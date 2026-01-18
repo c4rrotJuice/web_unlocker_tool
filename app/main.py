@@ -7,7 +7,8 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from supabase import create_client
-import httpx
+from app.routes.http import http_client
+from app.routes import upstash_redis as r
 import os
 
 # Redis helpers
@@ -52,6 +53,27 @@ except Exception as e:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ✅ Use the shared client you already created in app.routes.http
+    app.state.http_session = http_client
+
+    # ✅ Wrap Redis so the rest of your code can keep calling redis_get(key)
+    app.state.redis_get = lambda key: r.redis_get(key, app.state.http_session)
+    app.state.redis_set = lambda key, value: r.redis_set(key, value, app.state.http_session)
+    app.state.redis_incr = lambda key: r.redis_incr(key, app.state.http_session)
+    app.state.redis_expire = lambda key, seconds: r.redis_expire(key, seconds, app.state.http_session)
+
+    print("✅ HTTP client + Redis ready")
+
+    try:
+        yield
+    finally:
+        # ✅ close the shared client (and remove the extra shutdown event below)
+        await app.state.http_session.aclose()
+        print("👋 HTTP client closed")
+
+'''
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     app.state.http_session = httpx.AsyncClient(timeout=10)
 
     app.state.redis_get = redis_get
@@ -67,7 +89,7 @@ async def lifespan(app: FastAPI):
         await app.state.http_session.aclose()
         print("👋 HTTP client closed")
 
-
+'''
 # --------------------------------------------------
 # APP INIT
 # --------------------------------------------------
@@ -86,6 +108,14 @@ app.add_middleware(
 
 
 # ====================== AUTH MIDDLEWARE ====================
+
+# Paths that never require authentication
+PUBLIC_PATH_PREFIXES = (
+    "/",
+    "/auth",
+    "/static",
+)
+
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
@@ -134,9 +164,6 @@ async def auth_middleware(request: Request, call_next):
 
     return await call_next(request)
 
-@app.on_event("shutdown")
-async def shutdown():
-    await http_client.aclose()
 
 
 # --------------------------------------------------

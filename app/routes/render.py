@@ -12,7 +12,6 @@ from app.routes.http import http_client
 from app.services.unprotector import fetch_and_clean_page
 from app.services.IP_usage_limit import check_login, get_user_ip
 from app.routes.upstash_redis import redis_get, redis_set, redis_incr, redis_expire
-from app.services.IP_usage_limit import check_login
 
 
 load_dotenv()
@@ -21,18 +20,6 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 router = APIRouter()
 
-
-def get_user_ip(request: Request) -> str:
-    """Extracts the real IP address from headers or request client."""
-    forwarded = request.headers.get("X-Forwarded-For")
-    return (
-        forwarded.split(",")[0].strip() if forwarded and "," in forwarded
-        else (forwarded or request.client.host)
-    )
-    
-    
-    
-from fastapi.responses import JSONResponse
 
 
 class CleanPageRequest(BaseModel):
@@ -61,7 +48,7 @@ async def post_view_clean_page(
             redis_get=request.app.state.redis_get,
             redis_set=request.app.state.redis_set,
             redis_incr=request.app.state.redis_incr,
-            redis_expire=request.app.state.redis_expire
+            redis_expire=request.app.state.redis_expire,
         )
 
 

@@ -161,7 +161,7 @@ async def check_login(request: Request, redis_get,
 
         # Freemium user (Redis-based)
         usage_key = f"user_usage:{user_id}:{today}"
-        current = int(await redis_get(usage_key) or 0)
+        current = int(await redis_get(usage_key,) or 0)
 
         if current >= daily_limit:
             raise HTTPException(
@@ -186,5 +186,4 @@ async def check_login(request: Request, redis_get,
         "user_id": None,
         "reason": "Guest IP usage",
     }
-
 

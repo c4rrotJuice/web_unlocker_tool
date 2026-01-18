@@ -56,4 +56,3 @@ async def get_full_history(
         raise HTTPException(status_code=500, detail="Error fetching history")
 
     return res.json()
-

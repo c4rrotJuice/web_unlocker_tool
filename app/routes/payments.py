@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 import httpx
+from app.routes.http import http_client
 import os
 
 router = APIRouter()
@@ -16,8 +17,7 @@ async def get_paddle_token():
         "Content-Type": "application/json",
     }
 
-    async with httpx.AsyncClient() as client:
-        res = await client.post(url, headers=headers, json={})
+    res = await http_client.post(url, headers=headers, json={})
 
     if res.status_code != 200:
         raise HTTPException(status_code=res.status_code, detail=res.text)

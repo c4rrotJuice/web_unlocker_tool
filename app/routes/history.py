@@ -28,4 +28,3 @@ async def get_user_unlocks(request: Request):
         }
     )
     return res.json()
-

@@ -23,102 +23,61 @@ headers = {
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
+def _check_env():
+    if not UPSTASH_REDIS_REST_URL or not UPSTASH_REDIS_REST_TOKEN:
+        raise RuntimeError("Missing UPSTASH_REDIS_REST_URL or UPSTASH_REDIS_REST_TOKEN")
 
-# --- Helper functions for compression, found out the hard way webpages can be heavy ---
+headers = {
+    "Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}",
+    "Content-Type": "application/json",
+}
+
 def compress_for_storage(data: str) -> str:
-    """Compress string and encode as base64 for safe storage."""
     return base64.b64encode(zlib.compress(data.encode())).decode()
 
-
 def decompress_from_storage(data: str) -> str:
-    """Decode base64 and decompress back into string."""
     try:
         return zlib.decompress(base64.b64decode(data.encode())).decode()
     except Exception:
-        # If not compressed, just return as-is
         return data
 
+async def _cmd(client: httpx.AsyncClient, command: list):
+    _check_env()
+    r = await client.post(UPSTASH_REDIS_REST_URL, headers=headers, json=command, timeout=20)
+    if r.status_code != 200:
+        raise RuntimeError(f"Upstash command failed {r.status_code}: {r.text}")
+    return r.json().get("result")
 
-# ---------------------------------------------------
+async def redis_get(key: str, client: httpx.AsyncClient):
+    try:
+        raw = await _cmd(client, ["GET", key])
+        if raw is None:
+            return None
+        if isinstance(raw, str) and raw.startswith("__COMPRESSED__:"):
+            raw = decompress_from_storage(raw.replace("__COMPRESSED__:", "", 1))
+        try:
+            return json.loads(raw)
+        except Exception:
+            return raw
+    except Exception as e:
+        print(f"[ERROR] [redis_get] key={key} exc={repr(e)}")
+        raise
 
-async def redis_set(key: str, value: dict | str, ttl_seconds: int | None = None):
-    """Set key to value in Redis,
-    with optional TTL ( thinking 24 hours coz had trouble with cached news sites
-    not updating and returnig the same image ove and over again)."""
-
+async def redis_set(key: str, value: str | dict, client: httpx.AsyncClient, ttl_seconds: int | None = None):
     if not isinstance(value, str):
         value = json.dumps(value)
 
-    # Compress large values (those HTML pages can get pretty big)
-    if len(value) > 5000:  # ~5KB threshold, tweak as needed, during testing this worked for me
+    if len(value) > 5000:
         value = "__COMPRESSED__:" + compress_for_storage(value)
 
-    command = ["SET", key, value]
+    cmd = ["SET", key, value]
     if ttl_seconds:
-        command += ["EX", str(ttl_seconds)]
+        cmd += ["EX", str(ttl_seconds)]
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            UPSTASH_REDIS_REST_URL, headers=headers, json=command
-        )
-        try:
-            return response.json()
-        except Exception as e:
-            logger.error(
-                f"[redis_set] JSON decode error: {e} | Status: {response.status_code} | Body: {response.text}"
-            )
-            return None
+    return await _cmd(client, cmd)
 
+async def redis_incr(key: str, client: httpx.AsyncClient):
+    return await _cmd(client, ["INCR", key])
 
-async def redis_get(key: str):
-    """Get key from Redis and auto-decode JSON or decompression if needed."""
-    command = ["GET", key]
-
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(
-                UPSTASH_REDIS_REST_URL, headers=headers, json=command
-            )
-            if response.status_code != 200:
-                logger.warning(f"[redis_get] Status {response.status_code} for key '{key}'")
-                return None
-
-            data = response.json()
-            raw = data.get("result")
-
-            if raw is None:
-                return None
-
-            # Handle compression marker
-            if isinstance(raw, str) and raw.startswith("__COMPRESSED__:"):
-                raw = decompress_from_storage(raw.replace("__COMPRESSED__:", "", 1))
-
-            try:
-                return json.loads(raw)  #Attempting JSON decode
-            except (json.JSONDecodeError, TypeError):
-                return raw
-        except Exception as e:
-            logger.error(f"[redis_get] Exception for key '{key}': {e}")
-            return None
-
-
-async def redis_incr(key: str):
-    """Increment a key atomically and return new value."""
-    command = ["INCR", key]
-
-    async with httpx.AsyncClient() as client:
-        res = await client.post(
-            UPSTASH_REDIS_REST_URL, headers=headers, json=command
-        )
-        return res.json()  # returns dict like {"result": 1}
-
-
-async def redis_expire(key: str, seconds: int):
-    """Set TTL (expire) for a key in seconds."""
-    command = ["EXPIRE", key, str(seconds)]
-
-    async with httpx.AsyncClient() as client:
-        res = await client.post(
-            UPSTASH_REDIS_REST_URL, headers=headers, json=command
-        )
-        return res.json()
+async def redis_expire(key: str, seconds: int, client: httpx.AsyncClient):
+    return await _cmd(client, ["EXPIRE", key, str(seconds)])

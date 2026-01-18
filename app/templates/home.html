@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Cite Unlocker Tool</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/navStyle.css">
+</head>
+<body>
+
+    <header class="navbar">
+  <div class="navbar-container">
+    <!-- Logo -->
+    <div class="logo">
+      <a href="/"><img src="../static/images/logo_transparent.png" alt="Logo"></a>
+    </div>
+
+    <!-- Menu -->
+    <nav>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/about">About</a></li>
+        <li><a href="/static/pricing.html" id="pricing">Pricing</a></li>
+        <li><a href="/static/auth.html" id="authButton">Sign in/Up</a></li>
+        <li><a href="/dashboard" id="dashboard">dashboard</a></li>
+        <li><a href="https://citeunlock.choneize.com/blog">Blog</a></li>
+        <li><a href="https://citeunlock.choneize.com/terms" id="terms">Terms & Policies</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+  
+<!--=======================================================-->
+  
+  <div class="container">
+    <h1>Cite Unlocker Tool</h1>
+
+    <form id="unblockForm">
+      <input id="urlToFetch" type="text" name="url" placeholder="Enter URL" required>
+      <label>
+        <input type="checkbox" id="unlockMode" name="unlock" checked>
+        Enable Unlock Mode
+      </label>
+      <button type="submit">View</button>
+    </form>
+
+    <div id="loader">Cleaning new click...</div>
+
+    <h2 id="url_in_view">Viewing: {{ url }}</h2>
+    <iframe id="iframe" src="/view?url={{ url }}"></iframe>
+  </div>
+
+  <!-- Footer -->
+  <footer>
+    <p>© 2025 Cite Unlocker Tool by Choneize</p>
+  </footer>
+
+  <!-- JS to handle iframe clicks and cleaning -->
+
+<script>
+
+const iframe = document.getElementById('iframe');
+const loader = document.getElementById('loader');
+const token = localStorage.getItem('access_token');
+
+// Global headers
+const headers = {
+  'Content-Type': 'application/json',
+};
+if (token) {
+  headers['Authorization'] = `Bearer ${token}`;
+}
+
+// Load initial URL
+async function loadInitialURL() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const targetUrl = urlParams.get('url');
+  const unlock = urlParams.get('unlock') === 'true';
+
+  if (!targetUrl) return;
+
+  loader.style.display = 'block';
+  loader.innerText = 'Loading page...';
+
+  try {
+    const response = await fetch('/view', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ url: targetUrl, unlock: true })
+    });
+
+    const html = await response.text();
+    const blob = new Blob([html], { type: 'text/html' });
+    iframe.src = URL.createObjectURL(blob);
+
+    //Post original URL to iframe
+    iframe.onload = () => {
+      iframe.contentWindow.postMessage({ originalUrl: targetUrl }, '*');
+    };
+
+  } catch (error) {
+    console.error('Error loading page:', error);
+    loader.innerText = 'Error loading page.';
+  } finally {
+    loader.style.display = 'none';
+  }
+}
+window.onload = loadInitialURL;
+
+// Dynamic navigation from inside iframe
+window.addEventListener('message', async (event) => {
+  const { newUrl } = event.data || {};
+  if (!newUrl) return;
+
+  loader.style.display = 'block';
+  loader.innerText = 'Cleaning new click...';
+
+  const urlInView = document.getElementById('url_in_view');
+  if (urlInView) {
+    urlInView.innerText = `Viewing: ${newUrl}`;
+  }
+
+  try {
+    const response = await fetch('/fetch_and_clean_page', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ url: newUrl, unlock: true })
+    });
+
+    const data = await response.text();
+    const blob = new Blob([data], { type: 'text/html' });
+    const blobUrl = URL.createObjectURL(blob);
+    iframe.src = blobUrl;
+
+    //Post new URL to iframe
+    iframe.onload = () => {
+      iframe.contentWindow.postMessage({ originalUrl: newUrl }, '*');
+    };
+
+  } catch (error) {
+    console.error('❌ Fetch error:', error);
+    loader.innerText = 'Error loading content.';
+  } finally {
+    loader.style.display = 'none';
+  }
+});
+
+// Form submit to fetch new page
+document.getElementById('unblockForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+
+  const urlToFetch = document.getElementById('urlToFetch').value;
+  const unlockMode = document.getElementById('unlockMode').checked;
+  const token = localStorage.getItem('access_token');
+
+  if (!urlToFetch) return;
+
+  loader.style.display = 'block';
+  loader.innerText = 'Loading page...';
+
+  const urlInView = document.getElementById('url_in_view');
+  if (urlInView) {
+    urlInView.innerText = `Viewing: ${urlToFetch}`;
+  }
+
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  try {
+    const response = await fetch('/view', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ url: urlToFetch, unlock: unlockMode })
+    });
+
+    const html = await response.text();
+    const blob = new Blob([html], { type: 'text/html' });
+
+    iframe.src = URL.createObjectURL(blob);
+
+    //Post the submitted URL to iframe
+    iframe.onload = () => {
+      iframe.contentWindow.postMessage({ originalUrl: urlToFetch }, '*');
+    };
+
+  } catch (error) {
+    console.error('Error loading page:', error);
+    loader.innerText = 'Error loading page.';
+  } finally {
+    loader.style.display = 'none';
+  }
+});
+
+//listen and capture the copycitation function from within the iframe
+window.addEventListener('message', async (event) => {
+  if (event.data?.type === 'copyCitation') {
+    const citation = event.data.citation;
+
+    try {
+      const response = await fetch('/api/citations', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(citation),
+      });
+
+      if (!response.ok) throw new Error('Citation save failed');
+      console.log('✅ Citation saved');
+    } catch (error) {
+      console.error('❌ Failed to save citation:', error);
+    }
+  }
+});
+
+const authButton = document.getElementById('authButton');
+const dashboardLink = document.getElementById('dashboard');
+
+
+// ✅ Update nav based on token presence
+function updateAuthUI() {
+  if (token) {
+    // Logged in state
+    authButton.textContent = "Log out";
+    authButton.href = "#"; // prevent redirect to auth page
+
+    authButton.addEventListener('click', (e) => {
+      e.preventDefault();
+      localStorage.removeItem('access_token');
+      window.location.href = "/"; // reload home after logout
+    });
+
+    dashboardLink.style.display = "inline"; // show dashboard
+  } else {
+    // Logged out state
+    authButton.textContent = "Sign in/Up";
+    authButton.href = "/static/auth.html";
+
+    dashboardLink.style.display = "none"; // hide dashboard if not logged in
+  }
+}
+
+// Run once on page load
+updateAuthUI();
+
+</script>
+</body>
+</html>
+

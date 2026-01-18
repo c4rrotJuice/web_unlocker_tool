@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <link rel="stylesheet" href="/static/css/style.css">
+  <title>Cite Unlocker Dashboard</title>
+</head>
+<body>
+
+  <header>
+    <div class="logo"><a href="/">🔓 Cite Unlocker</a></div>
+        <nav>
+      <a href="/">Home</a>
+    </nav>
+  </header>
+
+  <div class="container">
+
+<div class="section profile-box">
+  <div><strong>User:</strong> <span id="user-name">Loading...</span></div>
+  <div><strong>Plan:</strong> <span id="account-type">Loading...</span></div>
+  <div><strong>Usage:</strong> <span id="usage">--</span> / <span id="limit">--</span> unlocks today</div>
+</div>
+
+<div class="dashboard">
+
+  <!-- ✅ Usage Analytics -->
+  <div class="card feature-card" data-feature="analytics">
+    <h3>Usage Analytics</h3>
+    <div class="feature-content">
+      <canvas id="usageChart"></canvas>
+    </div>
+  </div>
+
+  <!-- ✅ Word Count Gamification (Always Active) -->
+  <div class="card">
+    <h3>Word Count</h3>
+    <p><strong id="wordCount">0</strong> words unlocked</p>
+    <p>🔥 Streak: <span id="streakDays">0</span> days</p>
+  </div>
+
+  <!-- ✅ Monthly PDF Summary -->
+  <div class="card feature-card" data-feature="pdf" id="pdfDownload">
+    <h3>Monthly PDF Summary</h3>
+    <button id="pdfDownloadBtn" class="btn-disabled">Download Last Month’s Report</button>
+  </div>
+
+  <!-- ✅ Pro Feature Teaser -->
+  <div class="card pro-teaser hidden" id="proTeaser">
+    <h4>Unlock more with Pro:</h4>
+    <ul>
+      <li>Usage Analytics</li>
+      <li>PDF usage report</li>
+      <li>Priority Queue – skip the wait</li>
+      <li>Unlimited history & Bookmarks</li>
+    </ul>
+    <button class="btn-upgrade">Upgrade Now</button>
+  </div>
+
+</div>
+
+
+    <div class="section">
+      <h2>🔓 Unlock a Page</h2>
+      <form id="dashboard-unlock-form" class="input-group">
+  <input id="dashboard-url-input" type="url" placeholder="Enter the URL to unlock..." required />
+  <button type="submit">Unlock</button>
+</form>
+
+<div class="support-slot free-only" data-obscure="true" id="revenue-gen-1">
+
+</div>
+
+
+    </div>
+    
+    <div class="section dual-history">
+  <div class="history-column">
+    <h2>Recent Unlocks 🔓</h2>
+    <ul class="history-list" id="unlock-history">
+      <li>
+      <p>Fetching ...</p>
+      </li>
+    </ul>
+  </div>
+
+  <div class="history-column">
+    <h2>Recent Citations 📝</h2>
+    <ul class="citation-list" id="citation-history">
+      <li>
+      <p>Fetching ...</p>
+      </li>
+    </ul>
+  </div>
+</div>
+<div class="section dual-history" id="proHistories">
+<section id="url-history" class="dashboard-card">
+  <h2>Unlocked URL History</h2>
+
+  <!-- Search bar (visible for Pro, greyed out for Freemium) -->
+  <div id="history-search-container">
+    <input 
+      type="text" 
+      id="history-search" 
+      placeholder="Search unlocked URLs..."
+      disabled
+    />
+  </div>
+
+  <!-- History list -->
+  <ul id="history-list">
+    <!-- Populated dynamically from JS -->
+  </ul>
+
+  <!-- Greyed-out notice for freemium -->
+  <p id="history-locked-msg" class="locked-msg" style="display:none;">
+    Full history search is a Pro feature. Upgrade to unlock it!
+  </p>
+</section>
+
+<!-- ===========================
+     BOOKMARKS SECTION
+     =========================== -->
+     
+<section id="bookmarks" class="dashboard-card">
+  <h2>Bookmarked Domains</h2>
+    <div id="bookmark-add">
+    <input type="text" id="bookmark-input" placeholder="Enter URL to bookmark" disabled />
+    <button id="bookmark-add-btn">Add Bookmark</button>
+  </div>
+  <ul id="bookmark-list">
+    <!-- Populated dynamically -->
+  </ul>
+
+  <!-- Greyed-out notice for freemium -->
+  <p id="bookmark-locked-msg" class="locked-msg" style="display:none;">
+    Bookmark frequently used domains for quick access — Pro feature only.
+  </p>
+</section>
+</div>
+    <div class="section upgrade-box" id="upgrade">
+      <h2>Need More Unlocks?</h2>
+      <p>Upgrade to Premium for unlimited page unlocks, PDF exports, and more!</p>
+      <button>Upgrade Now</button>
+    </div>
+    
+      <div class="support-slot free-only" data-obscure="true" id="revenue-gen-2">
+  <div class="funding-message">
+    <p class="fallback">Using the free plan? These quiet ads help keep this tool running – thank you! 🧠</p>
+  </div>
+</div>
+
+  </div>
+  
+  <footer>
+    &copy; 2025 Web Unlocker Tool · All rights reserved
+  </footer>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+
+
+async function loadUserData() {
+  const token = localStorage.getItem("access_token");
+
+  if (!token) {
+    alert("No token found. Please log in again.");
+    window.location.href = "/auth";
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/me", {
+      headers: {
+        "Authorization": `Bearer ${token}`
+      }
+    });
+
+    if (res.status === 401) {
+      alert("Unauthorized. Please log in again.");
+      localStorage.removeItem("access_token");
+      window.location.href = "/static/auth.html";
+      return;
+    }
+
+    if (!res.ok) throw new Error("Failed to load user metadata");
+
+    const data = await res.json();
+
+    // ✅ Show metadata
+    document.getElementById("user-name").textContent = data.name;
+    document.getElementById("account-type").textContent =
+      data.account_type?.charAt(0).toUpperCase() + data.account_type?.slice(1);
+    document.getElementById("usage").textContent = data.requests_today;
+    document.getElementById("limit").textContent = data.daily_limit;
+
+
+
+     // After fetching `data` from /api/me:
+renderBookmarks(data.bookmarks);
+
+if (data.account_type === "pro") {
+  document.getElementById("history-search").disabled = false;
+  document.getElementById("bookmark-input").disabled = false;
+  document.getElementById("history-locked-msg").style.display = "none";
+  document.getElementById("bookmark-locked-msg").style.display = "none";
+  document.getElementById("proTeaser").style.display = "none";
+  document.getElementById("upgrade").style.display = "none";
+
+  loadFullHistory();
+  document.getElementById("history-search").addEventListener("input", e => {
+    loadFullHistory(e.target.value);
+  });
+} else {
+
+  document.getElementById("history-locked-msg").style.display = "block";
+  document.getElementById("bookmark-locked-msg").style.display = "block";
+}
+
+     
+     
+    // ✅ If freemium, show ads
+    if (data.account_type === "freemium") {
+      document.querySelectorAll(".free-only").forEach(el => {
+        el.style.display = "block";
+      });
+      
+      injectAdSenseAds();
+      detectAdblock();
+
+    }
+
+  } catch (err) {
+    console.error("🔥 Error loading user metadata:", err);
+    alert("Failed to load user info. Please try again.");
+  }
+}
+
+async function loadFullHistory(query = "") {
+  const token = localStorage.getItem("access_token");
+  if (!token) return;
+
+  try {
+    const res = await fetch(`/api/history?q=${encodeURIComponent(query)}`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+
+    if (!res.ok) throw new Error("Could not load full history");
+
+    const history = await res.json();
+    const list = document.getElementById("history-list");
+    list.innerHTML = "";
+
+    if (history.length === 0) {
+      list.innerHTML = "<li>No history found.</li>";
+      return;
+    }
+
+    history.forEach(item => {
+      const li = document.createElement("li");
+      li.innerHTML = `
+        <span>${item.url}</span>
+        <span class="badge">${timeSince(new Date(item.unlocked_at))} ago</span>
+      `;
+      list.appendChild(li);
+    });
+
+    // 🔹 Render analytics chart using the same data
+    renderUsageAnalytics(history);
+
+  } catch (err) {
+    console.error("Failed to load history:", err);
+  }
+}
+
+
+function renderUsageAnalytics(history) {
+  // 1️⃣ Count unlocks per day (last 7 days)
+  const counts = {};
+  const now = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const day = new Date(now);
+    day.setDate(day.getDate() - i);
+    const dayStr = day.toISOString().split('T')[0]; // YYYY-MM-DD
+    counts[dayStr] = 0;
+  }
+
+  history.forEach(item => {
+    const dateStr = new Date(item.unlocked_at).toISOString().split('T')[0];
+    if (counts[dateStr] !== undefined) {
+      counts[dateStr]++;
+    }
+  });
+
+  const labels = Object.keys(counts);
+  const data = Object.values(counts);
+
+  // 2️⃣ Render chart
+  const ctx = document.getElementById('usageChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Unlocks per Day',
+        data,
+        backgroundColor: 'rgba(54, 162, 235, 0.6)',
+        borderRadius: 6
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, ticks: { stepSize: 1 } }
+      }
+    }
+  });
+}
+
+// === Initial fetch and render of bookmarks ===
+async function loadBookmarks() {
+  const token = localStorage.getItem("access_token");
+  if (!token) return;
+
+  try {
+    const res = await fetch("/api/bookmarks", {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!res.ok) throw new Error("Failed to load bookmarks");
+    const bookmarks = await res.json();
+    renderBookmarks(bookmarks);
+  } catch (err) {
+    console.error("Error loading bookmarks:", err);
+  }
+}
+
+// === Render Bookmarks ===
+function renderBookmarks(bookmarks) {
+  const list = document.getElementById("bookmark-list");
+  list.innerHTML = "";
+
+  if (!bookmarks || bookmarks.length === 0) {
+    list.innerHTML = "<li>No bookmarks yet.</li>";
+    return;
+  }
+
+  bookmarks.forEach(bm => {
+    const li = document.createElement("li");
+    li.dataset.id = bm.id;
+    li.dataset.url = bm.url;
+
+    li.innerHTML = `
+      <span class="bookmark-link" style="cursor:pointer; color:blue; text-decoration:underline;">
+        ${bm.domain || bm.url}
+      </span>
+      <button data-id="${bm.id}" class="remove-bookmark">❌</button>
+    `;
+
+    // Make bookmark clickable -> send to main app
+    li.querySelector(".bookmark-link").addEventListener("click", () => {
+      const encoded = encodeURIComponent(bm.url);
+      window.location.href = `/?url=${encoded}&unlock=true`;
+    });
+
+    // Delete bookmark handler
+    li.querySelector(".remove-bookmark").addEventListener("click", async (e) => {
+      e.stopPropagation(); // prevent click triggering link
+      await deleteBookmark(bm.id);
+      li.remove();
+    });
+
+    list.appendChild(li);
+  });
+}
+
+// === Add Bookmark ===
+async function addBookmark(url) {
+  const token = localStorage.getItem("access_token");
+    // Show status text
+  let statusEl = document.getElementById("bookmark-status");
+  if (!statusEl) {
+    statusEl = document.createElement("p");
+    statusEl.id = "bookmark-status";
+    document.getElementById("bookmarks").appendChild(statusEl);
+  }
+  statusEl.textContent = "Adding bookmark...";
+
+  try {
+    const res = await fetch("/api/bookmarks", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+        
+      },
+      body: JSON.stringify({ url })
+    });
+    if (!res.ok) throw new Error("Failed to add bookmark");
+
+    // Refresh list after adding
+    await loadBookmarks();
+    statusEl.textContent = "Bookmark added!";
+    setTimeout(() => statusEl.textContent = "", 1500);
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = "Failed to add bookmark";
+    setTimeout(() => statusEl.textContent = "", 2000);
+  }
+}
+
+// Add bookmark button listener
+document.getElementById("bookmark-add-btn").addEventListener("click", () => {
+  const input = document.getElementById("bookmark-input");
+  const url = input.value.trim();
+  if (!url) return;
+  addBookmark(url);
+  input.value = "";
+});
+
+// === Delete Bookmark ===
+async function deleteBookmark(id) {
+  const token = localStorage.getItem("access_token");
+  try {
+    const res = await fetch(`/api/bookmarks/${id}`, {
+      method: "DELETE",
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!res.ok) throw new Error("Failed to delete bookmark");
+  } catch (err) {
+    console.error("Failed to delete bookmark:", err);
+  }
+}
+
+// Load on page ready
+document.addEventListener("DOMContentLoaded", loadBookmarks);
+
+
+function injectAdSenseAds() {
+  const revenue1 = document.getElementById("revenue-gen-1");
+  const revenue2 = document.getElementById("revenue-gen-2");
+
+  // Inject AdSense slot #1
+  revenue1.innerHTML = `
+    <ins class="adsbygoogle"
+      style="display:block"
+      data-ad-client="ca-pub-XXXXXXXXXXXXXX"
+      data-ad-slot="1111111111"
+      data-ad-format="auto"
+      data-full-width-responsive="true"></ins>
+  `;
+
+  // Inject AdSense slot #2
+  revenue2.innerHTML = `
+    <ins class="adsbygoogle"
+      style="display:block"
+      data-ad-client="ca-pub-XXXXXXXXXXXXXX"
+      data-ad-slot="2222222222"
+      data-ad-format="auto"
+      data-full-width-responsive="true"></ins>
+  `;
+
+  // Trigger AdSense rendering
+  try {
+    (adsbygoogle = window.adsbygoogle || []).push({});
+    (adsbygoogle = window.adsbygoogle || []).push({});
+  } catch (e) {
+    console.warn("Adsense rendering error:", e);
+  }
+}
+
+function detectAdblock() {
+  const slots = [document.getElementById("revenue-gen-1"), document.getElementById("revenue-gen-2")];
+
+  slots.forEach(slot => {
+    setTimeout(() => {
+      if (slot && slot.offsetHeight === 0) {
+        slot.innerHTML = `
+          <div class="funding-message">
+            <p class="fallback">You're using an ad blocker — no worries. Our unobtrusive ads help fund this tool so we can keep it free. 💙</p>
+          </div>
+        `;
+      }
+    }, 1500); // Allow time for ad to attempt render
+  });
+}
+
+  window.addEventListener("DOMContentLoaded", () => {
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      window.location.href = "/static/auth.html";
+      return;
+    }
+
+    loadUserData();
+    loadRecentUnlocks();
+    loadRecentCitations();
+  });
+  
+  
+  
+  //load citations
+  async function loadRecentCitations() {
+  const token = localStorage.getItem("access_token");
+  if (!token) return;
+
+  try {
+    const res = await fetch("/api/citations", {
+      headers: {
+        "Authorization": `Bearer ${token}`
+      }
+    });
+
+    if (!res.ok) throw new Error("Could not load citation history");
+
+    const citations = await res.json();
+    const list = document.querySelector(".citation-list");
+    list.innerHTML = "";
+    
+    
+    citations.forEach(citation => {
+  const li = document.createElement("li");
+  const timeAgo = timeSince(new Date(citation.cited_at));
+  li.classList.add("citation-item");
+
+  const excerptDiv = document.createElement("div");
+  excerptDiv.classList.add("citation-excerpt");
+  excerptDiv.innerHTML = `
+    <span>${citation.excerpt}</span>
+    <span class="badge">${timeAgo} ago</span>
+  `;
+
+  const modalDiv = document.createElement("div");
+  modalDiv.classList.add("citation-modal");
+
+  const fullTextP = document.createElement("p");
+  fullTextP.textContent = citation.full_text;
+
+  const copyBtn = document.createElement("button");
+  copyBtn.className = "copy-button";
+  copyBtn.textContent = "Copy Again";
+
+  // ✅ SAFELY attach click handler
+  copyBtn.addEventListener("click", (e) => {
+    e.stopPropagation(); // prevent hover-out from interfering
+    navigator.clipboard.writeText(citation.full_text)
+      .then(() => alert("Full citation copied!"))
+      .catch(err => console.error("Failed to copy full citation: ", err));
+  });
+
+  modalDiv.appendChild(fullTextP);
+  modalDiv.appendChild(copyBtn);
+
+  li.appendChild(excerptDiv);
+  li.appendChild(modalDiv);
+
+  list.appendChild(li);
+});
+
+  } catch (err) {
+    console.error("Failed to load recent citations:", err);
+  }
+}
+
+
+
+function copyCitationFull(fullText) {
+  navigator.clipboard.writeText(fullText)
+    .then(() => alert("Full citation copied!"))
+    .catch(err => console.error("Failed to copy full citation: ", err));
+}
+
+  
+  // Handle unlock form submission
+  document.getElementById('dashboard-unlock-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    const input = document.getElementById('dashboard-url-input');
+    const url = input.value.trim();
+
+    if (!url) {
+      alert("Please enter a URL");
+      return;
+    }
+
+    // Redirect to main tool with query string
+    const encoded = encodeURIComponent(url);
+    window.location.href = `/?url=${encoded}&unlock=true`;
+  });
+   //load urls  
+async function loadRecentUnlocks() {
+  const token = localStorage.getItem("access_token");
+  if (!token) return;
+
+  try {
+    const res = await fetch("/api/unlocks", {
+      headers: {
+        "Authorization": `Bearer ${token}`
+      }
+    });
+
+    if (!res.ok) throw new Error("Could not load unlock history");
+
+    const history = await res.json();
+    const list = document.querySelector(".history-list");
+    list.innerHTML = "";
+
+    history.forEach(item => {
+      const li = document.createElement("li");
+      const timeAgo = timeSince(new Date(item.unlocked_at));
+
+      li.innerHTML = `
+        <span>${item.url}</span>
+        <span class="badge">${timeAgo} ago</span>
+      `;
+
+      list.appendChild(li);
+    });
+
+  } catch (err) {
+    console.error("Failed to load recent unlocks:", err);
+  }
+}
+
+function timeSince(date) {
+  const seconds = Math.floor((new Date() - date) / 1000);
+  const r = (val, label) => `${val} ${label}${val > 1 ? 's' : ''}`;
+
+  if (seconds < 60) return r(seconds, "second");
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return r(minutes, "minute");
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return r(hours, "hour");
+  const days = Math.floor(hours / 24);
+  return r(days, "day");
+}
+
+</script>
+</body>
+</html>
+

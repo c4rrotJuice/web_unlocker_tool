@@ -1,0 +1,131 @@
+* {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #d7e7f7;
+      color: #1E293B;
+      margin: 0;
+      padding: 0;
+    }
+
+    header {
+      background: #fff;
+      padding: 15px 30px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 1px 5px rgba(0,0,0,0.06);
+    }
+
+    .logo {
+      font-weight: 600;
+      font-size: 18px;
+    }
+
+    nav a {
+      text-decoration: none;
+      color: #1E293B;
+      margin-left: 20px;
+      font-weight: 500;
+    }
+
+    nav a:hover {
+      color: #3B82F6;
+    }
+
+    .container {
+      max-width: 95vw;
+      margin: 30px auto;
+      padding: 10px;
+      text-align: center;
+      background: #d7e7f7;
+      border-radius: 12px;
+      box-shadow: 0 70px 70px 70px rgba(0.35, 0.35, 0.35, 0.35);
+    }
+
+    form#unblockForm {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 20px 0;
+      align-items: center;
+    }
+
+    form#unblockForm input[type="text"] {
+      flex-grow: 1;
+      min-width: 250px;
+      padding: 12px;
+      font-size: 16px;
+      border: 1px solid #CBD5E1;
+      border-radius: 8px;
+    }
+
+    form#unblockForm label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 14px;
+    }
+
+    form#unblockForm button {
+      padding: 10px 16px;
+      background: #3B82F6;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.3s ease;
+    }
+
+    form#unblockForm button:hover {
+      background: #2563EB;
+    }
+
+    #loader {
+      display: none;
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background: #1E293B;
+      color: white;
+      padding: 10px 15px;
+      border-radius: 8px;
+      z-index: 9999;
+      font-family: sans-serif;
+    }
+
+    iframe {
+      width: 100%;
+      height: 600px;
+      border: 1px solid #E5E7EB;
+      border-radius: 8px;
+      margin-top: 15px;
+    }
+
+    .ocr-form {
+      margin-top: 20px;
+    }
+
+    .ocr-form button {
+      padding: 10px 14px;
+      background: #6B7280;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .ocr-form button:hover {
+      background: #4B5563;
+    }
+
+    footer {
+      background: #F1F5F9;
+      padding: 20px;
+      text-align: center;
+      font-size: 14px;
+      color: #64748B;
+      margin-top: 40px;
+    }

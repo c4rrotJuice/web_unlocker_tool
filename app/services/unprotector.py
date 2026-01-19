@@ -103,6 +103,38 @@ def patch_lazy_loaded_images(soup):
         elif img.has_attr("data-original") and not img.has_attr("src"):
             img["src"] = img["data-original"]
 
+def rebase_html_resources_selectolax(tree: HTMLParser, base_url: str) -> None:
+    tag_attr_pairs = [
+        ("link", "href"),
+        ("script", "src"),
+        ("img", "src"),
+        ("iframe", "src"),
+        ("audio", "src"),
+        ("video", "src"),
+        ("source", "src"),
+        ("a", "href"),
+        ("form", "action"),
+    ]
+    for tag, attr in tag_attr_pairs:
+        for node in tree.css(tag):
+            value = node.attributes.get(attr)
+            if value:
+                node.attributes[attr] = urljoin(base_url, value)
+
+def patch_lazy_loaded_images_selectolax(tree: HTMLParser) -> None:
+    for node in tree.css("img"):
+        if "src" in node.attributes:
+            continue
+        data_src = node.attributes.get("data-src")
+        data_lazy_src = node.attributes.get("data-lazy-src")
+        data_original = node.attributes.get("data-original")
+        if data_src:
+            node.attributes["src"] = data_src
+        elif data_lazy_src:
+            node.attributes["src"] = data_lazy_src
+        elif data_original:
+            node.attributes["src"] = data_original
+
 
 # --- Main Fetch and Clean Function ---
 async def fetch_and_clean_page(
@@ -217,18 +249,20 @@ async def fetch_and_clean_page(
     response_text = clean_known_blockers(response_text)
 
     try:
-        soup = BeautifulSoup(response_text, "html.parser")
-        rebase_html_resources(soup, base_url)
-        patch_lazy_loaded_images(soup) 
-        response_text = str(soup)
-    except Exception as e:
-        logger.warning("Soup parsing/rebase failed: %s", e)
-
-    try:
         tree = HTMLParser(response_text)
+        rebase_html_resources_selectolax(tree, base_url)
+        patch_lazy_loaded_images_selectolax(tree)
     except Exception as e:
-        logger.error("HTML parsing failed: %s", e)
-        return "<div style='color:red;'>Error parsing HTML for unlock true.</div>"
+        logger.warning("Selectolax parsing/rebase failed: %s", e)
+        try:
+            soup = BeautifulSoup(response_text, "html.parser")
+            rebase_html_resources(soup, base_url)
+            patch_lazy_loaded_images(soup)
+            response_text = str(soup)
+            tree = HTMLParser(response_text)
+        except Exception as fallback_error:
+            logger.error("HTML parsing failed: %s", fallback_error)
+            return "<div style='color:red;'>Error parsing HTML for unlock true.</div>"
 
     for script in tree.css('script'):
         try:
@@ -270,5 +304,4 @@ async def fetch_and_clean_page(
         logger.error("Final serialization error: %s", e)
         return "<div style='color:red;'>Failed to render page.</div>"
     
-
 

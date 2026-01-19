@@ -47,6 +47,8 @@ USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36",
 ]
 
+CACHE_TTL_SECONDS = 3600
+
 
 # --- SSRF Check ---
 async def is_ssrf_risk(url: str) -> bool:
@@ -152,8 +154,11 @@ async def fetch_and_clean_page(
     try:
         if use_cloudscraper:
             logger.info("[cloudscraper] Fetching with Cloudscraper...")
-            scraper = cloudscraper.create_scraper()
-            response_text = scraper.get(url, headers=headers).text
+            def _fetch_with_cloudscraper() -> str:
+                scraper = cloudscraper.create_scraper()
+                return scraper.get(url, headers=headers).text
+
+            response_text = await asyncio.to_thread(_fetch_with_cloudscraper)
             content_type = "text/html"
             content_length = len(response_text)
         else:
@@ -184,8 +189,8 @@ async def fetch_and_clean_page(
     if not unlock:
         safe_html = sanitize_html(response_text, base_url)
         try:
-            updated_html = (
-                updated_html
+            safe_html = (
+                safe_html
                 .encode("utf-8", errors="replace")
                 .decode("utf-8", errors="replace")
             )
@@ -193,7 +198,7 @@ async def fetch_and_clean_page(
             logger.error("UTF-8 normalization failed: %s", e)
             return "<div style='color:red;'>Encoding error.</div>"
 
-        await redis_set(cache_key, {"result": safe_html}, ttl_seconds=3600)
+        await redis_set(cache_key, {"result": safe_html}, ttl_seconds=CACHE_TTL_SECONDS)
         return safe_html
 
     response_text = response_text.encode('utf-8', 'replace').decode('utf-8', 'replace')
@@ -258,14 +263,12 @@ async def fetch_and_clean_page(
         updated_html = "<div style='color:red;'>Failed to inject enhancements.</div>"
 
     try:
-        await redis_set(cache_key, {"result": updated_html})
+        await redis_set(cache_key, {"result": updated_html}, ttl_seconds=CACHE_TTL_SECONDS)
         logger.info("Page processed and cached.")
         return updated_html
     except Exception as e:
         logger.error("Final serialization error: %s", e)
         return "<div style='color:red;'>Failed to render page.</div>"
     
-
-
 
 

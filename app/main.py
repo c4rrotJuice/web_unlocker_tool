@@ -58,7 +58,9 @@ async def lifespan(app: FastAPI):
 
     # ✅ Wrap Redis so the rest of your code can keep calling redis_get(key)
     app.state.redis_get = lambda key: r.redis_get(key, app.state.http_session)
-    app.state.redis_set = lambda key, value: r.redis_set(key, value, app.state.http_session)
+    app.state.redis_set = lambda key, value, ttl_seconds=None: r.redis_set(
+        key, value, app.state.http_session, ttl_seconds=ttl_seconds
+    )
     app.state.redis_incr = lambda key: r.redis_incr(key, app.state.http_session)
     app.state.redis_expire = lambda key, seconds: r.redis_expire(key, seconds, app.state.http_session)
 
@@ -145,19 +147,39 @@ async def auth_middleware(request: Request, call_next):
 
         # ✅ Fetch metadata with SERVICE ROLE
         try:
-            meta = (
-                supabase_admin
-                .table("user_meta")
-                .select("name, account_type, daily_limit")
-                .eq("user_id", user.id)
-                .single()
-                .execute()
-            )
+            cache_key = f"user_meta:{user.id}"
+            cached_meta = None
+            try:
+                cached_meta = await request.app.state.redis_get(cache_key)
+            except Exception as e:
+                print("⚠️ Failed to read metadata cache:", e)
 
-            if meta.data:
-                request.state.name = meta.data.get("name")
-                request.state.account_type = meta.data.get("account_type")
-                request.state.usage_limit = meta.data.get("daily_limit", 5)
+            if isinstance(cached_meta, dict):
+                request.state.name = cached_meta.get("name")
+                request.state.account_type = cached_meta.get("account_type")
+                request.state.usage_limit = cached_meta.get("daily_limit", 5)
+            else:
+                meta = (
+                    supabase_admin
+                    .table("user_meta")
+                    .select("name, account_type, daily_limit")
+                    .eq("user_id", user.id)
+                    .single()
+                    .execute()
+                )
+
+                if meta.data:
+                    request.state.name = meta.data.get("name")
+                    request.state.account_type = meta.data.get("account_type")
+                    request.state.usage_limit = meta.data.get("daily_limit", 5)
+                    try:
+                        await request.app.state.redis_set(
+                            cache_key,
+                            meta.data,
+                            ttl_seconds=300,
+                        )
+                    except Exception as e:
+                        print("⚠️ Failed to write metadata cache:", e)
 
         except Exception as e:
             print("⚠️ Failed to fetch metadata:", e)
@@ -211,4 +233,3 @@ app.include_router(citations.router)
 app.include_router(bookmarks.router)
 app.include_router(search.router)
 app.include_router(payments.router)
-

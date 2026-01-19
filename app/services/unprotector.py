@@ -47,6 +47,8 @@ USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36",
 ]
 
+CACHE_TTL_SECONDS = 3600
+
 
 # --- SSRF Check ---
 async def is_ssrf_risk(url: str) -> bool:
@@ -101,6 +103,38 @@ def patch_lazy_loaded_images(soup):
         elif img.has_attr("data-original") and not img.has_attr("src"):
             img["src"] = img["data-original"]
 
+def rebase_html_resources_selectolax(tree: HTMLParser, base_url: str) -> None:
+    tag_attr_pairs = [
+        ("link", "href"),
+        ("script", "src"),
+        ("img", "src"),
+        ("iframe", "src"),
+        ("audio", "src"),
+        ("video", "src"),
+        ("source", "src"),
+        ("a", "href"),
+        ("form", "action"),
+    ]
+    for tag, attr in tag_attr_pairs:
+        for node in tree.css(tag):
+            value = node.attributes.get(attr)
+            if value:
+                node.attributes[attr] = urljoin(base_url, value)
+
+def patch_lazy_loaded_images_selectolax(tree: HTMLParser) -> None:
+    for node in tree.css("img"):
+        if "src" in node.attributes:
+            continue
+        data_src = node.attributes.get("data-src")
+        data_lazy_src = node.attributes.get("data-lazy-src")
+        data_original = node.attributes.get("data-original")
+        if data_src:
+            node.attributes["src"] = data_src
+        elif data_lazy_src:
+            node.attributes["src"] = data_lazy_src
+        elif data_original:
+            node.attributes["src"] = data_original
+
 
 # --- Main Fetch and Clean Function ---
 async def fetch_and_clean_page(
@@ -152,8 +186,11 @@ async def fetch_and_clean_page(
     try:
         if use_cloudscraper:
             logger.info("[cloudscraper] Fetching with Cloudscraper...")
-            scraper = cloudscraper.create_scraper()
-            response_text = scraper.get(url, headers=headers).text
+            def _fetch_with_cloudscraper() -> str:
+                scraper = cloudscraper.create_scraper()
+                return scraper.get(url, headers=headers).text
+
+            response_text = await asyncio.to_thread(_fetch_with_cloudscraper)
             content_type = "text/html"
             content_length = len(response_text)
         else:
@@ -184,8 +221,8 @@ async def fetch_and_clean_page(
     if not unlock:
         safe_html = sanitize_html(response_text, base_url)
         try:
-            updated_html = (
-                updated_html
+            safe_html = (
+                safe_html
                 .encode("utf-8", errors="replace")
                 .decode("utf-8", errors="replace")
             )
@@ -193,7 +230,7 @@ async def fetch_and_clean_page(
             logger.error("UTF-8 normalization failed: %s", e)
             return "<div style='color:red;'>Encoding error.</div>"
 
-        await redis_set(cache_key, {"result": safe_html}, ttl_seconds=3600)
+        await redis_set(cache_key, {"result": safe_html}, ttl_seconds=CACHE_TTL_SECONDS)
         return safe_html
 
     response_text = response_text.encode('utf-8', 'replace').decode('utf-8', 'replace')
@@ -212,18 +249,20 @@ async def fetch_and_clean_page(
     response_text = clean_known_blockers(response_text)
 
     try:
-        soup = BeautifulSoup(response_text, "html.parser")
-        rebase_html_resources(soup, base_url)
-        patch_lazy_loaded_images(soup) 
-        response_text = str(soup)
-    except Exception as e:
-        logger.warning("Soup parsing/rebase failed: %s", e)
-
-    try:
         tree = HTMLParser(response_text)
+        rebase_html_resources_selectolax(tree, base_url)
+        patch_lazy_loaded_images_selectolax(tree)
     except Exception as e:
-        logger.error("HTML parsing failed: %s", e)
-        return "<div style='color:red;'>Error parsing HTML for unlock true.</div>"
+        logger.warning("Selectolax parsing/rebase failed: %s", e)
+        try:
+            soup = BeautifulSoup(response_text, "html.parser")
+            rebase_html_resources(soup, base_url)
+            patch_lazy_loaded_images(soup)
+            response_text = str(soup)
+            tree = HTMLParser(response_text)
+        except Exception as fallback_error:
+            logger.error("HTML parsing failed: %s", fallback_error)
+            return "<div style='color:red;'>Error parsing HTML for unlock true.</div>"
 
     for script in tree.css('script'):
         try:
@@ -258,14 +297,11 @@ async def fetch_and_clean_page(
         updated_html = "<div style='color:red;'>Failed to inject enhancements.</div>"
 
     try:
-        await redis_set(cache_key, {"result": updated_html})
+        await redis_set(cache_key, {"result": updated_html}, ttl_seconds=CACHE_TTL_SECONDS)
         logger.info("Page processed and cached.")
         return updated_html
     except Exception as e:
         logger.error("Final serialization error: %s", e)
         return "<div style='color:red;'>Failed to render page.</div>"
     
-
-
-
 

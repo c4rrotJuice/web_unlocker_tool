@@ -9,6 +9,11 @@ from fastapi import Request, HTTPException
 
 from app.routes.http import http_client
 from app.routes.upstash_redis import redis_get, redis_set, redis_incr, redis_expire
+from app.services.entitlements import (
+    can_use_cloudscraper,
+    has_daily_limit,
+    normalize_account_type,
+)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -149,14 +154,14 @@ async def check_login(request: Request, redis_get,
     # ── AUTHENTICATED USER ──
     if request.state.user_id:
         user_id = request.state.user_id
-        account_type = request.state.account_type
+        account_type = normalize_account_type(request.state.account_type)
         daily_limit = request.state.usage_limit or MAX_DAILY_USES
 
-        if account_type == "premium":
+        if not has_daily_limit(account_type):
             return {
-                "use_cloudscraper": True,
+                "use_cloudscraper": can_use_cloudscraper(account_type),
                 "user_id": user_id,
-                "reason": "Premium user",
+                "reason": "Paid tier user",
             }
 
         # Freemium user (Redis-based)
@@ -166,7 +171,7 @@ async def check_login(request: Request, redis_get,
         if current >= daily_limit:
             raise HTTPException(
                 status_code=429,
-                detail="🚫 Daily limit reached. Upgrade to premium.",
+                detail="🚫 Daily limit reached. Upgrade to Standard.",
             )
 
         await redis_incr(usage_key)
@@ -174,9 +179,9 @@ async def check_login(request: Request, redis_get,
             await redis_expire(usage_key, 86400)
 
         return {
-            "use_cloudscraper": True,
+            "use_cloudscraper": can_use_cloudscraper(account_type),
             "user_id": user_id,
-            "reason": "Freemium usage logged",
+            "reason": "Free usage logged",
         }
 
     # ── GUEST USER (IP) ──
@@ -186,4 +191,3 @@ async def check_login(request: Request, redis_get,
         "user_id": None,
         "reason": "Guest IP usage",
     }
-

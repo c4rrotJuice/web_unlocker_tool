@@ -195,33 +195,37 @@ async function loadUserData() {
     document.getElementById("usage").textContent = data.requests_today;
     document.getElementById("limit").textContent = data.daily_limit;
 
+    const isPro = data.account_type === "pro";
+    const canBookmark = data.account_type === "pro" || data.account_type === "standard";
 
+    // After fetching `data` from /api/me:
+    renderBookmarks(data.bookmarks);
 
-     // After fetching `data` from /api/me:
-renderBookmarks(data.bookmarks);
+    if (isPro) {
+      document.getElementById("history-search").disabled = false;
+      document.getElementById("history-locked-msg").style.display = "none";
+      document.getElementById("proTeaser").style.display = "none";
+      document.getElementById("upgrade").style.display = "none";
 
-if (data.account_type === "pro") {
-  document.getElementById("history-search").disabled = false;
-  document.getElementById("bookmark-input").disabled = false;
-  document.getElementById("history-locked-msg").style.display = "none";
-  document.getElementById("bookmark-locked-msg").style.display = "none";
-  document.getElementById("proTeaser").style.display = "none";
-  document.getElementById("upgrade").style.display = "none";
+      loadFullHistory();
+      document.getElementById("history-search").addEventListener("input", e => {
+        loadFullHistory(e.target.value);
+      });
+    } else {
+      document.getElementById("history-locked-msg").style.display = "block";
+    }
 
-  loadFullHistory();
-  document.getElementById("history-search").addEventListener("input", e => {
-    loadFullHistory(e.target.value);
-  });
-} else {
-
-  document.getElementById("history-locked-msg").style.display = "block";
-  document.getElementById("bookmark-locked-msg").style.display = "block";
-}
+    if (canBookmark) {
+      document.getElementById("bookmark-input").disabled = false;
+      document.getElementById("bookmark-locked-msg").style.display = "none";
+    } else {
+      document.getElementById("bookmark-locked-msg").style.display = "block";
+    }
 
      
      
     // ✅ If freemium, show ads
-    if (data.account_type === "freemium") {
+    if (data.account_type === "free") {
       document.querySelectorAll(".free-only").forEach(el => {
         el.style.display = "block";
       });
@@ -638,4 +642,3 @@ function timeSince(date) {
 </script>
 </body>
 </html>
-

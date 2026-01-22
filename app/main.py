@@ -23,6 +23,7 @@ from app.routes.upstash_redis import (
 from app.routes.http import http_client
 from app.routes import render
 from app.services import authentication
+from app.services.entitlements import normalize_account_type
 from app.routes import dashboard, history, citations, bookmarks, search, payments
 
 # --------------------------------------------------
@@ -156,7 +157,9 @@ async def auth_middleware(request: Request, call_next):
 
             if isinstance(cached_meta, dict):
                 request.state.name = cached_meta.get("name")
-                request.state.account_type = cached_meta.get("account_type")
+                request.state.account_type = normalize_account_type(
+                    cached_meta.get("account_type")
+                )
                 request.state.usage_limit = cached_meta.get("daily_limit", 5)
             else:
                 meta = (
@@ -170,7 +173,9 @@ async def auth_middleware(request: Request, call_next):
 
                 if meta.data:
                     request.state.name = meta.data.get("name")
-                    request.state.account_type = meta.data.get("account_type")
+                    request.state.account_type = normalize_account_type(
+                        meta.data.get("account_type")
+                    )
                     request.state.usage_limit = meta.data.get("daily_limit", 5)
                     try:
                         await request.app.state.redis_set(

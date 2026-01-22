@@ -5,6 +5,7 @@ from fastapi.templating import Jinja2Templates
 from datetime import date
 import httpx
 from app.routes.http import http_client
+from app.services.entitlements import normalize_account_type
 import os
 
 templates = Jinja2Templates(directory="app/templates")
@@ -65,7 +66,7 @@ async def get_user_metadata(request: Request):
         return {
             "user_id": user_id,
             "name": meta.get("name"),
-            "account_type": meta.get("account_type"),
+            "account_type": normalize_account_type(meta.get("account_type")),
             "daily_limit": meta.get("daily_limit"),
             "requests_today": meta.get("requests_today"),
             "bookmarks": bookmarks,
@@ -76,4 +77,3 @@ async def get_user_metadata(request: Request):
     except Exception as e:
         print("🔥 Error in /api/me:", str(e))
         raise HTTPException(status_code=500, detail="Internal server error")
-

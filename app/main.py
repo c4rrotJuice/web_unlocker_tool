@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import asyncio
 
 from dotenv import load_dotenv
 from supabase import create_client
@@ -23,6 +24,7 @@ from app.routes.upstash_redis import (
 from app.routes.http import http_client
 from app.routes import render
 from app.services import authentication
+from app.services.entitlements import normalize_account_type
 from app.routes import dashboard, history, citations, bookmarks, search, payments
 
 # --------------------------------------------------
@@ -55,6 +57,9 @@ except Exception as e:
 async def lifespan(app: FastAPI):
     # ✅ Use the shared client you already created in app.routes.http
     app.state.http_session = http_client
+    app.state.fetch_semaphore = asyncio.Semaphore(
+        int(os.getenv("FETCH_CONCURRENCY", "5"))
+    )
 
     # ✅ Wrap Redis so the rest of your code can keep calling redis_get(key)
     app.state.redis_get = lambda key: r.redis_get(key, app.state.http_session)
@@ -156,7 +161,9 @@ async def auth_middleware(request: Request, call_next):
 
             if isinstance(cached_meta, dict):
                 request.state.name = cached_meta.get("name")
-                request.state.account_type = cached_meta.get("account_type")
+                request.state.account_type = normalize_account_type(
+                    cached_meta.get("account_type")
+                )
                 request.state.usage_limit = cached_meta.get("daily_limit", 5)
             else:
                 meta = (
@@ -170,7 +177,9 @@ async def auth_middleware(request: Request, call_next):
 
                 if meta.data:
                     request.state.name = meta.data.get("name")
-                    request.state.account_type = meta.data.get("account_type")
+                    request.state.account_type = normalize_account_type(
+                        meta.data.get("account_type")
+                    )
                     request.state.usage_limit = meta.data.get("daily_limit", 5)
                     try:
                         await request.app.state.redis_set(

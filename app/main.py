@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import asyncio
 
 from dotenv import load_dotenv
 from supabase import create_client
@@ -56,6 +57,9 @@ except Exception as e:
 async def lifespan(app: FastAPI):
     # ✅ Use the shared client you already created in app.routes.http
     app.state.http_session = http_client
+    app.state.fetch_semaphore = asyncio.Semaphore(
+        int(os.getenv("FETCH_CONCURRENCY", "5"))
+    )
 
     # ✅ Wrap Redis so the rest of your code can keep calling redis_get(key)
     app.state.redis_get = lambda key: r.redis_get(key, app.state.http_session)

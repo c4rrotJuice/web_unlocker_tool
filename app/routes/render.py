@@ -75,6 +75,7 @@ async def post_view_clean_page(
                 redis_get=request.app.state.redis_get,
                 redis_set=request.app.state.redis_set,
                 use_cloudscraper=use_cloudscraper,
+                fetch_semaphore=request.app.state.fetch_semaphore,
                 redis_incr=request.app.state.redis_incr,
                 redis_expire=request.app.state.redis_expire
             )
@@ -104,6 +105,7 @@ async def post_view_clean_page(
                 redis_get=request.app.state.redis_get,
                 redis_set=request.app.state.redis_set,
                 use_cloudscraper=False,  # guest users
+                fetch_semaphore=request.app.state.fetch_semaphore,
                 redis_incr=request.app.state.redis_incr,
                 redis_expire=request.app.state.redis_expire
             )
@@ -180,6 +182,7 @@ async def fetch_and_clean_page_post(
             redis_get=request.app.state.redis_get,
             redis_set=request.app.state.redis_set,
             use_cloudscraper=use_cloudscraper,
+            fetch_semaphore=request.app.state.fetch_semaphore,
             redis_incr=request.app.state.redis_incr,
             redis_expire=request.app.state.redis_expire  
         )
@@ -192,4 +195,3 @@ async def fetch_and_clean_page_post(
     except Exception as e:
         print(f"Error in fetch_and_clean_page: {e}")
         return HTMLResponse(content=f"<h1>Error loading page: {e}</h1>", status_code=500)
-

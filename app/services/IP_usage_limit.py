@@ -3,7 +3,7 @@
 
 import os
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from fastapi import Request, HTTPException
 
@@ -22,6 +22,7 @@ SUPABASE_TABLE = "ip_usage"
 DEV_HASH = os.getenv("DEV_HASH")
 
 MAX_DAILY_USES = 5
+MAX_WEEKLY_USES = 200
 RATE_LIMIT_PER_MINUTE = 3
 
 
@@ -38,6 +39,12 @@ HEADERS = {
 
 def get_today_gmt3() -> str:
     return datetime.now(pytz.timezone("Africa/Kampala")).date().isoformat()
+
+
+def get_week_start_gmt3() -> str:
+    today = datetime.now(pytz.timezone("Africa/Kampala")).date()
+    week_start = today - timedelta(days=today.weekday())
+    return week_start.isoformat()
 
 
 def hash_ip(ip: str) -> str:
@@ -57,10 +64,19 @@ def get_user_ip(request: Request) -> str:
 # Rate limiting
 # ───────────────────────────
 
-async def is_rate_limited(ip: str) -> bool:
+async def is_rate_limited(ip: str, redis_incr, redis_expire) -> bool:
     key = f"rate_limit:{ip}"
-    result = await redis_incr(key)
-    count = result.get("result", 0)
+    count = int(await redis_incr(key) or 0)
+
+    if count == 1:
+        await redis_expire(key, 60)
+
+    return count > RATE_LIMIT_PER_MINUTE
+
+
+async def is_rate_limited_user(user_id: str, redis_incr, redis_expire) -> bool:
+    key = f"rate_limit:user:{user_id}"
+    count = int(await redis_incr(key) or 0)
 
     if count == 1:
         await redis_expire(key, 60)
@@ -110,7 +126,11 @@ async def log_ip_usage(hashed_ip: str, today: str) -> int:
     return usage
 
 
-async def can_use_tool_ip(request: Request):
+async def can_use_tool_ip(
+    request: Request,
+    redis_incr,
+    redis_expire,
+):
     ip = get_user_ip(request)
     hashed = hash_ip(ip)
     today = get_today_gmt3()
@@ -118,7 +138,7 @@ async def can_use_tool_ip(request: Request):
     if hashed == DEV_HASH:
         return True
 
-    if await is_rate_limited(ip):
+    if await is_rate_limited(ip, redis_incr, redis_expire):
         raise HTTPException(
             status_code=429,
             detail="⏱️ Too many requests. Please slow down.",
@@ -156,8 +176,27 @@ async def check_login(request: Request, redis_get,
         user_id = request.state.user_id
         account_type = normalize_account_type(request.state.account_type)
         daily_limit = request.state.usage_limit or MAX_DAILY_USES
+        week_start = get_week_start_gmt3()
+
+        if await is_rate_limited_user(user_id, redis_incr, redis_expire):
+            raise HTTPException(
+                status_code=429,
+                detail="⏱️ Too many requests. Please slow down.",
+            )
 
         if not has_daily_limit(account_type):
+            weekly_key = f"user_usage_week:{user_id}:{week_start}"
+            current_weekly = int(await redis_get(weekly_key,) or 0)
+            if current_weekly >= MAX_WEEKLY_USES:
+                raise HTTPException(
+                    status_code=429,
+                    detail="🚫 Weekly limit reached. Try again next week.",
+                )
+
+            await redis_incr(weekly_key)
+            if current_weekly == 0:
+                await redis_expire(weekly_key, 7 * 86400)
+
             return {
                 "use_cloudscraper": can_use_cloudscraper(account_type),
                 "user_id": user_id,
@@ -185,7 +224,7 @@ async def check_login(request: Request, redis_get,
         }
 
     # ── GUEST USER (IP) ──
-    await can_use_tool_ip(request)
+    await can_use_tool_ip(request, redis_incr, redis_expire)
     return {
         "use_cloudscraper": False,
         "user_id": None,

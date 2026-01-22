@@ -21,7 +21,7 @@
 <div class="section profile-box">
   <div><strong>User:</strong> <span id="user-name">Loading...</span></div>
   <div><strong>Plan:</strong> <span id="account-type">Loading...</span></div>
-  <div><strong>Usage:</strong> <span id="usage">--</span> / <span id="limit">--</span> unlocks today</div>
+  <div><strong>Usage:</strong> <span id="usage">--</span> / <span id="limit">--</span> unlocks <span id="usage-period">today</span></div>
 </div>
 
 <div class="dashboard">
@@ -192,8 +192,12 @@ async function loadUserData() {
     document.getElementById("user-name").textContent = data.name;
     document.getElementById("account-type").textContent =
       data.account_type?.charAt(0).toUpperCase() + data.account_type?.slice(1);
-    document.getElementById("usage").textContent = data.requests_today;
-    document.getElementById("limit").textContent = data.daily_limit;
+    document.getElementById("usage").textContent =
+      data.usage_count ?? "--";
+    document.getElementById("limit").textContent =
+      data.usage_limit ?? "--";
+    document.getElementById("usage-period").textContent =
+      data.usage_period === "week" ? "this week" : "today";
 
     const isPro = data.account_type === "pro";
     const canBookmark = data.account_type === "pro" || data.account_type === "standard";

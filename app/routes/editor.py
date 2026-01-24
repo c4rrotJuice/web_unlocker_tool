@@ -5,8 +5,9 @@ import os
 import re
 from typing import Optional
 
+import bleach
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
@@ -47,9 +48,36 @@ def _supabase_headers() -> dict[str, str]:
 
 
 def _sanitize_html(html: str) -> str:
-    cleaned = re.sub(r"<\s*script[^>]*>.*?<\s*/\s*script\s*>", "", html, flags=re.I | re.S)
-    cleaned = re.sub(r"on\w+\s*=\s*(['\"]).*?\1", "", cleaned, flags=re.I | re.S)
-    cleaned = cleaned.replace("javascript:", "")
+    allowed_tags = bleach.sanitizer.ALLOWED_TAGS.union(
+        {
+            "p",
+            "br",
+            "span",
+            "h1",
+            "h2",
+            "h3",
+            "ul",
+            "ol",
+            "li",
+            "blockquote",
+            "pre",
+            "code",
+        }
+    )
+    allowed_attributes = {
+        **bleach.sanitizer.ALLOWED_ATTRIBUTES,
+        "a": ["href", "title", "rel"],
+        "span": ["class"],
+        "p": ["class"],
+    }
+    cleaned = bleach.clean(
+        html,
+        tags=allowed_tags,
+        attributes=allowed_attributes,
+        protocols=["http", "https", "mailto"],
+        strip=True,
+    )
+    cleaned = re.sub(r"\s+on\w+\s*=\s*(['\"]).*?\1", "", cleaned, flags=re.I | re.S)
     return cleaned
 
 
@@ -111,12 +139,11 @@ def _doc_expiration(account_type: str) -> Optional[str]:
 async def editor_page(request: Request):
     user_id = request.state.user_id
     if not user_id:
-        # Allow the shell to render so the client can handle auth via localStorage.
-        return templates.TemplateResponse("editor.html", {"request": request})
+        return RedirectResponse(url="/static/auth.html", status_code=302)
 
     account_type = await _get_account_type(request, user_id)
     if account_type not in PAID_TIERS:
-        raise HTTPException(status_code=403, detail="Editor access requires a paid tier.")
+        return RedirectResponse(url="/static/pricing.html", status_code=302)
 
     return templates.TemplateResponse("editor.html", {"request": request})
 

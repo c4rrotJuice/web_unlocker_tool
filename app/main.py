@@ -127,6 +127,10 @@ PUBLIC_PATH_PREFIXES = (
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     auth_header = request.headers.get("authorization")
+    if not auth_header:
+        token_cookie = request.cookies.get("access_token")
+        if token_cookie:
+            auth_header = f"Bearer {token_cookie}"
 
     request.state.user_id = None
     request.state.account_type = None

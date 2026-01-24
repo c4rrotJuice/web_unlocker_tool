@@ -33,13 +33,23 @@ async function verifyPaidAccess() {
 }
 
 function renderBlockedMessage(message) {
-  document.body.innerHTML = `
-    <div class="access-blocked">
-      <h1>Upgrade Required</h1>
-      <p>${message}</p>
-      <a class="primary" href="/static/pricing.html">View plans</a>
-    </div>
-  `;
+  document.body.innerHTML = "";
+  const container = document.createElement("div");
+  container.className = "access-blocked";
+
+  const heading = document.createElement("h1");
+  heading.textContent = "Upgrade Required";
+
+  const body = document.createElement("p");
+  body.textContent = message;
+
+  const link = document.createElement("a");
+  link.className = "primary";
+  link.href = "/static/pricing.html";
+  link.textContent = "View plans";
+
+  container.append(heading, body, link);
+  document.body.appendChild(container);
 }
 
 function startEditor() {
@@ -161,9 +171,10 @@ function startEditor() {
         throw new Error("Failed to save");
       }
 
+      const data = await res.json();
       setSaveStatus("Saved");
       isDirty = false;
-      await loadDocsList();
+      updateDocInList(data);
     } catch (err) {
       console.error(err);
       setSaveStatus("Save failed");
@@ -203,16 +214,32 @@ function startEditor() {
       if (doc.id === currentDocId) {
         item.classList.add("active");
       }
-      item.innerHTML = `
-        <strong>${doc.title}</strong>
-        <span class="doc-meta">Updated ${new Date(doc.updated_at).toLocaleString()}</span>
-      `;
+
+      const title = document.createElement("strong");
+      title.textContent = doc.title;
+
+      const meta = document.createElement("span");
+      meta.className = "doc-meta";
+      meta.textContent = `Updated ${new Date(doc.updated_at).toLocaleString()}`;
+
+      item.append(title, meta);
       item.addEventListener("click", () => openDoc(doc.id));
       docsList.appendChild(item);
     });
   }
 
   docSearchInput.addEventListener("input", () => renderDocs(allDocs));
+
+  function updateDocInList(doc) {
+    if (!doc || !doc.id) return;
+    const existingIndex = allDocs.findIndex((entry) => entry.id === doc.id);
+    if (existingIndex >= 0) {
+      allDocs[existingIndex] = { ...allDocs[existingIndex], ...doc };
+    } else {
+      allDocs.unshift(doc);
+    }
+    renderDocs(allDocs);
+  }
 
   document.getElementById("new-doc-btn").addEventListener("click", async () => {
     try {
@@ -312,11 +339,26 @@ function startEditor() {
     const card = document.createElement("div");
     card.className = "citation-card";
     card.dataset.citationId = citation.id;
-    card.innerHTML = `
-      <strong>${domain}</strong>
-      <p>${excerpt}</p>
-      <span class="doc-meta">${citation.format?.toUpperCase()} · ${citedAt}</span>
-    `;
+
+    const title = document.createElement("strong");
+    title.textContent = domain;
+
+    const body = document.createElement("p");
+    body.textContent = excerpt;
+
+    const meta = document.createElement("span");
+    meta.className = "doc-meta";
+    const formatLabel = citation.format ? citation.format.toUpperCase() : "";
+    const metaParts = [];
+    if (formatLabel) {
+      metaParts.push(formatLabel);
+    }
+    if (citedAt) {
+      metaParts.push(citedAt);
+    }
+    meta.textContent = metaParts.join(" · ");
+
+    card.append(title, body, meta);
 
     card.addEventListener("click", () => {
       selectCitationCard(card, citation.id);
@@ -383,7 +425,13 @@ function startEditor() {
   async function refreshInDocCitations() {
     if (!currentDocId) return;
 
-    const citations = await fetchCitations({ limit: 100 });
+    const missingIds = currentCitationIds.filter((id) => !citationCache.has(id));
+    let citations = [];
+    if (missingIds.length) {
+      citations = await fetchCitations({ limit: 100 });
+    } else {
+      citations = Array.from(citationCache.values());
+    }
     const container = document.getElementById("doc-citations-list");
     container.innerHTML = "";
 
@@ -473,10 +521,15 @@ function startEditor() {
 
   function removeCitationTokens(citationId) {
     const token = `${citeTokenPrefix}${citationId}${citeTokenSuffix}`;
-    let index = quill.getText().indexOf(token);
+    const text = quill.getText();
+    const indices = [];
+    let index = text.indexOf(token);
     while (index !== -1) {
-      quill.deleteText(index, token.length);
-      index = quill.getText().indexOf(token);
+      indices.push(index);
+      index = text.indexOf(token, index + token.length);
+    }
+    for (let i = indices.length - 1; i >= 0; i -= 1) {
+      quill.deleteText(indices[i], token.length);
     }
   }
 

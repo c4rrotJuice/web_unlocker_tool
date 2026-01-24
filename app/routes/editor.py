@@ -5,6 +5,7 @@ import os
 import re
 from typing import Optional
 
+import bleach
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -47,9 +48,36 @@ def _supabase_headers() -> dict[str, str]:
 
 
 def _sanitize_html(html: str) -> str:
-    cleaned = re.sub(r"<\s*script[^>]*>.*?<\s*/\s*script\s*>", "", html, flags=re.I | re.S)
-    cleaned = re.sub(r"on\w+\s*=\s*(['\"]).*?\1", "", cleaned, flags=re.I | re.S)
-    cleaned = cleaned.replace("javascript:", "")
+    allowed_tags = bleach.sanitizer.ALLOWED_TAGS.union(
+        {
+            "p",
+            "br",
+            "span",
+            "h1",
+            "h2",
+            "h3",
+            "ul",
+            "ol",
+            "li",
+            "blockquote",
+            "pre",
+            "code",
+        }
+    )
+    allowed_attributes = {
+        **bleach.sanitizer.ALLOWED_ATTRIBUTES,
+        "a": ["href", "title", "rel"],
+        "span": ["class"],
+        "p": ["class"],
+    }
+    cleaned = bleach.clean(
+        html,
+        tags=allowed_tags,
+        attributes=allowed_attributes,
+        protocols=["http", "https", "mailto"],
+        strip=True,
+    )
+    cleaned = re.sub(r"\s+on\w+\s*=\s*(['\"]).*?\1", "", cleaned, flags=re.I | re.S)
     return cleaned
 
 

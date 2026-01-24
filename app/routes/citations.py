@@ -1,5 +1,5 @@
 #citations.py
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 import httpx
@@ -24,22 +24,45 @@ class CitationInput(BaseModel):
 
 
 @router.get("/api/citations")
-async def get_user_citations(request: Request):
+async def get_user_citations(
+    request: Request,
+    search: str | None = None,
+    limit: int = Query(5, le=100),
+    format: str | None = None,
+):
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    cutoff = datetime.utcnow() - timedelta(days=30)
-    cutoff_iso = cutoff.isoformat()
-    
+    now_iso = datetime.utcnow().isoformat()
+    params = {
+        "user_id": f"eq.{user_id}",
+        "expires_at": f"gt.{now_iso}",
+        "order": "cited_at.desc",
+        "limit": limit,
+        "select": "id,url,excerpt,full_text,cited_at,format,metadata,custom_format_template,custom_format_name",
+    }
+
+    if search:
+        search_term = search.strip()
+        if search_term:
+            params["or"] = (
+                f"(url.ilike.*{search_term}*,"
+                f"excerpt.ilike.*{search_term}*,"
+                f"full_text.ilike.*{search_term}*,"
+                f"metadata.ilike.*{search_term}*)"
+            )
+
+    if format:
+        params["format"] = f"eq.{format.strip().lower()}"
+
     res = await http_client.get(
-        f"{SUPABASE_URL}/rest/v1/citations"
-        f"?user_id=eq.{user_id}&expires_at=gte.{cutoff_iso}"
-        f"&order=cited_at.desc&limit=5",
+        f"{SUPABASE_URL}/rest/v1/citations",
+        params=params,
         headers={
             "apikey": SUPABASE_KEY,
             "Authorization": f"Bearer {SUPABASE_KEY}",
-        }
+        },
     )
 
     return res.json()

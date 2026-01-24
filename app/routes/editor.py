@@ -7,7 +7,7 @@ from typing import Optional
 
 import bleach
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
@@ -139,12 +139,11 @@ def _doc_expiration(account_type: str) -> Optional[str]:
 async def editor_page(request: Request):
     user_id = request.state.user_id
     if not user_id:
-        # Allow the shell to render so the client can handle auth via localStorage.
-        return templates.TemplateResponse("editor.html", {"request": request})
+        return RedirectResponse(url="/static/auth.html", status_code=302)
 
     account_type = await _get_account_type(request, user_id)
     if account_type not in PAID_TIERS:
-        raise HTTPException(status_code=403, detail="Editor access requires a paid tier.")
+        return RedirectResponse(url="/static/pricing.html", status_code=302)
 
     return templates.TemplateResponse("editor.html", {"request": request})
 

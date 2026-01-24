@@ -25,7 +25,7 @@ from app.routes.http import http_client
 from app.routes import render
 from app.services import authentication
 from app.services.entitlements import normalize_account_type
-from app.routes import dashboard, history, citations, bookmarks, search, payments
+from app.routes import dashboard, history, citations, bookmarks, search, payments, editor
 
 # --------------------------------------------------
 # ENV + SUPABASE
@@ -242,3 +242,4 @@ app.include_router(citations.router)
 app.include_router(bookmarks.router)
 app.include_router(search.router)
 app.include_router(payments.router)
+app.include_router(editor.router)

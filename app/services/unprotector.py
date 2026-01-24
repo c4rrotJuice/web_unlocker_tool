@@ -48,6 +48,9 @@ USER_AGENTS = [
 ]
 
 CACHE_TTL_SECONDS = 3600
+FETCH_MAX_RETRIES = int(os.getenv("FETCH_MAX_RETRIES", "2"))
+FETCH_TIMEOUT_SECONDS = float(os.getenv("FETCH_TIMEOUT_SECONDS", "15"))
+FETCH_CONNECT_TIMEOUT_SECONDS = float(os.getenv("FETCH_CONNECT_TIMEOUT_SECONDS", "5"))
 
 
 # --- SSRF Check ---
@@ -145,6 +148,7 @@ async def fetch_and_clean_page(
     redis_set: callable,
     unlock: bool = True,
     use_cloudscraper: bool = False,
+    fetch_semaphore: asyncio.Semaphore | None = None,
     redis_incr: callable = None,     
     redis_expire: callable = None  
 ) -> str:
@@ -183,23 +187,59 @@ async def fetch_and_clean_page(
 }
 
 
-    try:
-        if use_cloudscraper:
-            logger.info("[cloudscraper] Fetching with Cloudscraper...")
-            def _fetch_with_cloudscraper() -> str:
-                scraper = cloudscraper.create_scraper()
-                return scraper.get(url, headers=headers).text
+    async def _fetch_with_cloudscraper() -> str:
+        def _fetch() -> str:
+            scraper = cloudscraper.create_scraper()
+            return scraper.get(url, headers=headers, timeout=FETCH_TIMEOUT_SECONDS).text
 
-            response_text = await asyncio.to_thread(_fetch_with_cloudscraper)
-            content_type = "text/html"
-            content_length = len(response_text)
+        return await asyncio.to_thread(_fetch)
+
+    async def _fetch_with_httpx() -> httpx.Response:
+        timeout = httpx.Timeout(
+            FETCH_TIMEOUT_SECONDS,
+            connect=FETCH_CONNECT_TIMEOUT_SECONDS,
+        )
+        response = await http_session.get(url, headers=headers, timeout=timeout)
+        response.raise_for_status()
+        return response
+
+    async def _fetch_with_retries():
+        for attempt in range(1, FETCH_MAX_RETRIES + 1):
+            try:
+                if use_cloudscraper:
+                    logger.info("[cloudscraper] Fetching with Cloudscraper...")
+                    fetched_text = await _fetch_with_cloudscraper()
+                    return fetched_text, "text/html", len(fetched_text.encode("utf-8", "replace"))
+
+                logger.info("[httpx] Fetching with standard HTTP client...")
+                response = await _fetch_with_httpx()
+                content_type = response.headers.get("Content-Type", "")
+                content_length = int(
+                    response.headers.get("Content-Length") or len(response.content)
+                )
+                response_text = response.content.decode(
+                    response.encoding or "utf-8", errors="replace"
+                )
+                return response_text, content_type, content_length
+            except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.TransportError) as e:
+                logger.warning(
+                    "Fetch attempt %s failed for %s: %s", attempt, url, e
+                )
+                if attempt >= FETCH_MAX_RETRIES:
+                    raise
+                await asyncio.sleep(0.5 * attempt)
+            except Exception as e:
+                logger.warning("Fetch attempt %s failed for %s: %s", attempt, url, e)
+                if attempt >= FETCH_MAX_RETRIES:
+                    raise
+                await asyncio.sleep(0.5 * attempt)
+
+    try:
+        if fetch_semaphore:
+            async with fetch_semaphore:
+                response_text, content_type, content_length = await _fetch_with_retries()
         else:
-            logger.info("[httpx] Fetching with standard HTTP client...")
-            response = await http_session.get(url, headers=headers, timeout=15.0)
-            response.raise_for_status()
-            content_type = response.headers.get('Content-Type', '')
-            content_length = int(response.headers.get('Content-Length', 0))
-            response_text = response.content.decode(response.encoding or 'utf-8', errors='replace')
+            response_text, content_type, content_length = await _fetch_with_retries()
     except Exception as e:
         logger.error("Failed to fetch URL %s: %s", url, e)
         return f"<div style='color:red;'>Fetch error: {e}</div>"
@@ -304,4 +344,3 @@ async def fetch_and_clean_page(
         logger.error("Final serialization error: %s", e)
         return "<div style='color:red;'>Failed to render page.</div>"
     
-

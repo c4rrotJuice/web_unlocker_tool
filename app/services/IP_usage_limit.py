@@ -40,16 +40,13 @@ HEADERS = {
 def get_today_gmt3() -> str:
     return datetime.now(pytz.timezone("Africa/Kampala")).date().isoformat()
 
-
 def get_week_start_gmt3() -> str:
     today = datetime.now(pytz.timezone("Africa/Kampala")).date()
     week_start = today - timedelta(days=today.weekday())
     return week_start.isoformat()
 
-
 def hash_ip(ip: str) -> str:
     return hashlib.sha256(ip.encode()).hexdigest()
-
 
 def get_user_ip(request: Request) -> str:
     forwarded = request.headers.get("X-Forwarded-For")
@@ -230,3 +227,4 @@ async def check_login(request: Request, redis_get,
         "user_id": None,
         "reason": "Guest IP usage",
     }
+

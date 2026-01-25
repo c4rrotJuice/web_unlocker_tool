@@ -33,7 +33,7 @@ async def get_user_citations(
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
-
+    
     now_iso = datetime.utcnow().isoformat()
     params = {
         "user_id": f"eq.{user_id}",
@@ -67,7 +67,6 @@ async def get_user_citations(
 
     return res.json()
 
-
 @router.get("/api/citations/by_ids")
 async def get_citations_by_ids(request: Request, ids: str = Query("")):
     user_id = request.state.user_id
@@ -98,13 +97,12 @@ async def get_citations_by_ids(request: Request, ids: str = Query("")):
 
     return res.json()
 
-
 @router.post("/api/citations")
 async def add_citation(request: Request, citation: CitationInput):
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
-
+    
     account_type = normalize_account_type(request.state.account_type)
     citation_format = (citation.format or "mla").strip().lower()
 
@@ -171,7 +169,7 @@ async def add_citation(request: Request, citation: CitationInput):
     )
     if res.status_code not in (200, 201):
         raise HTTPException(status_code=500, detail="Failed to add citation")
-
+    
     cutoff = datetime.utcnow() - timedelta(days=30)
     cutoff_iso = cutoff.isoformat()
     await http_client.delete(
@@ -183,3 +181,5 @@ async def add_citation(request: Request, citation: CitationInput):
         },
     )
     return {"status": "success"}
+
+

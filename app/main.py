@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +25,7 @@ from app.routes.http import http_client
 from app.routes import render
 from app.services import authentication
 from app.services.entitlements import normalize_account_type
-from app.routes import dashboard, history, citations, bookmarks, search, payments
+from app.routes import dashboard, history, citations, bookmarks, search, payments, editor
 
 # --------------------------------------------------
 # ENV + SUPABASE
@@ -127,6 +127,8 @@ PUBLIC_PATH_PREFIXES = (
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     auth_header = request.headers.get("authorization")
+    path = request.url.path
+    is_public_path = path.startswith(PUBLIC_PATH_PREFIXES)
 
     request.state.user_id = None
     request.state.account_type = None
@@ -148,6 +150,10 @@ async def auth_middleware(request: Request, call_next):
 
         except Exception as e:
             print("[AuthMiddleware] Token validation failed:", e)
+            if is_public_path and path != "/static/auth.html":
+                return RedirectResponse("/static/auth.html")
+            if is_public_path:
+                return await call_next(request)
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
         # ✅ Fetch metadata with SERVICE ROLE
@@ -242,3 +248,4 @@ app.include_router(citations.router)
 app.include_router(bookmarks.router)
 app.include_router(search.router)
 app.include_router(payments.router)
+app.include_router(editor.router)

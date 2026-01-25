@@ -62,6 +62,7 @@ function startEditor() {
   let autosaveTimer = null;
   let isDirty = false;
   let allDocs = [];
+  let citationSearchTimer = null;
 
   const saveStatus = document.getElementById("save-status");
   const docTitleInput = document.getElementById("doc-title");
@@ -284,7 +285,6 @@ function startEditor() {
     setSaveStatus("Idle");
     isDirty = false;
 
-    await loadDocsList();
     await refreshInDocCitations();
   }
 
@@ -296,6 +296,28 @@ function startEditor() {
     }
 
     const res = await fetch(`/api/citations?${params.toString()}`, {
+      headers: {
+        "Authorization": `Bearer ${token}`,
+      },
+    });
+
+    if (!res.ok) {
+      throw new Error("Failed to load citations");
+    }
+
+    const citations = await res.json();
+    citations.forEach((citation) => {
+      citationCache.set(citation.id, citation);
+    });
+    return citations;
+  }
+
+  async function fetchCitationsByIds(ids = []) {
+    if (!ids.length) return [];
+    const params = new URLSearchParams();
+    params.set("ids", ids.join(","));
+
+    const res = await fetch(`/api/citations/by_ids?${params.toString()}`, {
       headers: {
         "Authorization": `Bearer ${token}`,
       },
@@ -426,12 +448,10 @@ function startEditor() {
     if (!currentDocId) return;
 
     const missingIds = currentCitationIds.filter((id) => !citationCache.has(id));
-    let citations = [];
     if (missingIds.length) {
-      citations = await fetchCitations({ limit: 100 });
-    } else {
-      citations = Array.from(citationCache.values());
+      await fetchCitationsByIds(missingIds);
     }
+    const citations = Array.from(citationCache.values());
     const container = document.getElementById("doc-citations-list");
     container.innerHTML = "";
 
@@ -545,8 +565,14 @@ function startEditor() {
     }
   }
 
-  document.getElementById("citation-search").addEventListener("input", async (event) => {
-    await loadCitationLibrary(event.target.value);
+  document.getElementById("citation-search").addEventListener("input", (event) => {
+    if (citationSearchTimer) {
+      clearTimeout(citationSearchTimer);
+    }
+    const query = event.target.value;
+    citationSearchTimer = setTimeout(async () => {
+      await loadCitationLibrary(query);
+    }, 250);
   });
 
   const tabs = document.querySelectorAll(".tab");

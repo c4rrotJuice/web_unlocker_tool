@@ -135,6 +135,34 @@ def _doc_expiration(account_type: str) -> Optional[str]:
     return None
 
 
+async def _validate_citation_ids(user_id: str, citation_ids: list[str]) -> list[str]:
+    unique_ids = list(dict.fromkeys(citation_ids))
+    if len(unique_ids) > 200:
+        raise HTTPException(status_code=422, detail="Too many citations attached.")
+    if not unique_ids:
+        return []
+
+    res = await http_client.get(
+        f"{SUPABASE_URL}/rest/v1/citations",
+        params={
+            "id": f"in.({','.join(unique_ids)})",
+            "user_id": f"eq.{user_id}",
+            "select": "id",
+        },
+        headers=_supabase_headers(),
+    )
+    if res.status_code != 200:
+        print("❌ Failed to validate citations:", res.text)
+        raise HTTPException(status_code=500, detail="Failed to validate citations")
+
+    found_ids = {item.get("id") for item in res.json()}
+    missing = [cid for cid in unique_ids if cid not in found_ids]
+    if missing:
+        raise HTTPException(status_code=403, detail="Invalid citation references.")
+
+    return unique_ids
+
+
 @router.get("/editor", response_class=HTMLResponse)
 async def editor_page(request: Request):
     user_id = request.state.user_id
@@ -270,10 +298,11 @@ async def update_doc(request: Request, doc_id: str, payload: DocumentUpdate):
     if account_type not in PAID_TIERS:
         raise HTTPException(status_code=403, detail="Editor access requires a paid tier.")
 
+    validated_citations = await _validate_citation_ids(user_id, payload.citation_ids or [])
     update_payload = {
         "title": payload.title,
         "content_delta": payload.content_delta,
-        "citation_ids": payload.citation_ids,
+        "citation_ids": validated_citations,
         "updated_at": datetime.utcnow().isoformat(),
         "expires_at": _doc_expiration(account_type),
     }
@@ -329,9 +358,9 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
     delta = doc.get("content_delta") or {}
     citation_ids = doc.get("citation_ids") or []
 
-    raw_html = payload.html or _delta_to_html(delta)
+    raw_html = _delta_to_html(delta)
     html = _sanitize_html(raw_html)
-    text = payload.text or _delta_to_text(delta)
+    text = _delta_to_text(delta)
 
     bibliography: list[str] = []
     if citation_ids:

@@ -68,6 +68,37 @@ async def get_user_citations(
     return res.json()
 
 
+@router.get("/api/citations/by_ids")
+async def get_citations_by_ids(request: Request, ids: str = Query("")):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    raw_ids = [item.strip() for item in ids.split(",") if item.strip()]
+    if not raw_ids:
+        return []
+    if len(raw_ids) > 100:
+        raise HTTPException(status_code=422, detail="Too many citation ids requested.")
+
+    res = await http_client.get(
+        f"{SUPABASE_URL}/rest/v1/citations",
+        params={
+            "id": f"in.({','.join(raw_ids)})",
+            "user_id": f"eq.{user_id}",
+            "select": "id,url,excerpt,full_text,cited_at,format,metadata,custom_format_template,custom_format_name",
+        },
+        headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+        },
+    )
+
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to load citations")
+
+    return res.json()
+
+
 @router.post("/api/citations")
 async def add_citation(request: Request, citation: CitationInput):
     user_id = request.state.user_id

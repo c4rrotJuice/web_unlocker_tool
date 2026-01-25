@@ -13,11 +13,10 @@ async def get_bookmarks(request: Request):
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
-
+    
     account_type = normalize_account_type(request.state.account_type)
     if not can_use_bookmarks(account_type):
         raise HTTPException(status_code=403, detail="Bookmarks are a Standard feature.")
-
     
     res = await http_client.get(
         f"{SUPABASE_URL}/rest/v1/bookmarks"
@@ -35,13 +34,12 @@ async def add_bookmark(request: Request, bookmark: dict):
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
-
+    
     account_type = normalize_account_type(request.state.account_type)
     if not can_use_bookmarks(account_type):
         raise HTTPException(status_code=403, detail="Bookmarks are a Standard feature.")
 
     bookmark["user_id"] = user_id
-
     
     res = await http_client.post(
         f"{SUPABASE_URL}/rest/v1/bookmarks",
@@ -64,11 +62,10 @@ async def delete_bookmark(request: Request, bookmark_id: str):
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
-
+    
     account_type = normalize_account_type(request.state.account_type)
     if not can_use_bookmarks(account_type):
         raise HTTPException(status_code=403, detail="Bookmarks are a Standard feature.")
-
     
     res = await http_client.delete(
         f"{SUPABASE_URL}/rest/v1/bookmarks"
@@ -82,4 +79,3 @@ async def delete_bookmark(request: Request, bookmark_id: str):
     if res.status_code != 204:
         raise HTTPException(status_code=500, detail="Failed to delete bookmark")
     return {"status": "success"}
-

@@ -215,7 +215,6 @@ function startEditor() {
       if (doc.id === currentDocId) {
         item.classList.add("active");
       }
-
       const title = document.createElement("strong");
       title.textContent = doc.title;
 
@@ -361,7 +360,6 @@ function startEditor() {
     const card = document.createElement("div");
     card.className = "citation-card";
     card.dataset.citationId = citation.id;
-
     const title = document.createElement("strong");
     title.textContent = domain;
 

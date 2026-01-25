@@ -5,6 +5,7 @@ from fastapi.templating import Jinja2Templates
 from datetime import date
 import httpx
 from app.routes.http import http_client
+from app.services.entitlements import normalize_account_type
 import os
 
 templates = Jinja2Templates(directory="app/templates")
@@ -17,6 +18,10 @@ async def get_user_unlocks(request: Request):
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    account_type = normalize_account_type(request.state.account_type)
+    if account_type not in {"free", "standard", "pro"}:
+        raise HTTPException(status_code=403, detail="History access not available.")
 
     
     res = await http_client.get(

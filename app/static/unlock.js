@@ -218,8 +218,8 @@ async function copyCitation(id, format) {
         excerpt: `${pageTitle}`,
         full_text: citationText,
         format: format || "mla",
-        custom_format_name: format === "custom"? customName: null,
-        custom_format_template: format === "custom"? citationText: null
+        custom_format_name: format === "custom" ? customName : null,
+        custom_format_template: format === "custom" ? citationText : null
         // user_id and cited_at handled by backend if needed
     };
 

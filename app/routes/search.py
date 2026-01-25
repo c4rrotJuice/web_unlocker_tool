@@ -38,7 +38,7 @@ async def get_full_history(
     account_type = normalize_account_type(request.state.account_type)
     if not can_use_history_search(account_type):
         raise HTTPException(status_code=403, detail="History search is a Pro feature.")
-
+    
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid token")
 

@@ -13,6 +13,7 @@
     <div class="logo"><a href="/">🔓 Cite Unlocker</a></div>
         <nav>
       <a href="/">Home</a>
+      <li><a href="/editor" id="dashboard">editor</a></li>
     </nav>
   </header>
 
@@ -21,7 +22,8 @@
 <div class="section profile-box">
   <div><strong>User:</strong> <span id="user-name">Loading...</span></div>
   <div><strong>Plan:</strong> <span id="account-type">Loading...</span></div>
-  <div><strong>Usage:</strong> <span id="usage">--</span> / <span id="limit">--</span> unlocks <span id="usage-period">today</span></div>
+  <div><strong>Usage:</strong> <span id="usage">--</span> / 
+    <span id="limit">--</span> unlocks <span id="usage-period">today</span></div>
 </div>
 
 <div class="dashboard">
@@ -218,7 +220,7 @@ async function loadUserData() {
     } else {
       document.getElementById("history-locked-msg").style.display = "block";
     }
-
+   
     if (canBookmark) {
       document.getElementById("bookmark-input").disabled = false;
       document.getElementById("bookmark-locked-msg").style.display = "none";
@@ -646,3 +648,4 @@ function timeSince(date) {
 </script>
 </body>
 </html>
+

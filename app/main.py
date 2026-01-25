@@ -1,9 +1,10 @@
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import asyncio
 
 from dotenv import load_dotenv
 from supabase import create_client
@@ -23,7 +24,8 @@ from app.routes.upstash_redis import (
 from app.routes.http import http_client
 from app.routes import render
 from app.services import authentication
-from app.routes import dashboard, history, citations, bookmarks, search, payments
+from app.services.entitlements import normalize_account_type
+from app.routes import dashboard, history, citations, bookmarks, search, payments, editor
 
 # --------------------------------------------------
 # ENV + SUPABASE
@@ -55,10 +57,15 @@ except Exception as e:
 async def lifespan(app: FastAPI):
     # ✅ Use the shared client you already created in app.routes.http
     app.state.http_session = http_client
+    app.state.fetch_semaphore = asyncio.Semaphore(
+        int(os.getenv("FETCH_CONCURRENCY", "5"))
+    )
 
     # ✅ Wrap Redis so the rest of your code can keep calling redis_get(key)
     app.state.redis_get = lambda key: r.redis_get(key, app.state.http_session)
-    app.state.redis_set = lambda key, value: r.redis_set(key, value, app.state.http_session)
+    app.state.redis_set = lambda key, value, ttl_seconds=None: r.redis_set(
+        key, value, app.state.http_session, ttl_seconds=ttl_seconds
+    )
     app.state.redis_incr = lambda key: r.redis_incr(key, app.state.http_session)
     app.state.redis_expire = lambda key, seconds: r.redis_expire(key, seconds, app.state.http_session)
 
@@ -71,25 +78,7 @@ async def lifespan(app: FastAPI):
         await app.state.http_session.aclose()
         print("👋 HTTP client closed")
 
-'''
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    app.state.http_session = httpx.AsyncClient(timeout=10)
 
-    app.state.redis_get = redis_get
-    app.state.redis_set = redis_set
-    app.state.redis_incr = redis_incr
-    app.state.redis_expire = redis_expire
-
-    print("✅ HTTP client + Redis ready")
-
-    try:
-        yield
-    finally:
-        await app.state.http_session.aclose()
-        print("👋 HTTP client closed")
-
-'''
 # --------------------------------------------------
 # APP INIT
 # --------------------------------------------------
@@ -116,10 +105,25 @@ PUBLIC_PATH_PREFIXES = (
     "/static",
 )
 
+def is_public_path(path: str) -> bool:
+    if path == "/":
+        return True
+    for prefix in PUBLIC_PATH_PREFIXES:
+        if prefix == "/":
+            continue
+        if path.startswith(prefix):
+            return True
+    return False
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    public_path = is_public_path(request.url.path)
     auth_header = request.headers.get("authorization")
+
+    if not auth_header:
+        token_cookie = request.cookies.get("access_token")
+        if token_cookie and not public_path:
+            auth_header = f"Bearer {token_cookie}"
 
     request.state.user_id = None
     request.state.account_type = None
@@ -141,23 +145,51 @@ async def auth_middleware(request: Request, call_next):
 
         except Exception as e:
             print("[AuthMiddleware] Token validation failed:", e)
+            if is_public_path:
+                return RedirectResponse("/static/auth.html")
+            if is_public_path:
+                return await call_next(request)
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
         # ✅ Fetch metadata with SERVICE ROLE
         try:
-            meta = (
-                supabase_admin
-                .table("user_meta")
-                .select("name, account_type, daily_limit")
-                .eq("user_id", user.id)
-                .single()
-                .execute()
-            )
+            cache_key = f"user_meta:{user.id}"
+            cached_meta = None
+            try:
+                cached_meta = await request.app.state.redis_get(cache_key)
+            except Exception as e:
+                print("⚠️ Failed to read metadata cache:", e)
 
-            if meta.data:
-                request.state.name = meta.data.get("name")
-                request.state.account_type = meta.data.get("account_type")
-                request.state.usage_limit = meta.data.get("daily_limit", 5)
+            if isinstance(cached_meta, dict):
+                request.state.name = cached_meta.get("name")
+                request.state.account_type = normalize_account_type(
+                    cached_meta.get("account_type")
+                )
+                request.state.usage_limit = cached_meta.get("daily_limit", 5)
+            else:
+                meta = (
+                    supabase_admin
+                    .table("user_meta")
+                    .select("name, account_type, daily_limit")
+                    .eq("user_id", user.id)
+                    .single()
+                    .execute()
+                )
+
+                if meta.data:
+                    request.state.name = meta.data.get("name")
+                    request.state.account_type = normalize_account_type(
+                        meta.data.get("account_type")
+                    )
+                    request.state.usage_limit = meta.data.get("daily_limit", 5)
+                    try:
+                        await request.app.state.redis_set(
+                            cache_key,
+                            meta.data,
+                            ttl_seconds=300,
+                        )
+                    except Exception as e:
+                        print("⚠️ Failed to write metadata cache:", e)
 
         except Exception as e:
             print("⚠️ Failed to fetch metadata:", e)
@@ -211,4 +243,5 @@ app.include_router(citations.router)
 app.include_router(bookmarks.router)
 app.include_router(search.router)
 app.include_router(payments.router)
+app.include_router(editor.router)
 

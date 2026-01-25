@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 import httpx, os
 from app.routes.http import http_client
+from app.services.entitlements import can_use_history_search, normalize_account_type
 
 router = APIRouter()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -29,10 +30,15 @@ async def get_user_id_from_token(token: str):
 
 @router.get("/api/history")
 async def get_full_history(
+    request: Request,
     q: str = Query(None, description="Search query for URL"),
     limit: int = Query(50, le=200, description="Max number of results"),
-    authorization: str = Header(None)
+    authorization: str = Header(None),
 ):
+    account_type = normalize_account_type(request.state.account_type)
+    if not can_use_history_search(account_type):
+        raise HTTPException(status_code=403, detail="History search is a Pro feature.")
+    
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid token")
 

@@ -75,6 +75,7 @@ async def post_view_clean_page(
                 redis_get=request.app.state.redis_get,
                 redis_set=request.app.state.redis_set,
                 use_cloudscraper=use_cloudscraper,
+                fetch_semaphore=request.app.state.fetch_semaphore,
                 redis_incr=request.app.state.redis_incr,
                 redis_expire=request.app.state.redis_expire
             )
@@ -89,6 +90,13 @@ async def post_view_clean_page(
         # No Authorization: fallback to GET /view behavior
         print("[🌐 GUEST] No auth header, redirecting to /view")
         try:
+            await check_login(
+                request,
+                redis_get=request.app.state.redis_get,
+                redis_set=request.app.state.redis_set,
+                redis_incr=request.app.state.redis_incr,
+                redis_expire=request.app.state.redis_expire,
+            )
             cleaned_html = await fetch_and_clean_page(
                 url=url,
                 user_ip=user_ip,
@@ -97,12 +105,14 @@ async def post_view_clean_page(
                 redis_get=request.app.state.redis_get,
                 redis_set=request.app.state.redis_set,
                 use_cloudscraper=False,  # guest users
+                fetch_semaphore=request.app.state.fetch_semaphore,
                 redis_incr=request.app.state.redis_incr,
                 redis_expire=request.app.state.redis_expire
             )
             
             return HTMLResponse(content=cleaned_html)
-            
+        except HTTPException as e:
+            return HTMLResponse(content=f"<h3>{e.detail}</h3>", status_code=e.status_code)            
         except Exception as e:
             print(f"Error in fetch_and_clean_page: {e}")
             return HTMLResponse(content=f"<h1>Error loading page (guest): {e}</h1>", status_code=500)
@@ -172,6 +182,7 @@ async def fetch_and_clean_page_post(
             redis_get=request.app.state.redis_get,
             redis_set=request.app.state.redis_set,
             use_cloudscraper=use_cloudscraper,
+            fetch_semaphore=request.app.state.fetch_semaphore,
             redis_incr=request.app.state.redis_incr,
             redis_expire=request.app.state.redis_expire  
         )

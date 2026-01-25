@@ -45,7 +45,7 @@ async def signup(payload: SignupRequest):
         "user_id": user.id,
         "name": payload.name,
         "use_case": payload.use_case,
-        "account_type": "freemium",
+        "account_type": "free",
         "daily_limit": 5
     }).execute()
     return {"message": "Signup successful. Please check your email to confirm."}

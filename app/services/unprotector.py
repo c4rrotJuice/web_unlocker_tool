@@ -47,6 +47,10 @@ USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36",
 ]
 
+CACHE_TTL_SECONDS = 3600
+FETCH_MAX_RETRIES = int(os.getenv("FETCH_MAX_RETRIES", "2"))
+FETCH_TIMEOUT_SECONDS = float(os.getenv("FETCH_TIMEOUT_SECONDS", "15"))
+FETCH_CONNECT_TIMEOUT_SECONDS = float(os.getenv("FETCH_CONNECT_TIMEOUT_SECONDS", "5"))
 
 # --- SSRF Check ---
 async def is_ssrf_risk(url: str) -> bool:
@@ -101,6 +105,76 @@ def patch_lazy_loaded_images(soup):
         elif img.has_attr("data-original") and not img.has_attr("src"):
             img["src"] = img["data-original"]
 
+def rebase_html_resources_selectolax(tree: HTMLParser, base_url: str) -> None:
+    tag_attr_pairs = [
+        ("link", "href"),
+        ("script", "src"),
+        ("img", "src"),
+        ("iframe", "src"),
+        ("audio", "src"),
+        ("video", "src"),
+        ("source", "src"),
+        ("a", "href"),
+        ("form", "action"),
+    ]
+    for tag, attr in tag_attr_pairs:
+        for node in tree.css(tag):
+            value = node.attributes.get(attr)
+            if value:
+                node.attributes[attr] = urljoin(base_url, value)
+
+def patch_lazy_loaded_images_selectolax(tree: HTMLParser) -> None:
+    for node in tree.css("img"):
+        if "src" in node.attributes:
+            continue
+        data_src = node.attributes.get("data-src")
+        data_lazy_src = node.attributes.get("data-lazy-src")
+        data_original = node.attributes.get("data-original")
+        if data_src:
+            node.attributes["src"] = data_src
+        elif data_lazy_src:
+            node.attributes["src"] = data_lazy_src
+        elif data_original:
+            node.attributes["src"] = data_original
+
+def extract_doctype(html_text: str) -> str | None:
+    match = re.search(r"<!doctype[^>]*>", html_text, flags=re.IGNORECASE)
+    return match.group(0) if match else None
+
+def should_fallback_selectolax(original_html: str, parsed_html: str) -> bool:
+    original = original_html.lower()
+    parsed = parsed_html.lower()
+    required_tags = ["<html", "<head", "<body"]
+    for tag in required_tags:
+        if tag in original and tag not in parsed:
+            return True
+    if parsed_html.strip() == "":
+        return True
+    if len(parsed_html) < int(len(original_html) * 0.7):
+        return True
+    return False
+
+def apply_dom_cleanups(tree: HTMLParser) -> None:
+    for script in tree.css('script'):
+        try:
+            src = script.attributes.get("src", "")
+            if "gtag" in src or "analytics" in src or "json" in script.attributes.get("type", ""):
+                continue
+            if any(kw in (script.text() or "") for kw in [
+                'oncopy', 'onselectstart', 'contextmenu', 'disableSelection', 'document.oncopy', 'document.oncontextmenu']):
+                script.decompose()
+        except Exception as e:
+            logger.warning("Script removal error: %s", e)
+
+    restrictive_events = {"oncopy", "oncut", "oncontextmenu", "onselectstart", "onmousedown"}
+    for el in tree.css('*'):
+        try:
+            for attr in list(el.attributes.keys()):
+                if attr.lower() in restrictive_events:
+                    del el.attributes[attr]
+        except Exception as e:
+            logger.warning("Inline JS cleanup error: %s", e)
+
 
 # --- Main Fetch and Clean Function ---
 async def fetch_and_clean_page(
@@ -111,6 +185,7 @@ async def fetch_and_clean_page(
     redis_set: callable,
     unlock: bool = True,
     use_cloudscraper: bool = False,
+    fetch_semaphore: asyncio.Semaphore | None = None,
     redis_incr: callable = None,     
     redis_expire: callable = None  
 ) -> str:
@@ -147,22 +222,61 @@ async def fetch_and_clean_page(
     "Upgrade-Insecure-Requests": "1",
     "Cache-Control": "max-age=0",
 }
+    
+    async def _fetch_with_cloudscraper() -> str:
+        def _fetch() -> str:
+            scraper = cloudscraper.create_scraper()
+            return scraper.get(url, headers=headers, timeout=FETCH_TIMEOUT_SECONDS).text
+
+        return await asyncio.to_thread(_fetch)
+
+    async def _fetch_with_httpx() -> httpx.Response:
+        timeout = httpx.Timeout(
+            FETCH_TIMEOUT_SECONDS,
+            connect=FETCH_CONNECT_TIMEOUT_SECONDS,
+        )
+        response = await http_session.get(url, headers=headers, timeout=timeout)
+        response.raise_for_status()
+        return response
+
+    async def _fetch_with_retries():
+        for attempt in range(1, FETCH_MAX_RETRIES + 1):
+            try:
+                if use_cloudscraper:
+                    logger.info("[cloudscraper] Fetching with Cloudscraper...")
+                    fetched_text = await _fetch_with_cloudscraper()
+                    return fetched_text, "text/html", len(fetched_text.encode("utf-8", "replace"))
+
+                logger.info("[httpx] Fetching with standard HTTP client...")
+                response = await _fetch_with_httpx()
+                content_type = response.headers.get("Content-Type", "")
+                content_length = int(
+                    response.headers.get("Content-Length") or len(response.content)
+                )
+                response_text = response.content.decode(
+                    response.encoding or "utf-8", errors="replace"
+                )
+                return response_text, content_type, content_length
+            except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.TransportError) as e:
+                logger.warning(
+                    "Fetch attempt %s failed for %s: %s", attempt, url, e
+                )
+                if attempt >= FETCH_MAX_RETRIES:
+                    raise
+                await asyncio.sleep(0.5 * attempt)
+            except Exception as e:
+                logger.warning("Fetch attempt %s failed for %s: %s", attempt, url, e)
+                if attempt >= FETCH_MAX_RETRIES:
+                    raise
+                await asyncio.sleep(0.5 * attempt)
 
 
     try:
-        if use_cloudscraper:
-            logger.info("[cloudscraper] Fetching with Cloudscraper...")
-            scraper = cloudscraper.create_scraper()
-            response_text = scraper.get(url, headers=headers).text
-            content_type = "text/html"
-            content_length = len(response_text)
+        if fetch_semaphore:
+            async with fetch_semaphore:
+                response_text, content_type, content_length = await _fetch_with_retries()
         else:
-            logger.info("[httpx] Fetching with standard HTTP client...")
-            response = await http_session.get(url, headers=headers, timeout=15.0)
-            response.raise_for_status()
-            content_type = response.headers.get('Content-Type', '')
-            content_length = int(response.headers.get('Content-Length', 0))
-            response_text = response.content.decode(response.encoding or 'utf-8', errors='replace')
+            response_text, content_type, content_length = await _fetch_with_retries()
     except Exception as e:
         logger.error("Failed to fetch URL %s: %s", url, e)
         return f"<div style='color:red;'>Fetch error: {e}</div>"
@@ -184,8 +298,8 @@ async def fetch_and_clean_page(
     if not unlock:
         safe_html = sanitize_html(response_text, base_url)
         try:
-            updated_html = (
-                updated_html
+            safe_html = (
+                safe_html
                 .encode("utf-8", errors="replace")
                 .decode("utf-8", errors="replace")
             )
@@ -193,7 +307,7 @@ async def fetch_and_clean_page(
             logger.error("UTF-8 normalization failed: %s", e)
             return "<div style='color:red;'>Encoding error.</div>"
 
-        await redis_set(cache_key, {"result": safe_html}, ttl_seconds=3600)
+        await redis_set(cache_key, {"result": safe_html}, ttl_seconds=CACHE_TTL_SECONDS)
         return safe_html
 
     response_text = response_text.encode('utf-8', 'replace').decode('utf-8', 'replace')
@@ -212,18 +326,20 @@ async def fetch_and_clean_page(
     response_text = clean_known_blockers(response_text)
 
     try:
-        soup = BeautifulSoup(response_text, "html.parser")
-        rebase_html_resources(soup, base_url)
-        patch_lazy_loaded_images(soup) 
-        response_text = str(soup)
-    except Exception as e:
-        logger.warning("Soup parsing/rebase failed: %s", e)
-
-    try:
         tree = HTMLParser(response_text)
+        rebase_html_resources_selectolax(tree, base_url)
+        patch_lazy_loaded_images_selectolax(tree)
     except Exception as e:
-        logger.error("HTML parsing failed: %s", e)
-        return "<div style='color:red;'>Error parsing HTML for unlock true.</div>"
+        logger.warning("Selectolax parsing/rebase failed: %s", e)
+        try:
+            soup = BeautifulSoup(response_text, "html.parser")
+            rebase_html_resources(soup, base_url)
+            patch_lazy_loaded_images(soup)
+            response_text = str(soup)
+            tree = HTMLParser(response_text)
+        except Exception as fallback_error:
+            logger.error("HTML parsing failed: %s", fallback_error)
+            return "<div style='color:red;'>Error parsing HTML for unlock true.</div>"
 
     for script in tree.css('script'):
         try:
@@ -236,17 +352,23 @@ async def fetch_and_clean_page(
         except Exception as e:
             logger.warning("Script removal error: %s", e)
 
-    RESTRICTIVE_EVENTS = {"oncopy", "oncut", "oncontextmenu", "onselectstart", "onmousedown"}
-    for el in tree.css('*'):
-        try:
-            for attr in list(el.attributes.keys()):
-                if attr.lower() in RESTRICTIVE_EVENTS:
-                    del el.attributes[attr]
-        except Exception as e:
-            logger.warning("Inline JS cleanup error: %s", e)
+    apply_dom_cleanups(tree)
 
     try:
         html = tree.html
+        doctype = extract_doctype(response_text)
+        if doctype and not html.lower().lstrip().startswith("<!doctype"):
+            html = f"{doctype}\n{html}"
+        if should_fallback_selectolax(response_text, html):
+            soup = BeautifulSoup(response_text, "html.parser")
+            rebase_html_resources(soup, base_url)
+            patch_lazy_loaded_images(soup)
+            fallback_html = str(soup)
+            tree = HTMLParser(fallback_html)
+            apply_dom_cleanups(tree)
+            html = tree.html
+            if doctype and not html.lower().lstrip().startswith("<!doctype"):
+                html = f"{doctype}\n{html}"
         banner_code = BANNER_HTML
         script_code = f"<script>{CUSTOM_JS_SCRIPT}</script>"
         if "</body>" in html:
@@ -258,14 +380,10 @@ async def fetch_and_clean_page(
         updated_html = "<div style='color:red;'>Failed to inject enhancements.</div>"
 
     try:
-        await redis_set(cache_key, {"result": updated_html})
+        await redis_set(cache_key, {"result": updated_html}, ttl_seconds=CACHE_TTL_SECONDS)
         logger.info("Page processed and cached.")
         return updated_html
     except Exception as e:
         logger.error("Final serialization error: %s", e)
         return "<div style='color:red;'>Failed to render page.</div>"
     
-
-
-
-

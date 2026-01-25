@@ -47,6 +47,9 @@ document.addEventListener("DOMContentLoaded", function () {
             z-index: 10000;
             width: 90%;
             max-width: 500px;
+            max-height: 85vh;
+            overflow-y: auto;
+            box-sizing: border-box;
         }
         .citation-popup h3 { margin-top: 0; font-size: 18px; }
         .citation-popup pre {
@@ -54,6 +57,14 @@ document.addEventListener("DOMContentLoaded", function () {
             padding: 10px;
             border-radius: 5px;
             overflow-x: auto;
+            font-size: 14px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .citation-popup input,
+        .citation-popup textarea {
+            width: 100%;
+            box-sizing: border-box;
             font-size: 14px;
         }
         .copy-popup-btn {
@@ -127,6 +138,8 @@ document.addEventListener("DOMContentLoaded", function () {
         const accessDate = new Date().toISOString().split("T")[0];
         const mlaCitation = `"${text}" — *${pageTitle}*. Accessed ${accessDate}. ${sourceUrl}`;
         const apaCitation = `${pageTitle}. (${accessDate}). Retrieved from ${sourceUrl}\n"${text}"`;
+        const chicagoCitation = `${pageTitle}. "${text}." Accessed ${accessDate}. ${sourceUrl}`;
+        const harvardCitation = `${pageTitle} (${accessDate}) "${text}", available at: ${sourceUrl}.`;
 
         const blur = document.createElement("div");
         blur.className = "blurred-bg";
@@ -141,16 +154,29 @@ document.addEventListener("DOMContentLoaded", function () {
             <h3>Citations</h3>
             <strong>MLA:</strong>
             <pre id="mla-cite">${mlaCitation}</pre>
-            <button class="copy-popup-btn" data-cite-id="mla-cite">Copy MLA</button>
+            <button class="copy-popup-btn" data-cite-id="mla-cite" data-cite-format="mla">Copy MLA</button>
             <br/><br/>
             <strong>APA:</strong>
             <pre id="apa-cite">${apaCitation}</pre>
-            <button class="copy-popup-btn" data-cite-id="apa-cite">Copy APA</button>
+            <button class="copy-popup-btn" data-cite-id="apa-cite" data-cite-format="apa">Copy APA</button>
+            <br/><br/>
+            <strong>Chicago:</strong>
+            <pre id="chicago-cite">${chicagoCitation}</pre>
+            <button class="copy-popup-btn" data-cite-id="chicago-cite" data-cite-format="chicago">Copy Chicago</button>
+            <br/><br/>
+            <strong>Harvard:</strong>
+            <pre id="harvard-cite">${harvardCitation}</pre>
+            <button class="copy-popup-btn" data-cite-id="harvard-cite" data-cite-format="harvard">Copy Harvard</button>
+            <br/><br/>
+            <strong>Custom (Pro):</strong>
+            <input id="custom-cite-name" type="text" style="width:100%; margin-bottom:8px;" placeholder="Custom format name (e.g., Lab Style)" />
+            <textarea id="custom-cite" rows="4" style="width:100%;" placeholder="Paste or type your custom citation format here..."></textarea>
+            <button class="copy-popup-btn" data-cite-id="custom-cite" data-cite-format="custom">Copy Custom</button>
         `;
 
         popup.querySelectorAll('.copy-popup-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                copyCitation(btn.dataset.citeId);
+                copyCitation(btn.dataset.citeId, btn.dataset.citeFormat);
             });
         });
 
@@ -170,8 +196,10 @@ window.addEventListener("message", (event) => {
     }
 });
 
-async function copyCitation(id) {
-    const citationText = document.getElementById(id)?.innerText || "";
+async function copyCitation(id, format) {
+    const target = document.getElementById(id);
+    const citationText = target?.value || target?.innerText || "";
+    const customName = document.getElementById("custom-cite-name")?.value || null;
     const sourceUrl = realSourceUrl || window.location.href;
     const pageTitle = document.title || "Untitled Page";
     const accessDate = new Date().toISOString().split("T")[0];
@@ -188,7 +216,10 @@ async function copyCitation(id) {
     const citationPayload = {
         url: sourceUrl,
         excerpt: `${pageTitle}`,
-        full_text: citationText
+        full_text: citationText,
+        format: format || "mla",
+        custom_format_name: format === "custom" ? customName : null,
+        custom_format_template: format === "custom" ? citationText : null
         // user_id and cited_at handled by backend if needed
     };
 
@@ -201,44 +232,6 @@ async function copyCitation(id) {
     }, 1000);
 }
 
-/*
-    async function copyCitation(id) {
-        const citationText = document.getElementById(id).innerText;
-        const token = localStorage.getItem("access_token");
-        const sourceUrl = realSourceUrl || window.location.href;
-        const pageTitle = document.title || "Untitled Page";
-        const accessDate = new Date().toISOString().split("T")[0];
-        const selectedExcerpt = selectedText || citationText;
-
-        try {
-            await navigator.clipboard.writeText(citationText);
-            showToast("Citation copied!");
-        } catch (err) {
-            alert("Copy failed. Please allow clipboard access or try again.");
-        }
-
-        try {
-            await fetch("/api/citations", {
-                method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    url: sourceUrl,
-                    excerpt: `"${selectedExcerpt}" — ${pageTitle}`,
-                    full_text: citationText
-                })
-            });
-        } catch (err) {
-            console.error("Failed to save citation:", err);
-        }
-
-        setTimeout(() => {
-            document.querySelector(".citation-popup")?.remove();
-            document.querySelector(".blurred-bg")?.remove();
-        }, 1000);
-    }*/
 
     function showToast(message) {
         const toast = document.createElement("div");

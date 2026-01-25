@@ -153,9 +153,9 @@
               </ul>
               <a
                 href="javascript:void(0)"
-                onclick="openCheckout('standard','Quarterly')"
+                onclick="openCheckout('pro','Monthly')"
                 class="cs-button-transparent"
-                >Soon</a
+                >Get Now</a
               >
             </div>
           </li>
@@ -190,9 +190,9 @@
               </ul>
               <a
                 href="javascript:void(0)"
-                onclick="openCheckout('premium','Monthly')"
+                onclick="openCheckout('standard','Quarterly')"
                 class="cs-button-transparent"
-                >Coming Soon</a
+                >Get Now</a
               >
             </div>
           </li>
@@ -224,9 +224,9 @@
               </ul>
               <a
                 href="javascript:void(0)"
-                onclick="openCheckout('premium','Quarterly')"
+                onclick="openCheckout('pro','Quarterly')"
                 class="cs-button-transparent"
-                >Coming Soon</a
+                >Get Now</a
               >
             </div>
           </li>
@@ -264,20 +264,52 @@
       const CONFIG = {
         environment: "sandbox",
         prices: {
-          Standard_Tier: {
+          standard: {
             Monthly: "pri_01kf77v5j5j1b0fkwb95p0wxew",
             Quarterly: "pri_01kf77xyfjdh0rr66caz2dnye7",
           },
-          Pro_Tier: {
+          pro: {
             Monthly: "pri_01kf781jrxcwtg70bxky3316fr",
             Quarterly: "pri_01kf7839fptpnr6wtgwcnkwe1r",
           },
         },
       };
 
+      let currentUserId = null;
+      let paddleReady = false;
+      let paddleInitError = null;
+
+      function authHeaders() {
+        const token = localStorage.getItem("access_token");
+        return token ? { Authorization: `Bearer ${token}` } : {};
+      }
+
+      async function loadCurrentUser() {
+        try {
+          const res = await fetch("/api/me", {
+            headers: authHeaders(),
+            credentials: "include",
+          });
+
+          if (!res.ok) {
+            currentUserId = null;
+            return;
+          }
+          const data = await res.json();
+          currentUserId = data.user_id || null;
+        } catch (err) {
+          console.error("❌ Failed to load user info:", err);
+          currentUserId = null;
+        }
+      }
+
       async function initPaddle() {
         try {
           const res = await fetch("/get_paddle_token");
+          if (!res.ok) {
+            const errorText = await res.text();
+            throw new Error(errorText || "Failed to fetch Paddle token");
+          }
           const data = await res.json();
 
           if (!data.token) {
@@ -293,12 +325,18 @@
           });
 
           console.log("✅ Paddle initialized with backend token");
+          paddleReady = true;
         } catch (err) {
+          paddleReady = false;
+          paddleInitError = err;
           console.error("❌ Paddle init failed:", err);
         }
       }
 
-      document.addEventListener("DOMContentLoaded", initPaddle);
+      document.addEventListener("DOMContentLoaded", async () => {
+        await loadCurrentUser();
+        await initPaddle();
+      });
       // Open checkout for a plan
       function openCheckout(plan, cycle) {
         const priceId = CONFIG.prices?.[plan]?.[cycle];
@@ -306,9 +344,28 @@
           console.error(`❌ Invalid plan/cycle combination: ${plan}/${cycle}`);
           return;
         }
+        if (!currentUserId) {
+          alert("Please log in before subscribing.");
+          window.location.href = "/static/auth.html";
+          return;
+        }
+        if (!paddleReady) {
+          alert(
+            "Billing isn't ready yet. Please refresh the page or try again later."
+          );
+          if (paddleInitError) {
+            console.error("Paddle init error:", paddleInitError);
+          }
+          return;
+        }
 
         Paddle.Checkout.open({
           items: [{ priceId, quantity: 1 }],
+          customData: {
+            user_id: currentUserId,
+            plan,
+            cycle,
+          },
           settings: {
             theme: "light",
             displayMode: "overlay", // can also use "inline" or "redirect"

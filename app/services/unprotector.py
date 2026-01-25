@@ -52,7 +52,6 @@ FETCH_MAX_RETRIES = int(os.getenv("FETCH_MAX_RETRIES", "2"))
 FETCH_TIMEOUT_SECONDS = float(os.getenv("FETCH_TIMEOUT_SECONDS", "15"))
 FETCH_CONNECT_TIMEOUT_SECONDS = float(os.getenv("FETCH_CONNECT_TIMEOUT_SECONDS", "5"))
 
-
 # --- SSRF Check ---
 async def is_ssrf_risk(url: str) -> bool:
     try:
@@ -138,6 +137,44 @@ def patch_lazy_loaded_images_selectolax(tree: HTMLParser) -> None:
         elif data_original:
             node.attributes["src"] = data_original
 
+def extract_doctype(html_text: str) -> str | None:
+    match = re.search(r"<!doctype[^>]*>", html_text, flags=re.IGNORECASE)
+    return match.group(0) if match else None
+
+def should_fallback_selectolax(original_html: str, parsed_html: str) -> bool:
+    original = original_html.lower()
+    parsed = parsed_html.lower()
+    required_tags = ["<html", "<head", "<body"]
+    for tag in required_tags:
+        if tag in original and tag not in parsed:
+            return True
+    if parsed_html.strip() == "":
+        return True
+    if len(parsed_html) < int(len(original_html) * 0.7):
+        return True
+    return False
+
+def apply_dom_cleanups(tree: HTMLParser) -> None:
+    for script in tree.css('script'):
+        try:
+            src = script.attributes.get("src", "")
+            if "gtag" in src or "analytics" in src or "json" in script.attributes.get("type", ""):
+                continue
+            if any(kw in (script.text() or "") for kw in [
+                'oncopy', 'onselectstart', 'contextmenu', 'disableSelection', 'document.oncopy', 'document.oncontextmenu']):
+                script.decompose()
+        except Exception as e:
+            logger.warning("Script removal error: %s", e)
+
+    restrictive_events = {"oncopy", "oncut", "oncontextmenu", "onselectstart", "onmousedown"}
+    for el in tree.css('*'):
+        try:
+            for attr in list(el.attributes.keys()):
+                if attr.lower() in restrictive_events:
+                    del el.attributes[attr]
+        except Exception as e:
+            logger.warning("Inline JS cleanup error: %s", e)
+
 
 # --- Main Fetch and Clean Function ---
 async def fetch_and_clean_page(
@@ -185,8 +222,7 @@ async def fetch_and_clean_page(
     "Upgrade-Insecure-Requests": "1",
     "Cache-Control": "max-age=0",
 }
-
-
+    
     async def _fetch_with_cloudscraper() -> str:
         def _fetch() -> str:
             scraper = cloudscraper.create_scraper()
@@ -233,6 +269,7 @@ async def fetch_and_clean_page(
                 if attempt >= FETCH_MAX_RETRIES:
                     raise
                 await asyncio.sleep(0.5 * attempt)
+
 
     try:
         if fetch_semaphore:
@@ -315,17 +352,23 @@ async def fetch_and_clean_page(
         except Exception as e:
             logger.warning("Script removal error: %s", e)
 
-    RESTRICTIVE_EVENTS = {"oncopy", "oncut", "oncontextmenu", "onselectstart", "onmousedown"}
-    for el in tree.css('*'):
-        try:
-            for attr in list(el.attributes.keys()):
-                if attr.lower() in RESTRICTIVE_EVENTS:
-                    del el.attributes[attr]
-        except Exception as e:
-            logger.warning("Inline JS cleanup error: %s", e)
+    apply_dom_cleanups(tree)
 
     try:
         html = tree.html
+        doctype = extract_doctype(response_text)
+        if doctype and not html.lower().lstrip().startswith("<!doctype"):
+            html = f"{doctype}\n{html}"
+        if should_fallback_selectolax(response_text, html):
+            soup = BeautifulSoup(response_text, "html.parser")
+            rebase_html_resources(soup, base_url)
+            patch_lazy_loaded_images(soup)
+            fallback_html = str(soup)
+            tree = HTMLParser(fallback_html)
+            apply_dom_cleanups(tree)
+            html = tree.html
+            if doctype and not html.lower().lstrip().startswith("<!doctype"):
+                html = f"{doctype}\n{html}"
         banner_code = BANNER_HTML
         script_code = f"<script>{CUSTOM_JS_SCRIPT}</script>"
         if "</body>" in html:

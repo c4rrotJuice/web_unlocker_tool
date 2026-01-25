@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -78,25 +78,7 @@ async def lifespan(app: FastAPI):
         await app.state.http_session.aclose()
         print("👋 HTTP client closed")
 
-'''
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    app.state.http_session = httpx.AsyncClient(timeout=10)
 
-    app.state.redis_get = redis_get
-    app.state.redis_set = redis_set
-    app.state.redis_incr = redis_incr
-    app.state.redis_expire = redis_expire
-
-    print("✅ HTTP client + Redis ready")
-
-    try:
-        yield
-    finally:
-        await app.state.http_session.aclose()
-        print("👋 HTTP client closed")
-
-'''
 # --------------------------------------------------
 # APP INIT
 # --------------------------------------------------
@@ -123,7 +105,6 @@ PUBLIC_PATH_PREFIXES = (
     "/static",
 )
 
-
 def is_public_path(path: str) -> bool:
     if path == "/":
         return True
@@ -134,11 +115,11 @@ def is_public_path(path: str) -> bool:
             return True
     return False
 
-
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     public_path = is_public_path(request.url.path)
     auth_header = request.headers.get("authorization")
+
     if not auth_header:
         token_cookie = request.cookies.get("access_token")
         if token_cookie and not public_path:
@@ -164,6 +145,10 @@ async def auth_middleware(request: Request, call_next):
 
         except Exception as e:
             print("[AuthMiddleware] Token validation failed:", e)
+            if is_public_path:
+                return RedirectResponse("/static/auth.html")
+            if is_public_path:
+                return await call_next(request)
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
         # ✅ Fetch metadata with SERVICE ROLE
@@ -259,3 +244,4 @@ app.include_router(bookmarks.router)
 app.include_router(search.router)
 app.include_router(payments.router)
 app.include_router(editor.router)
+

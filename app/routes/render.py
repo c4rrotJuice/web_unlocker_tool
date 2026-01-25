@@ -112,7 +112,7 @@ async def post_view_clean_page(
             
             return HTMLResponse(content=cleaned_html)
         except HTTPException as e:
-            return HTMLResponse(content=f"<h3>{e.detail}</h3>", status_code=e.status_code)
+            return HTMLResponse(content=f"<h3>{e.detail}</h3>", status_code=e.status_code)            
         except Exception as e:
             print(f"Error in fetch_and_clean_page: {e}")
             return HTMLResponse(content=f"<h1>Error loading page (guest): {e}</h1>", status_code=500)
@@ -195,3 +195,5 @@ async def fetch_and_clean_page_post(
     except Exception as e:
         print(f"Error in fetch_and_clean_page: {e}")
         return HTMLResponse(content=f"<h1>Error loading page: {e}</h1>", status_code=500)
+
+

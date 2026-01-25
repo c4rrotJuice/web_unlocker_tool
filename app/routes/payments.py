@@ -11,7 +11,7 @@ router = APIRouter()
 
 PADDLE_API_KEY = os.getenv("PADDLE_API")
 PADDLE_ENV = os.getenv("PADDLE_ENV", "sandbox")
-PADDLE_API_VERSION = os.getenv("PADDLE_API_VERSION", "2024-04-01")
+PADDLE_API_VERSION = os.getenv("PADDLE_API_VERSION", "1")
 PADDLE_WEBHOOK_SECRET = os.getenv("PADDLE_WEBHOOK_SECRET")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -92,10 +92,17 @@ async def get_paddle_token():
         base_url = "https://sandbox-api.paddle.com"
 
     url = f"{base_url}/client-tokens"
+    paddle_version = PADDLE_API_VERSION.strip()
+    if not paddle_version:
+        raise HTTPException(
+            status_code=500,
+            detail="PADDLE_API_VERSION is not configured.",
+        )
+
     headers = {
         "Authorization": f"Bearer {PADDLE_API_KEY}",
         "Content-Type": "application/json",
-        "Paddle-Version": PADDLE_API_VERSION,
+        "Paddle-Version": paddle_version,
     }
 
     res = await http_client.post(url, headers=headers, json={})

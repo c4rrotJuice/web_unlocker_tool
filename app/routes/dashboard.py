@@ -98,3 +98,4 @@ async def get_user_metadata(request: Request):
     except Exception as e:
         print("🔥 Error in /api/me:", str(e))
         raise HTTPException(status_code=500, detail="Internal server error")
+

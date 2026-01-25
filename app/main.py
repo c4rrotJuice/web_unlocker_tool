@@ -124,12 +124,24 @@ PUBLIC_PATH_PREFIXES = (
 )
 
 
+def is_public_path(path: str) -> bool:
+    if path == "/":
+        return True
+    for prefix in PUBLIC_PATH_PREFIXES:
+        if prefix == "/":
+            continue
+        if path.startswith(prefix):
+            return True
+    return False
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    public_path = is_public_path(request.url.path)
     auth_header = request.headers.get("authorization")
     if not auth_header:
         token_cookie = request.cookies.get("access_token")
-        if token_cookie:
+        if token_cookie and not public_path:
             auth_header = f"Bearer {token_cookie}"
 
     request.state.user_id = None

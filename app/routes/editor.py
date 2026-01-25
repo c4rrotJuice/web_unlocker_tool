@@ -4,8 +4,8 @@ from datetime import datetime, timedelta
 import os
 import re
 from typing import Optional
-
 import bleach
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -134,7 +134,6 @@ def _doc_expiration(account_type: str) -> Optional[str]:
         return (datetime.utcnow() + timedelta(days=14)).isoformat()
     return None
 
-
 async def _validate_citation_ids(user_id: str, citation_ids: list[str]) -> list[str]:
     unique_ids = list(dict.fromkeys(citation_ids))
     if len(unique_ids) > 200:
@@ -161,7 +160,6 @@ async def _validate_citation_ids(user_id: str, citation_ids: list[str]) -> list[
         raise HTTPException(status_code=403, detail="Invalid citation references.")
 
     return unique_ids
-
 
 @router.get("/editor", response_class=HTMLResponse)
 async def editor_page(request: Request):
@@ -390,3 +388,4 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
         "bibliography": bibliography,
         "style": payload.style,
     }
+

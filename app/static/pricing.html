@@ -276,6 +276,7 @@
       };
 
       let currentUserId = null;
+      let currentUserEmail = null;
       let paddleReady = false;
       let paddleInitError = null;
 
@@ -297,9 +298,11 @@
           }
           const data = await res.json();
           currentUserId = data.user_id || null;
+          currentUserEmail = data.email || null;
         } catch (err) {
           console.error("❌ Failed to load user info:", err);
           currentUserId = null;
+          currentUserEmail = null;
         }
       }
 
@@ -362,7 +365,7 @@
           return;
         }
 
-        Paddle.Checkout.open({
+        const checkoutPayload = {
           items: [{ priceId, quantity: 1 }],
           customData: {
             user_id: currentUserId,
@@ -375,7 +378,15 @@
             successUrl: "https://citeunlock.choneize.com/success",
             cancelUrl: "https://citeunlock.choneize.com/cancel",
           },
-        });
+        };
+
+        if (currentUserEmail) {
+          checkoutPayload.customer = {
+            email: currentUserEmail,
+          };
+        }
+
+        Paddle.Checkout.open(checkoutPayload);
       }
     </script>
   </body>

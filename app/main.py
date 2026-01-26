@@ -129,6 +129,7 @@ async def auth_middleware(request: Request, call_next):
     request.state.account_type = None
     request.state.usage_limit = 5
     request.state.name = None
+    request.state.email = None
 
     if auth_header and auth_header.lower().startswith("bearer "):
         token = auth_header.split(" ")[1]
@@ -141,6 +142,7 @@ async def auth_middleware(request: Request, call_next):
                 raise Exception("Invalid token")
 
             request.state.user_id = user.id
+            request.state.email = user.email
             print("✅ user id:", user.id)
 
         except Exception as e:
@@ -244,4 +246,3 @@ app.include_router(bookmarks.router)
 app.include_router(search.router)
 app.include_router(payments.router)
 app.include_router(editor.router)
-

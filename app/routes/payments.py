@@ -135,7 +135,7 @@ async def get_paddle_token(request: Request):
 
     res = await http_client.post(url, headers=headers, json={"name": token_name})
 
-    if res.status_code != 200:
+    if res.status_code not in {200, 201}:
         raise HTTPException(
             status_code=res.status_code,
             detail=f"Paddle token request failed: {res.text}",
@@ -156,6 +156,7 @@ async def get_current_user(request: Request):
     return {
         "user_id": request.state.user_id,
         "account_type": request.state.account_type,
+        "email": request.state.email,
     }
 
 

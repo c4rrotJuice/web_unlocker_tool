@@ -305,7 +305,10 @@
 
       async function initPaddle() {
         try {
-          const res = await fetch("/get_paddle_token");
+          const res = await fetch("/get_paddle_token", {
+            headers: authHeaders(),
+            credentials: "include",
+          });
           if (!res.ok) {
             const errorText = await res.text();
             throw new Error(errorText || "Failed to fetch Paddle token");

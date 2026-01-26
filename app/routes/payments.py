@@ -11,7 +11,11 @@ router = APIRouter()
 
 PADDLE_API_KEY = os.getenv("PADDLE_API")
 PADDLE_ENV = os.getenv("PADDLE_ENV", "sandbox")
-PADDLE_API_VERSION = os.getenv("PADDLE_API_VERSION", "2024-04-01")
+PADDLE_API_VERSION = os.getenv("PADDLE_API_VERSION", "1")
+PADDLE_CLIENT_TOKEN_NAME = os.getenv(
+    "PADDLE_CLIENT_TOKEN_NAME",
+    "web-unlocker",
+)
 PADDLE_WEBHOOK_SECRET = os.getenv("PADDLE_WEBHOOK_SECRET")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -80,25 +84,56 @@ def _verify_paddle_signature(raw_body: bytes, signature_header: str) -> bool:
     return hmac.compare_digest(provided, expected)
 
 @router.get("/get_paddle_token")
-async def get_paddle_token():
+async def get_paddle_token(request: Request):
     if not PADDLE_API_KEY:
         raise HTTPException(
             status_code=500,
             detail="PADDLE_API is not configured.",
         )
 
+    paddle_env = PADDLE_ENV.lower()
+    if paddle_env not in {"sandbox", "live"}:
+        raise HTTPException(
+            status_code=500,
+            detail="PADDLE_ENV must be 'sandbox' or 'live'.",
+        )
+
+    if paddle_env == "sandbox" and PADDLE_API_KEY.startswith("pdl_live_"):
+        raise HTTPException(
+            status_code=500,
+            detail="Sandbox environment requires a sandbox API key.",
+        )
+    if paddle_env == "live" and PADDLE_API_KEY.startswith("pdl_sandbox_"):
+        raise HTTPException(
+            status_code=500,
+            detail="Live environment requires a live API key.",
+        )
+
     base_url = "https://api.paddle.com"
-    if PADDLE_ENV.lower() == "sandbox":
+    if paddle_env == "sandbox":
         base_url = "https://sandbox-api.paddle.com"
 
     url = f"{base_url}/client-tokens"
+    paddle_version = PADDLE_API_VERSION.strip()
+    if not paddle_version:
+        raise HTTPException(
+            status_code=500,
+            detail="PADDLE_API_VERSION is not configured.",
+        )
+    token_name = PADDLE_CLIENT_TOKEN_NAME.strip()
+    if not token_name:
+        raise HTTPException(
+            status_code=500,
+            detail="PADDLE_CLIENT_TOKEN_NAME is not configured.",
+        )
+
     headers = {
         "Authorization": f"Bearer {PADDLE_API_KEY}",
         "Content-Type": "application/json",
-        "Paddle-Version": PADDLE_API_VERSION,
+        "Paddle-Version": paddle_version,
     }
 
-    res = await http_client.post(url, headers=headers, json={})
+    res = await http_client.post(url, headers=headers, json={"name": token_name})
 
     if res.status_code != 200:
         raise HTTPException(

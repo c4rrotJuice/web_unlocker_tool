@@ -276,6 +276,7 @@
       };
 
       let currentUserId = null;
+      let currentUserEmail = null;
       let paddleReady = false;
       let paddleInitError = null;
 
@@ -297,15 +298,20 @@
           }
           const data = await res.json();
           currentUserId = data.user_id || null;
+          currentUserEmail = data.email || null;
         } catch (err) {
           console.error("❌ Failed to load user info:", err);
           currentUserId = null;
+          currentUserEmail = null;
         }
       }
 
       async function initPaddle() {
         try {
-          const res = await fetch("/get_paddle_token");
+          const res = await fetch("/get_paddle_token", {
+            headers: authHeaders(),
+            credentials: "include",
+          });
           if (!res.ok) {
             const errorText = await res.text();
             throw new Error(errorText || "Failed to fetch Paddle token");
@@ -359,7 +365,7 @@
           return;
         }
 
-        Paddle.Checkout.open({
+        const checkoutPayload = {
           items: [{ priceId, quantity: 1 }],
           customData: {
             user_id: currentUserId,
@@ -372,7 +378,15 @@
             successUrl: "https://citeunlock.choneize.com/success",
             cancelUrl: "https://citeunlock.choneize.com/cancel",
           },
-        });
+        };
+
+        if (currentUserEmail) {
+          checkoutPayload.customer = {
+            email: currentUserEmail,
+          };
+        }
+
+        Paddle.Checkout.open(checkoutPayload);
       }
     </script>
   </body>

@@ -20,6 +20,17 @@ PADDLE_WEBHOOK_SECRET = os.getenv("PADDLE_WEBHOOK_SECRET")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
+PLAN_PRICE_IDS = {
+    "standard": {
+        "monthly": "pri_01kf77v5j5j1b0fkwb95p0wxew",
+        "quarterly": "pri_01kf77xyfjdh0rr66caz2dnye7",
+    },
+    "pro": {
+        "monthly": "pri_01kf781jrxcwtg70bxky3316fr",
+        "quarterly": "pri_01kf7839fptpnr6wtgwcnkwe1r",
+    },
+}
+
 PRICE_ID_TO_TIER = {
     "pri_01kf77v5j5j1b0fkwb95p0wxew": "standard",
     "pri_01kf77xyfjdh0rr66caz2dnye7": "standard",
@@ -35,6 +46,53 @@ PADDLE_CANCEL_EVENTS = {
     "subscription.ended",
 }
 
+def _paddle_environment() -> str:
+    if not PADDLE_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="PADDLE_API is not configured.",
+        )
+
+    paddle_env = PADDLE_ENV.lower()
+    if paddle_env not in {"sandbox", "live"}:
+        raise HTTPException(
+            status_code=500,
+            detail="PADDLE_ENV must be 'sandbox' or 'live'.",
+        )
+
+    if paddle_env == "sandbox" and PADDLE_API_KEY.startswith("pdl_live_"):
+        raise HTTPException(
+            status_code=500,
+            detail="Sandbox environment requires a sandbox API key.",
+        )
+    if paddle_env == "live" and PADDLE_API_KEY.startswith("pdl_sandbox_"):
+        raise HTTPException(
+            status_code=500,
+            detail="Live environment requires a live API key.",
+        )
+
+    return paddle_env
+
+
+def _paddle_base_url() -> str:
+    paddle_env = _paddle_environment()
+    if paddle_env == "sandbox":
+        return "https://sandbox-api.paddle.com"
+    return "https://api.paddle.com"
+
+
+def _paddle_headers() -> dict[str, str]:
+    paddle_version = PADDLE_API_VERSION.strip()
+    if not paddle_version:
+        raise HTTPException(
+            status_code=500,
+            detail="PADDLE_API_VERSION is not configured.",
+        )
+    return {
+        "Authorization": f"Bearer {PADDLE_API_KEY}",
+        "Content-Type": "application/json",
+        "Paddle-Version": paddle_version,
+    }
 
 def _supabase_headers() -> dict[str, str]:
     if not SUPABASE_SERVICE_ROLE_KEY:
@@ -85,53 +143,18 @@ def _verify_paddle_signature(raw_body: bytes, signature_header: str) -> bool:
 
 @router.get("/get_paddle_token")
 async def get_paddle_token(request: Request):
-    if not PADDLE_API_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="PADDLE_API is not configured.",
-        )
-
-    paddle_env = PADDLE_ENV.lower()
-    if paddle_env not in {"sandbox", "live"}:
-        raise HTTPException(
-            status_code=500,
-            detail="PADDLE_ENV must be 'sandbox' or 'live'.",
-        )
-
-    if paddle_env == "sandbox" and PADDLE_API_KEY.startswith("pdl_live_"):
-        raise HTTPException(
-            status_code=500,
-            detail="Sandbox environment requires a sandbox API key.",
-        )
-    if paddle_env == "live" and PADDLE_API_KEY.startswith("pdl_sandbox_"):
-        raise HTTPException(
-            status_code=500,
-            detail="Live environment requires a live API key.",
-        )
-
-    base_url = "https://api.paddle.com"
-    if paddle_env == "sandbox":
-        base_url = "https://sandbox-api.paddle.com"
+    paddle_env = _paddle_environment()
+    base_url = _paddle_base_url()
 
     url = f"{base_url}/client-tokens"
-    paddle_version = PADDLE_API_VERSION.strip()
-    if not paddle_version:
-        raise HTTPException(
-            status_code=500,
-            detail="PADDLE_API_VERSION is not configured.",
-        )
     token_name = PADDLE_CLIENT_TOKEN_NAME.strip()
     if not token_name:
         raise HTTPException(
             status_code=500,
             detail="PADDLE_CLIENT_TOKEN_NAME is not configured.",
         )
-
-    headers = {
-        "Authorization": f"Bearer {PADDLE_API_KEY}",
-        "Content-Type": "application/json",
-        "Paddle-Version": paddle_version,
-    }
+    
+    headers = _paddle_headers()
 
     res = await http_client.post(url, headers=headers, json={"name": token_name})
 
@@ -146,7 +169,69 @@ async def get_paddle_token(request: Request):
     if not token:
         raise HTTPException(status_code=500, detail="Token not found in Paddle response")
 
-    return JSONResponse(content={"token": token})
+    return JSONResponse(content={"token": token, "environment": paddle_env})
+
+
+@router.post("/create_paddle_checkout")
+async def create_paddle_checkout(request: Request):
+    if not request.state.user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if not request.state.email:
+        raise HTTPException(status_code=400, detail="Customer email is required.")
+
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+
+    plan = (payload.get("plan") or "").strip().lower()
+    cycle = (payload.get("cycle") or "").strip().lower()
+    price_id = PLAN_PRICE_IDS.get(plan, {}).get(cycle)
+    if not price_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid plan or billing cycle.",
+        )
+
+    transaction_payload = {
+        "items": [
+            {
+                "price_id": price_id,
+                "quantity": 1,
+            }
+        ],
+        "customer": {
+            "email": request.state.email,
+        },
+        "custom_data": {
+            "user_id": request.state.user_id,
+            "plan": plan,
+            "cycle": cycle,
+        },
+    }
+
+    url = f"{_paddle_base_url()}/transactions"
+    res = await http_client.post(
+        url,
+        headers=_paddle_headers(),
+        json=transaction_payload,
+    )
+
+    if res.status_code not in {200, 201}:
+        raise HTTPException(
+            status_code=res.status_code,
+            detail=f"Paddle transaction request failed: {res.text}",
+        )
+
+    data = res.json()
+    transaction_id = data.get("data", {}).get("id")
+    if not transaction_id:
+        raise HTTPException(
+            status_code=500,
+            detail="Transaction ID not found in Paddle response.",
+        )
+
+    return JSONResponse(content={"transaction_id": transaction_id})
 
 
 @router.get("/api/me")

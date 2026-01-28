@@ -7,29 +7,34 @@
   <link rel="stylesheet" href="/static/css/style.css">
   <link rel="stylesheet" href="/static/css/navStyle.css">
 </head>
-<body>
+<body class="has-navbar">
 
-    <header class="navbar">
-  <div class="navbar-container">
-    <!-- Logo -->
-    <div class="logo">
-      <a href="/"><img src="../static/images/logo_transparent.png" alt="Logo"></a>
+  <header class="navbar">
+    <div class="navbar-container">
+      <!-- Logo -->
+      <div class="logo">
+        <a href="/"><img src="/static/images/logo_transparent.png" alt="Logo"></a>
+      </div>
+
+      <!-- Menu -->
+      <nav>
+        <ul class="nav-links">
+          <li><a href="/" class="active">Home</a></li>
+          <li><a href="/dashboard" id="dashboardLink">Dashboard</a></li>
+          <li><a href="/editor" id="editorLink">Editor</a></li>
+          <li><a href="/static/pricing.html">Pricing</a></li>
+          <li><a href="https://citeunlock.choneize.com/blog">Blog</a></li>
+          <li><a href="https://citeunlock.choneize.com/terms">Terms & Policies</a></li>
+          <li><a href="/static/auth.html" id="authButton">Sign in/Up</a></li>
+        </ul>
+      </nav>
+
+      <!-- Button -->
+      <div class="nav-btn">
+        <a href="/" class="btn">Unlock a Page</a>
+      </div>
     </div>
-
-    <!-- Menu -->
-    <nav>
-      <ul class="nav-links">
-        <li><a href="/">Home</a></li>
-        <li><a href="/about">About</a></li>
-        <li><a href="/static/pricing.html" id="pricing">Pricing</a></li>
-        <li><a href="/static/auth.html" id="authButton">Sign in/Up</a></li>
-        <li><a href="/dashboard" id="dashboard">dashboard</a></li>
-        <li><a href="https://citeunlock.choneize.com/blog">Blog</a></li>
-        <li><a href="https://citeunlock.choneize.com/terms" id="terms">Terms & Policies</a></li>
-      </ul>
-    </nav>
-  </div>
-</header>
+  </header>
   
 <!--=======================================================-->
   
@@ -216,37 +221,7 @@ window.addEventListener('message', async (event) => {
   }
 });
 
-const authButton = document.getElementById('authButton');
-const dashboardLink = document.getElementById('dashboard');
-
-
-// ✅ Update nav based on token presence
-function updateAuthUI() {
-  if (token) {
-    // Logged in state
-    authButton.textContent = "Log out";
-    authButton.href = "#"; // prevent redirect to auth page
-
-    authButton.addEventListener('click', (e) => {
-      e.preventDefault();
-      localStorage.removeItem('access_token');
-      window.location.href = "/"; // reload home after logout
-    });
-
-    dashboardLink.style.display = "inline"; // show dashboard
-  } else {
-    // Logged out state
-    authButton.textContent = "Sign in/Up";
-    authButton.href = "/static/auth.html";
-
-    dashboardLink.style.display = "none"; // hide dashboard if not logged in
-  }
-}
-
-// Run once on page load
-updateAuthUI();
-
 </script>
+<script src="/static/js/nav.js"></script>
 </body>
 </html>
-

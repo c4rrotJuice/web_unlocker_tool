@@ -5,16 +5,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <link rel="stylesheet" href="/static/css/dashboard.css">
   <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/navStyle.css">
   <title>Cite Unlocker Dashboard</title>
 </head>
-<body>
+<body class="has-navbar">
 
-  <header>
-    <div class="logo"><a href="/">🔓 Cite Unlocker</a></div>
-        <nav>
-      <a href="/">Home</a>
-      <li><a href="/editor" id="dashboard">editor</a></li>
-    </nav>
+  <header class="navbar">
+    <div class="navbar-container">
+      <div class="logo">
+        <a href="/"><img src="/static/images/logo_transparent.png" alt="Logo" /></a>
+      </div>
+
+      <nav>
+        <ul class="nav-links">
+          <li><a href="/">Home</a></li>
+          <li><a href="/dashboard" class="active" id="dashboardLink">Dashboard</a></li>
+          <li><a href="/editor" id="editorLink">Editor</a></li>
+          <li><a href="/static/pricing.html">Pricing</a></li>
+          <li><a href="https://citeunlock.choneize.com/blog">Blog</a></li>
+          <li><a href="https://citeunlock.choneize.com/terms">Terms & Policies</a></li>
+          <li><a href="/static/auth.html" id="authButton">Sign in/Up</a></li>
+        </ul>
+      </nav>
+
+      <div class="nav-btn">
+        <a href="/" class="btn">Unlock a Page</a>
+      </div>
+    </div>
   </header>
 
   <div class="container">
@@ -646,6 +663,6 @@ function timeSince(date) {
 }
 
 </script>
+<script src="/static/js/nav.js"></script>
 </body>
 </html>
-

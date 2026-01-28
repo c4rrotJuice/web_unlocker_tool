@@ -6,8 +6,33 @@
   <title>Research Editor</title>
   <link rel="stylesheet" href="https://cdn.quilljs.com/1.3.7/quill.snow.css" />
   <link rel="stylesheet" href="/static/css/editor.css" />
+  <link rel="stylesheet" href="/static/css/navStyle.css" />
 </head>
-<body>
+<body class="has-navbar">
+  <header class="navbar">
+    <div class="navbar-container">
+      <div class="logo">
+        <a href="/"><img src="/static/images/logo_transparent.png" alt="Logo" /></a>
+      </div>
+
+      <nav>
+        <ul class="nav-links">
+          <li><a href="/">Home</a></li>
+          <li><a href="/dashboard" id="dashboardLink">Dashboard</a></li>
+          <li><a href="/editor" class="active" id="editorLink">Editor</a></li>
+          <li><a href="/static/pricing.html">Pricing</a></li>
+          <li><a href="https://citeunlock.choneize.com/blog">Blog</a></li>
+          <li><a href="https://citeunlock.choneize.com/terms">Terms & Policies</a></li>
+          <li><a href="/static/auth.html" id="authButton">Sign in/Up</a></li>
+        </ul>
+      </nav>
+
+      <div class="nav-btn">
+        <a href="/" class="btn">Unlock a Page</a>
+      </div>
+    </div>
+  </header>
+
   <div class="editor-shell">
     <aside class="sidebar sidebar-left">
       <div class="sidebar-header">
@@ -122,5 +147,6 @@
 
   <script src="https://cdn.quilljs.com/1.3.7/quill.js"></script>
   <script src="/static/js/editor.js"></script>
+  <script src="/static/js/nav.js"></script>
 </body>
 </html>

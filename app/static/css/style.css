@@ -10,7 +10,7 @@
       padding: 0;
     }
 
-    header {
+    header.app-header {
       background: #fff;
       padding: 15px 30px;
       display: flex;

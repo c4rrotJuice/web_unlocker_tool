@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Sign Up / Log In</title>
+    <link rel="stylesheet" href="/static/css/navStyle.css" />
     <style>
       :root {
         --bg-dark: #121212;
@@ -19,11 +20,15 @@
         font-family: "Segoe UI", sans-serif;
         background-color: var(--bg-dark);
         color: var(--text-light);
+        margin: 0;
+      }
+
+      .auth-page {
         display: flex;
         align-items: center;
         justify-content: center;
-        min-height: 100vh;
-        margin: 0;
+        min-height: calc(100vh - 120px);
+        padding: 2rem 0;
       }
 
       .auth-container {
@@ -207,8 +212,33 @@
       }
     </style>
   </head>
-  <body>
-    <div class="auth-container">
+  <body class="has-navbar">
+    <header class="navbar">
+      <div class="navbar-container">
+        <div class="logo">
+          <a href="/"><img src="/static/images/logo_transparent.png" alt="Logo" /></a>
+        </div>
+
+        <nav>
+          <ul class="nav-links">
+            <li><a href="/">Home</a></li>
+            <li><a href="/dashboard" id="dashboardLink">Dashboard</a></li>
+            <li><a href="/editor" id="editorLink">Editor</a></li>
+            <li><a href="/static/pricing.html">Pricing</a></li>
+            <li><a href="https://citeunlock.choneize.com/blog">Blog</a></li>
+            <li><a href="https://citeunlock.choneize.com/terms">Terms & Policies</a></li>
+            <li><a href="/static/auth.html" class="active" id="authButton">Sign in/Up</a></li>
+          </ul>
+        </nav>
+
+        <div class="nav-btn">
+          <a href="/" class="btn">Unlock a Page</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="auth-page">
+      <div class="auth-container">
       <!-- Left Side -->
       <div class="welcome-section">
         <h1>Welcome to Cite Unlocker</h1>
@@ -286,7 +316,8 @@
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </main>
 
     <script>
       // --- CLEAR OLD TOKENS ON PAGE LOAD ---
@@ -394,5 +425,6 @@
           }
         });
     </script>
+    <script src="/static/js/nav.js"></script>
   </body>
 </html>

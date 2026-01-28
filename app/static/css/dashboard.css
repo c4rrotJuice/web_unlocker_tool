@@ -5,7 +5,7 @@
       color: #1E293B;
     }
 
-    header {
+    header.dashboard-header {
       background-color: #1E293B;
       color: #fff;
       padding: 20px;
@@ -472,7 +472,6 @@
   background: rgba(101, 129, 134, 1);
   transform: translateY(-1px);
 }
-
 
 
 

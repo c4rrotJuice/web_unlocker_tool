@@ -5,17 +5,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Sign Up / Log In</title>
+  <link rel="stylesheet" href="/static/css/navStyle.css">
   <style>
     body {
       font-family: 'Segoe UI', sans-serif;
       background-color: #121212;
       color: #ffffff;
+      margin: 0;
+    }
+
+    .auth-page {
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       padding: 2rem;
-      min-height: 100vh;
+      min-height: calc(100vh - 120px);
     }
 
     .form-container {
@@ -101,7 +106,32 @@
     }
   </style>
 </head>
-<body>
+<body class="has-navbar">
+  <header class="navbar">
+    <div class="navbar-container">
+      <div class="logo">
+        <a href="/"><img src="/static/images/logo_transparent.png" alt="Logo" /></a>
+      </div>
+
+      <nav>
+        <ul class="nav-links">
+          <li><a href="/">Home</a></li>
+          <li><a href="/dashboard" id="dashboardLink">Dashboard</a></li>
+          <li><a href="/editor" id="editorLink">Editor</a></li>
+          <li><a href="/static/pricing.html">Pricing</a></li>
+          <li><a href="https://citeunlock.choneize.com/blog">Blog</a></li>
+          <li><a href="https://citeunlock.choneize.com/terms">Terms & Policies</a></li>
+          <li><a href="/static/auth.html" class="active" id="authButton">Sign in/Up</a></li>
+        </ul>
+      </nav>
+
+      <div class="nav-btn">
+        <a href="/" class="btn">Unlock a Page</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="auth-page">
 
   <!-- Sign-Up Form -->
   <div class="form-container">
@@ -131,6 +161,7 @@
     </form>
     <div id="login-msg" class="message"></div>
   </div>
+  </main>
 
   <script>
     const signupMsg = document.getElementById("signup-msg");
@@ -200,6 +231,6 @@
       }
     });
   </script>
+  <script src="/static/js/nav.js"></script>
 </body>
 </html>
-

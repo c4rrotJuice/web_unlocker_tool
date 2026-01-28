@@ -19,28 +19,6 @@ body {
   background: var(--bg);
 }
 
-<<<<<<< HEAD
-=======
-.access-blocked {
-  max-width: 540px;
-  margin: 10vh auto;
-  padding: 32px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  text-align: center;
-}
-
-.access-blocked h1 {
-  margin-top: 0;
-}
-
-.access-blocked .primary {
-  display: inline-block;
-  text-decoration: none;
-}
-
->>>>>>> origin/main
 .editor-shell {
   display: grid;
   grid-template-columns: 280px 1fr 320px;

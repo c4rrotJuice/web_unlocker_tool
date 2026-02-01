@@ -139,20 +139,74 @@ def hash_url_key(url: str, unlock: bool = True) -> str:
     hash_input = f"{url}:{unlock}".encode("utf-8")
     return hashlib.sha256(hash_input).hexdigest()
 
+def safe_urljoin(base_url: str, value: str | None) -> str | None:
+    if value is None:
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    lowered = trimmed.lower()
+    blocked_prefixes = (
+        "#",
+        "javascript:",
+        "data:",
+        "mailto:",
+        "tel:",
+        "blob:",
+    )
+    if lowered.startswith(blocked_prefixes):
+        return None
+    if trimmed == ":" or lowered == "about:blank":
+        return None
+    return urljoin(base_url, trimmed)
+
 # --- Fix relative resource URLs ---
-def rebase_html_resources(soup: BeautifulSoup, base_url: str):
+def rebase_html_resources(soup: BeautifulSoup, base_url: str) -> tuple[int, int]:
+    num_rebased = 0
+    num_skipped_invalid_url = 0
     for tag in soup.find_all("link", href=True):
-        tag["href"] = urljoin(base_url, tag["href"])
+        updated = safe_urljoin(base_url, tag["href"])
+        if updated is None:
+            num_skipped_invalid_url += 1
+            continue
+        tag["href"] = updated
+        num_rebased += 1
     for tag in soup.find_all("script", src=True):
-        tag["src"] = urljoin(base_url, tag["src"])
+        updated = safe_urljoin(base_url, tag["src"])
+        if updated is None:
+            num_skipped_invalid_url += 1
+            continue
+        tag["src"] = updated
+        num_rebased += 1
     for tag in soup.find_all("img", src=True):
-        tag["src"] = urljoin(base_url, tag["src"])
+        updated = safe_urljoin(base_url, tag["src"])
+        if updated is None:
+            num_skipped_invalid_url += 1
+            continue
+        tag["src"] = updated
+        num_rebased += 1
     for tag in soup.find_all(["iframe", "audio", "video", "source"], src=True):
-        tag["src"] = urljoin(base_url, tag["src"])
+        updated = safe_urljoin(base_url, tag["src"])
+        if updated is None:
+            num_skipped_invalid_url += 1
+            continue
+        tag["src"] = updated
+        num_rebased += 1
     for tag in soup.find_all("a", href=True):
-        tag["href"] = urljoin(base_url, tag["href"])
+        updated = safe_urljoin(base_url, tag["href"])
+        if updated is None:
+            num_skipped_invalid_url += 1
+            continue
+        tag["href"] = updated
+        num_rebased += 1
     for tag in soup.find_all("form", action=True):
-        tag["action"] = urljoin(base_url, tag["action"])
+        updated = safe_urljoin(base_url, tag["action"])
+        if updated is None:
+            num_skipped_invalid_url += 1
+            continue
+        tag["action"] = updated
+        num_rebased += 1
+    return num_rebased, num_skipped_invalid_url
         
 def patch_lazy_loaded_images(soup):
     for img in soup.find_all("img"):
@@ -163,7 +217,9 @@ def patch_lazy_loaded_images(soup):
         elif img.has_attr("data-original") and not img.has_attr("src"):
             img["src"] = img["data-original"]
 
-def rebase_html_resources_selectolax(tree: HTMLParser, base_url: str) -> None:
+def rebase_html_resources_selectolax(tree: HTMLParser, base_url: str) -> tuple[int, int]:
+    num_rebased = 0
+    num_skipped_invalid_url = 0
     tag_attr_pairs = [
         ("link", "href"),
         ("script", "src"),
@@ -179,7 +235,13 @@ def rebase_html_resources_selectolax(tree: HTMLParser, base_url: str) -> None:
         for node in tree.css(tag):
             value = node.attributes.get(attr)
             if value:
-                node.attributes[attr] = urljoin(base_url, value)
+                updated = safe_urljoin(base_url, value)
+                if updated is None:
+                    num_skipped_invalid_url += 1
+                    continue
+                node.attributes[attr] = updated
+                num_rebased += 1
+    return num_rebased, num_skipped_invalid_url
 
 def patch_lazy_loaded_images_selectolax(tree: HTMLParser) -> None:
     for node in tree.css("img"):
@@ -212,15 +274,31 @@ def should_fallback_selectolax(original_html: str, parsed_html: str) -> bool:
         return True
     return False
 
-def apply_dom_cleanups(tree: HTMLParser) -> None:
+def apply_dom_cleanups(tree: HTMLParser) -> int:
+    num_scripts_removed = 0
+    blocker_patterns = [
+        r"document\.oncopy\s*=",
+        r"document\.oncontextmenu\s*=",
+        r"document\.onselectstart\s*=",
+        r"document\.oncut\s*=",
+        r"window\.oncopy\s*=",
+        r"window\.oncontextmenu\s*=",
+        r"window\.onselectstart\s*=",
+        r"window\.oncut\s*=",
+    ]
     for script in tree.css('script'):
         try:
             src = script.attributes.get("src", "")
             if "gtag" in src or "analytics" in src or "json" in script.attributes.get("type", ""):
                 continue
-            if any(kw in (script.text() or "") for kw in [
-                'oncopy', 'onselectstart', 'contextmenu', 'disableSelection', 'document.oncopy', 'document.oncontextmenu']):
+            if src:
+                continue
+            script_text = script.text() or ""
+            if len(script_text) < 8000 and any(
+                re.search(pattern, script_text, flags=re.IGNORECASE) for pattern in blocker_patterns
+            ):
                 script.decompose()
+                num_scripts_removed += 1
         except Exception as e:
             logger.warning("Script removal error: %s", e)
 
@@ -232,6 +310,17 @@ def apply_dom_cleanups(tree: HTMLParser) -> None:
                     del el.attributes[attr]
         except Exception as e:
             logger.warning("Inline JS cleanup error: %s", e)
+    return num_scripts_removed
+
+def strip_integrity_attributes(tree: HTMLParser) -> int:
+    attributes_to_strip = {"integrity", "crossorigin", "referrerpolicy"}
+    num_stripped = 0
+    for el in tree.css("*"):
+        for attr in list(el.attributes.keys()):
+            if attr.lower() in attributes_to_strip:
+                del el.attributes[attr]
+                num_stripped += 1
+    return num_stripped
 
 def _serialize_style_attributes(attributes: dict) -> str:
     parts = []
@@ -560,8 +649,9 @@ async def fetch_and_clean_page(
 
     try:
         tree = HTMLParser(response_text)
-        rebase_html_resources_selectolax(tree, base_url)
+        num_rebased, num_skipped_invalid_url = rebase_html_resources_selectolax(tree, base_url)
         patch_lazy_loaded_images_selectolax(tree)
+        num_integrity_stripped = strip_integrity_attributes(tree)
         font_counts = apply_font_simplification(tree)
         logger.info(
             "Font cleanup: removed_font_links=%s removed_font_preloads=%s "
@@ -571,14 +661,21 @@ async def fetch_and_clean_page(
             font_counts["stripped_font_face_blocks"],
             font_counts["removed_google_font_links"],
         )
+        logger.info(
+            "Resource cleanup: num_rebased=%s num_skipped_invalid_url=%s num_integrity_stripped=%s",
+            num_rebased,
+            num_skipped_invalid_url,
+            num_integrity_stripped,
+        )
     except Exception as e:
         logger.warning("Selectolax parsing/rebase failed: %s", e)
         try:
             soup = BeautifulSoup(response_text, "html.parser")
-            rebase_html_resources(soup, base_url)
+            num_rebased, num_skipped_invalid_url = rebase_html_resources(soup, base_url)
             patch_lazy_loaded_images(soup)
             response_text = str(soup)
             tree = HTMLParser(response_text)
+            num_integrity_stripped = strip_integrity_attributes(tree)
             font_counts = apply_font_simplification(tree)
             logger.info(
                 "Font cleanup: removed_font_links=%s removed_font_preloads=%s "
@@ -588,22 +685,18 @@ async def fetch_and_clean_page(
                 font_counts["stripped_font_face_blocks"],
                 font_counts["removed_google_font_links"],
             )
+            logger.info(
+                "Resource cleanup: num_rebased=%s num_skipped_invalid_url=%s num_integrity_stripped=%s",
+                num_rebased,
+                num_skipped_invalid_url,
+                num_integrity_stripped,
+            )
         except Exception as fallback_error:
             logger.error("HTML parsing failed: %s", fallback_error)
             return "<div style='color:red;'>Error parsing HTML for unlock true.</div>"
 
-    for script in tree.css('script'):
-        try:
-            src = script.attributes.get("src", "")
-            if "gtag" in src or "analytics" in src or "json" in script.attributes.get("type", ""):
-                continue
-            if any(kw in (script.text() or "") for kw in [
-                'oncopy', 'onselectstart', 'contextmenu', 'disableSelection', 'document.oncopy', 'document.oncontextmenu']):
-                script.decompose()
-        except Exception as e:
-            logger.warning("Script removal error: %s", e)
-
-    apply_dom_cleanups(tree)
+    num_scripts_removed = apply_dom_cleanups(tree)
+    logger.info("Script cleanup: num_scripts_removed=%s", num_scripts_removed)
 
     try:
         html = tree.html
@@ -612,12 +705,20 @@ async def fetch_and_clean_page(
             html = f"{doctype}\n{html}"
         if should_fallback_selectolax(response_text, html):
             soup = BeautifulSoup(response_text, "html.parser")
-            rebase_html_resources(soup, base_url)
+            num_rebased, num_skipped_invalid_url = rebase_html_resources(soup, base_url)
             patch_lazy_loaded_images(soup)
             fallback_html = str(soup)
             tree = HTMLParser(fallback_html)
-            apply_dom_cleanups(tree)
+            num_integrity_stripped = strip_integrity_attributes(tree)
+            num_scripts_removed = apply_dom_cleanups(tree)
             html = tree.html
+            logger.info(
+                "Resource cleanup: num_rebased=%s num_skipped_invalid_url=%s num_integrity_stripped=%s",
+                num_rebased,
+                num_skipped_invalid_url,
+                num_integrity_stripped,
+            )
+            logger.info("Script cleanup: num_scripts_removed=%s", num_scripts_removed)
             if doctype and not html.lower().lstrip().startswith("<!doctype"):
                 html = f"{doctype}\n{html}"
         banner_code = BANNER_HTML

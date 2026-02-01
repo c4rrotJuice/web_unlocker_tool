@@ -79,16 +79,62 @@ USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36",
 ]
 
+UPGRADE_REQUIRED_HTML = """
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Upgrade Required</title>
+    <style>
+      body { font-family: Arial, sans-serif; background: #f8fafc; color: #0f172a; margin: 0; }
+      .container { max-width: 720px; margin: 64px auto; background: #ffffff; padding: 32px; border-radius: 12px; box-shadow: 0 8px 30px rgba(15, 23, 42, 0.08); }
+      h1 { margin-top: 0; font-size: 24px; }
+      p { line-height: 1.6; margin: 12px 0; }
+      .cta { margin-top: 20px; padding: 12px 16px; background: #0ea5e9; color: #fff; display: inline-block; border-radius: 8px; text-decoration: none; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Unlocking requires an upgrade</h1>
+      <p>This site uses advanced protections. Upgrade to Standard or Pro for Cloudscraper-powered unlocks.</p>
+      <p><a class="cta" href="/pricing">Upgrade to Standard or Pro</a></p>
+    </div>
+  </body>
+</html>
+"""
+
 def build_referer(url: str) -> str | None:
     parsed = urlparse(url)
     if parsed.scheme and parsed.hostname:
         return f"{parsed.scheme}://{parsed.hostname}/"
     return None
 
+def _platform_from_user_agent(user_agent: str | None) -> str:
+    if not user_agent:
+        return "Windows"
+    ua = user_agent.lower()
+    if "mac os x" in ua:
+        return "macOS"
+    if "android" in ua:
+        return "Android"
+    if "iphone" in ua or "ipad" in ua:
+        return "iOS"
+    if "linux" in ua:
+        return "Linux"
+    return "Windows"
+
+def _is_mobile_user_agent(user_agent: str | None) -> bool:
+    if not user_agent:
+        return False
+    ua = user_agent.lower()
+    return "mobile" in ua or "android" in ua or "iphone" in ua
+
 def build_base_headers(user_agent: str | None = None, referer: str | None = None) -> dict:
     headers = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
         "Upgrade-Insecure-Requests": "1",
         "Cache-Control": "max-age=0",
     }
@@ -98,11 +144,44 @@ def build_base_headers(user_agent: str | None = None, referer: str | None = None
         headers["Referer"] = referer
     return headers
 
+def build_browser_headers(user_agent: str | None, referer: str | None) -> dict:
+    headers = build_base_headers(user_agent=user_agent, referer=referer)
+    platform = _platform_from_user_agent(user_agent)
+    mobile_flag = "?1" if _is_mobile_user_agent(user_agent) else "?0"
+    headers.update(
+        {
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Sec-CH-UA": '"Chromium";v="117", "Not)A;Brand";v="8"',
+            "Sec-CH-UA-Mobile": mobile_flag,
+            "Sec-CH-UA-Platform": f'"{platform}"',
+        }
+    )
+    return headers
+
 def _cloudscraper_header_factory(hostname: str) -> dict:
     user_agent = random.choice(USER_AGENTS)
-    return build_base_headers(user_agent=user_agent)
+    return build_browser_headers(user_agent=user_agent, referer=None)
 
-_cloudscraper_session_pool = SessionPool(max_size=32, header_factory=_cloudscraper_header_factory)
+def _cloudscraper_options() -> dict:
+    browser = os.getenv("CLOUDSCRAPER_BROWSER", "chrome")
+    platform = os.getenv("CLOUDSCRAPER_PLATFORM", "windows")
+    mobile = os.getenv("CLOUDSCRAPER_MOBILE", "false").lower() == "true"
+    return {
+        "browser": {
+            "browser": browser,
+            "platform": platform,
+            "mobile": mobile,
+        }
+    }
+
+_cloudscraper_session_pool = SessionPool(
+    max_size=32,
+    header_factory=_cloudscraper_header_factory,
+    scraper_kwargs=_cloudscraper_options(),
+)
 
 CACHE_TTL_SECONDS = 3600
 BLOCKED_PAGE_TTL_SECONDS = 600
@@ -302,7 +381,7 @@ async def fetch_and_clean_page(
         return "<div style='color:red;'>Cache decoding error.</div>"
 
     referer = build_referer(url)
-    headers = build_base_headers(
+    headers = build_browser_headers(
         user_agent=random.choice(USER_AGENTS),
         referer=referer,
     )
@@ -311,7 +390,7 @@ async def fetch_and_clean_page(
         def _fetch() -> tuple[str, int, dict, str]:
             hostname = urlparse(url).hostname or ""
             scraper, session_headers = _cloudscraper_session_pool.get_session(hostname)
-            request_headers = build_base_headers(referer=referer)
+            request_headers = build_browser_headers(user_agent=None, referer=referer)
             merged_headers = {**session_headers, **request_headers}
             if "User-Agent" in session_headers:
                 merged_headers["User-Agent"] = session_headers["User-Agent"]
@@ -433,6 +512,15 @@ async def fetch_and_clean_page(
         fetch_meta.get("status_code"),
     )
     if is_blocked:
+        if fetch_meta.get("method") == "cloudscraper":
+            _cloudscraper_session_pool.evict(hostname)
+        if fetch_meta.get("method") == "httpx" and not use_cloudscraper:
+            await redis_set(
+                cache_key,
+                {"result": UPGRADE_REQUIRED_HTML},
+                ttl_seconds=BLOCKED_PAGE_TTL_SECONDS,
+            )
+            return UPGRADE_REQUIRED_HTML
         blocked_html = build_blocked_html(hostname, ray_id)
         cached_blocked_html = build_blocked_html(hostname, None)
         await redis_set(

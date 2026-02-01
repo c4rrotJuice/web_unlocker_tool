@@ -9,11 +9,12 @@ logger = logging.getLogger(__name__)
 
 
 class SessionPool:
-    def __init__(self, max_size: int = 32, header_factory=None) -> None:
+    def __init__(self, max_size: int = 32, header_factory=None, scraper_kwargs=None) -> None:
         self.max_size = max_size
         self._lock = threading.Lock()
         self._sessions: OrderedDict[str, tuple[cloudscraper.CloudScraper, dict]] = OrderedDict()
         self._header_factory = header_factory
+        self._scraper_kwargs = scraper_kwargs or {}
 
     def get_session(self, hostname: str) -> Tuple[cloudscraper.CloudScraper, dict]:
         if not hostname:
@@ -46,7 +47,7 @@ class SessionPool:
             self._sessions.clear()
 
     def _create_session(self, hostname: str) -> tuple[cloudscraper.CloudScraper, dict]:
-        session = cloudscraper.create_scraper()
+        session = cloudscraper.create_scraper(**self._scraper_kwargs)
         headers = self._build_session_headers(hostname)
         return session, headers
 

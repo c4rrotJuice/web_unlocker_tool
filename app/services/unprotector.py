@@ -71,12 +71,22 @@ except FileNotFoundError as e:
     CUSTOM_JS_SCRIPT = "console.log('Unlock script loaded.');"
 
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:115.0) Gecko/20100101 Firefox/115.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_2) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edg/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
+]
+ACCEPT_LANGUAGES = [
+    "en-US,en;q=0.9",
+    "en-US,en;q=0.9,fr;q=0.8",
+    "en-GB,en;q=0.9",
+    "en-US,en;q=0.9,es;q=0.8",
+    "en-US,en;q=0.9,de;q=0.8",
 ]
 
 UPGRADE_REQUIRED_HTML = """
@@ -133,10 +143,11 @@ def _is_mobile_user_agent(user_agent: str | None) -> bool:
 def build_base_headers(user_agent: str | None = None, referer: str | None = None) -> dict:
     headers = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Language": random.choice(ACCEPT_LANGUAGES),
         "Accept-Encoding": "gzip, deflate, br",
         "Upgrade-Insecure-Requests": "1",
         "Cache-Control": "max-age=0",
+        "DNT": "1",
     }
     if user_agent:
         headers["User-Agent"] = user_agent
@@ -154,7 +165,7 @@ def build_browser_headers(user_agent: str | None, referer: str | None) -> dict:
             "Sec-Fetch-Mode": "navigate",
             "Sec-Fetch-Site": "none",
             "Sec-Fetch-User": "?1",
-            "Sec-CH-UA": '"Chromium";v="117", "Not)A;Brand";v="8"',
+            "Sec-CH-UA": '"Chromium";v="122", "Not)A;Brand";v="8"',
             "Sec-CH-UA-Mobile": mobile_flag,
             "Sec-CH-UA-Platform": f'"{platform}"',
         }
@@ -169,12 +180,14 @@ def _cloudscraper_options() -> dict:
     browser = os.getenv("CLOUDSCRAPER_BROWSER", "chrome")
     platform = os.getenv("CLOUDSCRAPER_PLATFORM", "windows")
     mobile = os.getenv("CLOUDSCRAPER_MOBILE", "false").lower() == "true"
+    delay = float(os.getenv("CLOUDSCRAPER_DELAY", "0"))
     return {
         "browser": {
             "browser": browser,
             "platform": platform,
             "mobile": mobile,
-        }
+        },
+        "delay": delay,
     }
 
 _cloudscraper_session_pool = SessionPool(
@@ -495,6 +508,16 @@ def detect_block_page(html_text: str, headers: dict | None, status_code: int | N
         "cloudflare ray id",
         "sorry, you have been blocked",
         "please enable cookies",
+        "attention required",
+        "checking your browser before accessing",
+        "just a moment",
+        "cf-chl-",
+        "cf-turnstile",
+        "challenge-platform",
+        "sucuri firewall",
+        "ddos-guard",
+        "enable javascript and cookies",
+        "/cdn-cgi/challenge-platform",
     ]
     if any(indicator in haystack for indicator in indicators):
         return True, extract_ray_id(html_text)
@@ -596,6 +619,24 @@ async def fetch_and_clean_page(
                 if use_cloudscraper:
                     logger.info("[cloudscraper] Fetching with Cloudscraper...")
                     fetched_text, status_code, response_headers, final_url = await _fetch_with_cloudscraper()
+                    blocked, ray_id = detect_block_page(
+                        fetched_text,
+                        response_headers,
+                        status_code,
+                    )
+                    if blocked and attempt < FETCH_MAX_RETRIES:
+                        hostname = urlparse(url).hostname or ""
+                        logger.warning(
+                            "[cloudscraper] Blocked response detected hostname=%s status=%s ray_id=%s (attempt %s/%s)",
+                            hostname,
+                            status_code,
+                            ray_id,
+                            attempt,
+                            FETCH_MAX_RETRIES,
+                        )
+                        _cloudscraper_session_pool.evict(hostname)
+                        await asyncio.sleep(0.75 * attempt + random.uniform(0, 0.35))
+                        continue
                     content_type = response_headers.get("Content-Type", "")
                     content_length = int(
                         response_headers.get("Content-Length")

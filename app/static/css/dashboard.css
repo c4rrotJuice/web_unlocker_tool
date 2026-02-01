@@ -322,6 +322,57 @@
   max-height: 40vh;
 }
 
+.momentum-card .momentum-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0.4rem 0 0.6rem;
+}
+
+.momentum-card #momentumStreak {
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.momentum-card .momentum-unit {
+  font-size: 0.95rem;
+  color: #6b7280;
+}
+
+.momentum-card .momentum-subtext {
+  font-size: 0.95rem;
+  margin-bottom: 0.4rem;
+}
+
+.momentum-card .momentum-all-time {
+  display: block;
+  color: #6b7280;
+  margin-top: 0.2rem;
+}
+
+.momentum-card .momentum-microcopy {
+  font-size: 0.9rem;
+  color: #2563eb;
+  margin-bottom: 0.4rem;
+}
+
+.momentum-card .momentum-milestone {
+  font-size: 0.85rem;
+  color: #16a34a;
+  margin: 0;
+}
+
+.report-card .report-subtext {
+  color: #6b7280;
+  margin-bottom: 0.6rem;
+}
+
+.report-card .status-text {
+  font-size: 0.85rem;
+  color: #6b7280;
+  margin-top: 0.5rem;
+}
+
 
 /* Optional: Make Pro Teaser card stand out a bit */
 .pro-teaser {
@@ -472,7 +523,6 @@
   background: rgba(101, 129, 134, 1);
   transform: translateY(-1px);
 }
-
 
 
 

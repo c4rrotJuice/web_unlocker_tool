@@ -140,6 +140,22 @@ def _is_mobile_user_agent(user_agent: str | None) -> bool:
     ua = user_agent.lower()
     return "mobile" in ua or "android" in ua or "iphone" in ua
 
+def _sec_ch_ua_for_user_agent(user_agent: str | None) -> str | None:
+    if not user_agent:
+        return None
+    ua = user_agent.lower()
+    chromium_match = re.search(r"(chrome|edg|chromium)/(\d+)", ua)
+    if not chromium_match:
+        return None
+    brand, version = chromium_match.groups()
+    if brand == "edg":
+        product = "Microsoft Edge"
+    elif brand == "chromium":
+        product = "Chromium"
+    else:
+        product = "Google Chrome"
+    return f'"Chromium";v="{version}", "Not)A;Brand";v="8", "{product}";v="{version}"'
+
 def build_base_headers(user_agent: str | None = None, referer: str | None = None) -> dict:
     headers = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -157,19 +173,25 @@ def build_base_headers(user_agent: str | None = None, referer: str | None = None
 
 def build_browser_headers(user_agent: str | None, referer: str | None) -> dict:
     headers = build_base_headers(user_agent=user_agent, referer=referer)
-    platform = _platform_from_user_agent(user_agent)
-    mobile_flag = "?1" if _is_mobile_user_agent(user_agent) else "?0"
     headers.update(
         {
             "Sec-Fetch-Dest": "document",
             "Sec-Fetch-Mode": "navigate",
             "Sec-Fetch-Site": "none",
             "Sec-Fetch-User": "?1",
-            "Sec-CH-UA": '"Chromium";v="122", "Not)A;Brand";v="8"',
-            "Sec-CH-UA-Mobile": mobile_flag,
-            "Sec-CH-UA-Platform": f'"{platform}"',
         }
     )
+    sec_ch_ua = _sec_ch_ua_for_user_agent(user_agent)
+    if sec_ch_ua:
+        platform = _platform_from_user_agent(user_agent)
+        mobile_flag = "?1" if _is_mobile_user_agent(user_agent) else "?0"
+        headers.update(
+            {
+                "Sec-CH-UA": sec_ch_ua,
+                "Sec-CH-UA-Mobile": mobile_flag,
+                "Sec-CH-UA-Platform": f'"{platform}"',
+            }
+        )
     return headers
 
 def _cloudscraper_header_factory(hostname: str) -> dict:
@@ -518,6 +540,9 @@ def detect_block_page(html_text: str, headers: dict | None, status_code: int | N
         "ddos-guard",
         "enable javascript and cookies",
         "/cdn-cgi/challenge-platform",
+        "verify you are human",
+        "captcha",
+        "cf-bm",
     ]
     if any(indicator in haystack for indicator in indicators):
         return True, extract_ray_id(html_text)
@@ -588,7 +613,8 @@ async def fetch_and_clean_page(
         def _fetch() -> tuple[str, int, dict, str]:
             hostname = urlparse(url).hostname or ""
             scraper, session_headers = _cloudscraper_session_pool.get_session(hostname)
-            request_headers = build_browser_headers(user_agent=None, referer=referer)
+            session_user_agent = session_headers.get("User-Agent")
+            request_headers = build_browser_headers(user_agent=session_user_agent, referer=referer)
             merged_headers = {**session_headers, **request_headers}
             if "User-Agent" in session_headers:
                 merged_headers["User-Agent"] = session_headers["User-Agent"]

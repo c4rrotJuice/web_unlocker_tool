@@ -33,6 +33,36 @@ BANNER_HTML = '''
 </div>
 '''
 
+BLOCKED_PAGE_HTML = """
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Verification Required</title>
+    <style>
+      body { font-family: Arial, sans-serif; background: #f8fafc; color: #0f172a; margin: 0; }
+      .container { max-width: 720px; margin: 64px auto; background: #ffffff; padding: 32px; border-radius: 12px; box-shadow: 0 8px 30px rgba(15, 23, 42, 0.08); }
+      h1 { margin-top: 0; font-size: 24px; }
+      p { line-height: 1.6; margin: 12px 0; }
+      .meta { margin-top: 20px; padding: 16px; background: #f1f5f9; border-radius: 8px; font-size: 14px; }
+      .meta span { display: block; margin: 4px 0; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Interactive verification required</h1>
+      <p>We couldn't unlock this page because it looks like an automated protection or security check.</p>
+      <p>Please visit the site directly in a browser to complete any verification steps, then try again.</p>
+      <div class="meta">
+        <span><strong>Hostname:</strong> {hostname}</span>
+        {ray_id_block}
+      </div>
+    </div>
+  </body>
+</html>
+"""
+
 try:
     with open("app/static/unlock.js", "r") as f:
         CUSTOM_JS_SCRIPT = f.read()
@@ -75,6 +105,7 @@ def _cloudscraper_header_factory(hostname: str) -> dict:
 _cloudscraper_session_pool = SessionPool(max_size=32, header_factory=_cloudscraper_header_factory)
 
 CACHE_TTL_SECONDS = 3600
+BLOCKED_PAGE_TTL_SECONDS = 600
 FETCH_MAX_RETRIES = int(os.getenv("FETCH_MAX_RETRIES", "2"))
 FETCH_TIMEOUT_SECONDS = float(os.getenv("FETCH_TIMEOUT_SECONDS", "15"))
 FETCH_CONNECT_TIMEOUT_SECONDS = float(os.getenv("FETCH_CONNECT_TIMEOUT_SECONDS", "5"))
@@ -202,6 +233,37 @@ def apply_dom_cleanups(tree: HTMLParser) -> None:
         except Exception as e:
             logger.warning("Inline JS cleanup error: %s", e)
 
+def detect_block_page(html_text: str, headers: dict | None, status_code: int | None) -> tuple[bool, str | None]:
+    if not html_text:
+        return False, None
+    haystack = html_text.lower()
+    indicators = [
+        "cloudflare ray id",
+        "sorry, you have been blocked",
+        "please enable cookies",
+    ]
+    if any(indicator in haystack for indicator in indicators):
+        return True, extract_ray_id(html_text)
+
+    headers = headers or {}
+    server_header = str(headers.get("server", headers.get("Server", ""))).lower()
+    status_code = status_code or 0
+    if "cloudflare" in server_header and status_code in {403, 429, 503}:
+        return True, extract_ray_id(html_text)
+
+    return False, None
+
+def extract_ray_id(html_text: str) -> str | None:
+    match = re.search(r"ray id[:\s#]*([a-f0-9]{8,})", html_text, flags=re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return None
+
+def build_blocked_html(hostname: str, ray_id: str | None) -> str:
+    ray_block = ""
+    if ray_id:
+        ray_block = f"<span><strong>Ray ID:</strong> {ray_id}</span>"
+    return BLOCKED_PAGE_HTML.format(hostname=hostname or "Unknown", ray_id_block=ray_block)
 
 # --- Main Fetch and Clean Function ---
 async def fetch_and_clean_page(
@@ -292,7 +354,7 @@ async def fetch_and_clean_page(
                         "server": response_headers.get("Server"),
                         "attempts": attempt,
                     }
-                    return fetched_text, content_type, content_length, fetch_meta
+                    return fetched_text, content_type, content_length, fetch_meta, response_headers
 
                 logger.info("[httpx] Fetching with standard HTTP client...")
                 response = await _fetch_with_httpx()
@@ -303,6 +365,7 @@ async def fetch_and_clean_page(
                 response_text = response.content.decode(
                     response.encoding or "utf-8", errors="replace"
                 )
+                response_headers = dict(response.headers)
                 fetch_meta = {
                     "method": "httpx",
                     "status_code": response.status_code,
@@ -310,7 +373,7 @@ async def fetch_and_clean_page(
                     "server": response.headers.get("Server"),
                     "attempts": attempt,
                 }
-                return response_text, content_type, content_length, fetch_meta
+                return response_text, content_type, content_length, fetch_meta, response_headers
             except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.TransportError) as e:
                 logger.warning(
                     "Fetch attempt %s failed for %s: %s", attempt, url, e
@@ -335,9 +398,9 @@ async def fetch_and_clean_page(
     try:
         if fetch_semaphore:
             async with fetch_semaphore:
-                response_text, content_type, content_length, fetch_meta = await _fetch_with_retries()
+                response_text, content_type, content_length, fetch_meta, response_headers = await _fetch_with_retries()
         else:
-            response_text, content_type, content_length, fetch_meta = await _fetch_with_retries()
+            response_text, content_type, content_length, fetch_meta, response_headers = await _fetch_with_retries()
     except Exception as e:
         logger.error("Failed to fetch URL %s: %s", url, e)
         return f"<div style='color:red;'>Fetch error: {e}</div>"
@@ -364,6 +427,20 @@ async def fetch_and_clean_page(
 
     logger.info("Fetched HTML: type=%s, length=%d", type(response_text), len(response_text))
     base_url = url
+    is_blocked, ray_id = detect_block_page(
+        response_text,
+        response_headers,
+        fetch_meta.get("status_code"),
+    )
+    if is_blocked:
+        blocked_html = build_blocked_html(hostname, ray_id)
+        cached_blocked_html = build_blocked_html(hostname, None)
+        await redis_set(
+            cache_key,
+            {"result": cached_blocked_html},
+            ttl_seconds=BLOCKED_PAGE_TTL_SECONDS,
+        )
+        return blocked_html
 
     if not unlock:
         safe_html = sanitize_html(response_text, base_url)

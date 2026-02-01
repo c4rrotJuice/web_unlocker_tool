@@ -60,10 +60,27 @@
     <p>🔥 Streak: <span id="streakDays">0</span> days</p>
   </div>
 
+  <!-- ✅ Momentum -->
+  <div class="card momentum-card" id="momentumTile">
+    <h3>⚡ Momentum</h3>
+    <div class="momentum-stat">
+      <span id="momentumStreak">0</span>
+      <span class="momentum-unit">day streak</span>
+    </div>
+    <p class="momentum-subtext">
+      <span id="momentumUnlockedMtd">0</span> articles unlocked (MTD)
+      <span class="momentum-all-time">All-time: <span id="momentumUnlockedAll">0</span></span>
+    </p>
+    <p class="momentum-microcopy" id="momentumMicrocopy">Keep it alive — unlock 1 today</p>
+    <p class="momentum-milestone" id="momentumMilestone" style="display:none;"></p>
+  </div>
+
   <!-- ✅ Monthly PDF Summary -->
-  <div class="card feature-card" data-feature="pdf" id="pdfDownload">
-    <h3>Monthly PDF Summary</h3>
-    <button id="pdfDownloadBtn" class="btn-disabled">Download Last Month’s Report</button>
+  <div class="card feature-card report-card" data-feature="pdf" id="pdfDownload">
+    <h3>📄 Research Activity Report</h3>
+    <p class="report-subtext">Download your monthly summary (PDF)</p>
+    <button id="pdfDownloadBtn" class="btn">Download PDF</button>
+    <p id="pdfDownloadStatus" class="status-text" aria-live="polite"></p>
   </div>
 
   <!-- ✅ Pro Feature Teaser -->
@@ -261,6 +278,78 @@ async function loadUserData() {
   } catch (err) {
     console.error("🔥 Error loading user metadata:", err);
     alert("Failed to load user info. Please try again.");
+  }
+}
+
+async function loadMomentum() {
+  const token = localStorage.getItem("access_token");
+  if (!token) return;
+
+  try {
+    const res = await fetch("/api/dashboard/momentum", {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+
+    if (!res.ok) throw new Error("Failed to load momentum data");
+    const data = await res.json();
+
+    document.getElementById("momentumStreak").textContent = data.current_streak_days;
+    document.getElementById("momentumUnlockedMtd").textContent = data.articles_unlocked_mtd;
+    document.getElementById("momentumUnlockedAll").textContent = data.articles_unlocked_all_time;
+
+    const microcopy = data.has_unlock_today
+      ? "Nice — you’re active today"
+      : "Keep it alive — unlock 1 today";
+    document.getElementById("momentumMicrocopy").textContent = microcopy;
+
+    const milestoneEl = document.getElementById("momentumMilestone");
+    if (data.milestone) {
+      milestoneEl.textContent = `Milestone earned: ${data.milestone.title}`;
+      milestoneEl.style.display = "block";
+    } else {
+      milestoneEl.style.display = "none";
+    }
+  } catch (err) {
+    console.error("Failed to load momentum:", err);
+  }
+}
+
+async function downloadMonthlyReport() {
+  const token = localStorage.getItem("access_token");
+  if (!token) return;
+
+  const button = document.getElementById("pdfDownloadBtn");
+  const status = document.getElementById("pdfDownloadStatus");
+  button.disabled = true;
+  button.textContent = "Preparing PDF...";
+  status.textContent = "Generating your report...";
+
+  try {
+    const res = await fetch("/api/reports/monthly", {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+
+    if (!res.ok) throw new Error("Report download failed");
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    const contentDisposition = res.headers.get("Content-Disposition") || "";
+    const filenameMatch = contentDisposition.match(/filename=([^;]+)/i);
+    link.download = filenameMatch ? filenameMatch[1] : "Research-Activity-Report.pdf";
+    link.href = url;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+
+    status.textContent = "Download started.";
+  } catch (err) {
+    console.error("PDF download error:", err);
+    status.textContent = "Unable to download report. Please try again.";
+  } finally {
+    button.disabled = false;
+    button.textContent = "Download PDF";
   }
 }
 
@@ -521,8 +610,10 @@ function detectAdblock() {
     }
 
     loadUserData();
+    loadMomentum();
     loadRecentUnlocks();
     loadRecentCitations();
+    document.getElementById("pdfDownloadBtn").addEventListener("click", downloadMonthlyReport);
   });
   
   

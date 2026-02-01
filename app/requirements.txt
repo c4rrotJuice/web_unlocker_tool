@@ -51,6 +51,7 @@ realtime==2.4.3
 redis==6.2.0
 requests==2.32.4
 requests-toolbelt==1.0.0
+reportlab==4.2.0
 selectolax==0.3.29
 six==1.17.0
 sniffio==1.3.1

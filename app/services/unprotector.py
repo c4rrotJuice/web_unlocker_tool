@@ -13,6 +13,7 @@ import uuid
 
 import httpx
 import bleach
+import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from selectolax.parser import HTMLParser
@@ -244,8 +245,8 @@ async def fetch_and_clean_page(
         referer=referer,
     )
     
-    async def _fetch_with_cloudscraper() -> tuple[str, int, dict]:
-        def _fetch() -> tuple[str, int, dict]:
+    async def _fetch_with_cloudscraper() -> tuple[str, int, dict, str]:
+        def _fetch() -> tuple[str, int, dict, str]:
             hostname = urlparse(url).hostname or ""
             scraper, session_headers = _cloudscraper_session_pool.get_session(hostname)
             request_headers = build_base_headers(referer=referer)
@@ -259,7 +260,8 @@ async def fetch_and_clean_page(
                 response.status_code,
                 dict(response.headers),
             )
-            return response.text, response.status_code, dict(response.headers)
+            final_url = response.url if isinstance(response.url, str) else str(response.url)
+            return response.text, response.status_code, dict(response.headers), final_url
 
         return await asyncio.to_thread(_fetch)
 
@@ -277,13 +279,20 @@ async def fetch_and_clean_page(
             try:
                 if use_cloudscraper:
                     logger.info("[cloudscraper] Fetching with Cloudscraper...")
-                    fetched_text, status_code, response_headers = await _fetch_with_cloudscraper()
-                    logger.info(
-                        "[cloudscraper] Metadata status=%s headers=%s",
-                        status_code,
-                        response_headers,
+                    fetched_text, status_code, response_headers, final_url = await _fetch_with_cloudscraper()
+                    content_type = response_headers.get("Content-Type", "")
+                    content_length = int(
+                        response_headers.get("Content-Length")
+                        or len(fetched_text.encode("utf-8", "replace"))
                     )
-                    return fetched_text, "text/html", len(fetched_text.encode("utf-8", "replace"))
+                    fetch_meta = {
+                        "method": "cloudscraper",
+                        "status_code": status_code,
+                        "final_url": final_url,
+                        "server": response_headers.get("Server"),
+                        "attempts": attempt,
+                    }
+                    return fetched_text, content_type, content_length, fetch_meta
 
                 logger.info("[httpx] Fetching with standard HTTP client...")
                 response = await _fetch_with_httpx()
@@ -294,8 +303,22 @@ async def fetch_and_clean_page(
                 response_text = response.content.decode(
                     response.encoding or "utf-8", errors="replace"
                 )
-                return response_text, content_type, content_length
+                fetch_meta = {
+                    "method": "httpx",
+                    "status_code": response.status_code,
+                    "final_url": str(response.url),
+                    "server": response.headers.get("Server"),
+                    "attempts": attempt,
+                }
+                return response_text, content_type, content_length, fetch_meta
             except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.TransportError) as e:
+                logger.warning(
+                    "Fetch attempt %s failed for %s: %s", attempt, url, e
+                )
+                if attempt >= FETCH_MAX_RETRIES:
+                    raise
+                await asyncio.sleep(0.5 * attempt)
+            except requests.RequestException as e:
                 logger.warning(
                     "Fetch attempt %s failed for %s: %s", attempt, url, e
                 )
@@ -312,13 +335,22 @@ async def fetch_and_clean_page(
     try:
         if fetch_semaphore:
             async with fetch_semaphore:
-                response_text, content_type, content_length = await _fetch_with_retries()
+                response_text, content_type, content_length, fetch_meta = await _fetch_with_retries()
         else:
-            response_text, content_type, content_length = await _fetch_with_retries()
+            response_text, content_type, content_length, fetch_meta = await _fetch_with_retries()
     except Exception as e:
         logger.error("Failed to fetch URL %s: %s", url, e)
         return f"<div style='color:red;'>Fetch error: {e}</div>"
 
+    hostname = urlparse(url).hostname or ""
+    logger.info(
+        "Fetch result hostname=%s method=%s status=%s content_length=%s attempts=%s",
+        hostname,
+        fetch_meta.get("method"),
+        fetch_meta.get("status_code"),
+        content_length,
+        fetch_meta.get("attempts"),
+    )
     logger.info("Content-Type: %s", content_type)
     logger.info("Content-Length: %d bytes", content_length)
 

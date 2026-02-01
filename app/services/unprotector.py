@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 from selectolax.parser import HTMLParser
 
 from app.services.cloudscraper_pool import SessionPool
+from app.services.priority_limiter import PriorityLimiter
 
 # --- Setup Logging ---
 logger = logging.getLogger(__name__)
@@ -608,7 +609,8 @@ async def fetch_and_clean_page(
     redis_set: callable,
     unlock: bool = True,
     use_cloudscraper: bool = False,
-    fetch_semaphore: asyncio.Semaphore | None = None,
+    fetch_limiter: PriorityLimiter | None = None,
+    queue_priority: int = 2,
     redis_incr: callable = None,     
     redis_expire: callable = None  
 ) -> str:
@@ -757,8 +759,8 @@ async def fetch_and_clean_page(
 
 
     try:
-        if fetch_semaphore:
-            async with fetch_semaphore:
+        if fetch_limiter:
+            async with fetch_limiter.limit(queue_priority):
                 response_text, content_type, content_length, fetch_meta, response_headers = await _fetch_with_retries()
         else:
             response_text, content_type, content_length, fetch_meta, response_headers = await _fetch_with_retries()

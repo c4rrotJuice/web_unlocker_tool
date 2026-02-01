@@ -11,6 +11,7 @@ from urllib.parse import urlparse, urljoin
 from datetime import datetime
 import uuid
 
+import brotli
 import httpx
 import bleach
 import requests
@@ -375,6 +376,37 @@ def extract_doctype(html_text: str) -> str | None:
     match = re.search(r"<!doctype[^>]*>", html_text, flags=re.IGNORECASE)
     return match.group(0) if match else None
 
+def _extract_charset(content_type: str | None) -> str | None:
+    if not content_type:
+        return None
+    match = re.search(r"charset=([^\s;]+)", content_type, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1).strip("\"'")
+
+def _decode_response_body(body: bytes, headers: dict, encoding_hint: str | None) -> str:
+    content_encoding = str(headers.get("Content-Encoding", "")).lower()
+    decoded_body = body
+    if "br" in content_encoding:
+        try:
+            decoded_body = brotli.decompress(body)
+            logger.info(
+                "Brotli decompressed response from %s to %s bytes",
+                len(body),
+                len(decoded_body),
+            )
+        except brotli.error as e:
+            logger.warning("Brotli decompression failed: %s", e)
+        except Exception as e:
+            logger.warning("Unexpected Brotli decompression error: %s", e)
+
+    content_type = headers.get("Content-Type", "")
+    charset = _extract_charset(content_type) or encoding_hint or "utf-8"
+    try:
+        return decoded_body.decode(charset, errors="replace")
+    except LookupError:
+        return decoded_body.decode("utf-8", errors="replace")
+
 def should_fallback_selectolax(original_html: str, parsed_html: str) -> bool:
     original = original_html.lower()
     parsed = parsed_html.lower()
@@ -626,7 +658,13 @@ async def fetch_and_clean_page(
                 dict(response.headers),
             )
             final_url = response.url if isinstance(response.url, str) else str(response.url)
-            return response.text, response.status_code, dict(response.headers), final_url
+            response_headers = dict(response.headers)
+            response_text = _decode_response_body(
+                response.content,
+                response_headers,
+                response.encoding,
+            )
+            return response_text, response.status_code, response_headers, final_url
 
         return await asyncio.to_thread(_fetch)
 
@@ -683,10 +721,12 @@ async def fetch_and_clean_page(
                 content_length = int(
                     response.headers.get("Content-Length") or len(response.content)
                 )
-                response_text = response.content.decode(
-                    response.encoding or "utf-8", errors="replace"
-                )
                 response_headers = dict(response.headers)
+                response_text = _decode_response_body(
+                    response.content,
+                    response_headers,
+                    response.encoding,
+                )
                 fetch_meta = {
                     "method": "httpx",
                     "status_code": response.status_code,

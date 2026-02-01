@@ -41,12 +41,12 @@ BLOCKED_PAGE_HTML = """
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Verification Required</title>
     <style>
-      body { font-family: Arial, sans-serif; background: #f8fafc; color: #0f172a; margin: 0; }
-      .container { max-width: 720px; margin: 64px auto; background: #ffffff; padding: 32px; border-radius: 12px; box-shadow: 0 8px 30px rgba(15, 23, 42, 0.08); }
-      h1 { margin-top: 0; font-size: 24px; }
-      p { line-height: 1.6; margin: 12px 0; }
-      .meta { margin-top: 20px; padding: 16px; background: #f1f5f9; border-radius: 8px; font-size: 14px; }
-      .meta span { display: block; margin: 4px 0; }
+      body {{ font-family: Arial, sans-serif; background: #f8fafc; color: #0f172a; margin: 0; }}
+      .container {{ max-width: 720px; margin: 64px auto; background: #ffffff; padding: 32px; border-radius: 12px; box-shadow: 0 8px 30px rgba(15, 23, 42, 0.08); }}
+      h1 {{ margin-top: 0; font-size: 24px; }}
+      p {{ line-height: 1.6; margin: 12px 0; }}
+      .meta {{ margin-top: 20px; padding: 16px; background: #f1f5f9; border-radius: 8px; font-size: 14px; }}
+      .meta span {{ display: block; margin: 4px 0; }}
     </style>
   </head>
   <body>

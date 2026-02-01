@@ -6,6 +6,12 @@ FREE_TIER = "free"
 STANDARD_TIER = "standard"
 PRO_TIER = "pro"
 
+QUEUE_PRIORITY = {
+    PRO_TIER: 0,
+    STANDARD_TIER: 1,
+    FREE_TIER: 2,
+}
+
 LEGACY_TIER_MAP = {
     "freemium": FREE_TIER,
     "premium": STANDARD_TIER,
@@ -42,3 +48,8 @@ def can_use_history_search(account_type: Optional[str]) -> bool:
 def should_show_ads(account_type: Optional[str]) -> bool:
     tier = normalize_account_type(account_type)
     return tier == FREE_TIER
+
+
+def queue_priority(account_type: Optional[str]) -> int:
+    tier = normalize_account_type(account_type)
+    return QUEUE_PRIORITY.get(tier, QUEUE_PRIORITY[FREE_TIER])

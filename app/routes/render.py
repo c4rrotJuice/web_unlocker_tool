@@ -11,6 +11,7 @@ from app.routes.http import http_client
 
 from app.services.unprotector import fetch_and_clean_page
 from app.services.IP_usage_limit import check_login, get_user_ip
+from app.services.entitlements import queue_priority
 from app.routes.upstash_redis import redis_get, redis_set, redis_incr, redis_expire
 
 
@@ -62,6 +63,7 @@ async def post_view_clean_page(
 
         user_id = login_status.get("user_id")
         use_cloudscraper = login_status.get("use_cloudscraper", False)
+        priority = queue_priority(request.state.account_type)
 
         print(f"[🔒 AUTH] User ID: {user_id} | IP: {user_ip} | Unlock: True")
 
@@ -75,7 +77,8 @@ async def post_view_clean_page(
                 redis_get=request.app.state.redis_get,
                 redis_set=request.app.state.redis_set,
                 use_cloudscraper=use_cloudscraper,
-                fetch_semaphore=request.app.state.fetch_semaphore,
+                fetch_limiter=request.app.state.fetch_limiter,
+                queue_priority=priority,
                 redis_incr=request.app.state.redis_incr,
                 redis_expire=request.app.state.redis_expire
             )
@@ -97,6 +100,7 @@ async def post_view_clean_page(
                 redis_incr=request.app.state.redis_incr,
                 redis_expire=request.app.state.redis_expire,
             )
+            priority = queue_priority(request.state.account_type)
             cleaned_html = await fetch_and_clean_page(
                 url=url,
                 user_ip=user_ip,
@@ -105,7 +109,8 @@ async def post_view_clean_page(
                 redis_get=request.app.state.redis_get,
                 redis_set=request.app.state.redis_set,
                 use_cloudscraper=False,  # guest users
-                fetch_semaphore=request.app.state.fetch_semaphore,
+                fetch_limiter=request.app.state.fetch_limiter,
+                queue_priority=priority,
                 redis_incr=request.app.state.redis_incr,
                 redis_expire=request.app.state.redis_expire
             )
@@ -165,6 +170,7 @@ async def fetch_and_clean_page_post(
     user_id = login_status.get("user_id")
     use_cloudscraper = login_status.get("use_cloudscraper", False)
     url = body.url
+    priority = queue_priority(request.state.account_type)
 
     # Attempting to extract Bearer token (but don't return error if missing, its an either or situation not an AND situation)
     token = None
@@ -182,7 +188,8 @@ async def fetch_and_clean_page_post(
             redis_get=request.app.state.redis_get,
             redis_set=request.app.state.redis_set,
             use_cloudscraper=use_cloudscraper,
-            fetch_semaphore=request.app.state.fetch_semaphore,
+            fetch_limiter=request.app.state.fetch_limiter,
+            queue_priority=priority,
             redis_incr=request.app.state.redis_incr,
             redis_expire=request.app.state.redis_expire  
         )
@@ -195,5 +202,4 @@ async def fetch_and_clean_page_post(
     except Exception as e:
         print(f"Error in fetch_and_clean_page: {e}")
         return HTMLResponse(content=f"<h1>Error loading page: {e}</h1>", status_code=500)
-
 

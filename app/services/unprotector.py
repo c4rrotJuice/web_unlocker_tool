@@ -233,6 +233,92 @@ def apply_dom_cleanups(tree: HTMLParser) -> None:
         except Exception as e:
             logger.warning("Inline JS cleanup error: %s", e)
 
+def _serialize_style_attributes(attributes: dict) -> str:
+    parts = []
+    for key, value in attributes.items():
+        if value is None:
+            parts.append(key)
+        else:
+            escaped = str(value).replace('"', "&quot;")
+            parts.append(f'{key}="{escaped}"')
+    return " ".join(parts)
+
+def apply_font_simplification(tree: HTMLParser) -> dict:
+    removed_font_links = 0
+    removed_font_preloads = 0
+    stripped_font_face_blocks = 0
+    removed_google_font_links = 0
+
+    font_link_pattern = re.compile(r"\.(woff2?|ttf|otf)(\?.*)?$", flags=re.IGNORECASE)
+    font_face_pattern = re.compile(r"@font-face\s*{.*?}", flags=re.IGNORECASE | re.DOTALL)
+
+    for link in tree.css("link"):
+        href = link.attributes.get("href", "")
+        rel = link.attributes.get("rel", "")
+        rel_lower = rel.lower()
+        as_attr = link.attributes.get("as", "")
+        href_lower = href.lower()
+        if "preload" in rel_lower and as_attr.lower() == "font":
+            link.decompose()
+            removed_font_preloads += 1
+            continue
+        if href and font_link_pattern.search(href):
+            link.decompose()
+            removed_font_links += 1
+            continue
+        if "stylesheet" in rel_lower and href:
+            if "fonts.googleapis.com" in href_lower or "typekit" in href_lower:
+                link.decompose()
+                removed_google_font_links += 1
+
+    for style in tree.css("style"):
+        css_text = style.text() or ""
+        if "@font-face" not in css_text.lower():
+            continue
+        updated_text = css_text
+        block_count = 0
+        while True:
+            updated_text, replacements = font_face_pattern.subn("", updated_text)
+            if replacements == 0:
+                break
+            block_count += replacements
+        if block_count:
+            stripped_font_face_blocks += block_count
+            attributes = style.attributes
+            attrs_serialized = _serialize_style_attributes(attributes)
+            if attrs_serialized:
+                style_html = f"<style {attrs_serialized}>{updated_text}</style>"
+            else:
+                style_html = f"<style>{updated_text}</style>"
+            replacement = HTMLParser(style_html).css_first("style")
+            if replacement is not None:
+                style.replace_with(replacement)
+
+    override_style = (
+        '<style id="unlocker-font-override">'
+        'html,body,*{font-family:system-ui,-apple-system,"Segoe UI",Roboto,'
+        '"Helvetica Neue",Arial,"Noto Sans","Liberation Sans",sans-serif !important;}'
+        "</style>"
+    )
+    override_node = HTMLParser(override_style).css_first("style")
+    if override_node is not None:
+        head = tree.css_first("head")
+        if head is not None:
+            head.insert_child(override_node)
+        else:
+            first_child = tree.root.child
+            if first_child is not None:
+                first_child.insert_before(override_node)
+            else:
+                tree.root.insert_child(override_node)
+
+    return {
+        "removed_font_links": removed_font_links,
+        "removed_font_preloads": removed_font_preloads,
+        "stripped_font_face_blocks": stripped_font_face_blocks,
+        "removed_google_font_links": removed_google_font_links,
+    }
+
 def detect_block_page(html_text: str, headers: dict | None, status_code: int | None) -> tuple[bool, str | None]:
     if not html_text:
         return False, None
@@ -476,6 +562,15 @@ async def fetch_and_clean_page(
         tree = HTMLParser(response_text)
         rebase_html_resources_selectolax(tree, base_url)
         patch_lazy_loaded_images_selectolax(tree)
+        font_counts = apply_font_simplification(tree)
+        logger.info(
+            "Font cleanup: removed_font_links=%s removed_font_preloads=%s "
+            "stripped_font_face_blocks=%s removed_google_font_links=%s",
+            font_counts["removed_font_links"],
+            font_counts["removed_font_preloads"],
+            font_counts["stripped_font_face_blocks"],
+            font_counts["removed_google_font_links"],
+        )
     except Exception as e:
         logger.warning("Selectolax parsing/rebase failed: %s", e)
         try:
@@ -484,6 +579,15 @@ async def fetch_and_clean_page(
             patch_lazy_loaded_images(soup)
             response_text = str(soup)
             tree = HTMLParser(response_text)
+            font_counts = apply_font_simplification(tree)
+            logger.info(
+                "Font cleanup: removed_font_links=%s removed_font_preloads=%s "
+                "stripped_font_face_blocks=%s removed_google_font_links=%s",
+                font_counts["removed_font_links"],
+                font_counts["removed_font_preloads"],
+                font_counts["stripped_font_face_blocks"],
+                font_counts["removed_google_font_links"],
+            )
         except Exception as fallback_error:
             logger.error("HTML parsing failed: %s", fallback_error)
             return "<div style='color:red;'>Error parsing HTML for unlock true.</div>"

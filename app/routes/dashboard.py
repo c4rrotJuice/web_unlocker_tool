@@ -167,13 +167,24 @@ async def get_user_metadata(request: Request):
             usage_period = "day"
 
         usage_count = int(await request.app.state.redis_get(usage_key) or 0)
+        if usage_period == "day" and meta.get("requests_today") != usage_count:
+            await http_client.patch(
+                f"{SUPABASE_URL}/rest/v1/user_meta",
+                params={"user_id": f"eq.{user_id}"},
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={"requests_today": usage_count},
+            )
 
         return {
             "user_id": user_id,
             "name": meta.get("name"),
             "account_type": account_type,
             "daily_limit": meta.get("daily_limit"),
-            "requests_today": meta.get("requests_today"),
+            "requests_today": usage_count,
             "bookmarks": bookmarks,
             "usage_count": usage_count,
             "usage_limit": usage_limit,
@@ -264,6 +275,10 @@ async def get_monthly_report(request: Request, month: str | None = None):
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+    account_type = normalize_account_type(request.state.account_type)
+    if account_type not in {"standard", "pro"}:
+        raise HTTPException(status_code=403, detail="Report access requires a paid plan.")
 
     month_start, month_end, month_label = _get_month_range(month)
     month_range = f"{month_label} ({month_start:%b %d} – {(month_end - timedelta(days=1)):%b %d})"

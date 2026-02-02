@@ -234,17 +234,6 @@ async def create_paddle_checkout(request: Request):
     return JSONResponse(content={"transaction_id": transaction_id})
 
 
-@router.get("/api/me")
-async def get_current_user(request: Request):
-    if not request.state.user_id:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    return {
-        "user_id": request.state.user_id,
-        "account_type": request.state.account_type,
-        "email": request.state.email,
-    }
-
-
 @router.post("/webhooks/paddle")
 async def paddle_webhook(request: Request):
     raw_body = await request.body()

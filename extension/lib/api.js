@@ -5,6 +5,7 @@ export function apiFetch(path, options = {}, accessToken) {
   if (!headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+  headers.set("X-Client", "extension");
   if (accessToken) {
     headers.set("Authorization", `Bearer ${accessToken}`);
   }

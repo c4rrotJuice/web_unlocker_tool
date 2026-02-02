@@ -13,7 +13,7 @@
   },
   "permissions": ["storage", "activeTab"],
   "host_permissions": [
-    "https://web-unlocker-tool.onrender.com",
-    "https://lrdpstewxrufbbgxfcgk.supabase.co"
+    "https://web-unlocker-tool.onrender.com/*",
+    "https://lrdpstewxrufbbgxfcgk.supabase.co/*"
   ]
 }

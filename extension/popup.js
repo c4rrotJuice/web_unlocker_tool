@@ -53,8 +53,16 @@ function renderSignedIn(session, usage) {
   }
 }
 
-async function sendMessage(type, payload = {}) {
-  return chrome.runtime.sendMessage({ type, ...payload });
+function sendMessage(type, payload = {}) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type, ...payload }, (response) => {
+      if (chrome.runtime.lastError) {
+        resolve({ error: chrome.runtime.lastError.message });
+        return;
+      }
+      resolve(response);
+    });
+  });
 }
 
 async function getCurrentTabUrl() {
@@ -65,12 +73,27 @@ async function getCurrentTabUrl() {
 async function loadSession() {
   setStatus("Checking session…");
   const response = await sendMessage("get-session");
+  if (response?.error) {
+    renderSignedOut();
+    setStatus(`Extension error: ${response.error}`, true);
+    return;
+  }
   if (response?.session) {
     renderSignedIn(response.session, response.usage);
     setStatus("Signed in.");
     if (!response.usage) {
-      await sendMessage("peek-unlock", { url: await getCurrentTabUrl() });
+      const peek = await sendMessage("peek-unlock", {
+        url: await getCurrentTabUrl(),
+      });
+      if (peek?.error) {
+        setStatus(`Extension error: ${peek.error}`, true);
+        return;
+      }
       const refreshed = await sendMessage("get-session");
+      if (refreshed?.error) {
+        setStatus(`Extension error: ${refreshed.error}`, true);
+        return;
+      }
       renderSignedIn(refreshed.session, refreshed.usage);
     }
   } else {
@@ -122,6 +145,10 @@ checkButton.addEventListener("click", async () => {
   setStatus("Checking allowance…");
   const url = await getCurrentTabUrl();
   const response = await sendMessage("check-unlock", { url });
+  if (response?.error) {
+    setStatus(`Extension error: ${response.error}`, true);
+    return;
+  }
   if (response?.status === 401) {
     renderSignedOut();
     setStatus("Session expired. Please sign in again.", true);

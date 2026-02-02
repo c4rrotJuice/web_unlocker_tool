@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Web Unlocker Tool",
+  "version": "0.1.0",
+  "description": "Authenticate with Supabase and check extension unlock usage.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Web Unlocker"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": [
+    "https://web-unlocker-tool.onrender.com/*",
+    "https://lrdpstewxrufbbgxfcgk.supabase.co/*"
+  ]
+}

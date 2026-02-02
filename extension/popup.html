@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Web Unlocker</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h1>Web Unlocker</h1>
+        <p id="status" class="status">Checking session…</p>
+      </header>
+
+      <section id="signed-out" class="panel hidden">
+        <label>
+          Email
+          <input type="email" id="email" placeholder="you@example.com" />
+        </label>
+        <label>
+          Password
+          <input type="password" id="password" placeholder="••••••••" />
+        </label>
+        <div class="actions">
+          <button id="login">Log in</button>
+          <button id="signup" class="secondary">Sign up</button>
+        </div>
+        <p class="hint">
+          Don’t have an account? Sign up to unlock weekly extension usage.
+        </p>
+      </section>
+
+      <section id="signed-in" class="panel hidden">
+        <p class="meta">
+          Signed in as <strong id="user-email">--</strong>
+        </p>
+        <p class="meta">
+          Tier: <strong id="user-tier">--</strong>
+        </p>
+        <div id="usage-info" class="usage hidden">
+          <p>
+            Remaining unlocks:
+            <strong id="remaining">--</strong>
+          </p>
+          <p>
+            Resets:
+            <strong id="reset-at">--</strong>
+          </p>
+        </div>
+        <div class="actions">
+          <button id="check-usage">Check unlock allowance</button>
+          <button id="logout" class="secondary">Log out</button>
+        </div>
+        <button id="upgrade" class="link">Upgrade plan</button>
+      </section>
+    </main>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

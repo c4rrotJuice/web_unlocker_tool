@@ -13,7 +13,7 @@
   },
   "permissions": ["storage", "activeTab"],
   "host_permissions": [
-    "https://YOUR_BACKEND_HOST/*",
-    "https://YOUR_SUPABASE_PROJECT.supabase.co/*"
+    "https://web-unlocker-tool.onrender.com",
+    "https://lrdpstewxrufbbgxfcgk.supabase.co"
   ]
 }

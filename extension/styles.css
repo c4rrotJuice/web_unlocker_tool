@@ -1,0 +1,98 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", system-ui, sans-serif;
+  background: #f6f7fb;
+  color: #1c1d20;
+  width: 320px;
+}
+
+.container {
+  padding: 16px;
+}
+
+header h1 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.status {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: #596173;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hidden {
+  display: none;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #364152;
+}
+
+input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #d1d6e0;
+  font-size: 13px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: none;
+  background: #1a73e8;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: #eef1f7;
+  color: #1c1d20;
+}
+
+button.link {
+  background: transparent;
+  color: #1a73e8;
+  padding: 0;
+  text-align: left;
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.meta {
+  margin: 0;
+  font-size: 13px;
+}
+
+.usage {
+  background: #ffffff;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #e6e9f2;
+  font-size: 13px;
+}

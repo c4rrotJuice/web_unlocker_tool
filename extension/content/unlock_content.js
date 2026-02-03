@@ -392,34 +392,83 @@
     const popup = document.createElement("div");
     popup.className = "web-unlocker-popup";
 
-    popup.innerHTML = `
-      <h3>Cite This Selection</h3>
-      ${formats
-        .map((format) => {
-          const label = format.toUpperCase();
-          const text = formatCitation(format, selectionText, title, url, accessed);
-          const safeText = sanitizeText(text);
-          return `
-            <div class="web-unlocker-row" data-format="${format}">
-              <strong>${label} Format</strong>
-              <pre id="cite-${format}">${safeText}</pre>
-              <button class="copy-btn" data-format="${format}">Copy ${label}</button>
-            </div>
-          `;
-        })
-        .join("")}
-      <div class="web-unlocker-row web-unlocker-custom">
-        <strong>Custom (Pro)</strong>
-        <input id="custom-name" type="text" placeholder="Format name" />
-        <textarea id="custom-template" placeholder="Template (use {title}, {url}, {accessed}, {quote})"></textarea>
-        <pre id="cite-custom"></pre>
-        <button class="copy-btn" data-format="custom">Copy Custom</button>
-      </div>
-      <div class="web-unlocker-footer">
-        <button class="work-in-editor" type="button">Work in editor</button>
-        <button class="secondary close-popup" type="button">Close</button>
-      </div>
-    `;
+    const header = document.createElement("h3");
+    header.textContent = "Cite This Selection";
+    popup.appendChild(header);
+
+    formats.forEach((format) => {
+      const label = format.toUpperCase();
+      const text = formatCitation(format, selectionText, title, url, accessed);
+
+      const row = document.createElement("div");
+      row.className = "web-unlocker-row";
+      row.dataset.format = format;
+
+      const titleEl = document.createElement("strong");
+      titleEl.textContent = `${label} Format`;
+      row.appendChild(titleEl);
+
+      const pre = document.createElement("pre");
+      pre.id = `cite-${format}`;
+      pre.textContent = text;
+      row.appendChild(pre);
+
+      const button = document.createElement("button");
+      button.className = "copy-btn";
+      button.dataset.format = format;
+      button.textContent = `Copy ${label}`;
+      row.appendChild(button);
+
+      popup.appendChild(row);
+    });
+
+    const customRow = document.createElement("div");
+    customRow.className = "web-unlocker-row web-unlocker-custom";
+
+    const customTitle = document.createElement("strong");
+    customTitle.textContent = "Custom (Pro)";
+    customRow.appendChild(customTitle);
+
+    const customNameInput = document.createElement("input");
+    customNameInput.id = "custom-name";
+    customNameInput.type = "text";
+    customNameInput.placeholder = "Format name";
+    customRow.appendChild(customNameInput);
+
+    const customTemplateInput = document.createElement("textarea");
+    customTemplateInput.id = "custom-template";
+    customTemplateInput.placeholder =
+      "Template (use {title}, {url}, {accessed}, {quote})";
+    customRow.appendChild(customTemplateInput);
+
+    const customPreviewEl = document.createElement("pre");
+    customPreviewEl.id = "cite-custom";
+    customRow.appendChild(customPreviewEl);
+
+    const customButton = document.createElement("button");
+    customButton.className = "copy-btn";
+    customButton.dataset.format = "custom";
+    customButton.textContent = "Copy Custom";
+    customRow.appendChild(customButton);
+
+    popup.appendChild(customRow);
+
+    const footer = document.createElement("div");
+    footer.className = "web-unlocker-footer";
+
+    const workButton = document.createElement("button");
+    workButton.className = "work-in-editor";
+    workButton.type = "button";
+    workButton.textContent = "Work in editor";
+    footer.appendChild(workButton);
+
+    const closeButton = document.createElement("button");
+    closeButton.className = "secondary close-popup";
+    closeButton.type = "button";
+    closeButton.textContent = "Close";
+    footer.appendChild(closeButton);
+
+    popup.appendChild(footer);
 
     const backdrop = document.createElement("div");
     backdrop.className = "web-unlocker-backdrop";
@@ -454,8 +503,8 @@
       if (target.classList.contains("copy-btn")) {
         const format = target.dataset.format || "mla";
         if (format === "custom") {
-          const template = document.getElementById("custom-template").value.trim();
-          const name = document.getElementById("custom-name").value.trim();
+          const template = customTemplateInput.value.trim();
+          const name = customNameInput.value.trim();
           const text = formatCustomCitation(template, selectionText, title, url, accessed);
           if (!text) {
             showToast("Add a custom template first.", true);
@@ -479,10 +528,6 @@
     document.body.appendChild(backdrop);
     document.body.appendChild(popup);
     document.addEventListener("keydown", handleKeydown);
-
-    const customTemplateInput = popup.querySelector("#custom-template");
-    const customNameInput = popup.querySelector("#custom-name");
-    const customPreviewEl = popup.querySelector("#cite-custom");
 
     function updateCustomPreview() {
       const template = customTemplateInput.value.trim();

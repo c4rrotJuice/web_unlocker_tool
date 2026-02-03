@@ -4,6 +4,7 @@ import {
   refreshSession,
   signupWithPassword,
 } from "./lib/supabase.js";
+import { BACKEND_BASE_URL } from "./config.js";
 
 const SESSION_KEY = "session";
 const USAGE_KEY = "usage_snapshot";
@@ -106,6 +107,70 @@ async function fetchUnlockPermit(payload) {
   return { status: response.status, data };
 }
 
+async function saveCitation(payload) {
+  const session = await ensureValidSession();
+  if (!session) {
+    return { error: "unauthenticated", status: 401 };
+  }
+
+  const response = await apiFetch(
+    "/api/citations",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    session.access_token,
+  );
+
+  if (response.status === 401) {
+    await clearSession();
+    await clearStorage([USAGE_KEY]);
+  }
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (error) {
+    // ignore
+  }
+
+  return { status: response.status, data };
+}
+
+async function workInEditor(payload) {
+  const session = await ensureValidSession();
+  if (!session) {
+    return { error: "unauthenticated", status: 401 };
+  }
+
+  const response = await apiFetch(
+    "/api/extension/selection",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    session.access_token,
+  );
+
+  if (response.status === 401) {
+    await clearSession();
+    await clearStorage([USAGE_KEY]);
+  }
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (error) {
+    // ignore
+  }
+
+  if (response.ok && data?.editor_url) {
+    chrome.tabs.create({ url: `${BACKEND_BASE_URL}${data.editor_url}` });
+  }
+
+  return { status: response.status, data };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message?.type) {
     return false;
@@ -158,6 +223,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             url: message.url || null,
             dry_run: true,
           });
+          sendResponse(result);
+          break;
+        }
+        case "SAVE_CITATION": {
+          const result = await saveCitation(message.payload || {});
+          sendResponse(result);
+          break;
+        }
+        case "WORK_IN_EDITOR": {
+          const result = await workInEditor(message.payload || {});
           sendResponse(result);
           break;
         }

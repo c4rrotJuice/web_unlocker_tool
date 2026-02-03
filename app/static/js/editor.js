@@ -273,7 +273,7 @@ function startEditor() {
 
     if (!res.ok) {
       console.error("Failed to load document");
-      return;
+      return false;
     }
 
     const doc = await res.json();
@@ -285,6 +285,8 @@ function startEditor() {
     isDirty = false;
 
     await refreshInDocCitations();
+    renderDocs(allDocs);
+    return true;
   }
 
   async function fetchCitations({ search = "", limit = 50 } = {}) {
@@ -642,10 +644,18 @@ function startEditor() {
   (async () => {
     await loadDocsList();
     await loadCitationLibrary();
-    if (allDocs.length) {
-      await openDoc(allDocs[0].id);
-    } else {
-      document.getElementById("new-doc-btn").click();
+    const urlParams = new URLSearchParams(window.location.search);
+    const initialDocId = urlParams.get("doc");
+    let opened = false;
+    if (initialDocId) {
+      opened = await openDoc(initialDocId);
+    }
+    if (!opened) {
+      if (allDocs.length) {
+        await openDoc(allDocs[0].id);
+      } else {
+        document.getElementById("new-doc-btn").click();
+      }
     }
   })();
 }

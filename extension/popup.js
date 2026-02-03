@@ -1,5 +1,12 @@
 import { BACKEND_BASE_URL } from "./config.js";
 
+const DEBUG = false;
+const debug = (...args) => {
+  if (DEBUG) {
+    console.debug("[Web Unlocker popup]", ...args);
+  }
+};
+
 const statusEl = document.getElementById("status");
 const signedOutPanel = document.getElementById("signed-out");
 const signedInPanel = document.getElementById("signed-in");
@@ -199,11 +206,13 @@ enableButton.addEventListener("click", async () => {
       return;
     }
     await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      // Inject into all frames so iframe selections can be handled.
+      target: { tabId: tab.id, allFrames: true },
       files: ["content/unlock_content.js"],
     });
     setStatus("Copy+Cite enabled on this page.");
   } catch (error) {
+    debug("Failed to inject content script.", error);
     setStatus("Failed to inject content script.", true);
   }
 });

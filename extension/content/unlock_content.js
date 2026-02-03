@@ -1,5 +1,15 @@
 (() => {
+  const DEBUG = false;
+  const debug = (...args) => {
+    if (DEBUG) {
+      console.debug("[Web Unlocker]", ...args);
+    }
+  };
+
   if (window.__webUnlockerContentScriptInjected) {
+    if (document.documentElement) {
+      document.documentElement.dataset.webUnlocker = "1";
+    }
     return;
   }
   window.__webUnlockerContentScriptInjected = true;
@@ -13,6 +23,8 @@
   };
 
   const STYLE_ID = "web-unlocker-extension-style";
+  // Guard flag prevents repeated enable toasts on reinjection.
+  const ENABLE_TOAST_FLAG = "__WEB_UNLOCKER_ENABLED__";
 
   function injectStyles() {
     if (document.getElementById(STYLE_ID)) {
@@ -206,13 +218,18 @@
   }
 
   function showToast(message, isError = false) {
+    const root = document.body || document.documentElement;
+    if (!root) {
+      debug("Toast skipped; no root element available.");
+      return;
+    }
     const toast = document.createElement("div");
     toast.className = "web-unlocker-toast";
     toast.textContent = message;
     if (isError) {
       toast.style.backgroundColor = "#ef4444";
     }
-    document.body.appendChild(toast);
+    root.appendChild(toast);
     setTimeout(() => toast.classList.add("show"), 10);
     setTimeout(() => {
       toast.classList.remove("show");
@@ -525,8 +542,9 @@
       }
     });
 
-    document.body.appendChild(backdrop);
-    document.body.appendChild(popup);
+    const root = document.body || document.documentElement;
+    root.appendChild(backdrop);
+    root.appendChild(popup);
     document.addEventListener("keydown", handleKeydown);
 
     function updateCustomPreview() {
@@ -611,6 +629,20 @@
 
   injectStyles();
   enableSelection();
+
+  if (document.documentElement) {
+    // Marker lets page-context DevTools confirm the script is active.
+    document.documentElement.dataset.webUnlocker = "1";
+  }
+
+  if (!window[ENABLE_TOAST_FLAG]) {
+    window[ENABLE_TOAST_FLAG] = true;
+    if (document.body) {
+      showToast("Web Unlocker enabled ✓");
+    } else {
+      debug("Enable toast skipped; body not available yet.");
+    }
+  }
 
   document.addEventListener("mouseup", handleMouseUp);
   document.addEventListener("mousedown", handleMouseDown);

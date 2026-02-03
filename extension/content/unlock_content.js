@@ -60,7 +60,7 @@
       }
 
       .web-unlocker-copy-btn {
-        position: absolute;
+        position: fixed;
         background: #282c34;
         color: #fff;
         padding: 6px 10px;
@@ -68,10 +68,11 @@
         font-size: 12px;
         font-weight: 600;
         border-radius: 6px;
-        z-index: 2147483646;
+        z-index: 2147483647;
         cursor: pointer;
         box-shadow: 0 4px 12px rgba(0,0,0,0.2);
         transition: transform 0.1s ease-out;
+        pointer-events: auto;
       }
 
       .web-unlocker-copy-btn:hover {
@@ -226,13 +227,6 @@
       document.body.oncontextmenu = null;
       document.body.oncopy = null;
       document.body.onselectstart = null;
-    }
-  }
-
-  function removeCopyButton() {
-    const existing = document.querySelector(".web-unlocker-copy-btn");
-    if (existing) {
-      existing.remove();
     }
   }
 
@@ -590,39 +584,158 @@
     updateCustomPreview();
   }
 
-  function showCopyButton(rect) {
-    removeCopyButton();
+  let copyButton = null;
+  let lastSelectionRect = null;
+  let lastSelectionRange = null;
+  let ignoreClearUntil = 0;
+  let repositionListenersActive = false;
+
+  function createCopyButton() {
+    if (copyButton) {
+      return copyButton;
+    }
     const button = document.createElement("div");
     button.className = "web-unlocker-copy-btn";
     button.textContent = "📋 Copy + Cite";
+    button.addEventListener(
+      "pointerdown",
+      (event) => {
+        debug("Button pointerdown.");
+        ignoreClearUntil = Date.now() + 400;
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        removeCopyButton();
+        try {
+          buildPopup();
+        } catch (error) {
+          debug("Popup build failed", error);
+        }
+      },
+      true,
+    );
 
-    const scrollX = window.scrollX || window.pageXOffset;
-    const scrollY = window.scrollY || window.pageYOffset;
-    const left = rect.left + scrollX;
-    const top = rect.bottom + scrollY + 10;
-
-    button.style.left = `${Math.max(left, 8)}px`;
-    button.style.top = `${Math.max(top, 8)}px`;
-    button.addEventListener("click", () => {
-      debug("Copy button clicked; building popup.");
-      removeCopyButton();
-      try {
-        buildPopup();
-      } catch (error) {
-        debug("Popup build failed", error);
-      }
-    });
-
-    const root = document.body || document.documentElement;
+    const root = document.documentElement || document.body;
     if (!root) {
       debug("Copy button skipped; no root element available.");
-      return;
+      return null;
     }
     root.appendChild(button);
+    copyButton = button;
     debug("Copy button injected.");
+    return copyButton;
+  }
+
+  function getSelectionRect(selection, event) {
+    if (!selection || selection.rangeCount === 0) {
+      return null;
+    }
+    try {
+      const range = selection.getRangeAt(0);
+      let rect = range.getBoundingClientRect();
+      if (!rect || (rect.width === 0 && rect.height === 0)) {
+        const rects = range.getClientRects();
+        rect = rects && rects.length ? rects[0] : rect;
+      }
+      if (!rect || (rect.width === 0 && rect.height === 0)) {
+        const caretRange = range.cloneRange();
+        caretRange.collapse(false);
+        const caretRects = caretRange.getClientRects();
+        rect = caretRects && caretRects.length ? caretRects[0] : rect;
+      }
+      if (rect) {
+        lastSelectionRange = range;
+        return rect;
+      }
+    } catch (error) {
+      debug("Selection rect failed", error);
+    }
+    if (event) {
+      return {
+        left: event.clientX,
+        right: event.clientX,
+        top: event.clientY,
+        bottom: event.clientY,
+        width: 0,
+        height: 0,
+      };
+    }
+    return null;
+  }
+
+  function positionCopyButton(rect) {
+    const button = createCopyButton();
+    if (!button || !rect) {
+      return;
+    }
+    const offset = 8;
+    const viewWidth = window.innerWidth;
+    const viewHeight = window.innerHeight;
+    const buttonWidth = button.offsetWidth || 160;
+    const buttonHeight = button.offsetHeight || 30;
+    const rawLeft = rect.left;
+    const rawTop = rect.bottom + offset;
+    const maxLeft = Math.max(offset, viewWidth - buttonWidth - offset);
+    const maxTop = Math.max(offset, viewHeight - buttonHeight - offset);
+    const left = Math.min(Math.max(rawLeft, offset), maxLeft);
+    const top = Math.min(Math.max(rawTop, offset), maxTop);
+    button.style.left = `${left}px`;
+    button.style.top = `${top}px`;
+    const computed = window.getComputedStyle(button);
+    debug("Copy button position", {
+      left: button.style.left,
+      top: button.style.top,
+      zIndex: computed.zIndex,
+      pointerEvents: computed.pointerEvents,
+      rect: button.getBoundingClientRect(),
+    });
+  }
+
+  function updateCopyButtonPosition() {
+    if (!copyButton || !lastSelectionRect) {
+      return;
+    }
+    let rect = lastSelectionRect;
+    if (lastSelectionRange) {
+      try {
+        rect = lastSelectionRange.getBoundingClientRect();
+      } catch (error) {
+        debug("Selection range rect update failed", error);
+      }
+    }
+    lastSelectionRect = rect;
+    positionCopyButton(rect);
+  }
+
+  function removeCopyButton() {
+    if (copyButton) {
+      copyButton.remove();
+      copyButton = null;
+    }
+    lastSelectionRect = null;
+    lastSelectionRange = null;
+  }
+
+  function ensureRepositionListeners() {
+    if (repositionListenersActive) {
+      return;
+    }
+    repositionListenersActive = true;
+    const handler = () => updateCopyButtonPosition();
+    window.addEventListener("scroll", handler, true);
+    window.addEventListener("resize", handler, true);
+  }
+
+  function showCopyButton(rect) {
+    lastSelectionRect = rect;
+    positionCopyButton(rect);
+    ensureRepositionListeners();
   }
 
   function handleMouseUp(event) {
+    if (Date.now() < ignoreClearUntil) {
+      return;
+    }
     const target = event.target;
     if (target instanceof Element && target.closest(".web-unlocker-popup")) {
       return;
@@ -638,22 +751,9 @@
     state.selectionText = text;
     state.lastCitationText = "";
 
-    let rect = null;
-    try {
-      if (selection && selection.rangeCount > 0) {
-        rect = selection.getRangeAt(0).getBoundingClientRect();
-      }
-    } catch (error) {
-      debug("Selection rect failed", error);
-      rect = null;
-    }
+    const rect = getSelectionRect(selection, event);
     if (!rect) {
-      const fallbackRect = {
-        left: event.pageX,
-        bottom: event.pageY,
-      };
-      debug("Using fallback rect", fallbackRect);
-      showCopyButton(fallbackRect);
+      debug("Selection rect missing; skipping button.");
       return;
     }
     debug("Selection rect", rect);
@@ -661,6 +761,9 @@
   }
 
   function handleMouseDown(event) {
+    if (Date.now() < ignoreClearUntil) {
+      return;
+    }
     const target = event.target;
     const inPopup = target instanceof Element && target.closest(".web-unlocker-popup");
     const isButton =
@@ -697,4 +800,15 @@
 
   document.addEventListener("mouseup", handleMouseUp);
   document.addEventListener("mousedown", handleMouseDown);
+
+  if (DEBUG) {
+    document.addEventListener(
+      "pointerdown",
+      (event) => {
+        const elements = document.elementsFromPoint(event.clientX, event.clientY);
+        debug("Pointerdown elementsFromPoint", elements);
+      },
+      true,
+    );
+  }
 })();

@@ -9,6 +9,28 @@ import { BACKEND_BASE_URL } from "./config.js";
 const SESSION_KEY = "session";
 const USAGE_KEY = "usage_snapshot";
 const REFRESH_WINDOW_SECONDS = 120;
+let debugEnabled = false;
+const debug = (...args) => {
+  if (debugEnabled) {
+    console.debug("[Web Unlocker]", ...args);
+  }
+};
+
+chrome.storage.local
+  .get({ webUnlockerDebug: false })
+  .then(({ webUnlockerDebug }) => {
+    debugEnabled = Boolean(webUnlockerDebug);
+  })
+  .catch(() => {
+    debugEnabled = false;
+  });
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local" || !changes.webUnlockerDebug) {
+    return;
+  }
+  debugEnabled = Boolean(changes.webUnlockerDebug.newValue);
+});
 
 function getNowSeconds() {
   return Math.floor(Date.now() / 1000);
@@ -178,6 +200,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   (async () => {
     try {
+      debug("Incoming message", {
+        type: message.type,
+        tabId: sender.tab?.id,
+        frameId: sender.frameId,
+      });
       switch (message.type) {
         case "login": {
           const session = await loginWithPassword(
@@ -228,11 +255,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         case "SAVE_CITATION": {
           const result = await saveCitation(message.payload || {});
+          debug("SAVE_CITATION result", result);
           sendResponse(result);
           break;
         }
         case "WORK_IN_EDITOR": {
           const result = await workInEditor(message.payload || {});
+          debug("WORK_IN_EDITOR result", result);
           sendResponse(result);
           break;
         }
@@ -240,6 +269,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ error: "Unknown message type." });
       }
     } catch (error) {
+      debug("Message handler error", error);
       sendResponse({ error: error.message || "Unexpected error." });
     }
   })();

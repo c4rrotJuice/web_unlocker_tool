@@ -10,6 +10,7 @@ const signupButton = document.getElementById("signup");
 const logoutButton = document.getElementById("logout");
 const checkButton = document.getElementById("check-usage");
 const upgradeButton = document.getElementById("upgrade");
+const enableButton = document.getElementById("enable-copy-cite");
 const userEmailEl = document.getElementById("user-email");
 const userTierEl = document.getElementById("user-tier");
 const remainingEl = document.getElementById("remaining");
@@ -68,6 +69,22 @@ function sendMessage(type, payload = {}) {
 async function getCurrentTabUrl() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab?.url || null;
+}
+
+async function getCurrentTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab || null;
+}
+
+function isRestrictedUrl(url) {
+  if (!url) return true;
+  return (
+    url.startsWith("chrome://") ||
+    url.startsWith("chrome-extension://") ||
+    url.startsWith("edge://") ||
+    url.startsWith("about:") ||
+    url.startsWith("moz-extension://")
+  );
 }
 
 async function loadSession() {
@@ -171,6 +188,24 @@ checkButton.addEventListener("click", async () => {
 
 upgradeButton.addEventListener("click", () => {
   chrome.tabs.create({ url: `${BACKEND_BASE_URL}/static/pricing.html` });
+});
+
+enableButton.addEventListener("click", async () => {
+  setStatus("Enabling Copy+Cite…");
+  try {
+    const tab = await getCurrentTab();
+    if (!tab?.id || isRestrictedUrl(tab.url)) {
+      setStatus("Cannot run on this page.", true);
+      return;
+    }
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["content/unlock_content.js"],
+    });
+    setStatus("Copy+Cite enabled on this page.");
+  } catch (error) {
+    setStatus("Failed to inject content script.", true);
+  }
 });
 
 loadSession();

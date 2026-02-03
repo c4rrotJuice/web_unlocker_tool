@@ -1,5 +1,8 @@
 (() => {
-  const DEBUG = false;
+  const DEBUG =
+    window.__webUnlockerDebug === true ||
+    window.__WEB_UNLOCKER_DEBUG__ === true ||
+    window.localStorage?.getItem("webUnlockerDebug") === "1";
   const debug = (...args) => {
     if (DEBUG) {
       console.debug("[Web Unlocker]", ...args);
@@ -26,8 +29,24 @@
   // Guard flag prevents repeated enable toasts on reinjection.
   const ENABLE_TOAST_FLAG = "__WEB_UNLOCKER_ENABLED__";
 
+  let styleInjectQueued = false;
   function injectStyles() {
     if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    if (!document.head) {
+      if (!styleInjectQueued) {
+        styleInjectQueued = true;
+        debug("Styles deferred; document.head not ready yet.");
+        document.addEventListener(
+          "DOMContentLoaded",
+          () => {
+            styleInjectQueued = false;
+            injectStyles();
+          },
+          { once: true },
+        );
+      }
       return;
     }
     const style = document.createElement("style");
@@ -310,12 +329,15 @@
   }
 
   function sendMessage(type, payload) {
+    debug("Sending message", { type });
     return new Promise((resolve) => {
       chrome.runtime.sendMessage({ type, payload }, (response) => {
         if (chrome.runtime.lastError) {
+          debug("Message error", chrome.runtime.lastError.message);
           resolve({ error: chrome.runtime.lastError.message });
           return;
         }
+        debug("Message response", { type, response });
         resolve(response);
       });
     });
@@ -389,6 +411,7 @@
   function buildPopup() {
     closePopup();
     const selectionText = state.selectionText;
+    debug("Building popup", { selectionLength: selectionText.length });
     const url = window.location.href;
     const title = document.title || "Untitled Page";
     const accessed = new Date().toLocaleDateString("en-US", {
@@ -543,8 +566,13 @@
     });
 
     const root = document.body || document.documentElement;
+    if (!root) {
+      debug("Popup aborted; no root element available.");
+      return;
+    }
     root.appendChild(backdrop);
     root.appendChild(popup);
+    debug("Popup injected.");
     document.addEventListener("keydown", handleKeydown);
 
     function updateCustomPreview() {
@@ -576,11 +604,22 @@
     button.style.left = `${Math.max(left, 8)}px`;
     button.style.top = `${Math.max(top, 8)}px`;
     button.addEventListener("click", () => {
+      debug("Copy button clicked; building popup.");
       removeCopyButton();
-      buildPopup();
+      try {
+        buildPopup();
+      } catch (error) {
+        debug("Popup build failed", error);
+      }
     });
 
-    document.body.appendChild(button);
+    const root = document.body || document.documentElement;
+    if (!root) {
+      debug("Copy button skipped; no root element available.");
+      return;
+    }
+    root.appendChild(button);
+    debug("Copy button injected.");
   }
 
   function handleMouseUp(event) {
@@ -590,6 +629,7 @@
     }
     const selection = window.getSelection();
     const text = selection ? selection.toString().trim() : "";
+    debug("Mouseup selection", { length: text.length });
     if (!text) {
       removeCopyButton();
       return;
@@ -604,6 +644,7 @@
         rect = selection.getRangeAt(0).getBoundingClientRect();
       }
     } catch (error) {
+      debug("Selection rect failed", error);
       rect = null;
     }
     if (!rect) {
@@ -611,9 +652,11 @@
         left: event.pageX,
         bottom: event.pageY,
       };
+      debug("Using fallback rect", fallbackRect);
       showCopyButton(fallbackRect);
       return;
     }
+    debug("Selection rect", rect);
     showCopyButton(rect);
   }
 
@@ -626,6 +669,14 @@
       removeCopyButton();
     }
   }
+
+  debug("Content script init", {
+    url: window.location.href,
+    top: window.top === window,
+    readyState: document.readyState,
+    hasBody: Boolean(document.body),
+    hasHead: Boolean(document.head),
+  });
 
   injectStyles();
   enableSelection();

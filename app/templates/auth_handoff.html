@@ -76,7 +76,10 @@
           });
 
           if (!response.ok) {
-            let message = "Handoff code expired. Please sign in again.";
+            let message =
+              response.status >= 500
+                ? "Server error, try again."
+                : "Handoff code expired. Please sign in again.";
             try {
               const errorData = await response.json();
               if (errorData && typeof errorData.detail === "string") {

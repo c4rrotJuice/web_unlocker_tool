@@ -235,7 +235,19 @@ async def auth_page(request: Request):
 
 @app.get("/auth/handoff", response_class=HTMLResponse)
 async def auth_handoff_page(request: Request):
-    return templates.TemplateResponse("auth_handoff.html", {"request": request})
+    return templates.TemplateResponse(
+        "auth_handoff.html",
+        {
+            "request": request,
+            "supabase_url": SUPABASE_URL,
+            "supabase_key": SUPABASE_KEY,
+        },
+    )
+
+
+@app.get("/login")
+async def login_redirect():
+    return RedirectResponse("/static/auth.html")
 
 
 @app.get("/dashboard", response_class=HTMLResponse)

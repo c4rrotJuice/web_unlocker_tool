@@ -25,6 +25,9 @@ HANDOFF_RATE_LIMIT = 5
 
 class HandoffRequest(BaseModel):
     redirect_path: str | None = None
+    refresh_token: str | None = None
+    expires_in: int | None = None
+    token_type: str | None = None
 
 
 class HandoffExchangeRequest(BaseModel):
@@ -35,6 +38,8 @@ def _normalize_redirect_path(path: str | None) -> str:
     if not path:
         return "/editor"
     if not path.startswith("/"):
+        return "/editor"
+    if "://" in path:
         return "/editor"
     if "//" in path:
         return "/editor"
@@ -74,6 +79,9 @@ async def create_handoff(request: Request, payload: HandoffRequest):
     await _rate_limit_handoff(request, user.id)
 
     redirect_path = _normalize_redirect_path(payload.redirect_path)
+    refresh_token = (payload.refresh_token or "").strip()
+    if not refresh_token:
+        raise HTTPException(status_code=400, detail="Missing refresh token.")
     code = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=HANDOFF_TTL_SECONDS)
 
@@ -87,6 +95,9 @@ async def create_handoff(request: Request, payload: HandoffRequest):
                 "redirect_path": redirect_path,
                 "expires_at": expires_at.isoformat(),
                 "access_token": token,
+                "refresh_token": refresh_token,
+                "expires_in": payload.expires_in,
+                "token_type": payload.token_type,
             }
         )
         .execute()
@@ -130,8 +141,27 @@ async def exchange_handoff(payload: HandoffExchangeRequest):
             raise HTTPException(status_code=400, detail="Invalid code expiry.")
 
     access_token = record.get("access_token")
+    refresh_token = record.get("refresh_token")
     if not access_token:
         raise HTTPException(status_code=400, detail="Code not exchangeable.")
+    if not refresh_token:
+        raise HTTPException(status_code=400, detail="Code missing refresh token.")
+
+    try:
+        user_res = supabase_anon.auth.get_user(access_token)
+        user = user_res.user
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid access token.") from exc
+
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid access token.")
+
+    if hasattr(user, "model_dump"):
+        user_payload = user.model_dump()
+    elif hasattr(user, "dict"):
+        user_payload = user.dict()
+    else:
+        user_payload = user
 
     update_res = (
         supabase_admin
@@ -140,6 +170,9 @@ async def exchange_handoff(payload: HandoffExchangeRequest):
             {
                 "used_at": datetime.now(timezone.utc).isoformat(),
                 "access_token": None,
+                "refresh_token": None,
+                "expires_in": None,
+                "token_type": None,
             }
         )
         .eq("id", record.get("id"))
@@ -151,6 +184,11 @@ async def exchange_handoff(payload: HandoffExchangeRequest):
 
     response = JSONResponse(
         {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_in": record.get("expires_in") or 0,
+            "token_type": record.get("token_type") or "bearer",
+            "user": user_payload,
             "redirect_path": record.get("redirect_path") or "/editor",
         }
     )

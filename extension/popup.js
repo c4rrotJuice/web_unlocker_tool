@@ -53,9 +53,19 @@ function renderSignedIn(session, usage) {
   }
   if (usage) {
     usageInfoEl.classList.remove("hidden");
+    const periodLabel = usage.usage_period
+      ? usage.usage_period === "day"
+        ? "today"
+        : usage.usage_period === "week"
+          ? "this week"
+          : "unlimited"
+      : "this week";
     remainingEl.textContent =
-      usage.remaining < 0 ? "Unlimited" : `${usage.remaining}`;
-    resetAtEl.textContent = formatReset(usage.reset_at);
+      usage.remaining < 0
+        ? "Unlimited usages"
+        : `${usage.remaining} usages ${periodLabel}`;
+    resetAtEl.textContent =
+      usage.remaining < 0 ? "--" : formatReset(usage.reset_at);
   } else {
     usageInfoEl.classList.add("hidden");
   }
@@ -204,6 +214,23 @@ enableButton.addEventListener("click", async () => {
     if (!tab?.id || isRestrictedUrl(tab.url)) {
       setStatus("Cannot run on this page.", true);
       return;
+    }
+    const usage = await sendMessage("check-unlock", { url: tab.url });
+    if (usage?.error) {
+      setStatus(`Extension error: ${usage.error}`, true);
+      return;
+    }
+    if (usage?.status === 401) {
+      renderSignedOut();
+      setStatus("Session expired. Please sign in again.", true);
+      return;
+    }
+    if (usage?.data) {
+      renderSignedIn((await sendMessage("get-session")).session, usage.data);
+      if (!usage.data.allowed) {
+        setStatus("Limit reached. Upgrade for more unlocks.", true);
+        return;
+      }
     }
     await chrome.scripting.executeScript({
       // Inject into all frames so iframe selections can be handled.

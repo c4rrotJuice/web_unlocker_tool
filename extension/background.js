@@ -61,6 +61,10 @@ async function clearSession() {
   await clearStorage([SESSION_KEY]);
 }
 
+function openLoginPage() {
+  chrome.tabs.create({ url: `${BACKEND_BASE_URL}/static/auth.html` });
+}
+
 async function setUsageSnapshot(snapshot) {
   await writeStorage({ [USAGE_KEY]: snapshot });
 }
@@ -93,6 +97,78 @@ async function ensureValidSession() {
     await clearStorage([USAGE_KEY]);
     return null;
   }
+}
+
+function decodeJwtExp(token) {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+  const padded = payload.padEnd(Math.ceil(payload.length / 4) * 4, "=");
+  try {
+    const decoded = JSON.parse(atob(padded));
+    return typeof decoded.exp === "number" ? decoded.exp : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function getValidAccessToken({
+  minTtlSeconds = 90,
+  forceRefresh = false,
+} = {}) {
+  const session = await getSession();
+  if (!session) {
+    return null;
+  }
+
+  const now = getNowSeconds();
+  const tokenExp = decodeJwtExp(session.access_token) || session.expires_at;
+  const secondsLeft = tokenExp ? tokenExp - now : 0;
+  debug("Token TTL check", {
+    exp: tokenExp,
+    secondsLeft,
+    minTtlSeconds,
+    forceRefresh,
+  });
+
+  // minTtlSeconds avoids using a token that may expire during a multi-step flow.
+  if (!forceRefresh && secondsLeft > minTtlSeconds) {
+    return session.access_token;
+  }
+
+  try {
+    debug("Refreshing session", { reason: forceRefresh ? "forced" : "ttl" });
+    const refreshed = await refreshSession(session.refresh_token);
+    const nextSession = {
+      ...session,
+      ...refreshed,
+    };
+    await setSession(nextSession);
+    const refreshedExp =
+      decodeJwtExp(nextSession.access_token) || nextSession.expires_at;
+    debug("Refresh success", { exp: refreshedExp });
+    return nextSession.access_token;
+  } catch (error) {
+    debug("Refresh failed", { message: error?.message || "unknown" });
+    await clearSession();
+    await clearStorage([USAGE_KEY]);
+    return null;
+  }
+}
+
+function isAuthFailure(status, data) {
+  if (status !== 401 && status !== 403) {
+    return false;
+  }
+  const message = `${data?.detail || data?.error || ""}`.toLowerCase();
+  return (
+    message.includes("jwt") ||
+    message.includes("token") ||
+    message.includes("expired") ||
+    message.includes("invalid") ||
+    status === 401
+  );
 }
 
 async function fetchUnlockPermit(payload) {
@@ -161,9 +237,13 @@ async function saveCitation(payload) {
 
 async function workInEditor(payload) {
   try {
-    const session = await ensureValidSession();
+    const accessToken = await getValidAccessToken();
+    if (!accessToken) {
+      return { error: "session_expired", status: 401 };
+    }
+    const session = await getSession();
     if (!session) {
-      return { error: "unauthenticated", status: 401 };
+      return { error: "session_expired", status: 401 };
     }
 
     const response = await apiFetch(
@@ -172,7 +252,7 @@ async function workInEditor(payload) {
         method: "POST",
         body: JSON.stringify(payload),
       },
-      session.access_token,
+      accessToken,
     );
 
     if (response.status === 401) {
@@ -190,7 +270,12 @@ async function workInEditor(payload) {
     if (!response.ok) {
       return {
         status: response.status,
-        error: data?.detail || data?.error || "request_failed",
+        error:
+          data?.detail ||
+          data?.error ||
+          (isAuthFailure(response.status, data)
+            ? "session_expired"
+            : "request_failed"),
       };
     }
 
@@ -229,19 +314,24 @@ async function workInEditor(payload) {
     };
 
     const redirectPath = normalizeRedirectPath(data.editor_url);
-    const handoffResponse = await apiFetch(
-      "/api/auth/handoff",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          redirect_path: redirectPath,
-          refresh_token: session.refresh_token,
-          expires_in: session.expires_in,
-          token_type: session.token_type,
-        }),
-      },
-      session.access_token,
-    );
+    const handoffPayload = {
+      redirect_path: redirectPath,
+      refresh_token: session.refresh_token,
+      expires_in: session.expires_in,
+      token_type: session.token_type,
+    };
+
+    const createHandoff = async (token) =>
+      apiFetch(
+        "/api/auth/handoff",
+        {
+          method: "POST",
+          body: JSON.stringify(handoffPayload),
+        },
+        token,
+      );
+
+    let handoffResponse = await createHandoff(accessToken);
 
     let handoffData = null;
     try {
@@ -250,14 +340,42 @@ async function workInEditor(payload) {
       // ignore
     }
 
+    if (!handoffResponse.ok && isAuthFailure(handoffResponse.status, handoffData)) {
+      // Retry once after a forced refresh to avoid infinite loops.
+      debug("Handoff auth failed, retrying once", {
+        status: handoffResponse.status,
+      });
+      const refreshedToken = await getValidAccessToken({
+        minTtlSeconds: 0,
+        forceRefresh: true,
+      });
+      if (refreshedToken) {
+        handoffResponse = await createHandoff(refreshedToken);
+        try {
+          handoffData = await handoffResponse.json();
+        } catch (error) {
+          // ignore
+        }
+        debug("Handoff retry outcome", {
+          status: handoffResponse.status,
+          ok: handoffResponse.ok,
+        });
+      }
+    }
+
     if (!handoffResponse.ok) {
-      if (handoffResponse.status === 401) {
+      if (handoffResponse.status === 401 || isAuthFailure(handoffResponse.status, handoffData)) {
         await clearSession();
         await clearStorage([USAGE_KEY]);
       }
       return {
         status: handoffResponse.status,
-        error: handoffData?.detail || handoffData?.error || "handoff_failed",
+        error:
+          handoffData?.detail ||
+          handoffData?.error ||
+          (isAuthFailure(handoffResponse.status, handoffData)
+            ? "session_expired"
+            : "handoff_failed"),
       };
     }
 
@@ -314,6 +432,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case "logout": {
           await clearSession();
           await clearStorage([USAGE_KEY]);
+          sendResponse({ success: true });
+          break;
+        }
+        case "OPEN_LOGIN": {
+          openLoginPage();
           sendResponse({ success: true });
           break;
         }

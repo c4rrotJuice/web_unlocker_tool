@@ -8,14 +8,15 @@ from pydantic import BaseModel
 
 from app.routes.http import http_client
 from app.services.entitlements import normalize_account_type
-from app.services.IP_usage_limit import get_week_start_gmt3
+from app.services.IP_usage_limit import get_today_gmt3, get_week_start_gmt3
 from app.routes.citations import CitationInput, create_citation
 from app.routes.editor import _doc_expiration, _get_account_type
 
 
 router = APIRouter()
 
-EXTENSION_WEEKLY_LIMIT = 3
+EXTENSION_WEEKLY_LIMIT = 5
+EXTENSION_DAILY_LIMIT = 5
 EXTENSION_EDITOR_WEEKLY_LIMIT = 500
 PAID_TIERS = {"standard", "pro"}
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -45,6 +46,19 @@ def _get_reset_at() -> tuple[str, int]:
     reset_at = week_start + timedelta(days=7)
     ttl_seconds = max(int((reset_at - now).total_seconds()), 60)
     return reset_at.isoformat(), ttl_seconds
+
+
+def _get_daily_reset_at() -> tuple[str, int]:
+    timezone = pytz.timezone("Africa/Kampala")
+    now = datetime.now(timezone)
+    next_day = (now + timedelta(days=1)).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    ttl_seconds = max(int((next_day - now).total_seconds()), 60)
+    return next_day.isoformat(), ttl_seconds
 
 
 def _iso_week_key(now: datetime) -> str:
@@ -82,28 +96,38 @@ async def extension_unlock_permit(request: Request, payload: ExtensionPermitRequ
 
     account_type = normalize_account_type(request.state.account_type)
     response_account_type = "freemium" if account_type == "free" else account_type
-    reset_at, ttl_seconds = _get_reset_at()
+    usage_period = "week"
 
-    if account_type != "free":
+    if account_type == "pro":
         return {
             "allowed": True,
             "remaining": -1,
-            "reset_at": reset_at,
+            "reset_at": None,
             "reason": "ok",
             "account_type": response_account_type,
+            "usage_period": "unlimited",
         }
 
-    usage_key = f"extension_usage_week:{user_id}:{get_week_start_gmt3()}"
+    if account_type == "standard":
+        reset_at, ttl_seconds = _get_daily_reset_at()
+        usage_key = f"extension_usage_day:{user_id}:{get_today_gmt3()}"
+        usage_limit = EXTENSION_DAILY_LIMIT
+        usage_period = "day"
+    else:
+        reset_at, ttl_seconds = _get_reset_at()
+        usage_key = f"extension_usage_week:{user_id}:{get_week_start_gmt3()}"
+        usage_limit = EXTENSION_WEEKLY_LIMIT
+
     usage_count = int(await request.app.state.redis_get(usage_key) or 0)
 
-    allowed = usage_count < EXTENSION_WEEKLY_LIMIT
+    allowed = usage_count < usage_limit
     if allowed and not payload.dry_run:
         await request.app.state.redis_incr(usage_key)
         if usage_count == 0:
             await request.app.state.redis_expire(usage_key, ttl_seconds)
         usage_count += 1
 
-    remaining = max(EXTENSION_WEEKLY_LIMIT - usage_count, 0)
+    remaining = max(usage_limit - usage_count, 0)
     reason = "ok" if allowed else "limit_reached"
 
     return {
@@ -112,6 +136,7 @@ async def extension_unlock_permit(request: Request, payload: ExtensionPermitRequ
         "reset_at": reset_at,
         "reason": reason,
         "account_type": response_account_type,
+        "usage_period": usage_period,
     }
 
 

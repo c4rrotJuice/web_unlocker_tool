@@ -13,7 +13,11 @@ from supabase import create_client
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-DEBUG_AUTH = os.getenv("DEBUG_AUTH", "").lower() in {"1", "true", "yes"}
+DEBUG_AUTH_HANDOFF = os.getenv("DEBUG_AUTH_HANDOFF", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 supabase_anon = create_client(SUPABASE_URL, SUPABASE_KEY)
 supabase_admin = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
@@ -25,8 +29,16 @@ HANDOFF_RATE_LIMIT = 5
 
 
 def _debug_log(message: str) -> None:
-    if DEBUG_AUTH:
+    if DEBUG_AUTH_HANDOFF:
         print(f"[auth_handoff] {message}")
+
+
+def _redact_secrets(message: str, *, tokens: list[str]) -> str:
+    redacted = message
+    for token in tokens:
+        if token:
+            redacted = redacted.replace(token, "<redacted>")
+    return redacted
 
 
 class HandoffRequest(BaseModel):
@@ -90,6 +102,11 @@ async def create_handoff(request: Request, payload: HandoffRequest):
         raise HTTPException(status_code=400, detail="Missing refresh token.")
     code = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=HANDOFF_TTL_SECONDS)
+    code_prefix = code[:6]
+    _debug_log(
+        "create started: "
+        f"user_id={user.id} code_prefix={code_prefix} redirect_path={redirect_path}"
+    )
 
     insert_res = (
         supabase_admin
@@ -109,8 +126,23 @@ async def create_handoff(request: Request, payload: HandoffRequest):
         .execute()
     )
 
-    if insert_res.error:
+    data = getattr(insert_res, "data", None)
+    if not data:
+        err = getattr(insert_res, "error", None)
+        if err:
+            safe_error = _redact_secrets(
+                str(err),
+                tokens=[token, refresh_token, code],
+            )
+            _debug_log(
+                "create failed: "
+                f"code_prefix={code_prefix} error={safe_error}"
+            )
+        else:
+            _debug_log(f"create failed: code_prefix={code_prefix} no data returned")
         raise HTTPException(status_code=500, detail="Failed to create handoff code.")
+
+    _debug_log(f"create success: code_prefix={code_prefix}")
 
     return {"code": code, "redirect_path": redirect_path}
 

@@ -160,33 +160,47 @@ async function saveCitation(payload) {
 }
 
 async function workInEditor(payload) {
-  const session = await ensureValidSession();
-  if (!session) {
-    return { error: "unauthenticated", status: 401 };
-  }
-
-  const response = await apiFetch(
-    "/api/extension/selection",
-    {
-      method: "POST",
-      body: JSON.stringify(payload),
-    },
-    session.access_token,
-  );
-
-  if (response.status === 401) {
-    await clearSession();
-    await clearStorage([USAGE_KEY]);
-  }
-
-  let data = null;
   try {
-    data = await response.json();
-  } catch (error) {
-    // ignore
-  }
+    const session = await ensureValidSession();
+    if (!session) {
+      return { error: "unauthenticated", status: 401 };
+    }
 
-  if (response.ok && data?.editor_url) {
+    const response = await apiFetch(
+      "/api/extension/selection",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      session.access_token,
+    );
+
+    if (response.status === 401) {
+      await clearSession();
+      await clearStorage([USAGE_KEY]);
+    }
+
+    let data = null;
+    try {
+      data = await response.json();
+    } catch (error) {
+      // ignore
+    }
+
+    if (!response.ok) {
+      return {
+        status: response.status,
+        error: data?.detail || data?.error || "request_failed",
+      };
+    }
+
+    if (!data?.editor_url) {
+      return {
+        status: response.status,
+        error: "missing_editor_url",
+      };
+    }
+
     const normalizeRedirectPath = (editorUrl) => {
       if (!editorUrl) {
         return "/editor";
@@ -236,24 +250,32 @@ async function workInEditor(payload) {
       // ignore
     }
 
-    if (handoffResponse.ok && handoffData?.code) {
-      const handoffUrl = `${BACKEND_BASE_URL}/auth/handoff?code=${encodeURIComponent(
-        handoffData.code,
-      )}`;
-      chrome.tabs.create({ url: handoffUrl });
-      return { status: response.status, data };
+    if (!handoffResponse.ok) {
+      if (handoffResponse.status === 401) {
+        await clearSession();
+        await clearStorage([USAGE_KEY]);
+      }
+      return {
+        status: handoffResponse.status,
+        error: handoffData?.detail || handoffData?.error || "handoff_failed",
+      };
     }
 
-    if (handoffResponse.status === 401) {
-      await clearSession();
-      await clearStorage([USAGE_KEY]);
-      return { status: 401, data: handoffData };
+    if (!handoffData?.code) {
+      return {
+        status: handoffResponse.status,
+        error: "handoff_code_missing",
+      };
     }
 
-    chrome.tabs.create({ url: `${BACKEND_BASE_URL}/static/auth.html` });
+    const handoffUrl = `${BACKEND_BASE_URL}/auth/handoff?code=${encodeURIComponent(
+      handoffData.code,
+    )}`;
+    chrome.tabs.create({ url: handoffUrl });
+    return { status: response.status, data };
+  } catch (error) {
+    return { error: error?.message || "unexpected_error" };
   }
-
-  return { status: response.status, data };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

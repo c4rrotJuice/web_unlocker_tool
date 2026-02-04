@@ -32,10 +32,17 @@
         font-size: 15px;
         margin-bottom: 16px;
       }
-      .actions a {
-        display: inline-block;
+      .actions {
         margin-top: 12px;
-        color: #2563eb;
+      }
+      .actions a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 18px;
+        border-radius: 999px;
+        color: #ffffff;
+        background: #2563eb;
         text-decoration: none;
         font-weight: 600;
       }
@@ -43,18 +50,20 @@
   </head>
   <body>
     <div class="card">
-      <div class="title">Signing you in…</div>
+      <div class="title" id="handoffTitle">Signing you in…</div>
       <div class="status" id="handoffStatus">Exchanging secure handoff code.</div>
       <div class="actions" id="handoffActions" style="display: none;">
-        <a href="/login">Go to login</a>
+        <a href="/static/auth.html">Sign in</a>
       </div>
     </div>
 
     <script>
+      const titleEl = document.getElementById("handoffTitle");
       const statusEl = document.getElementById("handoffStatus");
       const actionsEl = document.getElementById("handoffActions");
 
-      function setError(message) {
+      function setError(message, title = "Signed out") {
+        titleEl.textContent = title;
         statusEl.textContent = message;
         actionsEl.style.display = "block";
       }
@@ -80,15 +89,21 @@
               response.status >= 500
                 ? "Server error, try again."
                 : "Handoff code expired. Please sign in again.";
+            let title = "Signed out";
             try {
               const errorData = await response.json();
-              if (errorData && typeof errorData.detail === "string") {
+              if (errorData && errorData.detail === "SIGNED_OUT") {
+                message = "You’ve been away for a while. Please sign in again.";
+              } else if (errorData && typeof errorData.detail === "string") {
                 message = errorData.detail;
               }
             } catch (error) {
               // Ignore JSON parsing errors and keep default message.
             }
-            setError(message);
+            if (response.status >= 500) {
+              title = "Something went wrong";
+            }
+            setError(message, title);
             return;
           }
 

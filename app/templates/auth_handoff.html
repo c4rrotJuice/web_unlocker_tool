@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Signing you in…</title>
+    <style>
+      body {
+        font-family: "Inter", Arial, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        margin: 0;
+        background: #f5f6fb;
+        color: #1f2937;
+      }
+      .card {
+        background: #ffffff;
+        border-radius: 16px;
+        padding: 32px;
+        width: min(420px, 90vw);
+        box-shadow: 0 24px 48px rgba(15, 23, 42, 0.12);
+        text-align: center;
+      }
+      .title {
+        font-size: 20px;
+        font-weight: 600;
+        margin-bottom: 12px;
+      }
+      .status {
+        font-size: 15px;
+        margin-bottom: 16px;
+      }
+      .actions a {
+        display: inline-block;
+        margin-top: 12px;
+        color: #2563eb;
+        text-decoration: none;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="title">Signing you in…</div>
+      <div class="status" id="handoffStatus">Exchanging secure handoff code.</div>
+      <div class="actions" id="handoffActions" style="display: none;">
+        <a href="/static/auth.html">Go to login</a>
+      </div>
+    </div>
+
+    <script>
+      const statusEl = document.getElementById("handoffStatus");
+      const actionsEl = document.getElementById("handoffActions");
+
+      function setError(message) {
+        statusEl.textContent = message;
+        actionsEl.style.display = "block";
+      }
+
+      async function exchangeCode() {
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get("code");
+        if (!code) {
+          setError("Missing handoff code. Please sign in again.");
+          return;
+        }
+
+        try {
+          const response = await fetch("/api/auth/handoff/exchange", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code }),
+          });
+
+          if (!response.ok) {
+            setError("Handoff code expired. Please sign in again.");
+            return;
+          }
+
+          const data = await response.json();
+          const redirectPath = data.redirect_path || "/editor";
+          window.location.replace(redirectPath);
+        } catch (error) {
+          setError("Unable to complete sign-in. Please try again.");
+        }
+      }
+
+      exchangeCode();
+    </script>
+  </body>
+</html>

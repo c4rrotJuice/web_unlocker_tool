@@ -25,7 +25,7 @@ from app.routes import render
 from app.services import authentication
 from app.services.entitlements import normalize_account_type
 from app.services.priority_limiter import PriorityLimiter
-from app.routes import dashboard, history, citations, bookmarks, search, payments, editor, extension
+from app.routes import dashboard, history, citations, bookmarks, search, payments, editor, extension, auth_handoff
 
 # --------------------------------------------------
 # ENV + SUPABASE
@@ -105,7 +105,13 @@ PUBLIC_PATH_PREFIXES = (
     "/static",
 )
 
+PUBLIC_PATHS = {
+    "/api/auth/handoff/exchange",
+}
+
 def is_public_path(path: str) -> bool:
+    if path in PUBLIC_PATHS:
+        return True
     if path == "/":
         return True
     for prefix in PUBLIC_PATH_PREFIXES:
@@ -147,9 +153,7 @@ async def auth_middleware(request: Request, call_next):
 
         except Exception as e:
             print("[AuthMiddleware] Token validation failed:", e)
-            if is_public_path:
-                return RedirectResponse("/static/auth.html")
-            if is_public_path:
+            if public_path:
                 return await call_next(request)
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
@@ -229,6 +233,11 @@ async def auth_page(request: Request):
     return templates.TemplateResponse("auth.html", {"request": request})
 
 
+@app.get("/auth/handoff", response_class=HTMLResponse)
+async def auth_handoff_page(request: Request):
+    return templates.TemplateResponse("auth_handoff.html", {"request": request})
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request})
@@ -239,6 +248,7 @@ async def dashboard_page(request: Request):
 # --------------------------------------------------
 app.include_router(render.router)
 app.include_router(authentication.router)
+app.include_router(auth_handoff.router)
 app.include_router(dashboard.router)
 app.include_router(history.router)
 app.include_router(citations.router)

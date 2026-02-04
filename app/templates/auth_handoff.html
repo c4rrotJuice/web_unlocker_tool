@@ -50,32 +50,13 @@
       </div>
     </div>
 
-    <script type="module">
-      import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
-
+    <script>
       const statusEl = document.getElementById("handoffStatus");
       const actionsEl = document.getElementById("handoffActions");
-      const supabaseUrl = "{{ supabase_url }}";
-      const supabaseKey = "{{ supabase_key }}";
 
       function setError(message) {
         statusEl.textContent = message;
         actionsEl.style.display = "block";
-      }
-
-      function getSupabaseClient() {
-        if (!supabaseUrl || !supabaseKey) {
-          setError("Missing Supabase configuration. Please sign in again.");
-          return null;
-        }
-
-        return createClient(supabaseUrl, supabaseKey, {
-          auth: {
-            autoRefreshToken: true,
-            persistSession: true,
-            detectSessionInUrl: false,
-          },
-        });
       }
 
       async function exchangeCode() {
@@ -90,48 +71,35 @@
           const response = await fetch("/api/auth/handoff/exchange", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            credentials: "include",
             body: JSON.stringify({ code }),
           });
 
           if (!response.ok) {
-            setError("Handoff code expired. Please sign in again.");
+            let message = "Handoff code expired. Please sign in again.";
+            try {
+              const errorData = await response.json();
+              if (errorData && typeof errorData.detail === "string") {
+                message = errorData.detail;
+              }
+            } catch (error) {
+              // Ignore JSON parsing errors and keep default message.
+            }
+            setError(message);
             return;
           }
 
-          const data = await response.json();
+          let data = {};
+          try {
+            data = await response.json();
+          } catch (error) {
+            // Ignore JSON parsing errors; fall back to default redirect.
+          }
           const redirectPath = data.redirect_path || "/editor";
-          const supabase = getSupabaseClient();
-          if (!supabase) {
-            return;
-          }
-
-          if (!data.access_token || !data.refresh_token) {
-            setError("Missing session data. Please log in again.");
-            return;
-          }
-
-          const { error } = await supabase.auth.setSession({
-            access_token: data.access_token,
-            refresh_token: data.refresh_token,
-          });
-
-          if (error) {
-            setError("Unable to finish sign-in. Please log in again.");
-            return;
-          }
-
-          if (data.access_token) {
-            localStorage.setItem("access_token", data.access_token);
-          }
-
-          const { data: userData, error: userError } =
-            await supabase.auth.getUser();
-          if (userError || !userData?.user) {
-            setError("Unable to verify session. Please log in again.");
-            return;
-          }
-
-          window.location.replace(redirectPath);
+          statusEl.textContent = "Signed in. Redirecting…";
+          setTimeout(() => {
+            window.location.replace(redirectPath);
+          }, 150);
         } catch (error) {
           setError("Unable to complete sign-in. Please try again.");
         }

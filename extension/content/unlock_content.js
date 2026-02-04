@@ -81,13 +81,11 @@
 
       .web-unlocker-backdrop {
         position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
+        inset: 0;
         backdrop-filter: blur(5px);
         background: rgba(0,0,0,0.4);
-        z-index: 2147483644;
+        z-index: 2147483646;
+        pointer-events: auto;
       }
 
       .web-unlocker-popup {
@@ -96,20 +94,51 @@
         left: 50%;
         transform: translate(-50%, -50%);
         background: #fff;
-        padding: 22px;
         border-radius: 12px;
         box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-        z-index: 2147483645;
-        width: 92%;
-        max-width: 560px;
+        z-index: 2147483647;
+        width: min(720px, 92vw);
+        max-height: 85vh;
         border: 1px solid #e2e8f0;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         color: #1f2937;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        pointer-events: auto;
       }
 
-      .web-unlocker-popup h3 {
-        margin: 0 0 12px;
+      .web-unlocker-popup-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 18px 22px 12px;
+        border-bottom: 1px solid #e5e7eb;
+      }
+
+      .web-unlocker-popup-header h3 {
+        margin: 0;
         font-size: 18px;
+      }
+
+      .web-unlocker-popup-close {
+        background: transparent;
+        border: none;
+        font-size: 20px;
+        line-height: 1;
+        color: #6b7280;
+        cursor: pointer;
+        padding: 4px 6px;
+      }
+
+      .web-unlocker-popup-close:hover {
+        color: #111827;
+      }
+
+      .web-unlocker-popup-body {
+        padding: 16px 22px;
+        overflow-y: auto;
+        flex: 1 1 auto;
       }
 
       .web-unlocker-popup pre {
@@ -123,7 +152,8 @@
         word-wrap: break-word;
       }
 
-      .web-unlocker-popup button {
+      .web-unlocker-popup-body button,
+      .web-unlocker-footer button {
         background-color: #3b82f6;
         color: #fff;
         padding: 8px 12px;
@@ -135,16 +165,19 @@
         transition: background-color 0.2s;
       }
 
-      .web-unlocker-popup button.secondary {
+      .web-unlocker-popup-body button.secondary,
+      .web-unlocker-footer button.secondary {
         background-color: #e5e7eb;
         color: #111827;
       }
 
-      .web-unlocker-popup button:hover {
+      .web-unlocker-popup-body button:hover,
+      .web-unlocker-footer button:hover {
         background-color: #2563eb;
       }
 
-      .web-unlocker-popup button.secondary:hover {
+      .web-unlocker-popup-body button.secondary:hover,
+      .web-unlocker-footer button.secondary:hover {
         background-color: #d1d5db;
       }
 
@@ -176,7 +209,8 @@
         display: flex;
         gap: 10px;
         flex-wrap: wrap;
-        margin-top: 10px;
+        padding: 12px 22px 18px;
+        border-top: 1px solid #e5e7eb;
       }
 
       .web-unlocker-toast {
@@ -254,6 +288,7 @@
     document.querySelector(".web-unlocker-popup")?.remove();
     document.querySelector(".web-unlocker-backdrop")?.remove();
     document.removeEventListener("keydown", handleKeydown);
+    unlockPageScroll();
   }
 
   function handleKeydown(event) {
@@ -356,7 +391,10 @@
   async function handleCopy(format, citationText, metadata) {
     const copied = await copyText(citationText);
     if (copied) {
-      showToast("Citation copied!");
+      const label = format === "custom" ? "Custom" : format.toUpperCase();
+      showToast(`Citation copied (${label}).`);
+      // Close quickly after a successful copy for a smoother flow.
+      closePopup();
     } else {
       showToast("Copy failed. Please try manually.", true);
     }
@@ -402,6 +440,39 @@
     closePopup();
   }
 
+  function lockPageScroll() {
+    const docEl = document.documentElement;
+    const body = document.body;
+    if (!docEl || !body) {
+      return;
+    }
+    if (docEl.dataset.webUnlockerScrollLocked === "1") {
+      return;
+    }
+    docEl.dataset.webUnlockerScrollLocked = "1";
+    docEl.dataset.webUnlockerPrevOverflow = docEl.style.overflow || "";
+    body.dataset.webUnlockerPrevOverflow = body.style.overflow || "";
+    // Prevent page scroll while the modal is open.
+    docEl.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+  }
+
+  function unlockPageScroll() {
+    const docEl = document.documentElement;
+    const body = document.body;
+    if (!docEl || !body) {
+      return;
+    }
+    if (docEl.dataset.webUnlockerScrollLocked !== "1") {
+      return;
+    }
+    docEl.style.overflow = docEl.dataset.webUnlockerPrevOverflow || "";
+    body.style.overflow = body.dataset.webUnlockerPrevOverflow || "";
+    delete docEl.dataset.webUnlockerScrollLocked;
+    delete docEl.dataset.webUnlockerPrevOverflow;
+    delete body.dataset.webUnlockerPrevOverflow;
+  }
+
   function buildPopup() {
     closePopup();
     const selectionText = state.selectionText;
@@ -425,10 +496,27 @@
     const formats = ["mla", "apa", "chicago", "harvard"];
     const popup = document.createElement("div");
     popup.className = "web-unlocker-popup";
+    popup.tabIndex = -1;
 
-    const header = document.createElement("h3");
-    header.textContent = "Cite This Selection";
+    const header = document.createElement("div");
+    header.className = "web-unlocker-popup-header";
+
+    const headerTitle = document.createElement("h3");
+    headerTitle.textContent = "Cite This Selection";
+    header.appendChild(headerTitle);
+
+    const headerClose = document.createElement("button");
+    headerClose.className = "web-unlocker-popup-close close-popup";
+    headerClose.type = "button";
+    headerClose.setAttribute("aria-label", "Close citation popup");
+    headerClose.textContent = "×";
+    header.appendChild(headerClose);
+
     popup.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "web-unlocker-popup-body";
+    // Scrollable body keeps the popup within the viewport.
 
     formats.forEach((format) => {
       const label = format.toUpperCase();
@@ -453,7 +541,7 @@
       button.textContent = `Copy ${label}`;
       row.appendChild(button);
 
-      popup.appendChild(row);
+      body.appendChild(row);
     });
 
     const customRow = document.createElement("div");
@@ -485,7 +573,7 @@
     customButton.textContent = "Copy Custom";
     customRow.appendChild(customButton);
 
-    popup.appendChild(customRow);
+    body.appendChild(customRow);
 
     const footer = document.createElement("div");
     footer.className = "web-unlocker-footer";
@@ -502,11 +590,16 @@
     closeButton.textContent = "Close";
     footer.appendChild(closeButton);
 
+    popup.appendChild(body);
     popup.appendChild(footer);
 
     const backdrop = document.createElement("div");
     backdrop.className = "web-unlocker-backdrop";
-    backdrop.addEventListener("click", closePopup);
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) {
+        closePopup();
+      }
+    });
 
     popup.addEventListener("click", async (event) => {
       const target = event.target;
@@ -568,6 +661,8 @@
     root.appendChild(popup);
     debug("Popup injected.");
     document.addEventListener("keydown", handleKeydown);
+    lockPageScroll();
+    popup.focus();
 
     function updateCustomPreview() {
       const template = customTemplateInput.value.trim();

@@ -201,16 +201,30 @@ async def exchange_handoff(payload: HandoffExchangeRequest):
         _debug_log(f"exchange rejected: code_prefix={code_prefix} missing refresh")
         raise HTTPException(status_code=400, detail="Code missing refresh token.")
 
+    user = None
     try:
         user_res = supabase_anon.auth.get_user(access_token)
         user = user_res.user
     except Exception as exc:
-        _debug_log(f"exchange rejected: code_prefix={code_prefix} invalid token")
-        raise HTTPException(status_code=400, detail="Invalid access token.") from exc
+        _debug_log(f"exchange token check failed: code_prefix={code_prefix} {exc}")
 
     if not user:
-        _debug_log(f"exchange rejected: code_prefix={code_prefix} no user")
-        raise HTTPException(status_code=400, detail="Invalid access token.")
+        try:
+            refresh_res = supabase_anon.auth.refresh_session(refresh_token)
+            refreshed_session = getattr(refresh_res, "session", None)
+            refreshed_access_token = getattr(refreshed_session, "access_token", None)
+            if refreshed_access_token:
+                access_token = refreshed_access_token
+                user_res = supabase_anon.auth.get_user(access_token)
+                user = user_res.user
+        except Exception as exc:
+            _debug_log(
+                f"exchange refresh failed: code_prefix={code_prefix} {exc}"
+            )
+
+    if not user:
+        _debug_log(f"exchange rejected: code_prefix={code_prefix} signed out")
+        raise HTTPException(status_code=401, detail="SIGNED_OUT")
 
     update_res = (
         supabase_admin

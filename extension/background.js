@@ -187,7 +187,37 @@ async function workInEditor(payload) {
   }
 
   if (response.ok && data?.editor_url) {
-    chrome.tabs.create({ url: `${BACKEND_BASE_URL}${data.editor_url}` });
+    const handoffResponse = await apiFetch(
+      "/api/auth/handoff",
+      {
+        method: "POST",
+        body: JSON.stringify({ redirect_path: data.editor_url }),
+      },
+      session.access_token,
+    );
+
+    let handoffData = null;
+    try {
+      handoffData = await handoffResponse.json();
+    } catch (error) {
+      // ignore
+    }
+
+    if (handoffResponse.ok && handoffData?.code) {
+      const handoffUrl = `${BACKEND_BASE_URL}/auth/handoff?code=${encodeURIComponent(
+        handoffData.code,
+      )}`;
+      chrome.tabs.create({ url: handoffUrl });
+      return { status: response.status, data };
+    }
+
+    if (handoffResponse.status === 401) {
+      await clearSession();
+      await clearStorage([USAGE_KEY]);
+      return { status: 401, data: handoffData };
+    }
+
+    chrome.tabs.create({ url: `${BACKEND_BASE_URL}/static/auth.html` });
   }
 
   return { status: response.status, data };

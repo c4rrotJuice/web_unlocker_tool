@@ -13,6 +13,7 @@ from supabase import create_client
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+DEBUG_AUTH = os.getenv("DEBUG_AUTH", "").lower() in {"1", "true", "yes"}
 
 supabase_anon = create_client(SUPABASE_URL, SUPABASE_KEY)
 supabase_admin = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
@@ -21,6 +22,11 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
 HANDOFF_TTL_SECONDS = 60
 HANDOFF_RATE_LIMIT = 5
+
+
+def _debug_log(message: str) -> None:
+    if DEBUG_AUTH:
+        print(f"[auth_handoff] {message}")
 
 
 class HandoffRequest(BaseModel):
@@ -113,7 +119,11 @@ async def create_handoff(request: Request, payload: HandoffRequest):
 async def exchange_handoff(payload: HandoffExchangeRequest):
     code = (payload.code or "").strip()
     if not code:
+        _debug_log("exchange rejected: missing code")
         raise HTTPException(status_code=400, detail="Missing code.")
+
+    code_prefix = code[:6]
+    _debug_log(f"exchange started: code_prefix={code_prefix}")
 
     res = (
         supabase_admin
@@ -125,10 +135,12 @@ async def exchange_handoff(payload: HandoffExchangeRequest):
     )
 
     if res.error or not res.data:
+        _debug_log(f"exchange failed: code_prefix={code_prefix} not found")
         raise HTTPException(status_code=404, detail="Invalid or expired code.")
 
     record = res.data
     if record.get("used_at"):
+        _debug_log(f"exchange rejected: code_prefix={code_prefix} already used")
         raise HTTPException(status_code=400, detail="Code already used.")
 
     expires_at = record.get("expires_at")
@@ -136,32 +148,31 @@ async def exchange_handoff(payload: HandoffExchangeRequest):
         try:
             expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
             if expires_dt < datetime.now(timezone.utc):
+                _debug_log(f"exchange rejected: code_prefix={code_prefix} expired")
                 raise HTTPException(status_code=400, detail="Code expired.")
         except ValueError:
+            _debug_log(f"exchange rejected: code_prefix={code_prefix} invalid expiry")
             raise HTTPException(status_code=400, detail="Invalid code expiry.")
 
     access_token = record.get("access_token")
     refresh_token = record.get("refresh_token")
     if not access_token:
+        _debug_log(f"exchange rejected: code_prefix={code_prefix} missing access")
         raise HTTPException(status_code=400, detail="Code not exchangeable.")
     if not refresh_token:
+        _debug_log(f"exchange rejected: code_prefix={code_prefix} missing refresh")
         raise HTTPException(status_code=400, detail="Code missing refresh token.")
 
     try:
         user_res = supabase_anon.auth.get_user(access_token)
         user = user_res.user
     except Exception as exc:
+        _debug_log(f"exchange rejected: code_prefix={code_prefix} invalid token")
         raise HTTPException(status_code=400, detail="Invalid access token.") from exc
 
     if not user:
+        _debug_log(f"exchange rejected: code_prefix={code_prefix} no user")
         raise HTTPException(status_code=400, detail="Invalid access token.")
-
-    if hasattr(user, "model_dump"):
-        user_payload = user.model_dump()
-    elif hasattr(user, "dict"):
-        user_payload = user.dict()
-    else:
-        user_payload = user
 
     update_res = (
         supabase_admin
@@ -180,17 +191,12 @@ async def exchange_handoff(payload: HandoffExchangeRequest):
     )
 
     if update_res.error:
+        _debug_log(f"exchange failed: code_prefix={code_prefix} update error")
         raise HTTPException(status_code=500, detail="Failed to finalize handoff.")
 
+    _debug_log(f"exchange success: code_prefix={code_prefix}")
     response = JSONResponse(
-        {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "expires_in": record.get("expires_in") or 0,
-            "token_type": record.get("token_type") or "bearer",
-            "user": user_payload,
-            "redirect_path": record.get("redirect_path") or "/editor",
-        }
+        {"redirect_path": record.get("redirect_path") or "/editor"}
     )
     secure_cookie = os.getenv("COOKIE_SECURE", "true").lower() != "false"
     response.set_cookie(

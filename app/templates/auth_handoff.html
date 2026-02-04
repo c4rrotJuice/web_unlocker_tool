@@ -46,17 +46,36 @@
       <div class="title">Signing you in…</div>
       <div class="status" id="handoffStatus">Exchanging secure handoff code.</div>
       <div class="actions" id="handoffActions" style="display: none;">
-        <a href="/static/auth.html">Go to login</a>
+        <a href="/login">Go to login</a>
       </div>
     </div>
 
-    <script>
+    <script type="module">
+      import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
+
       const statusEl = document.getElementById("handoffStatus");
       const actionsEl = document.getElementById("handoffActions");
+      const supabaseUrl = "{{ supabase_url }}";
+      const supabaseKey = "{{ supabase_key }}";
 
       function setError(message) {
         statusEl.textContent = message;
         actionsEl.style.display = "block";
+      }
+
+      function getSupabaseClient() {
+        if (!supabaseUrl || !supabaseKey) {
+          setError("Missing Supabase configuration. Please sign in again.");
+          return null;
+        }
+
+        return createClient(supabaseUrl, supabaseKey, {
+          auth: {
+            autoRefreshToken: true,
+            persistSession: true,
+            detectSessionInUrl: false,
+          },
+        });
       }
 
       async function exchangeCode() {
@@ -81,6 +100,37 @@
 
           const data = await response.json();
           const redirectPath = data.redirect_path || "/editor";
+          const supabase = getSupabaseClient();
+          if (!supabase) {
+            return;
+          }
+
+          if (!data.access_token || !data.refresh_token) {
+            setError("Missing session data. Please log in again.");
+            return;
+          }
+
+          const { error } = await supabase.auth.setSession({
+            access_token: data.access_token,
+            refresh_token: data.refresh_token,
+          });
+
+          if (error) {
+            setError("Unable to finish sign-in. Please log in again.");
+            return;
+          }
+
+          if (data.access_token) {
+            localStorage.setItem("access_token", data.access_token);
+          }
+
+          const { data: userData, error: userError } =
+            await supabase.auth.getUser();
+          if (userError || !userData?.user) {
+            setError("Unable to verify session. Please log in again.");
+            return;
+          }
+
           window.location.replace(redirectPath);
         } catch (error) {
           setError("Unable to complete sign-in. Please try again.");

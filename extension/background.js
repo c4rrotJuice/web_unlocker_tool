@@ -187,11 +187,44 @@ async function workInEditor(payload) {
   }
 
   if (response.ok && data?.editor_url) {
+    const normalizeRedirectPath = (editorUrl) => {
+      if (!editorUrl) {
+        return "/editor";
+      }
+      if (editorUrl.startsWith("/")) {
+        if (editorUrl.includes("//")) {
+          return "/editor";
+        }
+        return editorUrl;
+      }
+
+      try {
+        const baseUrl = new URL(BACKEND_BASE_URL);
+        const parsedUrl = new URL(editorUrl, baseUrl);
+        if (parsedUrl.origin !== baseUrl.origin) {
+          return "/editor";
+        }
+        const path = `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
+        if (!path.startsWith("/") || path.includes("//")) {
+          return "/editor";
+        }
+        return path;
+      } catch (error) {
+        return "/editor";
+      }
+    };
+
+    const redirectPath = normalizeRedirectPath(data.editor_url);
     const handoffResponse = await apiFetch(
       "/api/auth/handoff",
       {
         method: "POST",
-        body: JSON.stringify({ redirect_path: data.editor_url }),
+        body: JSON.stringify({
+          redirect_path: redirectPath,
+          refresh_token: session.refresh_token,
+          expires_in: session.expires_in,
+          token_type: session.token_type,
+        }),
       },
       session.access_token,
     );

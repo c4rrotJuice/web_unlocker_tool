@@ -232,6 +232,58 @@
         opacity: 1;
         transform: translate(-50%, -6px);
       }
+
+      .web-unlocker-auth-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.45);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 2147483647;
+      }
+
+      .web-unlocker-auth-modal {
+        background: #ffffff;
+        color: #0f172a;
+        border-radius: 14px;
+        padding: 20px 22px;
+        width: min(360px, 90vw);
+        box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+        font-family: inherit;
+      }
+
+      .web-unlocker-auth-modal h3 {
+        margin: 0 0 8px;
+        font-size: 18px;
+      }
+
+      .web-unlocker-auth-modal p {
+        margin: 0 0 16px;
+        font-size: 14px;
+        color: #475569;
+      }
+
+      .web-unlocker-auth-actions {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+      }
+
+      .web-unlocker-auth-button {
+        border: none;
+        border-radius: 999px;
+        padding: 8px 16px;
+        font-size: 14px;
+        cursor: pointer;
+        background: #2563eb;
+        color: #fff;
+      }
+
+      .web-unlocker-auth-button.secondary {
+        background: #e2e8f0;
+        color: #0f172a;
+      }
     `;
     document.head.appendChild(style);
   }
@@ -282,6 +334,66 @@
       toast.classList.remove("show");
       setTimeout(() => toast.remove(), 300);
     }, 2500);
+  }
+
+  function openLoginPage() {
+    sendMessage("OPEN_LOGIN");
+  }
+
+  function showSignedOutModal({ autoOpen = false } = {}) {
+    const root = document.body || document.documentElement;
+    if (!root) {
+      return;
+    }
+    const existing = document.querySelector(".web-unlocker-auth-overlay");
+    if (existing) {
+      if (autoOpen) {
+        openLoginPage();
+      }
+      return;
+    }
+    const overlay = document.createElement("div");
+    overlay.className = "web-unlocker-auth-overlay";
+
+    const modal = document.createElement("div");
+    modal.className = "web-unlocker-auth-modal";
+
+    const title = document.createElement("h3");
+    title.textContent = "Signed out";
+    modal.appendChild(title);
+
+    const body = document.createElement("p");
+    body.textContent = "You’ve been away for a while. Please sign in again.";
+    modal.appendChild(body);
+
+    const actions = document.createElement("div");
+    actions.className = "web-unlocker-auth-actions";
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "web-unlocker-auth-button secondary";
+    closeButton.textContent = "Dismiss";
+    closeButton.addEventListener("click", () => {
+      overlay.remove();
+    });
+
+    const signInButton = document.createElement("button");
+    signInButton.type = "button";
+    signInButton.className = "web-unlocker-auth-button";
+    signInButton.textContent = "Sign in";
+    signInButton.addEventListener("click", () => {
+      openLoginPage();
+    });
+
+    actions.appendChild(closeButton);
+    actions.appendChild(signInButton);
+    modal.appendChild(actions);
+    overlay.appendChild(modal);
+    root.appendChild(overlay);
+
+    if (autoOpen) {
+      openLoginPage();
+    }
   }
 
   function closePopup() {
@@ -430,6 +542,10 @@
 
   async function handleWorkInEditor(payload) {
     const response = await sendMessage("WORK_IN_EDITOR", payload);
+    if (response?.error === "session_expired") {
+      showSignedOutModal({ autoOpen: true });
+      return;
+    }
     if (response?.status === 401 || response?.error === "unauthenticated") {
       showToast("Please sign in to use the editor.", true);
       return;

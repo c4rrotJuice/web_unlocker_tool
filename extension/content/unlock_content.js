@@ -360,15 +360,25 @@
   function sendMessage(type, payload) {
     debug("Sending message", { type });
     return new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type, payload }, (response) => {
-        if (chrome.runtime.lastError) {
-          debug("Message error", chrome.runtime.lastError.message);
-          resolve({ error: chrome.runtime.lastError.message });
+      try {
+        if (!chrome?.runtime?.sendMessage) {
+          resolve({ error: "Extension context invalidated." });
           return;
         }
-        debug("Message response", { type, response });
-        resolve(response);
-      });
+        chrome.runtime.sendMessage({ type, payload }, (response) => {
+          if (chrome.runtime.lastError) {
+            debug("Message error", chrome.runtime.lastError.message);
+            resolve({ error: chrome.runtime.lastError.message });
+            return;
+          }
+          debug("Message response", { type, response });
+          resolve(response);
+        });
+      } catch (error) {
+        const message = error?.message || "Extension context invalidated.";
+        debug("Message error", message);
+        resolve({ error: message });
+      }
     });
   }
 

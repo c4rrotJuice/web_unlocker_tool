@@ -166,11 +166,17 @@ async def exchange_handoff(payload: HandoffExchangeRequest):
         .execute()
     )
 
-    if res.error or not res.data:
-        _debug_log(f"exchange failed: code_prefix={code_prefix} not found")
+    record = getattr(res, "data", None)
+    if not record:
+        err = getattr(res, "error", None)
+        if err:
+            _debug_log(
+                f"exchange failed: code_prefix={code_prefix} not found error={err}"
+            )
+        else:
+            _debug_log(f"exchange failed: code_prefix={code_prefix} not found")
         raise HTTPException(status_code=404, detail="Invalid or expired code.")
 
-    record = res.data
     if record.get("used_at"):
         _debug_log(f"exchange rejected: code_prefix={code_prefix} already used")
         raise HTTPException(status_code=400, detail="Code already used.")
@@ -222,13 +228,24 @@ async def exchange_handoff(payload: HandoffExchangeRequest):
         .execute()
     )
 
-    if update_res.error:
-        _debug_log(f"exchange failed: code_prefix={code_prefix} update error")
+    updated = getattr(update_res, "data", None)
+    if not updated:
+        err = getattr(update_res, "error", None)
+        if err:
+            _debug_log(
+                f"exchange failed: code_prefix={code_prefix} update error={err}"
+            )
+        else:
+            _debug_log(f"exchange failed: code_prefix={code_prefix} update failed")
         raise HTTPException(status_code=500, detail="Failed to finalize handoff.")
 
-    _debug_log(f"exchange success: code_prefix={code_prefix}")
+    redirect_path = record.get("redirect_path") or "/editor"
+    _debug_log(
+        "exchange success: "
+        f"code_prefix={code_prefix} user_id={user.id} redirect_path={redirect_path}"
+    )
     response = JSONResponse(
-        {"redirect_path": record.get("redirect_path") or "/editor"}
+        {"redirect_path": redirect_path}
     )
     secure_cookie = os.getenv("COOKIE_SECURE", "true").lower() != "false"
     response.set_cookie(

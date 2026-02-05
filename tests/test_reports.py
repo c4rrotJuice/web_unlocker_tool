@@ -38,7 +38,7 @@ async def test_monthly_report_returns_pdf(monkeypatch):
 
     monkeypatch.setattr(dashboard, "http_client", SimpleNamespace(get=fake_get, post=fake_post))
 
-    request = SimpleNamespace(state=SimpleNamespace(user_id="user-123", name="Ada Lovelace"))
+    request = SimpleNamespace(state=SimpleNamespace(user_id="user-123", name="Ada Lovelace", account_type="pro"))
     response = await dashboard.get_monthly_report(request, month="2025-01")
 
     assert response.media_type == "application/pdf"

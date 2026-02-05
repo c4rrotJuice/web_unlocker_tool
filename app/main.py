@@ -107,7 +107,7 @@ PUBLIC_PATH_PREFIXES = (
 
 PUBLIC_PATHS = {
     "/api/auth/handoff/exchange",
-    
+    "/webhooks/paddle",
 }
 
 def is_public_path(path: str) -> bool:

@@ -293,11 +293,7 @@ async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
         httponly=True,
         secure=secure_cookie,
         samesite="lax",
-        max_age=(
-            int(expires_in)
-            if isinstance(expires_in, int) and expires_in > 0
-            else 60 * 60 * 24 * 30
-        ),
+        max_age=60 * 60 * 24 * 30,
         path="/",
     )
     return response

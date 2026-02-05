@@ -181,6 +181,7 @@ def test_exchange_rotates_tokens_after_refresh(monkeypatch):
     cookie_header = response.headers.get("set-cookie", "")
     assert "access_token=new-access" in cookie_header
     assert "refresh_token=new-refresh" in cookie_header
+    assert "Max-Age=2592000" in cookie_header
 
 
 def test_exchange_rejects_reuse_race(monkeypatch):

@@ -58,7 +58,7 @@ async def test_webhook_updates_subscription_without_custom_data(monkeypatch):
     payload = {
         "event_type": "subscription.renewed",
         "data": {
-            "id": "sub_123",
+            "subscription_id": "sub_123",
             "status": "active",
             "customer_id": "ctm_123",
             "items": [{"price_id": "pri_01kf781jrxcwtg70bxky3316fr"}],
@@ -89,7 +89,7 @@ async def test_webhook_cancellation_reverts_to_free(monkeypatch):
     payload = {
         "event_type": "subscription.canceled",
         "data": {
-            "id": "sub_456",
+            "subscription_id": "sub_456",
             "status": "canceled",
             "customer_id": "ctm_456",
             "items": [{"price_id": "pri_01kf77v5j5j1b0fkwb95p0wxew"}],
@@ -103,6 +103,7 @@ async def test_webhook_cancellation_reverts_to_free(monkeypatch):
     patch_payload = fake_http.patch_calls[0]["json"]
     assert patch_payload["account_type"] == "free"
     assert patch_payload["paid_until"] is None
+    assert patch_payload["auto_renew"] is False
 
 
 @pytest.fixture

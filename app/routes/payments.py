@@ -216,12 +216,10 @@ def _verify_paddle_signature(raw_body: bytes, signature_header: str) -> bool:
             continue
         parts.setdefault(key, []).append(value.strip().strip('"'))
 
-    provided_candidates = (
-        parts.get("v1")
-        or parts.get("h1")
-        or parts.get("sig")
-        or []
-    )
+    v1_candidates = [value for value in (parts.get("v1") or []) if value]
+    h1_candidates = [value for value in (parts.get("h1") or []) if value]
+    sig_candidates = [value for value in (parts.get("sig") or []) if value]
+    provided_candidates = v1_candidates or h1_candidates or sig_candidates
     if not provided_candidates:
         return False
     timestamp_values = parts.get("ts") or parts.get("t") or []

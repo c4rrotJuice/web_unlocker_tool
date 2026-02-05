@@ -144,3 +144,20 @@ def test_verify_signature_accepts_multiple_v1_values(monkeypatch):
 
     header = f"ts=1700000000;v1=invalid;v1={valid_digest}"
     assert payments._verify_paddle_signature(raw, header) is True
+
+
+def test_verify_signature_falls_back_when_v1_empty(monkeypatch):
+    monkeypatch.setattr(payments, "PADDLE_WEBHOOK_SECRET", "secret")
+    raw = b'{"event_type":"subscription.created"}'
+
+    import hmac
+    import hashlib
+
+    valid_digest = hmac.new(
+        b"secret",
+        b"1700000000:{\"event_type\":\"subscription.created\"}",
+        hashlib.sha256,
+    ).hexdigest()
+
+    header = f"ts=1700000000;v1=;h1={valid_digest}"
+    assert payments._verify_paddle_signature(raw, header) is True

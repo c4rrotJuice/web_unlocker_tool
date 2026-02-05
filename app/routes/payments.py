@@ -206,15 +206,26 @@ def _verify_paddle_signature(raw_body: bytes, signature_header: str) -> bool:
         return True
     if not signature_header:
         return False
-    parts = dict(
-        part.strip().split("=", 1)
-        for part in signature_header.split(",")
-        if "=" in part
+    normalized = signature_header.replace(";", ",")
+    parts: dict[str, list[str]] = {}
+    for part in normalized.split(","):
+        if "=" not in part:
+            continue
+        key, value = part.strip().split("=", 1)
+        if not key:
+            continue
+        parts.setdefault(key, []).append(value.strip().strip('"'))
+
+    provided_candidates = (
+        parts.get("v1")
+        or parts.get("h1")
+        or parts.get("sig")
+        or []
     )
-    provided = parts.get("v1") or parts.get("h1") or parts.get("sig")
-    if not provided:
+    if not provided_candidates:
         return False
-    timestamp = parts.get("ts") or parts.get("t")
+    timestamp_values = parts.get("ts") or parts.get("t") or []
+    timestamp = timestamp_values[0] if timestamp_values else None
     if not timestamp:
         return False
 
@@ -223,7 +234,7 @@ def _verify_paddle_signature(raw_body: bytes, signature_header: str) -> bool:
         f"{timestamp}:{raw_body.decode('utf-8')}".encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
-    return hmac.compare_digest(provided, expected)
+    return any(hmac.compare_digest(provided, expected) for provided in provided_candidates)
 
 @router.get("/get_paddle_token")
 async def get_paddle_token(request: Request):

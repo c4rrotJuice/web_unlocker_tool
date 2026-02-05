@@ -107,6 +107,37 @@ async def test_webhook_cancellation_reverts_to_free(monkeypatch):
     assert patch_payload["auto_renew"] is False
 
 
+@pytest.mark.anyio
+async def test_transaction_events_do_not_downgrade_paid_user(monkeypatch):
+    fake_http = FakeHttpClient(lookup_rows=[{"user_id": "user-789"}])
+    monkeypatch.setattr(payments, "http_client", fake_http)
+    monkeypatch.setattr(payments, "SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setattr(payments, "SUPABASE_SERVICE_ROLE_KEY", "service-role")
+    monkeypatch.setattr(payments, "PADDLE_WEBHOOK_SECRET", None)
+
+    payload = {
+        "event_type": "transaction.completed",
+        "data": {
+            "status": "completed",
+            "customer_id": "ctm_789",
+            "subscription_id": "sub_789",
+            "items": [{"price_id": "pri_01kf77v5j5j1b0fkwb95p0wxew"}],
+        },
+    }
+
+    request = FakeRequest(payload)
+    response = await payments.paddle_webhook(request)
+
+    assert response.status_code == 200
+    assert response.body == b'{"status":"ignored","reason":"transaction event"}'
+    patch_payload = fake_http.patch_calls[0]["json"]
+    assert patch_payload == {
+        "paddle_customer_id": "ctm_789",
+        "paddle_subscription_id": "sub_789",
+        "paddle_price_id": "pri_01kf77v5j5j1b0fkwb95p0wxew",
+    }
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"

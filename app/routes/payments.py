@@ -47,6 +47,13 @@ PADDLE_CANCEL_EVENTS = {
     "subscription.ended",
 }
 
+PADDLE_SUBSCRIPTION_EVENTS = {
+    "subscription.created",
+    "subscription.updated",
+    "subscription.renewed",
+    "subscription.activated",
+}
+
 
 def _parse_iso_datetime(value: str | None) -> str | None:
     if not value:
@@ -96,6 +103,10 @@ def _extract_subscription_id(payload: dict) -> str | None:
         return subscription.get("id")
 
     return None
+
+
+def _is_subscription_event(event_type: str | None) -> bool:
+    return bool(event_type and event_type.startswith("subscription."))
 
 
 async def _lookup_user_id(customer_id: str | None, customer_email: str | None) -> str | None:
@@ -361,7 +372,7 @@ async def paddle_webhook(request: Request):
     if event_type in PADDLE_CANCEL_EVENTS:
         account_type = "free"
         auto_renew = False
-    else:
+    elif _is_subscription_event(event_type):
         status = (data.get("status") or "").lower()
         if status and status not in PADDLE_ACTIVE_STATUSES:
             account_type = "free"
@@ -369,10 +380,34 @@ async def paddle_webhook(request: Request):
             account_type = PRICE_ID_TO_TIER.get(paddle_price_id)
 
         paid_until = _parse_iso_datetime(_extract_subscription_period_end(data))
-        if event_type in {"subscription.renewed", "subscription.updated", "subscription.created"}:
+        if event_type in PADDLE_SUBSCRIPTION_EVENTS:
             auto_renew = status not in {"canceled", "cancelled"}
+    elif event_type and event_type.startswith("transaction."):
+        # Transaction webhooks can have statuses like "completed" that do not map to
+        # subscription lifecycle states. Updating account_type here can incorrectly
+        # downgrade paying users to "free".
+        account_type = None
+    else:
+        return JSONResponse(content={"status": "ignored", "reason": "unsupported event"}, status_code=200)
 
     if not account_type:
+        if event_type and event_type.startswith("transaction."):
+            if customer_id or subscription_id or paddle_price_id:
+                await http_client.patch(
+                    f"{SUPABASE_URL}/rest/v1/user_meta",
+                    params={"user_id": f"eq.{user_id}"},
+                    headers={
+                        **_supabase_headers(),
+                        "Prefer": "return=minimal",
+                    },
+                    json={
+                        "paddle_customer_id": customer_id,
+                        "paddle_subscription_id": subscription_id,
+                        "paddle_price_id": paddle_price_id,
+                    },
+                )
+            return JSONResponse(content={"status": "ignored", "reason": "transaction event"}, status_code=200)
+
         return JSONResponse(
             content={"status": "ignored", "reason": "unknown tier"},
             status_code=200,

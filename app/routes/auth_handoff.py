@@ -194,6 +194,8 @@ async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
 
     access_token = record.get("access_token")
     refresh_token = record.get("refresh_token")
+    expires_in = record.get("expires_in")
+    token_type = record.get("token_type")
     if not access_token:
         _debug_log(f"exchange rejected: code_prefix={code_prefix} missing access")
         raise HTTPException(status_code=400, detail="Code not exchangeable.")
@@ -213,8 +215,17 @@ async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
             refresh_res = supabase_anon.auth.refresh_session(refresh_token)
             refreshed_session = getattr(refresh_res, "session", None)
             refreshed_access_token = getattr(refreshed_session, "access_token", None)
+            refreshed_refresh_token = getattr(refreshed_session, "refresh_token", None)
+            refreshed_expires_in = getattr(refreshed_session, "expires_in", None)
+            refreshed_token_type = getattr(refreshed_session, "token_type", None)
             if refreshed_access_token:
                 access_token = refreshed_access_token
+                if refreshed_refresh_token:
+                    refresh_token = refreshed_refresh_token
+                if refreshed_expires_in is not None:
+                    expires_in = refreshed_expires_in
+                if refreshed_token_type:
+                    token_type = refreshed_token_type
                 user_res = supabase_anon.auth.get_user(access_token)
                 user = user_res.user
         except Exception as exc:
@@ -226,7 +237,7 @@ async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
         _debug_log(f"exchange rejected: code_prefix={code_prefix} signed out")
         raise HTTPException(status_code=401, detail="SIGNED_OUT")
 
-    update_res = (
+    update_query = (
         supabase_admin
         .table("auth_handoff_codes")
         .update(
@@ -239,8 +250,12 @@ async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
             }
         )
         .eq("id", record.get("id"))
-        .execute()
     )
+
+    if hasattr(update_query, "is_"):
+        update_query = update_query.is_("used_at", "null")
+
+    update_res = update_query.execute()
 
     updated = getattr(update_res, "data", None)
     if not updated:
@@ -250,8 +265,8 @@ async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
                 f"exchange failed: code_prefix={code_prefix} update error={err}"
             )
         else:
-            _debug_log(f"exchange failed: code_prefix={code_prefix} update failed")
-        raise HTTPException(status_code=500, detail="Failed to finalize handoff.")
+            _debug_log(f"exchange rejected: code_prefix={code_prefix} already used")
+        raise HTTPException(status_code=400, detail="Code already used.")
 
     redirect_path = record.get("redirect_path") or "/editor"
     _debug_log(
@@ -278,7 +293,11 @@ async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
         httponly=True,
         secure=secure_cookie,
         samesite="lax",
-        max_age=60 * 60 * 24 * 30,
+        max_age=(
+            int(expires_in)
+            if isinstance(expires_in, int) and expires_in > 0
+            else 60 * 60 * 24 * 30
+        ),
         path="/",
     )
     return response

@@ -1,15 +1,6 @@
-const token = localStorage.getItem("access_token");
-if (!token) {
-  window.location.href = "/static/auth.html";
-}
-
 async function verifyPaidAccess() {
   try {
-    const res = await fetch("/api/editor/access", {
-      headers: {
-        "Authorization": `Bearer ${token}`,
-      },
-    });
+    const res = await fetch("/api/editor/access");
 
     if (!res.ok) {
       window.location.href = "/static/auth.html";
@@ -162,7 +153,6 @@ function startEditor() {
       const res = await fetch(`/api/docs/${currentDocId}`, {
         method: "PUT",
         headers: {
-          "Authorization": `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(payload),
@@ -183,11 +173,7 @@ function startEditor() {
   }
 
   async function loadDocsList() {
-    const res = await fetch("/api/docs", {
-      headers: {
-        "Authorization": `Bearer ${token}`,
-      },
-    });
+    const res = await fetch("/api/docs");
 
     if (!res.ok) {
       docsList.innerHTML = "<p>Unable to load documents.</p>";
@@ -246,7 +232,6 @@ function startEditor() {
       const res = await fetch("/api/docs", {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({}),
@@ -265,11 +250,7 @@ function startEditor() {
   });
 
   async function openDoc(docId) {
-    const res = await fetch(`/api/docs/${docId}`, {
-      headers: {
-        "Authorization": `Bearer ${token}`,
-      },
-    });
+    const res = await fetch(`/api/docs/${docId}`);
 
     if (!res.ok) {
       console.error("Failed to load document");
@@ -296,11 +277,7 @@ function startEditor() {
       params.set("search", search);
     }
 
-    const res = await fetch(`/api/citations?${params.toString()}`, {
-      headers: {
-        "Authorization": `Bearer ${token}`,
-      },
-    });
+    const res = await fetch(`/api/citations?${params.toString()}`);
 
     if (!res.ok) {
       throw new Error("Failed to load citations");
@@ -318,11 +295,7 @@ function startEditor() {
     const params = new URLSearchParams();
     params.set("ids", ids.join(","));
 
-    const res = await fetch(`/api/citations/by_ids?${params.toString()}`, {
-      headers: {
-        "Authorization": `Bearer ${token}`,
-      },
-    });
+    const res = await fetch(`/api/citations/by_ids?${params.toString()}`);
 
     if (!res.ok) {
       throw new Error("Failed to load citations");
@@ -597,7 +570,6 @@ function startEditor() {
     const res = await fetch(`/api/docs/${currentDocId}/export`, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

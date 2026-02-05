@@ -102,6 +102,7 @@ async def test_webhook_cancellation_reverts_to_free(monkeypatch):
     assert response.status_code == 200
     patch_payload = fake_http.patch_calls[0]["json"]
     assert patch_payload["account_type"] == "free"
+    assert patch_payload["auto_renew"] is False
     assert patch_payload["paid_until"] is None
 
 

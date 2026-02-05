@@ -343,6 +343,7 @@ async def paddle_webhook(request: Request):
 
     if event_type in PADDLE_CANCEL_EVENTS:
         account_type = "free"
+        auto_renew = False
     else:
         status = (data.get("status") or "").lower()
         if status and status not in PADDLE_ACTIVE_STATUSES:

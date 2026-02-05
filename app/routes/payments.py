@@ -87,7 +87,15 @@ def _extract_custom_data(payload: dict) -> dict:
 
 
 def _extract_subscription_id(payload: dict) -> str | None:
-    return payload.get("subscription_id") or payload.get("subscriptionId") or payload.get("id")
+    subscription_id = payload.get("subscription_id") or payload.get("subscriptionId")
+    if subscription_id:
+        return subscription_id
+
+    subscription = payload.get("subscription")
+    if isinstance(subscription, dict):
+        return subscription.get("id")
+
+    return None
 
 
 async def _lookup_user_id(customer_id: str | None, customer_email: str | None) -> str | None:
@@ -343,6 +351,7 @@ async def paddle_webhook(request: Request):
 
     if event_type in PADDLE_CANCEL_EVENTS:
         account_type = "free"
+        auto_renew = False
     else:
         status = (data.get("status") or "").lower()
         if status and status not in PADDLE_ACTIVE_STATUSES:

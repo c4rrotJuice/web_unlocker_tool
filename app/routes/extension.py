@@ -1,16 +1,18 @@
 from datetime import datetime, timedelta
 import os
+from uuid import UUID
 
 import pytz
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.routes.http import http_client
 from app.services.entitlements import normalize_account_type
 from app.services.IP_usage_limit import get_today_gmt3, get_week_start_gmt3
 from app.routes.citations import CitationInput, create_citation
 from app.routes.editor import _doc_expiration, _get_account_type
+from app.routes.render import save_unlock_history
 
 
 router = APIRouter()
@@ -26,6 +28,33 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 class ExtensionPermitRequest(BaseModel):
     url: str | None = None
     dry_run: bool = False
+
+
+class ExtensionUsageEventRequest(BaseModel):
+    url: str
+    event_id: str
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        url = (value or "").strip()
+        if not url.lower().startswith(("http://", "https://")):
+            raise ValueError("url must be http/https")
+        if len(url) > 2048:
+            raise ValueError("url is too long")
+        return url
+
+    @field_validator("event_id")
+    @classmethod
+    def validate_event_id(cls, value: str) -> str:
+        event_id = (value or "").strip()
+        if not event_id:
+            raise ValueError("event_id is required")
+        try:
+            UUID(event_id)
+        except ValueError as exc:
+            raise ValueError("event_id must be a valid UUID") from exc
+        return event_id
 
 
 class ExtensionSelectionRequest(BaseModel):
@@ -224,3 +253,30 @@ async def extension_selection(request: Request, payload: ExtensionSelectionReque
         "remaining": remaining,
         "reset_at": reset_at,
     }
+
+
+@router.post("/api/extension/usage-event")
+async def extension_usage_event(request: Request, payload: ExtensionUsageEventRequest):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    rate_limit_key = f"extension_usage_event_rate:{user_id}:{datetime.utcnow().strftime('%Y-%m-%dT%H:%M')}"
+    current_minute_usage = int(await request.app.state.redis_get(rate_limit_key) or 0)
+    if current_minute_usage >= 30:
+        raise HTTPException(status_code=429, detail="Too many extension usage events.")
+
+    inserted = await save_unlock_history(
+        user_id,
+        payload.url,
+        "",
+        request.app.state.http_session,
+        source="extension",
+        event_id=payload.event_id,
+    )
+
+    await request.app.state.redis_incr(rate_limit_key)
+    if current_minute_usage == 0:
+        await request.app.state.redis_expire(rate_limit_key, 120)
+
+    return {"ok": True, "deduped": not inserted}

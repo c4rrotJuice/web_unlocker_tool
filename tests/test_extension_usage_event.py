@@ -189,3 +189,52 @@ def test_extension_usage_event_write_failure(monkeypatch):
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Failed to record extension usage event."
+
+
+def test_extension_usage_event_fallback_without_unique_constraint(monkeypatch):
+    main = _build_app(monkeypatch)
+
+    from app.routes import extension, render
+
+    extension.save_unlock_history = render.save_unlock_history
+
+    class FakeResponse:
+        def __init__(self, status_code, payload=None, text=""):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = text
+
+        def json(self):
+            return self._payload
+
+    class FakeHttpClient:
+        def __init__(self):
+            self.post_calls = 0
+
+        async def post(self, *_args, **kwargs):
+            self.post_calls += 1
+            if self.post_calls == 1:
+                return FakeResponse(
+                    400,
+                    {
+                        "code": "42P10",
+                        "message": "there is no unique or exclusion constraint matching the ON CONFLICT specification",
+                    },
+                    text='{"code":"42P10"}',
+                )
+            return FakeResponse(201, [{"id": "inserted"}], text='[{"id":"inserted"}]')
+
+        async def get(self, *_args, **_kwargs):
+            return FakeResponse(200, [], text='[]')
+
+    main.app.state.http_session = FakeHttpClient()
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/api/extension/usage-event",
+        headers={"Authorization": "Bearer token"},
+        json={"url": "https://example.com/article", "event_id": "a5d54e8d-3eff-4a93-ae21-d74f0ebf8b7f"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "deduped": False}

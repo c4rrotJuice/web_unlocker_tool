@@ -216,31 +216,71 @@ async def save_unlock_history(
     source: str = "web",
     event_id: str | None = None,
 ) -> str:
+    payload = {
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "url": url,
+        "unlocked_at": datetime.utcnow().isoformat(),
+        "source": source,
+        "event_id": event_id,
+    }
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+
     params = None
-    prefer = "return=representation"
     if event_id:
         params = {"on_conflict": "user_id,event_id"}
-        prefer = "return=representation,resolution=ignore-duplicates"
+        headers["Prefer"] = "return=representation,resolution=ignore-duplicates"
 
     res = await client.post(
         f"{SUPABASE_URL}/rest/v1/unlock_history",
         params=params,
-        headers={
-            "apikey": SUPABASE_KEY,                   # Needed for Supabase
-            "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}"
-,       # User's token, not service key
-            "Content-Type": "application/json",
-            "Prefer": prefer,
-        },
-        json={
-            "id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "url": url,
-            "unlocked_at": datetime.utcnow().isoformat(),
-            "source": source,
-            "event_id": event_id,
-        }
+        headers=headers,
+        json=payload,
     )
+
+    if event_id and res.status_code == 400:
+        error_payload = {}
+        try:
+            error_payload = res.json()
+        except ValueError:
+            error_payload = {}
+
+        if error_payload.get("code") == "42P10":
+            existing = await client.get(
+                f"{SUPABASE_URL}/rest/v1/unlock_history",
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                    "Accept": "application/json",
+                },
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "event_id": f"eq.{event_id}",
+                    "select": "id",
+                    "limit": 1,
+                },
+            )
+            if existing.status_code == 200:
+                existing_payload = existing.json()
+                if existing_payload:
+                    return "duplicate"
+
+            res = await client.post(
+                f"{SUPABASE_URL}/rest/v1/unlock_history",
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=representation",
+                },
+                json=payload,
+            )
+
     print(f"Insert status: {res.status_code}, body: {res.text}")
     if res.status_code not in (200, 201):
         return "failed"

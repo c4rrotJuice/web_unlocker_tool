@@ -124,5 +124,7 @@ def test_fetch_cloudscraper_does_not_evict_session_for_choneize_like_html(monkey
         use_cloudscraper=True,
     ))
 
-    assert "Verification Required" not in result
+    assert result.success is True
+    assert result.outcome_reason == "ok"
+    assert "Verification Required" not in result.html
     assert fake_pool.evicted_hosts == []

@@ -1,6 +1,6 @@
 #render.py
 from fastapi import APIRouter, Request, Query, HTTPException, Header, Body
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
@@ -9,7 +9,7 @@ import uuid
 import httpx
 from app.routes.http import http_client
 
-from app.services.unprotector import fetch_and_clean_page
+from app.services.unprotector import fetch_and_clean_page, FetchOutcome
 from app.services.IP_usage_limit import check_login, get_user_ip
 from app.services.entitlements import queue_priority
 from app.routes.upstash_redis import redis_get, redis_set, redis_incr, redis_expire
@@ -21,6 +21,38 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 router = APIRouter()
 
+def _wants_json_response(request: Request) -> bool:
+    accept_header = (request.headers.get("accept") or "").lower()
+    return "application/json" in accept_header
+
+
+def _failure_json_from_outcome(outcome: FetchOutcome) -> tuple[int, dict]:
+    if outcome.outcome_reason.startswith("blocked_"):
+        status_code = 403
+    else:
+        status_code = 504 if outcome.outcome_reason == "fetch_error" else 502
+
+    payload = {
+        "success": False,
+        "reason": outcome.outcome_reason,
+        "provider": outcome.provider,
+        "ray_id": outcome.ray_id,
+        "http_status": outcome.http_status,
+        "html": outcome.html,
+    }
+    if outcome.outcome_reason == "blocked_by_cloudflare":
+        # Browser mode can complete interactive checks when server-side unlock is blocked.
+        payload["suggested_action"] = "use_browser_mode"
+    return status_code, payload
+
+
+def _response_from_outcome(request: Request, outcome: FetchOutcome):
+    if outcome.success:
+        return HTMLResponse(content=outcome.html, status_code=200)
+    status_code, payload = _failure_json_from_outcome(outcome)
+    if _wants_json_response(request) or outcome.outcome_reason.startswith("blocked_"):
+        return JSONResponse(content=payload, status_code=status_code)
+    return HTMLResponse(content=outcome.html, status_code=status_code)
 
 
 class CleanPageRequest(BaseModel):
@@ -69,7 +101,7 @@ async def post_view_clean_page(
 
         try:
             token = authorization.split(" ")[1]
-            cleaned_html = await fetch_and_clean_page(
+            outcome = await fetch_and_clean_page(
                 url=url,
                 user_ip=user_ip,
                 unlock=unlock,
@@ -82,9 +114,18 @@ async def post_view_clean_page(
                 redis_incr=request.app.state.redis_incr,
                 redis_expire=request.app.state.redis_expire
             )
-            await save_unlock_history(user_id, url, token, request.app.state.http_session)
-            #await save_unlock_history(user_id, url, request.app.state.http_session)
-            return HTMLResponse(content=cleaned_html)
+            await save_unlock_history(
+                user_id,
+                url,
+                token,
+                request.app.state.http_session,
+                success=outcome.success,
+                status=outcome.http_status,
+                block_reason=None if outcome.success else outcome.outcome_reason,
+                provider=outcome.provider,
+                ray_id=outcome.ray_id,
+            )
+            return _response_from_outcome(request, outcome)
         except Exception as e:
             print(f"{e}")
             return HTMLResponse(content=f"<h1>Error loading page: {e}</h1>", status_code=500)
@@ -101,7 +142,7 @@ async def post_view_clean_page(
                 redis_expire=request.app.state.redis_expire,
             )
             priority = queue_priority(request.state.account_type)
-            cleaned_html = await fetch_and_clean_page(
+            outcome = await fetch_and_clean_page(
                 url=url,
                 user_ip=user_ip,
                 unlock=unlock,
@@ -114,8 +155,8 @@ async def post_view_clean_page(
                 redis_incr=request.app.state.redis_incr,
                 redis_expire=request.app.state.redis_expire
             )
-            
-            return HTMLResponse(content=cleaned_html)
+
+            return _response_from_outcome(request, outcome)
         except HTTPException as e:
             return HTMLResponse(content=f"<h3>{e.detail}</h3>", status_code=e.status_code)            
         except Exception as e:
@@ -158,7 +199,7 @@ async def get_view_clean_page(
 
         try:
             token = authorization.split(" ")[1]
-            cleaned_html = await fetch_and_clean_page(
+            outcome = await fetch_and_clean_page(
                 url=url,
                 user_ip=user_ip,
                 unlock=unlock,
@@ -171,8 +212,18 @@ async def get_view_clean_page(
                 redis_incr=request.app.state.redis_incr,
                 redis_expire=request.app.state.redis_expire,
             )
-            await save_unlock_history(user_id, url, token, request.app.state.http_session)
-            return HTMLResponse(content=cleaned_html)
+            await save_unlock_history(
+                user_id,
+                url,
+                token,
+                request.app.state.http_session,
+                success=outcome.success,
+                status=outcome.http_status,
+                block_reason=None if outcome.success else outcome.outcome_reason,
+                provider=outcome.provider,
+                ray_id=outcome.ray_id,
+            )
+            return _response_from_outcome(request, outcome)
         except Exception as e:
             print(f"{e}")
             return HTMLResponse(content=f"<h1>Error loading page: {e}</h1>", status_code=500)
@@ -186,7 +237,7 @@ async def get_view_clean_page(
             redis_expire=request.app.state.redis_expire,
         )
         priority = queue_priority(request.state.account_type)
-        cleaned_html = await fetch_and_clean_page(
+        outcome = await fetch_and_clean_page(
             url=url,
             user_ip=user_ip,
             unlock=unlock,
@@ -199,7 +250,7 @@ async def get_view_clean_page(
             redis_incr=request.app.state.redis_incr,
             redis_expire=request.app.state.redis_expire,
         )
-        return HTMLResponse(content=cleaned_html)
+        return _response_from_outcome(request, outcome)
     except HTTPException as e:
         return HTMLResponse(content=f"<h3>{e.detail}</h3>", status_code=e.status_code)
     except Exception as e:
@@ -215,6 +266,11 @@ async def save_unlock_history(
     *,
     source: str = "web",
     event_id: str | None = None,
+    success: bool = True,
+    status: int | None = None,
+    block_reason: str | None = None,
+    provider: str | None = None,
+    ray_id: str | None = None,
 ) -> str:
     payload = {
         "id": str(uuid.uuid4()),
@@ -223,6 +279,11 @@ async def save_unlock_history(
         "unlocked_at": datetime.utcnow().isoformat(),
         "source": source,
         "event_id": event_id,
+        "success": success,
+        "status": status,
+        "block_reason": block_reason,
+        "provider": provider,
+        "ray_id": ray_id,
     }
     headers = {
         "apikey": SUPABASE_KEY,
@@ -242,6 +303,27 @@ async def save_unlock_history(
         headers=headers,
         json=payload,
     )
+
+    if res.status_code == 400:
+        try:
+            err_text = (res.text or "").lower()
+        except Exception:
+            err_text = ""
+        if all(fragment in err_text for fragment in ["column", "unlock_history"]):
+            fallback_payload = {
+                "id": payload["id"],
+                "user_id": payload["user_id"],
+                "url": payload["url"],
+                "unlocked_at": payload["unlocked_at"],
+                "source": payload["source"],
+                "event_id": payload["event_id"],
+            }
+            res = await client.post(
+                f"{SUPABASE_URL}/rest/v1/unlock_history",
+                params=params,
+                headers=headers,
+                json=fallback_payload,
+            )
 
     if event_id and res.status_code == 400:
         error_payload = {}
@@ -328,7 +410,7 @@ async def fetch_and_clean_page_post(
     print(f"User IP: {user_ip} | User ID: {user_id} | URL: {url}")
 
     try:
-        cleaned_html = await fetch_and_clean_page(
+        outcome = await fetch_and_clean_page(
             url=body.url,
             user_ip=user_ip,
             unlock=body.unlock,
@@ -344,9 +426,19 @@ async def fetch_and_clean_page_post(
 
         # Only log history if token is available, unregisterred guest users beed not consume this resource
         if token:
-            await save_unlock_history(user_id, url, token, request.app.state.http_session)
+            await save_unlock_history(
+                user_id,
+                url,
+                token,
+                request.app.state.http_session,
+                success=outcome.success,
+                status=outcome.http_status,
+                block_reason=None if outcome.success else outcome.outcome_reason,
+                provider=outcome.provider,
+                ray_id=outcome.ray_id,
+            )
 
-        return HTMLResponse(content=cleaned_html)
+        return _response_from_outcome(request, outcome)
     except Exception as e:
         print(f"Error in fetch_and_clean_page: {e}")
         return HTMLResponse(content=f"<h1>Error loading page: {e}</h1>", status_code=500)

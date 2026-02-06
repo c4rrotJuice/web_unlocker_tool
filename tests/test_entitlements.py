@@ -26,9 +26,9 @@ def test_bookmarks_allowed_for_standard_and_pro():
     assert can_use_bookmarks("pro") is True
 
 
-def test_history_search_is_pro_only():
+def test_history_search_is_available_for_paid_tiers():
     assert can_use_history_search("free") is False
-    assert can_use_history_search("standard") is False
+    assert can_use_history_search("standard") is True
     assert can_use_history_search("pro") is True
 
 

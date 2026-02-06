@@ -129,6 +129,37 @@ async function fetchUnlockPermit(payload) {
   return { status: response.status, data };
 }
 
+
+async function logUsageEvent(payload) {
+  const session = await ensureValidSession();
+  if (!session) {
+    return { error: "unauthenticated", status: 401 };
+  }
+
+  const response = await apiFetch(
+    "/api/extension/usage-event",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    session.access_token,
+  );
+
+  if (response.status === 401) {
+    await clearSession();
+    await clearStorage([USAGE_KEY]);
+  }
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (error) {
+    // ignore
+  }
+
+  return { status: response.status, data };
+}
+
 async function saveCitation(payload) {
   const session = await ensureValidSession();
   if (!session) {
@@ -347,6 +378,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case "WORK_IN_EDITOR": {
           const result = await workInEditor(message.payload || {});
           debug("WORK_IN_EDITOR result", result);
+          sendResponse(result);
+          break;
+        }
+        case "LOG_USAGE_EVENT": {
+          const result = await logUsageEvent(message.payload || {});
+          debug("LOG_USAGE_EVENT result", result);
           sendResponse(result);
           break;
         }

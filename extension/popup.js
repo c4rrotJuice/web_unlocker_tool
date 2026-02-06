@@ -93,6 +93,14 @@ async function getCurrentTab() {
   return tab || null;
 }
 
+function buildUsageEventPayload(url) {
+  const eventId =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return { url, event_id: eventId };
+}
+
 function isRestrictedUrl(url) {
   if (!url) return true;
   return (
@@ -232,6 +240,19 @@ enableButton.addEventListener("click", async () => {
         return;
       }
     }
+
+    const usageEvent = await sendMessage("LOG_USAGE_EVENT", {
+      payload: buildUsageEventPayload(tab.url),
+    });
+    if (usageEvent?.status === 401) {
+      renderSignedOut();
+      setStatus("Session expired. Please sign in again.", true);
+      return;
+    }
+    if (usageEvent?.status && usageEvent.status >= 400) {
+      setStatus("Copy+Cite enabled, but usage sync failed.", true);
+    }
+
     await chrome.scripting.executeScript({
       // Inject into all frames so iframe selections can be handled.
       target: { tabId: tab.id, allFrames: true },

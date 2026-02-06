@@ -207,23 +207,45 @@ async def get_view_clean_page(
         return HTMLResponse(content=f"<h1>Error loading page (guest): {e}</h1>", status_code=500)
 
 
-async def save_unlock_history(user_id: str, url: str, token: str, client: httpx.AsyncClient):
+async def save_unlock_history(
+    user_id: str,
+    url: str,
+    token: str,
+    client: httpx.AsyncClient,
+    *,
+    source: str = "web",
+    event_id: str | None = None,
+) -> bool:
+    params = None
+    prefer = "return=representation"
+    if event_id:
+        params = {"on_conflict": "user_id,event_id"}
+        prefer = "return=representation,resolution=ignore-duplicates"
+
     res = await client.post(
         f"{SUPABASE_URL}/rest/v1/unlock_history",
+        params=params,
         headers={
             "apikey": SUPABASE_KEY,                   # Needed for Supabase
             "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}"
 ,       # User's token, not service key
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Prefer": prefer,
         },
         json={
             "id": str(uuid.uuid4()),
             "user_id": user_id,
             "url": url,
-            "unlocked_at": datetime.utcnow().isoformat()
+            "unlocked_at": datetime.utcnow().isoformat(),
+            "source": source,
+            "event_id": event_id,
         }
     )
     print(f"Insert status: {res.status_code}, body: {res.text}")
+    if res.status_code not in (200, 201):
+        return False
+    payload = res.json()
+    return bool(payload)
 
 
 @router.post("/fetch_and_clean_page", response_class=HTMLResponse)

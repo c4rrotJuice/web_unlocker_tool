@@ -13,3 +13,33 @@ When the extension user clicks **Work in Editor**, the extension requests a shor
 - **No tokens in URLs**: access/refresh tokens never appear in query strings or referrers.
 - **Short-lived + one-time**: handoff codes expire after ~60 seconds and are marked used on exchange.
 - **Server-side validation**: the backend binds the code to the authenticated user and rate limits creation attempts.
+
+
+## Extension Usage Event Sync
+
+The extension now records unlock usage to the same `unlock_history` stream used by web unlock flows.
+
+- Endpoint: `POST /api/extension/usage-event`
+- Auth: `Authorization: Bearer <supabase_access_token>`
+- Rate limit: 30 events/minute/user
+- Idempotency: pass `event_id` UUID; duplicates are ignored server-side via `(user_id, event_id)` unique index.
+
+### Request example
+
+```json
+{
+  "url": "https://example.com/article",
+  "event_id": "a5d54e8d-3eff-4a93-ae21-d74f0ebf8b7f"
+}
+```
+
+### Response example
+
+```json
+{
+  "ok": true,
+  "deduped": false
+}
+```
+
+If `deduped` is `true`, the event was already processed previously.

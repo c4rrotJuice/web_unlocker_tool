@@ -42,7 +42,7 @@ def can_use_bookmarks(account_type: Optional[str]) -> bool:
 
 def can_use_history_search(account_type: Optional[str]) -> bool:
     tier = normalize_account_type(account_type)
-    return tier == PRO_TIER
+    return tier in {STANDARD_TIER, PRO_TIER}
 
 
 def should_show_ads(account_type: Optional[str]) -> bool:

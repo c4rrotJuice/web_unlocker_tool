@@ -235,23 +235,26 @@ async function loadUserData() {
     document.getElementById("usage-period").textContent =
       data.usage_period === "week" ? "this week" : "today";
 
-    const isPro = data.account_type === "pro";
-    const canBookmark = data.account_type === "pro" || data.account_type === "standard";
+    const accountType = (data.account_type || "").toLowerCase();
+    const isPro = accountType === "pro";
+    const isStandard = accountType === "standard";
+    const isFree = accountType === "free";
+    const canBookmark = isPro || isStandard;
+    const canUseHistorySearch = isPro || isStandard;
 
     // After fetching `data` from /api/me:
     renderBookmarks(data.bookmarks);
 
-    if (isPro) {
+    if (canUseHistorySearch) {
       document.getElementById("history-search").disabled = false;
       document.getElementById("history-locked-msg").style.display = "none";
-      document.getElementById("proTeaser").style.display = "none";
-      document.getElementById("upgrade").style.display = "none";
 
       loadFullHistory();
       document.getElementById("history-search").addEventListener("input", e => {
         loadFullHistory(e.target.value);
       });
     } else {
+      document.getElementById("history-search").disabled = true;
       document.getElementById("history-locked-msg").style.display = "block";
     }
    
@@ -265,14 +268,21 @@ async function loadUserData() {
      
      
     // ✅ If freemium, show ads
-    if (data.account_type === "free") {
+    if (isFree) {
       document.querySelectorAll(".free-only").forEach(el => {
         el.style.display = "block";
       });
-      
+
       injectAdSenseAds();
       detectAdblock();
-
+      document.getElementById("upgrade").style.display = "block";
+      document.getElementById("proTeaser").style.display = "block";
+    } else {
+      document.querySelectorAll(".free-only").forEach(el => {
+        el.style.display = "none";
+      });
+      document.getElementById("upgrade").style.display = "none";
+      document.getElementById("proTeaser").style.display = "none";
     }
 
   } catch (err) {

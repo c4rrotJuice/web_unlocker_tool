@@ -266,7 +266,7 @@ async def extension_usage_event(request: Request, payload: ExtensionUsageEventRe
     if current_minute_usage >= 30:
         raise HTTPException(status_code=429, detail="Too many extension usage events.")
 
-    inserted = await save_unlock_history(
+    save_result = await save_unlock_history(
         user_id,
         payload.url,
         "",
@@ -275,8 +275,11 @@ async def extension_usage_event(request: Request, payload: ExtensionUsageEventRe
         event_id=payload.event_id,
     )
 
+    if save_result == "failed":
+        raise HTTPException(status_code=503, detail="Failed to record extension usage event.")
+
     await request.app.state.redis_incr(rate_limit_key)
     if current_minute_usage == 0:
         await request.app.state.redis_expire(rate_limit_key, 120)
 
-    return {"ok": True, "deduped": not inserted}
+    return {"ok": True, "deduped": save_result == "duplicate"}

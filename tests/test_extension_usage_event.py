@@ -110,7 +110,7 @@ def test_extension_usage_event_records_as_extension(monkeypatch):
                 "event_id": event_id,
             }
         )
-        return True
+        return "inserted"
 
     extension.save_unlock_history = fake_save_unlock_history
 
@@ -141,9 +141,9 @@ def test_extension_usage_event_idempotent(monkeypatch):
     async def fake_save_unlock_history(user_id, url, token, client, source="web", event_id=None):
         key = (user_id, event_id)
         if key in seen:
-            return False
+            return "duplicate"
         seen.add(key)
-        return True
+        return "inserted"
 
     extension.save_unlock_history = fake_save_unlock_history
 
@@ -168,3 +168,24 @@ def test_extension_usage_event_idempotent(monkeypatch):
     assert second.status_code == 200
     assert first.json()["deduped"] is False
     assert second.json()["deduped"] is True
+
+
+def test_extension_usage_event_write_failure(monkeypatch):
+    main = _build_app(monkeypatch)
+
+    from app.routes import extension
+
+    async def fake_save_unlock_history(user_id, url, token, client, source="web", event_id=None):
+        return "failed"
+
+    extension.save_unlock_history = fake_save_unlock_history
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/api/extension/usage-event",
+        headers={"Authorization": "Bearer token"},
+        json={"url": "https://example.com/article", "event_id": "a5d54e8d-3eff-4a93-ae21-d74f0ebf8b7f"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Failed to record extension usage event."

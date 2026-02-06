@@ -215,7 +215,7 @@ async def save_unlock_history(
     *,
     source: str = "web",
     event_id: str | None = None,
-) -> bool:
+) -> str:
     params = None
     prefer = "return=representation"
     if event_id:
@@ -243,9 +243,11 @@ async def save_unlock_history(
     )
     print(f"Insert status: {res.status_code}, body: {res.text}")
     if res.status_code not in (200, 201):
-        return False
+        return "failed"
     payload = res.json()
-    return bool(payload)
+    if payload:
+        return "inserted"
+    return "duplicate"
 
 
 @router.post("/fetch_and_clean_page", response_class=HTMLResponse)

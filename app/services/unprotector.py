@@ -225,6 +225,7 @@ BLOCKED_PAGE_TTL_SECONDS = 600
 FETCH_MAX_RETRIES = int(os.getenv("FETCH_MAX_RETRIES", "2"))
 FETCH_TIMEOUT_SECONDS = float(os.getenv("FETCH_TIMEOUT_SECONDS", "15"))
 FETCH_CONNECT_TIMEOUT_SECONDS = float(os.getenv("FETCH_CONNECT_TIMEOUT_SECONDS", "5"))
+LOW_CONF_BLOCK_RETRY_ENABLED = os.getenv("LOW_CONF_BLOCK_RETRY_ENABLED", "false").lower() == "true"
 
 # --- SSRF Check ---
 async def is_ssrf_risk(url: str) -> bool:
@@ -555,44 +556,122 @@ def apply_font_simplification(tree: HTMLParser) -> dict:
         "removed_google_font_links": removed_google_font_links,
     }
 
-def detect_block_page(html_text: str, headers: dict | None, status_code: int | None) -> tuple[bool, str | None]:
-    if not html_text:
-        return False, None
-    haystack = html_text.lower()
-    indicators = [
-        "cloudflare ray id",
-        "sorry, you have been blocked",
-        "please enable cookies",
-        "attention required",
-        "checking your browser before accessing",
-        "just a moment",
-        "cf-chl-",
-        "cf-turnstile",
-        "challenge-platform",
-        "sucuri firewall",
-        "ddos-guard",
-        "enable javascript and cookies",
-        "/cdn-cgi/challenge-platform",
-        "verify you are human",
-        "captcha",
-        "cf-bm",
-    ]
-    if any(indicator in haystack for indicator in indicators):
-        return True, extract_ray_id(html_text)
+def _normalize_headers(headers: dict | None) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for key, value in (headers or {}).items():
+        if key is None:
+            continue
+        normalized[str(key).lower()] = str(value)
+    return normalized
 
-    headers = headers or {}
-    server_header = str(headers.get("server", headers.get("Server", ""))).lower()
-    status_code = status_code or 0
-    if "cloudflare" in server_header and status_code in {403, 429, 503}:
-        return True, extract_ray_id(html_text)
 
-    return False, None
+def _detect_provider(headers: dict[str, str]) -> str | None:
+    server = headers.get("server", "").lower()
+    if "cloudflare" in server or "cf-ray" in headers or "cf-cache-status" in headers:
+        return "cloudflare"
+    if "litespeed" in server:
+        return "litespeed"
+    if "akamai" in server or "akamai" in headers.get("x-akamai-transformed", "").lower():
+        return "akamai"
+    if "perimeterx" in server or "x-px" in " ".join(headers.keys()):
+        return "perimeterx"
+    return "unknown"
+
+
+def classify_blocked_response(
+    status: int | None,
+    headers: dict[str, str] | None,
+    html: str | bytes,
+    hostname: str,
+) -> dict:
+    """Classify possible bot/WAF blocks with confidence tiers.
+
+    High-confidence signals immediately mark blocked. Low-confidence signals are
+    logged for observability but are not treated as blocked by themselves.
+    Tuning options should primarily adjust keyword lists and the optional low-
+    confidence retry flag.
+    """
+    normalized_headers = _normalize_headers(headers)
+    provider = _detect_provider(normalized_headers)
+    text = html.decode("utf-8", errors="ignore") if isinstance(html, bytes) else (html or "")
+    haystack = text.lower()
+    status_code = status or 0
+
+    strong_markers = {
+        "cf_challenge_path": "/cdn-cgi/",
+        "cf_chl_marker": "cf-chl-",
+        "cf_turnstile": "cf-turnstile",
+        "cf_just_a_moment": "just a moment",
+        "cf_checking_browser": "checking your browser before accessing",
+        "cf_attention_required": "attention required",
+        "challenge_platform": "challenge-platform",
+    }
+    weak_markers = {
+        "generic_enable_js": "enable javascript",
+        "generic_enable_cookies": "enable cookies",
+        "generic_access_denied": "access denied",
+        "generic_verify_human": "verify you are human",
+        "generic_captcha": "captcha",
+    }
+
+    reasons: list[str] = []
+    strong_hits = [reason for reason, marker in strong_markers.items() if marker in haystack]
+    reasons.extend(strong_hits)
+
+    waf_provider = provider in {"cloudflare", "akamai", "perimeterx"}
+    if status_code in {401, 403, 429, 503} and waf_provider:
+        reasons.append(f"status_{status_code}_{provider}")
+        return {
+            "is_blocked": True,
+            "confidence": "high",
+            "reasons": reasons,
+            "provider": provider,
+            "hostname": hostname,
+        }
+
+    if strong_hits:
+        reasons.append("strong_challenge_marker")
+        return {
+            "is_blocked": True,
+            "confidence": "high",
+            "reasons": reasons,
+            "provider": provider,
+            "hostname": hostname,
+        }
+
+    weak_hits = [reason for reason, marker in weak_markers.items() if marker in haystack]
+    if status_code == 200 and weak_hits:
+        reasons.extend(weak_hits)
+        reasons.append("keyword_only_low_conf")
+        return {
+            "is_blocked": False,
+            "confidence": "low",
+            "reasons": reasons,
+            "provider": provider,
+            "hostname": hostname,
+        }
+
+    return {
+        "is_blocked": False,
+        "confidence": "none",
+        "reasons": reasons,
+        "provider": provider,
+        "hostname": hostname,
+    }
 
 def extract_ray_id(html_text: str) -> str | None:
     match = re.search(r"ray id[:\s#]*([a-f0-9]{8,})", html_text, flags=re.IGNORECASE)
     if match:
         return match.group(1)
     return None
+
+
+def _extract_ray_id_from_headers(headers: dict[str, str] | None) -> str | None:
+    normalized_headers = _normalize_headers(headers)
+    ray_id = normalized_headers.get("cf-ray")
+    if not ray_id:
+        return None
+    return ray_id.strip() or None
 
 def build_blocked_html(hostname: str, ray_id: str | None) -> str:
     ray_block = ""
@@ -642,7 +721,8 @@ async def fetch_and_clean_page(
         user_agent=random.choice(USER_AGENTS),
         referer=referer,
     )
-    
+    hostname = urlparse(url).hostname or ""
+
     async def _fetch_with_cloudscraper() -> tuple[str, int, dict, str]:
         def _fetch() -> tuple[str, int, dict, str]:
             hostname = urlparse(url).hostname or ""
@@ -685,17 +765,35 @@ async def fetch_and_clean_page(
                 if use_cloudscraper:
                     logger.info("[cloudscraper] Fetching with Cloudscraper...")
                     fetched_text, status_code, response_headers, final_url = await _fetch_with_cloudscraper()
-                    blocked, ray_id = detect_block_page(
-                        fetched_text,
-                        response_headers,
-                        status_code,
+                    classification = classify_blocked_response(
+                        status=status_code,
+                        headers=response_headers,
+                        html=fetched_text,
+                        hostname=hostname,
                     )
-                    if blocked and attempt < FETCH_MAX_RETRIES:
-                        hostname = urlparse(url).hostname or ""
-                        logger.warning(
-                            "[cloudscraper] Blocked response detected hostname=%s status=%s ray_id=%s (attempt %s/%s)",
+                    ray_id = _extract_ray_id_from_headers(response_headers) or extract_ray_id(fetched_text)
+                    blocked = classification["is_blocked"] and classification["confidence"] == "high"
+                    if classification["confidence"] == "low":
+                        logger.info(
+                            "[cloudscraper] suspected_block_low_conf hostname=%s status=%s provider=%s confidence=%s reasons=%s ray_id=%s",
                             hostname,
                             status_code,
+                            classification.get("provider"),
+                            classification.get("confidence"),
+                            classification.get("reasons"),
+                            ray_id,
+                        )
+                        if LOW_CONF_BLOCK_RETRY_ENABLED and attempt < FETCH_MAX_RETRIES:
+                            await asyncio.sleep(0.75 * attempt + random.uniform(0, 0.35))
+                            continue
+                    if blocked and attempt < FETCH_MAX_RETRIES:
+                        logger.warning(
+                            "[cloudscraper] blocked_response_detected hostname=%s status=%s provider=%s confidence=%s blocked_reason=%s ray_id=%s attempt=%s/%s",
+                            hostname,
+                            status_code,
+                            classification.get("provider"),
+                            classification.get("confidence"),
+                            ",".join(classification.get("reasons") or ["unknown"]),
                             ray_id,
                             attempt,
                             FETCH_MAX_RETRIES,
@@ -768,7 +866,6 @@ async def fetch_and_clean_page(
         logger.error("Failed to fetch URL %s: %s", url, e)
         return f"<div style='color:red;'>Fetch error: {e}</div>"
 
-    hostname = urlparse(url).hostname or ""
     logger.info(
         "Fetch result hostname=%s method=%s status=%s content_length=%s attempts=%s",
         hostname,
@@ -790,12 +887,34 @@ async def fetch_and_clean_page(
 
     logger.info("Fetched HTML: type=%s, length=%d", type(response_text), len(response_text))
     base_url = url
-    is_blocked, ray_id = detect_block_page(
-        response_text,
-        response_headers,
-        fetch_meta.get("status_code"),
+    classification = classify_blocked_response(
+        status=fetch_meta.get("status_code"),
+        headers=response_headers,
+        html=response_text,
+        hostname=hostname,
     )
-    if is_blocked:
+    ray_id = _extract_ray_id_from_headers(response_headers) or extract_ray_id(response_text)
+    if classification["confidence"] == "low":
+        logger.info(
+            "suspected_block_low_conf hostname=%s status=%s provider=%s confidence=%s reasons=%s ray_id=%s",
+            hostname,
+            fetch_meta.get("status_code"),
+            classification.get("provider"),
+            classification.get("confidence"),
+            classification.get("reasons"),
+            ray_id,
+        )
+
+    if classification["is_blocked"] and classification["confidence"] == "high":
+        logger.warning(
+            "blocked_response_detected hostname=%s status=%s provider=%s confidence=%s blocked_reason=%s ray_id=%s",
+            hostname,
+            fetch_meta.get("status_code"),
+            classification.get("provider"),
+            classification.get("confidence"),
+            ",".join(classification.get("reasons") or ["unknown"]),
+            ray_id,
+        )
         if fetch_meta.get("method") == "cloudscraper":
             _cloudscraper_session_pool.evict(hostname)
         if fetch_meta.get("method") == "httpx" and not use_cloudscraper:

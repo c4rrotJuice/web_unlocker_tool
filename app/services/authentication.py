@@ -1,39 +1,41 @@
 # app/services/authentication.py
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, EmailStr
 from supabase import create_client, Client
 import os
 from dotenv import load_dotenv
-from supabase.client import AuthApiError
 
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 router = APIRouter(prefix="/api", tags=["Auth"])
 
-# Pydantic Models
+
 class SignupRequest(BaseModel):
     name: str
     email: EmailStr
     password: str
     use_case: str
 
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
-# Routes
+
 @router.post("/signup")
 async def signup(payload: SignupRequest):
     try:
         res = supabase.auth.sign_up({
             "email": payload.email,
-            "password": payload.password
+            "password": payload.password,
         })
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -41,28 +43,27 @@ async def signup(payload: SignupRequest):
     if not user:
         raise HTTPException(status_code=500, detail="Signup succeeded but user not returned.")
 
-    insert_res = supabase.table("user_meta").insert({
-        "user_id": user.id,
-        "name": payload.name,
-        "use_case": payload.use_case,
-        "account_type": "free",
-        "daily_limit": 5
-    }).execute()
+    try:
+        supabase.table("user_meta").insert({
+            "user_id": user.id,
+            "name": payload.name,
+            "use_case": payload.use_case,
+            "account_type": "free",
+            "daily_limit": 5,
+        }).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save metadata: {e}")
+
     return {"message": "Signup successful. Please check your email to confirm."}
 
-    if insert_res.error:
-        raise HTTPException(status_code=500, detail="Failed to save metadata.")
-
-    return {"message": "Signup successful"}
 
 @router.post("/login")
-async def login(payload: LoginRequest):
+async def login(payload: LoginRequest, response: Response):
     try:
         res = supabase.auth.sign_in_with_password({
             "email": payload.email,
-            "password": payload.password
+            "password": payload.password,
         })
-        # Check if login was successful
         if res.user is None or res.session is None:
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
@@ -70,6 +71,27 @@ async def login(payload: LoginRequest):
         refresh_token = res.session.refresh_token
         expires_in = res.session.expires_in
         token_type = res.session.token_type
+
+        cookie_secure_default = os.getenv("COOKIE_SECURE", "true").lower() != "false"
+        response.set_cookie(
+            "access_token",
+            access_token,
+            httponly=True,
+            secure=cookie_secure_default,
+            samesite="lax",
+            max_age=expires_in or 3600,
+            path="/",
+        )
+        response.set_cookie(
+            "refresh_token",
+            refresh_token,
+            httponly=True,
+            secure=cookie_secure_default,
+            samesite="lax",
+            max_age=60 * 60 * 24 * 30,
+            path="/",
+        )
+
         return {
             "message": "Login successful",
             "access_token": access_token,
@@ -79,8 +101,9 @@ async def login(payload: LoginRequest):
             "user": {
                 "id": res.user.id,
                 "email": res.user.email,
-            }
+            },
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-

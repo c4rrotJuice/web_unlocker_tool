@@ -319,7 +319,23 @@
       </div>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
+      let supabase;
+
+      async function ensureSupabaseClient() {
+        if (supabase) {
+          return supabase;
+        }
+        const res = await fetch("/api/auth/config");
+        if (!res.ok) {
+          throw new Error("Failed to load auth config");
+        }
+        const data = await res.json();
+        supabase = window.supabase.createClient(data.supabase_url, data.supabase_key);
+        return supabase;
+      }
+
       // --- CLEAR OLD TOKENS ON PAGE LOAD ---
       document.addEventListener("DOMContentLoaded", async () => {
         // Remove any old Supabase token from previous sessions
@@ -410,14 +426,18 @@
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || "Login failed");
 
-            if (data.access_token) {
+            if (data.access_token && data.refresh_token) {
+              const client = await ensureSupabaseClient();
+              await client.auth.setSession({
+                access_token: data.access_token,
+                refresh_token: data.refresh_token,
+              });
               localStorage.setItem("access_token", data.access_token);
-              document.cookie = `access_token=${data.access_token}; Path=/; SameSite=Lax`;
               loginMsg.textContent = "✅ Login successful!";
               loginMsg.className = "message success";
-              setTimeout(() => (window.location.href = "/"), 800);
+              setTimeout(() => (window.location.href = "/dashboard"), 800);
             } else {
-              throw new Error("No access token received from server");
+              throw new Error("No session received from server");
             }
           } catch (err) {
             loginMsg.textContent = "❌ Login failed: " + err.message;

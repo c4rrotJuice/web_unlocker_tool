@@ -194,11 +194,20 @@
     &copy; 2025 Web Unlocker Tool · All rights reserved
   </footer>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
+const supabase = window.supabase.createClient({{ supabase_url|tojson }}, {{ supabase_key|tojson }});
 
+async function getAccessToken() {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) {
+    throw error;
+  }
+  return data?.session?.access_token || null;
+}
 
 async function loadUserData() {
-  const token = localStorage.getItem("access_token");
+  const token = await getAccessToken();
 
   if (!token) {
     alert("No token found. Please log in again.");
@@ -215,7 +224,6 @@ async function loadUserData() {
 
     if (res.status === 401) {
       alert("Unauthorized. Please log in again.");
-      localStorage.removeItem("access_token");
       window.location.href = "/static/auth.html";
       return;
     }
@@ -292,7 +300,7 @@ async function loadUserData() {
 }
 
 async function loadMomentum() {
-  const token = localStorage.getItem("access_token");
+  const token = await getAccessToken();
   if (!token) return;
 
   try {
@@ -325,7 +333,7 @@ async function loadMomentum() {
 }
 
 async function downloadMonthlyReport() {
-  const token = localStorage.getItem("access_token");
+  const token = await getAccessToken();
   if (!token) return;
 
   const button = document.getElementById("pdfDownloadBtn");
@@ -364,7 +372,7 @@ async function downloadMonthlyReport() {
 }
 
 async function loadFullHistory(query = "") {
-  const token = localStorage.getItem("access_token");
+  const token = await getAccessToken();
   if (!token) return;
 
   try {
@@ -447,7 +455,7 @@ function renderUsageAnalytics(history) {
 
 // === Initial fetch and render of bookmarks ===
 async function loadBookmarks() {
-  const token = localStorage.getItem("access_token");
+  const token = await getAccessToken();
   if (!token) return;
 
   try {
@@ -503,7 +511,7 @@ function renderBookmarks(bookmarks) {
 
 // === Add Bookmark ===
 async function addBookmark(url) {
-  const token = localStorage.getItem("access_token");
+  const token = await getAccessToken();
     // Show status text
   let statusEl = document.getElementById("bookmark-status");
   if (!statusEl) {
@@ -547,7 +555,7 @@ document.getElementById("bookmark-add-btn").addEventListener("click", () => {
 
 // === Delete Bookmark ===
 async function deleteBookmark(id) {
-  const token = localStorage.getItem("access_token");
+  const token = await getAccessToken();
   try {
     const res = await fetch(`/api/bookmarks/${id}`, {
       method: "DELETE",
@@ -612,8 +620,8 @@ function detectAdblock() {
   });
 }
 
-  window.addEventListener("DOMContentLoaded", () => {
-    const token = localStorage.getItem("access_token");
+  window.addEventListener("DOMContentLoaded", async () => {
+    const token = await getAccessToken();
     if (!token) {
       window.location.href = "/static/auth.html";
       return;
@@ -630,7 +638,7 @@ function detectAdblock() {
   
   //load citations
   async function loadRecentCitations() {
-  const token = localStorage.getItem("access_token");
+  const token = await getAccessToken();
   if (!token) return;
 
   try {
@@ -717,7 +725,7 @@ function copyCitationFull(fullText) {
   });
    //load urls  
 async function loadRecentUnlocks() {
-  const token = localStorage.getItem("access_token");
+  const token = await getAccessToken();
   if (!token) return;
 
   try {

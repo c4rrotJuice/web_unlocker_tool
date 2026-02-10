@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from supabase import create_client
+from app.services.auth_session import apply_auth_cookies
 
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -80,21 +81,28 @@ async def _rate_limit_handoff(request: Request, user_id: str) -> None:
 
 @router.post("/handoff")
 async def create_handoff(request: Request, payload: HandoffRequest):
+    user_id = request.state.user_id
+
     auth_header = request.headers.get("authorization") or ""
-    if not auth_header.lower().startswith("bearer "):
+    token = ""
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        token = request.cookies.get("access_token") or ""
+
+    if not user_id and token:
+        try:
+            user_res = supabase_anon.auth.get_user(token)
+            user = user_res.user
+            if user:
+                user_id = user.id
+        except Exception:
+            user_id = None
+
+    if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    token = auth_header.split(" ")[1]
-    try:
-        user_res = supabase_anon.auth.get_user(token)
-        user = user_res.user
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="Invalid token") from exc
-
-    if not user:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    await _rate_limit_handoff(request, user.id)
+    await _rate_limit_handoff(request, user_id)
 
     redirect_path = _normalize_redirect_path(payload.redirect_path)
     refresh_token = (payload.refresh_token or "").strip()
@@ -105,7 +113,7 @@ async def create_handoff(request: Request, payload: HandoffRequest):
     code_prefix = code[:6]
     _debug_log(
         "create started: "
-        f"user_id={user.id} code_prefix={code_prefix} redirect_path={redirect_path}"
+        f"user_id={user_id} code_prefix={code_prefix} redirect_path={redirect_path}"
     )
 
     insert_res = (
@@ -114,7 +122,7 @@ async def create_handoff(request: Request, payload: HandoffRequest):
         .insert(
             {
                 "code": code,
-                "user_id": user.id,
+                "user_id": user_id,
                 "redirect_path": redirect_path,
                 "expires_at": expires_at.isoformat(),
                 "access_token": token,
@@ -273,31 +281,21 @@ async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
         "exchange success: "
         f"code_prefix={code_prefix} user_id={user.id} redirect_path={redirect_path}"
     )
-    response = JSONResponse({"redirect_path": redirect_path})
-    cookie_secure_default = os.getenv("COOKIE_SECURE", "true").lower() != "false"
-    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
-    request_is_https = request.url.scheme == "https" or forwarded_proto == "https"
-    secure_cookie = cookie_secure_default and request_is_https
-    response.set_cookie(
-        "access_token",
-        access_token,
-        httponly=True,
-        secure=secure_cookie,
-        samesite="lax",
-        max_age=3600,
-        path="/",
-    )
-    response.set_cookie(
-        "refresh_token",
-        refresh_token,
-        httponly=True,
-        secure=secure_cookie,
-        samesite="lax",
-        max_age=(
+    response = JSONResponse({"ok": True, "redirect_path": redirect_path})
+    apply_auth_cookies(
+        request,
+        response,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        access_max_age=(
+            int(expires_in)
+            if isinstance(expires_in, int) and expires_in > 0
+            else 3600
+        ),
+        refresh_max_age=(
             int(expires_in)
             if isinstance(expires_in, int) and expires_in > 0
             else 60 * 60 * 24 * 30
         ),
-        path="/",
     )
     return response

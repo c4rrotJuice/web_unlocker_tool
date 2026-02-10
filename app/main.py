@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -23,6 +23,7 @@ from app.routes.upstash_redis import (
 from app.routes.http import http_client
 from app.routes import render
 from app.services import authentication
+from app.services.auth_session import authenticate_request, verify_csrf, apply_auth_cookies
 from app.services.entitlements import normalize_account_type
 from app.services.priority_limiter import PriorityLimiter
 from app.routes import dashboard, history, citations, bookmarks, search, payments, editor, extension, auth_handoff
@@ -89,7 +90,7 @@ templates = Jinja2Templates(directory="app/templates")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in prod
+    allow_origins=[origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:8000").split(",") if origin.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -107,6 +108,9 @@ PUBLIC_PATH_PREFIXES = (
 
 PUBLIC_PATHS = {
     "/api/auth/handoff/exchange",
+    "/api/auth/handoff",
+    "/api/signup",
+    "/api/login",
     "/webhooks/paddle",
 }
 
@@ -125,14 +129,6 @@ def is_public_path(path: str) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     public_path = is_public_path(request.url.path)
-    auth_header = request.headers.get("authorization")
-
-    if not auth_header:
-        token_cookie = request.cookies.get("access_token")
-        if token_cookie and not public_path:
-            auth_header = f"Bearer {token_cookie}"
-
-    refresh_token_cookie = request.cookies.get("refresh_token")
 
     request.state.user_id = None
     request.state.account_type = None
@@ -140,49 +136,21 @@ async def auth_middleware(request: Request, call_next):
     request.state.name = None
     request.state.email = None
 
-    if auth_header and auth_header.lower().startswith("bearer "):
-        token = auth_header.split(" ")[1]
+    user = authenticate_request(request)
+    if user:
+        request.state.user_id = user.id
+        request.state.email = user.email
+    elif not public_path:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-        # ✅ Let Supabase validate token
+    try:
+        verify_csrf(request)
+    except HTTPException as exc:
+        return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+
+    if request.state.user_id:
         try:
-            user_res = supabase_anon.auth.get_user(token)
-            user = user_res.user
-            if not user:
-                raise Exception("Invalid token")
-
-            request.state.user_id = user.id
-            request.state.email = user.email
-            print("✅ user id:", user.id)
-
-        except Exception as e:
-            print("[AuthMiddleware] Token validation failed:", e)
-            refreshed = False
-            if refresh_token_cookie and not public_path:
-                try:
-                    refresh_res = supabase_anon.auth.refresh_session(refresh_token_cookie)
-                    refreshed_session = getattr(refresh_res, "session", None)
-                    refreshed_access_token = getattr(refreshed_session, "access_token", None)
-                    refreshed_refresh_token = getattr(refreshed_session, "refresh_token", None)
-                    if refreshed_access_token:
-                        user_res = supabase_anon.auth.get_user(refreshed_access_token)
-                        user = user_res.user
-                        if user:
-                            request.state.user_id = user.id
-                            request.state.email = user.email
-                            request.state.refreshed_access_token = refreshed_access_token
-                            request.state.refreshed_refresh_token = refreshed_refresh_token
-                            refreshed = True
-                except Exception as refresh_error:
-                    print("[AuthMiddleware] Token refresh failed:", refresh_error)
-
-            if not refreshed:
-                if public_path:
-                    return await call_next(request)
-                return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
-        # ✅ Fetch metadata with SERVICE ROLE
-        try:
-            cache_key = f"user_meta:{user.id}"
+            cache_key = f"user_meta:{request.state.user_id}"
             cached_meta = None
             try:
                 cached_meta = await request.app.state.redis_get(cache_key)
@@ -191,32 +159,24 @@ async def auth_middleware(request: Request, call_next):
 
             if isinstance(cached_meta, dict):
                 request.state.name = cached_meta.get("name")
-                request.state.account_type = normalize_account_type(
-                    cached_meta.get("account_type")
-                )
+                request.state.account_type = normalize_account_type(cached_meta.get("account_type"))
                 request.state.usage_limit = cached_meta.get("daily_limit", 5)
             else:
                 meta = (
                     supabase_admin
                     .table("user_meta")
                     .select("name, account_type, daily_limit")
-                    .eq("user_id", user.id)
+                    .eq("user_id", request.state.user_id)
                     .single()
                     .execute()
                 )
 
                 if meta.data:
                     request.state.name = meta.data.get("name")
-                    request.state.account_type = normalize_account_type(
-                        meta.data.get("account_type")
-                    )
+                    request.state.account_type = normalize_account_type(meta.data.get("account_type"))
                     request.state.usage_limit = meta.data.get("daily_limit", 5)
                     try:
-                        await request.app.state.redis_set(
-                            cache_key,
-                            meta.data,
-                            ttl_seconds=300,
-                        )
+                        await request.app.state.redis_set(cache_key, meta.data, ttl_seconds=300)
                     except Exception as e:
                         print("⚠️ Failed to write metadata cache:", e)
 
@@ -228,32 +188,14 @@ async def auth_middleware(request: Request, call_next):
     refreshed_access_token = getattr(request.state, "refreshed_access_token", None)
     if refreshed_access_token and not public_path:
         refreshed_refresh_token = getattr(request.state, "refreshed_refresh_token", None)
-        cookie_secure_default = os.getenv("COOKIE_SECURE", "true").lower() != "false"
-        forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
-        request_is_https = request.url.scheme == "https" or forwarded_proto == "https"
-        secure_cookie = cookie_secure_default and request_is_https
-        response.set_cookie(
-            "access_token",
-            refreshed_access_token,
-            httponly=True,
-            secure=secure_cookie,
-            samesite="lax",
-            max_age=3600,
-            path="/",
+        apply_auth_cookies(
+            request,
+            response,
+            access_token=refreshed_access_token,
+            refresh_token=refreshed_refresh_token,
         )
-        if refreshed_refresh_token:
-            response.set_cookie(
-                "refresh_token",
-                refreshed_refresh_token,
-                httponly=True,
-                secure=secure_cookie,
-                samesite="lax",
-                max_age=60 * 60 * 24 * 30,
-                path="/",
-            )
 
     return response
-
 
 
 # --------------------------------------------------

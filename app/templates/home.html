@@ -67,15 +67,10 @@
 
 const iframe = document.getElementById('iframe');
 const loader = document.getElementById('loader');
-const token = localStorage.getItem('access_token');
-
 // Global headers
 const headers = {
   'Content-Type': 'application/json',
 };
-if (token) {
-  headers['Authorization'] = `Bearer ${token}`;
-}
 
 // Load initial URL
 async function loadInitialURL() {
@@ -89,7 +84,7 @@ async function loadInitialURL() {
   loader.innerText = 'Loading page...';
 
   try {
-    const response = await fetch('/view', {
+    const response = await window.apiFetch('/view', {
       method: 'POST',
       headers,
       body: JSON.stringify({ url: targetUrl, unlock: true })
@@ -127,7 +122,7 @@ window.addEventListener('message', async (event) => {
   }
 
   try {
-    const response = await fetch('/fetch_and_clean_page', {
+    const response = await window.apiFetch('/fetch_and_clean_page', {
       method: 'POST',
       headers,
       body: JSON.stringify({ url: newUrl, unlock: true })
@@ -157,9 +152,7 @@ document.getElementById('unblockForm').addEventListener('submit', async (event) 
 
   const urlToFetch = document.getElementById('urlToFetch').value;
   const unlockMode = document.getElementById('unlockMode').checked;
-  const token = localStorage.getItem('access_token');
-
-  if (!urlToFetch) return;
+    if (!urlToFetch) return;
 
   loader.style.display = 'block';
   loader.innerText = 'Loading page...';
@@ -172,12 +165,9 @@ document.getElementById('unblockForm').addEventListener('submit', async (event) 
   const headers = {
     'Content-Type': 'application/json',
   };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
+  
   try {
-    const response = await fetch('/view', {
+    const response = await window.apiFetch('/view', {
       method: 'POST',
       headers,
       body: JSON.stringify({ url: urlToFetch, unlock: unlockMode })
@@ -207,7 +197,7 @@ window.addEventListener('message', async (event) => {
     const citation = event.data.citation;
 
     try {
-      const response = await fetch('/api/citations', {
+      const response = await window.apiFetch('/api/citations', {
         method: 'POST',
         headers,
         body: JSON.stringify(citation),
@@ -222,6 +212,7 @@ window.addEventListener('message', async (event) => {
 });
 
 </script>
+<script src="/static/js/api.js"></script>
 <script src="/static/js/nav.js"></script>
 </body>
 </html>

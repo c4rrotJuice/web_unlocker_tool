@@ -234,6 +234,7 @@
       </div>
     </section>
 
+    <script src="/static/js/api.js"></script>
     <script>
       // Toggle logic
       const leftOption = document.querySelector(
@@ -270,17 +271,9 @@
       let paddleReady = false;
       let paddleInitError = null;
 
-      function authHeaders() {
-        const token = localStorage.getItem("access_token");
-        return token ? { Authorization: `Bearer ${token}` } : {};
-      }
-
       async function loadCurrentUser() {
         try {
-          const res = await fetch("/api/me", {
-            headers: authHeaders(),
-            credentials: "include",
-          });
+          const res = await window.apiFetch("/api/me");
 
           if (!res.ok) {
             currentUserId = null;
@@ -298,10 +291,7 @@
 
       async function initPaddle() {
         try {
-          const res = await fetch("/get_paddle_token", {
-            headers: authHeaders(),
-            credentials: "include",
-          });
+          const res = await window.apiFetch("/get_paddle_token");
           if (!res.ok) {
             const errorText = await res.text();
             throw new Error(errorText || "Failed to fetch Paddle token");
@@ -351,13 +341,11 @@
           return;
         }
 
-        fetch("/create_paddle_checkout", {
+        window.apiFetch("/create_paddle_checkout", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...authHeaders(),
           },
-          credentials: "include",
           body: JSON.stringify({ plan, cycle }),
         })
           .then(async (res) => {

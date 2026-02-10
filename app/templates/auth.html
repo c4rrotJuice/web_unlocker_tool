@@ -184,7 +184,7 @@
       }
 
       try {
-        const res = await fetch("/api/signup", {
+        const res = await window.apiFetch("/api/signup", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -210,7 +210,7 @@
       const password = document.getElementById("login-password").value;
 
       try {
-        const res = await fetch("/api/login", {
+        const res = await window.apiFetch("/api/login", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -223,14 +223,14 @@
         loginMsg.textContent = "✅ Login successful!";
         loginMsg.className = "message success";
 
-        // Optional: redirect after login
-        // window.location.href = "/dashboard";
+        window.location.href = "/dashboard";
       } catch (err) {
         loginMsg.textContent = "❌ Login failed: " + err.message;
         loginMsg.className = "message error";
       }
     });
   </script>
-  <script src="/static/js/nav.js"></script>
+  <script src="/static/js/api.js"></script>
+<script src="/static/js/nav.js"></script>
 </body>
 </html>

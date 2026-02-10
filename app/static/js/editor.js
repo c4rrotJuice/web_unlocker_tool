@@ -44,16 +44,37 @@ function renderBlockedMessage(message) {
 }
 
 function startEditor() {
+  const ENABLE_MARKDOWN_SHORTCUTS = true;
+  const ENABLE_OUTLINE = true;
+  const ENABLE_CHECKPOINTS = true;
+  const AUTOSAVE_DEBOUNCE_MS = 2000;
+  const OUTLINE_DEBOUNCE_MS = 700;
+  const CHECKPOINT_INTERVAL_MS = 4 * 60 * 1000;
+  const CHECKPOINT_CHANGE_THRESHOLD = 700;
+
+  // Implementation map:
+  // - Doc CRUD uses GET/POST/PUT /api/docs and GET /api/docs/{id} with { title, content_delta, content_html?, citation_ids }.
+  // - Autosave updates happen in queueAutosave -> autosaveDoc using PUT /api/docs/{id}.
+  // - Citations flow uses /api/citations and /api/citations/by_ids, inserts as text token `〔cite:{id}〕`.
+  // - Checkpoints are additive via GET/POST /api/docs/{id}/checkpoints and POST /api/docs/{id}/restore.
+
   const citeTokenPrefix = "〔cite:";
   const citeTokenSuffix = "〕";
+  const markdownState = {
+    inProgress: false,
+  };
+
   let currentDocId = null;
   let currentCitationIds = [];
   let citationCache = new Map();
   let selectedCitationId = null;
   let autosaveTimer = null;
+  let outlineTimer = null;
   let isDirty = false;
   let allDocs = [];
   let citationSearchTimer = null;
+  let lastCheckpointAt = 0;
+  let changedSinceCheckpoint = 0;
 
   const saveStatus = document.getElementById("save-status");
   const docTitleInput = document.getElementById("doc-title");
@@ -65,6 +86,12 @@ function startEditor() {
   const exportText = document.getElementById("export-text");
   const exportBibliography = document.getElementById("export-bibliography");
   const exportStyle = document.getElementById("export-style");
+  const outlineList = document.getElementById("outline-list");
+  const outlinePanel = document.getElementById("outline-panel");
+  const outlineRefreshBtn = document.getElementById("outline-refresh");
+  const outlineToggleBtn = document.getElementById("outline-toggle");
+  const historyList = document.getElementById("history-list");
+  const historyRefreshBtn = document.getElementById("history-refresh");
 
   const quill = new Quill("#editor", {
     theme: "snow",
@@ -88,10 +115,12 @@ function startEditor() {
       "bold",
       "italic",
       "underline",
+      "strike",
       "link",
       "header",
       "list",
       "blockquote",
+      "code",
       "code-block",
     ]);
 
@@ -109,14 +138,34 @@ function startEditor() {
     return new Delta(cleanedOps);
   });
 
-  quill.on("text-change", () => {
+  quill.on("text-change", (delta, old, source) => {
+    if (ENABLE_MARKDOWN_SHORTCUTS && source === "user") {
+      applyMarkdownShortcuts();
+    }
     isDirty = true;
+    changedSinceCheckpoint += estimateDeltaLength(delta);
     queueAutosave();
+    scheduleOutlineBuild();
+    if (ENABLE_CHECKPOINTS) {
+      createCheckpointIfNeeded();
+    }
+  });
+
+  quill.on("selection-change", (range, oldRange) => {
+    if (!range && oldRange && isDirty) {
+      autosaveDoc();
+    }
   });
 
   docTitleInput.addEventListener("input", () => {
     isDirty = true;
     queueAutosave();
+  });
+
+  window.addEventListener("beforeunload", () => {
+    if (isDirty) {
+      autosaveDoc();
+    }
   });
 
   function setSaveStatus(text) {
@@ -130,6 +179,14 @@ function startEditor() {
     return delta;
   }
 
+  function estimateDeltaLength(delta) {
+    if (!delta || !Array.isArray(delta.ops)) return 0;
+    return delta.ops.reduce((acc, op) => {
+      if (typeof op.insert === "string") return acc + op.insert.length;
+      return acc + 1;
+    }, 0);
+  }
+
   function queueAutosave() {
     setSaveStatus("Saving...");
     if (autosaveTimer) {
@@ -137,7 +194,7 @@ function startEditor() {
     }
     autosaveTimer = setTimeout(() => {
       autosaveDoc();
-    }, 2000);
+    }, AUTOSAVE_DEBOUNCE_MS);
   }
 
   async function autosaveDoc() {
@@ -146,6 +203,7 @@ function startEditor() {
     const payload = {
       title: docTitleInput.value.trim() || "Untitled",
       content_delta: quill.getContents(),
+      content_html: quill.root.innerHTML,
       citation_ids: currentCitationIds,
     };
 
@@ -229,6 +287,7 @@ function startEditor() {
 
   document.getElementById("new-doc-btn").addEventListener("click", async () => {
     try {
+      await autosaveDoc();
       const res = await fetch("/api/docs", {
         method: "POST",
         headers: {
@@ -250,6 +309,7 @@ function startEditor() {
   });
 
   async function openDoc(docId) {
+    await autosaveDoc();
     const res = await fetch(`/api/docs/${docId}`);
 
     if (!res.ok) {
@@ -261,14 +321,267 @@ function startEditor() {
     currentDocId = doc.id;
     currentCitationIds = doc.citation_ids || [];
     docTitleInput.value = doc.title;
-    quill.setContents(normalizeDelta(doc.content_delta), "silent");
+
+    if (doc.content_delta && Array.isArray(doc.content_delta.ops) && doc.content_delta.ops.length) {
+      quill.setContents(normalizeDelta(doc.content_delta), "silent");
+    } else if (doc.content_html) {
+      quill.setText("", "silent");
+      quill.clipboard.dangerouslyPasteHTML(doc.content_html, "silent");
+    } else {
+      quill.setContents(normalizeDelta(doc.content_delta), "silent");
+    }
+
     setSaveStatus("Idle");
     isDirty = false;
+    changedSinceCheckpoint = 0;
+    lastCheckpointAt = Date.now();
 
     await refreshInDocCitations();
+    if (ENABLE_OUTLINE) {
+      buildAndRenderOutline();
+    }
+    if (ENABLE_CHECKPOINTS) {
+      await loadCheckpoints();
+    }
     renderDocs(allDocs);
     return true;
   }
+
+  function applyMarkdownShortcuts() {
+    if (markdownState.inProgress) return;
+    const range = quill.getSelection(true);
+    if (!range) return;
+
+    const [line, lineOffset] = quill.getLine(range.index);
+    if (!line) return;
+    const lineStart = range.index - lineOffset;
+    const lineText = quill.getText(lineStart, line.length()).replace(/\n$/, "");
+
+    const rules = [
+      { regex: /^###\s$/, apply: () => quill.formatLine(lineStart, 1, "header", 3, "user") },
+      { regex: /^##\s$/, apply: () => quill.formatLine(lineStart, 1, "header", 2, "user") },
+      { regex: /^#\s$/, apply: () => quill.formatLine(lineStart, 1, "header", 1, "user") },
+      { regex: /^-\s$/, apply: () => quill.formatLine(lineStart, 1, "list", "bullet", "user") },
+      { regex: /^1\.\s$/, apply: () => quill.formatLine(lineStart, 1, "list", "ordered", "user") },
+    ];
+
+    const matched = rules.find((rule) => rule.regex.test(lineText));
+    if (matched) {
+      markdownState.inProgress = true;
+      quill.deleteText(lineStart, lineText.length, "user");
+      matched.apply();
+      quill.setSelection(lineStart, 0, "silent");
+      markdownState.inProgress = false;
+      return;
+    }
+
+    if (range.length > 0) return;
+    applyInlineMarkdown(range.index);
+  }
+
+  function applyInlineMarkdown(cursorIndex) {
+    const start = Math.max(0, cursorIndex - 120);
+    const chunk = quill.getText(start, cursorIndex - start);
+    const patterns = [
+      { regex: /\*\*([^*\n]+)\*\*$/, format: { bold: true } },
+      { regex: /\*([^*\n]+)\*$/, format: { italic: true } },
+      { regex: /~~([^~\n]+)~~$/, format: { strike: true } },
+      { regex: /`([^`\n]+)`$/, format: { code: true } },
+    ];
+
+    for (const pattern of patterns) {
+      const match = chunk.match(pattern.regex);
+      if (!match) continue;
+      const full = match[0];
+      const inner = match[1];
+      const fullStart = cursorIndex - full.length;
+
+      markdownState.inProgress = true;
+      quill.deleteText(fullStart, full.length, "user");
+      quill.insertText(fullStart, inner, pattern.format, "user");
+      quill.setSelection(fullStart + inner.length, 0, "silent");
+      markdownState.inProgress = false;
+      break;
+    }
+  }
+
+  function buildOutlineFromDelta(delta) {
+    const ops = (delta && Array.isArray(delta.ops) && delta.ops) || [];
+    const outline = [];
+    let textBuffer = "";
+    let lineStartIndex = 0;
+    let index = 0;
+
+    const pushLine = (attributes = {}) => {
+      const level = attributes && attributes.header;
+      if (level && level >= 1 && level <= 3) {
+        outline.push({
+          level,
+          text: textBuffer.trim() || `Heading ${outline.length + 1}`,
+          index: lineStartIndex,
+        });
+      }
+      textBuffer = "";
+      lineStartIndex = index;
+    };
+
+    ops.forEach((op) => {
+      if (typeof op.insert !== "string") {
+        index += 1;
+        return;
+      }
+
+      for (let i = 0; i < op.insert.length; i += 1) {
+        const ch = op.insert[i];
+        if (ch === "\n") {
+          pushLine(op.attributes || {});
+          index += 1;
+        } else {
+          textBuffer += ch;
+          index += 1;
+        }
+      }
+    });
+
+    return outline;
+  }
+
+  function renderOutline(outlineItems) {
+    outlineList.innerHTML = "";
+    if (!outlineItems.length) {
+      outlineList.innerHTML = '<p class="empty-state">No headings yet. Add H1/H2/H3 to build the outline.</p>';
+      return;
+    }
+
+    outlineItems.forEach((item) => {
+      const btn = document.createElement("button");
+      btn.className = `outline-item level-${item.level}`;
+      btn.textContent = item.text;
+      btn.addEventListener("click", () => {
+        quill.setSelection(item.index, 0, "user");
+        quill.focus();
+      });
+      outlineList.appendChild(btn);
+    });
+  }
+
+  function buildAndRenderOutline() {
+    const outline = buildOutlineFromDelta(quill.getContents());
+    renderOutline(outline);
+  }
+
+  function scheduleOutlineBuild() {
+    if (!ENABLE_OUTLINE) return;
+    if (outlineTimer) {
+      clearTimeout(outlineTimer);
+    }
+    outlineTimer = setTimeout(() => {
+      buildAndRenderOutline();
+    }, OUTLINE_DEBOUNCE_MS);
+  }
+
+  async function loadCheckpoints() {
+    if (!ENABLE_CHECKPOINTS || !currentDocId) return;
+    const res = await fetch(`/api/docs/${currentDocId}/checkpoints?limit=15`);
+    if (!res.ok) {
+      historyList.innerHTML = '<p class="empty-state">History unavailable.</p>';
+      return;
+    }
+    const checkpoints = await res.json();
+    renderCheckpoints(checkpoints);
+  }
+
+  function renderCheckpoints(checkpoints = []) {
+    historyList.innerHTML = "";
+    if (!checkpoints.length) {
+      historyList.innerHTML = '<p class="empty-state">No checkpoints yet.</p>';
+      return;
+    }
+
+    checkpoints.forEach((checkpoint) => {
+      const row = document.createElement("div");
+      row.className = "history-row";
+
+      const label = document.createElement("span");
+      label.className = "doc-meta";
+      label.textContent = new Date(checkpoint.created_at).toLocaleString();
+
+      const restoreBtn = document.createElement("button");
+      restoreBtn.className = "secondary";
+      restoreBtn.textContent = "Restore";
+      restoreBtn.addEventListener("click", async () => {
+        await restoreCheckpoint(checkpoint.id);
+      });
+
+      row.append(label, restoreBtn);
+      historyList.appendChild(row);
+    });
+  }
+
+  async function createCheckpointIfNeeded(force = false) {
+    if (!currentDocId) return;
+
+    const now = Date.now();
+    const byTime = now - lastCheckpointAt >= CHECKPOINT_INTERVAL_MS;
+    const byChange = changedSinceCheckpoint >= CHECKPOINT_CHANGE_THRESHOLD;
+
+    if (!force && !byTime && !byChange) return;
+
+    const payload = {
+      content_delta: quill.getContents(),
+      content_html: quill.root.innerHTML,
+    };
+
+    try {
+      const res = await fetch(`/api/docs/${currentDocId}/checkpoints`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        changedSinceCheckpoint = 0;
+        lastCheckpointAt = now;
+        await loadCheckpoints();
+      }
+    } catch (error) {
+      console.warn("checkpoint failed", error);
+    }
+  }
+
+  async function restoreCheckpoint(checkpointId) {
+    if (!currentDocId || !checkpointId) return;
+    const confirmed = window.confirm("Restore this checkpoint? Current editor content will be replaced.");
+    if (!confirmed) return;
+
+    await createCheckpointIfNeeded(true);
+
+    const res = await fetch(`/api/docs/${currentDocId}/restore`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ checkpoint_id: checkpointId }),
+    });
+
+    if (!res.ok) {
+      alert("Failed to restore checkpoint.");
+      return;
+    }
+
+    const doc = await res.json();
+    quill.setContents(normalizeDelta(doc.content_delta), "silent");
+    isDirty = false;
+    setSaveStatus("Restored");
+    buildAndRenderOutline();
+    await loadCheckpoints();
+  }
+
+  outlineRefreshBtn.addEventListener("click", () => buildAndRenderOutline());
+  outlineToggleBtn.addEventListener("click", () => {
+    outlinePanel.classList.toggle("collapsed");
+    outlineToggleBtn.textContent = outlinePanel.classList.contains("collapsed")
+      ? "Expand"
+      : "Collapse";
+  });
+  historyRefreshBtn.addEventListener("click", () => loadCheckpoints());
 
   async function fetchCitations({ search = "", limit = 50 } = {}) {
     const params = new URLSearchParams();
@@ -428,9 +741,7 @@ function startEditor() {
     const container = document.getElementById("doc-citations-list");
     container.innerHTML = "";
 
-    const docCitations = citations.filter((citation) =>
-      currentCitationIds.includes(citation.id)
-    );
+    const docCitations = citations.filter((citation) => currentCitationIds.includes(citation.id));
 
     if (!docCitations.length) {
       container.innerHTML = "<p>No citations attached yet.</p>";
@@ -484,7 +795,9 @@ function startEditor() {
 
     const range = quill.getSelection(true);
     const insertIndex = range ? range.index : quill.getLength();
-    quill.insertText(insertIndex, `${inText} ${token} `, "user");
+    quill.insertText(insertIndex, `${inText} ${token} `, {
+      background: "#eef4ff",
+    }, "user");
     quill.setSelection(insertIndex + inText.length + token.length + 2);
 
     attachCitation(citationData.id);

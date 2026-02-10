@@ -64,15 +64,17 @@
       <div id="editor-toolbar">
         <span class="ql-formats">
           <select class="ql-header">
-            <option selected></option>
-            <option value="1"></option>
-            <option value="2"></option>
+            <option selected>Normal</option>
+            <option value="1">Heading 1</option>
+            <option value="2">Heading 2</option>
+            <option value="3">Heading 3</option>
           </select>
         </span>
         <span class="ql-formats">
           <button class="ql-bold"></button>
           <button class="ql-italic"></button>
           <button class="ql-underline"></button>
+          <button class="ql-strike"></button>
         </span>
         <span class="ql-formats">
           <button class="ql-list" value="ordered"></button>
@@ -80,8 +82,10 @@
           <button class="ql-blockquote"></button>
         </span>
         <span class="ql-formats">
+          <button class="ql-code"></button>
           <button class="ql-link"></button>
           <button class="ql-code-block"></button>
+          <button class="ql-clean"></button>
         </span>
         <span class="ql-formats">
           <button class="ql-cite">Cite</button>
@@ -89,6 +93,29 @@
         </span>
       </div>
       <div id="editor" class="editor-canvas"></div>
+
+      <section class="editor-secondary-panel" id="outline-panel">
+        <div class="panel-header">
+          <h3>Outline</h3>
+          <div class="panel-actions">
+            <button class="text" id="outline-refresh">Refresh</button>
+            <button class="text" id="outline-toggle">Collapse</button>
+          </div>
+        </div>
+        <div id="outline-list" class="outline-list">
+          <p class="empty-state">No headings yet. Add H1/H2/H3 to build the outline.</p>
+        </div>
+      </section>
+
+      <section class="editor-secondary-panel" id="history-panel">
+        <div class="panel-header">
+          <h3>History</h3>
+          <button class="text" id="history-refresh">Refresh</button>
+        </div>
+        <div id="history-list" class="history-list">
+          <p class="empty-state">No checkpoints yet.</p>
+        </div>
+      </section>
     </main>
 
     <aside class="sidebar sidebar-right">

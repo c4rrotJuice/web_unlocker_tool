@@ -279,3 +279,79 @@ button.text {
     height: 60vh;
   }
 }
+
+.editor-secondary-panel {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: #fbfcff;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.panel-header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.outline-list,
+.history-list {
+  max-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.outline-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  text-align: left;
+  width: 100%;
+  padding: 6px 10px;
+}
+
+.outline-item.level-2 {
+  margin-left: 14px;
+  width: calc(100% - 14px);
+}
+
+.outline-item.level-3 {
+  margin-left: 28px;
+  width: calc(100% - 28px);
+}
+
+.history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+}
+
+.empty-state {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+#outline-panel.collapsed .outline-list {
+  display: none;
+}
+
+.ql-toolbar .ql-formats:last-child button {
+  min-width: 70px;
+}

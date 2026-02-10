@@ -198,24 +198,12 @@
 
 
 async function loadUserData() {
-  const token = localStorage.getItem("access_token");
-
-  if (!token) {
-    alert("No token found. Please log in again.");
-    window.location.href = "/auth";
-    return;
-  }
 
   try {
-    const res = await fetch("/api/me", {
-      headers: {
-        "Authorization": `Bearer ${token}`
-      }
-    });
+    const res = await window.apiFetch("/api/me");
 
     if (res.status === 401) {
       alert("Unauthorized. Please log in again.");
-      localStorage.removeItem("access_token");
       window.location.href = "/static/auth.html";
       return;
     }
@@ -292,13 +280,9 @@ async function loadUserData() {
 }
 
 async function loadMomentum() {
-  const token = localStorage.getItem("access_token");
-  if (!token) return;
 
   try {
-    const res = await fetch("/api/dashboard/momentum", {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
+    const res = await window.apiFetch("/api/dashboard/momentum");
 
     if (!res.ok) throw new Error("Failed to load momentum data");
     const data = await res.json();
@@ -325,8 +309,6 @@ async function loadMomentum() {
 }
 
 async function downloadMonthlyReport() {
-  const token = localStorage.getItem("access_token");
-  if (!token) return;
 
   const button = document.getElementById("pdfDownloadBtn");
   const status = document.getElementById("pdfDownloadStatus");
@@ -335,9 +317,7 @@ async function downloadMonthlyReport() {
   status.textContent = "Generating your report...";
 
   try {
-    const res = await fetch("/api/reports/monthly", {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
+    const res = await window.apiFetch("/api/reports/monthly");
 
     if (!res.ok) throw new Error("Report download failed");
     const blob = await res.blob();
@@ -364,12 +344,10 @@ async function downloadMonthlyReport() {
 }
 
 async function loadFullHistory(query = "") {
-  const token = localStorage.getItem("access_token");
-  if (!token) return;
 
   try {
-    const res = await fetch(`/api/history?q=${encodeURIComponent(query)}`, {
-      headers: { "Authorization": `Bearer ${token}` }
+    const res = await window.apiFetch(`/api/history?q=${encodeURIComponent(query)}`, {
+      
     });
 
     if (!res.ok) throw new Error("Could not load full history");
@@ -447,13 +425,9 @@ function renderUsageAnalytics(history) {
 
 // === Initial fetch and render of bookmarks ===
 async function loadBookmarks() {
-  const token = localStorage.getItem("access_token");
-  if (!token) return;
 
   try {
-    const res = await fetch("/api/bookmarks", {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
+    const res = await window.apiFetch("/api/bookmarks");
     if (!res.ok) throw new Error("Failed to load bookmarks");
     const bookmarks = await res.json();
     renderBookmarks(bookmarks);
@@ -503,7 +477,6 @@ function renderBookmarks(bookmarks) {
 
 // === Add Bookmark ===
 async function addBookmark(url) {
-  const token = localStorage.getItem("access_token");
     // Show status text
   let statusEl = document.getElementById("bookmark-status");
   if (!statusEl) {
@@ -514,12 +487,10 @@ async function addBookmark(url) {
   statusEl.textContent = "Adding bookmark...";
 
   try {
-    const res = await fetch("/api/bookmarks", {
+    const res = await window.apiFetch("/api/bookmarks", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${token}`,
         "Content-Type": "application/json"
-        
       },
       body: JSON.stringify({ url })
     });
@@ -547,11 +518,10 @@ document.getElementById("bookmark-add-btn").addEventListener("click", () => {
 
 // === Delete Bookmark ===
 async function deleteBookmark(id) {
-  const token = localStorage.getItem("access_token");
   try {
-    const res = await fetch(`/api/bookmarks/${id}`, {
+    const res = await window.apiFetch(`/api/bookmarks/${id}`, {
       method: "DELETE",
-      headers: { "Authorization": `Bearer ${token}` }
+      
     });
     if (!res.ok) throw new Error("Failed to delete bookmark");
   } catch (err) {
@@ -612,12 +582,9 @@ function detectAdblock() {
   });
 }
 
-  window.addEventListener("DOMContentLoaded", () => {
-    const token = localStorage.getItem("access_token");
-    if (!token) {
-      window.location.href = "/static/auth.html";
-      return;
-    }
+  window.addEventListener("DOMContentLoaded", async () => {
+    const auth = await window.requireAuth();
+    if (!auth) return;
 
     loadUserData();
     loadMomentum();
@@ -630,15 +597,9 @@ function detectAdblock() {
   
   //load citations
   async function loadRecentCitations() {
-  const token = localStorage.getItem("access_token");
-  if (!token) return;
 
   try {
-    const res = await fetch("/api/citations", {
-      headers: {
-        "Authorization": `Bearer ${token}`
-      }
-    });
+    const res = await window.apiFetch("/api/citations");
 
     if (!res.ok) throw new Error("Could not load citation history");
 
@@ -717,15 +678,9 @@ function copyCitationFull(fullText) {
   });
    //load urls  
 async function loadRecentUnlocks() {
-  const token = localStorage.getItem("access_token");
-  if (!token) return;
 
   try {
-    const res = await fetch("/api/unlocks", {
-      headers: {
-        "Authorization": `Bearer ${token}`
-      }
-    });
+    const res = await window.apiFetch("/api/unlocks");
 
     if (!res.ok) throw new Error("Could not load unlock history");
 
@@ -764,6 +719,7 @@ function timeSince(date) {
 }
 
 </script>
+<script src="/static/js/api.js"></script>
 <script src="/static/js/nav.js"></script>
 </body>
 </html>

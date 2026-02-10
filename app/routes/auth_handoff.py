@@ -26,6 +26,7 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
 HANDOFF_TTL_SECONDS = 60
 HANDOFF_RATE_LIMIT = 5
+HANDOFF_EXCHANGE_RATE_LIMIT = 20
 
 
 def _debug_log(message: str) -> None:
@@ -76,6 +77,25 @@ async def _rate_limit_handoff(request: Request, user_id: str) -> None:
         raise
     except Exception as exc:
         print("⚠️ Failed to apply handoff rate limit:", exc)
+
+
+async def _rate_limit_handoff_exchange(request: Request) -> None:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    client_ip = forwarded.split(",")[0].strip() if forwarded else None
+    if not client_ip:
+        client_ip = getattr(request.client, "host", "unknown")
+
+    key = f"handoff:exchange:{client_ip}"
+    try:
+        count = await request.app.state.redis_incr(key)
+        if count == 1:
+            await request.app.state.redis_expire(key, 60)
+        if count > HANDOFF_EXCHANGE_RATE_LIMIT:
+            raise HTTPException(status_code=429, detail="Too many exchange requests.")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print("⚠️ Failed to apply handoff exchange rate limit:", exc)
 
 
 @router.post("/handoff")
@@ -149,6 +169,8 @@ async def create_handoff(request: Request, payload: HandoffRequest):
 
 @router.post("/handoff/exchange")
 async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
+    await _rate_limit_handoff_exchange(request)
+
     code = (payload.code or "").strip()
     if not code:
         _debug_log("exchange rejected: missing code")
@@ -273,31 +295,20 @@ async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
         "exchange success: "
         f"code_prefix={code_prefix} user_id={user.id} redirect_path={redirect_path}"
     )
-    response = JSONResponse({"redirect_path": redirect_path})
-    cookie_secure_default = os.getenv("COOKIE_SECURE", "true").lower() != "false"
-    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
-    request_is_https = request.url.scheme == "https" or forwarded_proto == "https"
-    secure_cookie = cookie_secure_default and request_is_https
-    response.set_cookie(
-        "access_token",
-        access_token,
-        httponly=True,
-        secure=secure_cookie,
-        samesite="lax",
-        max_age=3600,
-        path="/",
+    return JSONResponse(
+        {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_in": (
+                int(expires_in)
+                if isinstance(expires_in, int) and expires_in > 0
+                else 60 * 60
+            ),
+            "token_type": token_type or "bearer",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+            },
+            "redirect_path": redirect_path,
+        }
     )
-    response.set_cookie(
-        "refresh_token",
-        refresh_token,
-        httponly=True,
-        secure=secure_cookie,
-        samesite="lax",
-        max_age=(
-            int(expires_in)
-            if isinstance(expires_in, int) and expires_in > 0
-            else 60 * 60 * 24 * 30
-        ),
-        path="/",
-    )
-    return response

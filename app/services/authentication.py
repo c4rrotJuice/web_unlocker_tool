@@ -67,9 +67,15 @@ async def login(payload: LoginRequest):
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
         access_token = res.session.access_token
+        refresh_token = res.session.refresh_token
+        expires_in = res.session.expires_in
+        token_type = res.session.token_type
         return {
             "message": "Login successful",
             "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_in": expires_in,
+            "token_type": token_type,
             "user": {
                 "id": res.user.id,
                 "email": res.user.email,
@@ -77,5 +83,4 @@ async def login(payload: LoginRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 

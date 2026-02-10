@@ -285,6 +285,14 @@ async def auth_page(request: Request):
     return templates.TemplateResponse("auth.html", {"request": request})
 
 
+@app.get("/api/auth/config")
+async def auth_config():
+    return {
+        "supabase_url": SUPABASE_URL,
+        "supabase_key": SUPABASE_KEY,
+    }
+
+
 @app.get("/auth/handoff", response_class=HTMLResponse)
 async def auth_handoff_page(request: Request):
     return templates.TemplateResponse(
@@ -304,7 +312,14 @@ async def login_redirect():
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "supabase_url": SUPABASE_URL,
+            "supabase_key": SUPABASE_KEY,
+        },
+    )
 
 
 # --------------------------------------------------

@@ -1,4 +1,5 @@
 import importlib
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import supabase
@@ -176,11 +177,12 @@ def test_exchange_rotates_tokens_after_refresh(monkeypatch):
     response = client.post("/api/auth/handoff/exchange", json={"code": "abc"})
 
     assert response.status_code == 200
-    assert response.json()["redirect_path"] == "/editor?doc=1"
+    payload = response.json()
+    assert payload["redirect_path"] == "/editor?doc=1"
+    assert payload["access_token"] == "new-access"
+    assert payload["refresh_token"] == "new-refresh"
+    assert payload["token_type"] == "bearer"
     assert admin._table.use_used_at_guard is True
-    cookie_header = response.headers.get("set-cookie", "")
-    assert "access_token=new-access" in cookie_header
-    assert "refresh_token=new-refresh" in cookie_header
 
 
 def test_exchange_rejects_reuse_race(monkeypatch):
@@ -208,3 +210,30 @@ def test_exchange_rejects_reuse_race(monkeypatch):
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Code already used."
+
+
+def test_exchange_rejects_expired_code(monkeypatch):
+    main = _build_app(monkeypatch)
+
+    from app.routes import auth_handoff
+
+    record = {
+        "id": "handoff-id",
+        "code": "abc",
+        "user_id": "user-1",
+        "redirect_path": "/editor",
+        "access_token": "old-access",
+        "refresh_token": "old-refresh",
+        "expires_in": 3600,
+        "token_type": "bearer",
+        "expires_at": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+        "used_at": None,
+    }
+    auth_handoff.supabase_admin = ExchangeAdminClient(record)
+    auth_handoff.supabase_anon = ExchangeAnonClient("user-1")
+
+    client = TestClient(main.app)
+    response = client.post("/api/auth/handoff/exchange", json={"code": "abc"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Code expired."

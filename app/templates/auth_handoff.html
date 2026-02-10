@@ -57,7 +57,12 @@
       </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
+      const supabaseUrl = {{ supabase_url|tojson }};
+      const supabaseKey = {{ supabase_key|tojson }};
+      const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
+
       const titleEl = document.getElementById("handoffTitle");
       const statusEl = document.getElementById("handoffStatus");
       const actionsEl = document.getElementById("handoffActions");
@@ -113,6 +118,17 @@
           } catch (error) {
             // Ignore JSON parsing errors; fall back to default redirect.
           }
+          if (!data.access_token || !data.refresh_token) {
+            setError("Handoff response missing session. Please sign in again.");
+            return;
+          }
+
+          await supabaseClient.auth.setSession({
+            access_token: data.access_token,
+            refresh_token: data.refresh_token,
+          });
+          localStorage.setItem("access_token", data.access_token);
+
           const redirectPath = data.redirect_path || "/editor";
           statusEl.textContent = "Signed in. Redirecting…";
           setTimeout(() => {

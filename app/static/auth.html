@@ -320,10 +320,6 @@
     </main>
 
     <script>
-      document.addEventListener("DOMContentLoaded", async () => {
-        await window.apiFetch("/api/auth/logout", { method: "POST", skipAuthRedirect: true });
-      });
-
       const loginContainer = document.getElementById("login-container");
       const signupContainer = document.getElementById("signup-container");
       const showSignup = document.getElementById("show-signup");

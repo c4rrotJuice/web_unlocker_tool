@@ -126,3 +126,43 @@ def test_csrf_required_for_unsafe_method(monkeypatch):
         headers={"X-CSRF-Token": "csrf-good"},
     )
     assert response_ok.status_code == 200
+
+
+class DummyMissingMetaTable(DummyTable):
+    inserted_rows = []
+
+    def execute(self):
+        return SimpleNamespace(data=[])
+
+    def insert(self, payload):
+        self.__class__.inserted_rows.append(payload)
+        return self
+
+
+class DummyMissingMetaClient(DummyClient):
+    def table(self, name, *args, **kwargs):
+        if name == "user_meta":
+            return DummyMissingMetaTable()
+        return DummyTable()
+
+
+def test_auth_me_provisions_default_metadata_when_missing(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "http://example.com")
+    monkeypatch.setenv("SUPABASE_KEY", "anon")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
+    monkeypatch.setenv("COOKIE_SECURE", "false")
+    DummyMissingMetaTable.inserted_rows = []
+    monkeypatch.setattr(supabase, "create_client", lambda *args, **kwargs: DummyMissingMetaClient())
+
+    from app import main
+
+    importlib.reload(main)
+    client = TestClient(main.app)
+
+    response = client.get("/api/auth/me", cookies={"access_token": "good-cookie"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["account_type"] == "free"
+    assert DummyMissingMetaTable.inserted_rows
+    assert DummyMissingMetaTable.inserted_rows[0]["user_id"] == "cookie-user"

@@ -171,18 +171,43 @@ async def auth_middleware(request: Request, call_next):
                     .table("user_meta")
                     .select("name, account_type, daily_limit")
                     .eq("user_id", request.state.user_id)
-                    .single()
                     .execute()
                 )
 
-                if meta.data:
-                    request.state.name = meta.data.get("name")
-                    request.state.account_type = normalize_account_type(meta.data.get("account_type"))
-                    request.state.usage_limit = meta.data.get("daily_limit", 5)
+                rows = getattr(meta, "data", None)
+                if isinstance(rows, list):
+                    row = rows[0] if rows else None
+                elif isinstance(rows, dict):
+                    row = rows
+                else:
+                    row = None
+
+                if row:
+                    request.state.name = row.get("name")
+                    request.state.account_type = normalize_account_type(row.get("account_type"))
+                    request.state.usage_limit = row.get("daily_limit", 5)
                     try:
-                        await request.app.state.redis_set(cache_key, meta.data, ttl_seconds=300)
+                        await request.app.state.redis_set(cache_key, row, ttl_seconds=300)
                     except Exception as e:
                         print("⚠️ Failed to write metadata cache:", e)
+                else:
+                    default_meta = {
+                        "user_id": request.state.user_id,
+                        "name": None,
+                        "account_type": "free",
+                        "daily_limit": 5,
+                    }
+                    try:
+                        supabase_admin.table("user_meta").insert(default_meta).execute()
+                    except Exception as insert_error:
+                        print("⚠️ Failed to provision metadata:", insert_error)
+
+                    request.state.account_type = "free"
+                    request.state.usage_limit = 5
+                    try:
+                        await request.app.state.redis_set(cache_key, default_meta, ttl_seconds=300)
+                    except Exception as cache_error:
+                        print("⚠️ Failed to write metadata cache:", cache_error)
 
         except Exception as e:
             print("⚠️ Failed to fetch metadata:", e)

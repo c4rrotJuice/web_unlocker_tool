@@ -6,12 +6,12 @@ from dataclasses import dataclass
 from typing import Optional
 
 from fastapi import HTTPException, Request
-from supabase import create_client
+import supabase
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
-supabase_anon = create_client(SUPABASE_URL, SUPABASE_KEY)
+def _get_supabase_anon_client():
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_KEY")
+    return supabase.create_client(url, key)
 
 ACCESS_COOKIE_NAME = "access_token"
 REFRESH_COOKIE_NAME = "refresh_token"
@@ -98,7 +98,7 @@ def clear_auth_cookies(request: Request, response) -> None:
 
 def _validate_token(token: str) -> Optional[AuthenticatedUser]:
     try:
-        user_res = supabase_anon.auth.get_user(token)
+        user_res = _get_supabase_anon_client().auth.get_user(token)
         user = user_res.user
         if user:
             return AuthenticatedUser(id=user.id, email=user.email)
@@ -135,6 +135,10 @@ def require_user(request: Request) -> AuthenticatedUser:
 
 def verify_csrf(request: Request) -> None:
     if request.method.upper() in SAFE_METHODS:
+        return
+
+    auth_header = request.headers.get("authorization") or ""
+    if auth_header.lower().startswith("bearer "):
         return
 
     path = request.url.path

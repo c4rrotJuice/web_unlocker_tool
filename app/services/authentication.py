@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
-from supabase import create_client, Client
+import supabase
 import os
 from dotenv import load_dotenv
 
@@ -16,8 +16,11 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 router = APIRouter(prefix="/api", tags=["Auth"])
+
+
+def _supabase_admin_client():
+    return supabase.create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 
 class SignupRequest(BaseModel):
@@ -35,7 +38,7 @@ class LoginRequest(BaseModel):
 @router.post("/signup")
 async def signup(payload: SignupRequest):
     try:
-        res = supabase.auth.sign_up(
+        res = _supabase_admin_client().auth.sign_up(
             {
                 "email": payload.email,
                 "password": payload.password,
@@ -48,7 +51,7 @@ async def signup(payload: SignupRequest):
     if not user:
         raise HTTPException(status_code=500, detail="Signup succeeded but user not returned.")
 
-    supabase.table("user_meta").insert(
+    _supabase_admin_client().table("user_meta").insert(
         {
             "user_id": user.id,
             "name": payload.name,
@@ -64,7 +67,7 @@ async def signup(payload: SignupRequest):
 @router.post("/login")
 async def login(payload: LoginRequest, request: Request):
     try:
-        res = supabase.auth.sign_in_with_password(
+        res = _supabase_admin_client().auth.sign_in_with_password(
             {
                 "email": payload.email,
                 "password": payload.password,
@@ -117,7 +120,7 @@ async def refresh_auth(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
-        refresh_res = supabase.auth.refresh_session(refresh_token)
+        refresh_res = _supabase_admin_client().auth.refresh_session(refresh_token)
         refreshed_session = getattr(refresh_res, "session", None)
         refreshed_access_token = getattr(refreshed_session, "access_token", None)
         refreshed_refresh_token = getattr(refreshed_session, "refresh_token", None)

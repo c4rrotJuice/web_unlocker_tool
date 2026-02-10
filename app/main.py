@@ -1,15 +1,20 @@
-from fastapi import FastAPI, Request, Form, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from fastapi.middleware.cors import CORSMiddleware
+import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
+from fastapi import FastAPI, Request, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from supabase import create_client
+
+# Load environment variables before importing modules that initialize clients
+# from process environment at import time.
+load_dotenv()
+
 from app.routes.http import http_client
 from app.routes import upstash_redis as r
-import os
 
 # Redis helpers
 from app.routes.upstash_redis import (
@@ -31,7 +36,6 @@ from app.routes import dashboard, history, citations, bookmarks, search, payment
 # --------------------------------------------------
 # ENV + SUPABASE
 # --------------------------------------------------
-load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")

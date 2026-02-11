@@ -1,37 +1,102 @@
 (function () {
-  const SUPABASE_URL = window.WEB_UNLOCKER_SUPABASE_URL;
-  const SUPABASE_ANON_KEY = window.WEB_UNLOCKER_SUPABASE_ANON_KEY;
+  let supabaseClient = null;
+  let bootPromise = null;
 
-  const canUseSupabase =
-    typeof window !== "undefined" &&
-    window.supabase &&
-    typeof window.supabase.createClient === "function" &&
-    !!SUPABASE_URL &&
-    !!SUPABASE_ANON_KEY;
+  function readConfigFromWindow() {
+    return {
+      url: window.WEB_UNLOCKER_SUPABASE_URL || null,
+      key: window.WEB_UNLOCKER_SUPABASE_ANON_KEY || null,
+    };
+  }
 
-  const supabaseClient = canUseSupabase
-    ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-    : null;
+  async function fetchPublicConfig() {
+    try {
+      const res = await fetch("/api/public-config", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+
+      if (!res.ok) {
+        return null;
+      }
+
+      const data = await res.json();
+      return {
+        url: data?.WEB_UNLOCKER_SUPABASE_URL || null,
+        key: data?.WEB_UNLOCKER_SUPABASE_ANON_KEY || null,
+      };
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  async function ensureSupabaseClient() {
+    if (supabaseClient) {
+      return supabaseClient;
+    }
+
+    if (!bootPromise) {
+      bootPromise = (async () => {
+        const initial = readConfigFromWindow();
+        let config = initial;
+
+        if (!config.url || !config.key) {
+          const remoteConfig = await fetchPublicConfig();
+          if (remoteConfig) {
+            config = {
+              url: config.url || remoteConfig.url,
+              key: config.key || remoteConfig.key,
+            };
+          }
+        }
+
+        if (
+          typeof window !== "undefined" &&
+          window.supabase &&
+          typeof window.supabase.createClient === "function" &&
+          config.url &&
+          config.key
+        ) {
+          window.WEB_UNLOCKER_SUPABASE_URL = config.url;
+          window.WEB_UNLOCKER_SUPABASE_ANON_KEY = config.key;
+          supabaseClient = window.supabase.createClient(config.url, config.key);
+        }
+
+        return supabaseClient;
+      })();
+    }
+
+    return bootPromise;
+  }
 
   async function getSession() {
-    if (!supabaseClient) {
-      return { data: { session: null }, error: new Error("Supabase client unavailable") };
+    const client = await ensureSupabaseClient();
+    if (!client) {
+      return {
+        data: { session: null },
+        error: new Error("Supabase client unavailable"),
+      };
     }
-    return supabaseClient.auth.getSession();
+    return client.auth.getSession();
   }
 
   async function setSession(tokens) {
-    if (!supabaseClient) {
-      return { data: { session: null }, error: new Error("Supabase client unavailable") };
+    const client = await ensureSupabaseClient();
+    if (!client) {
+      return {
+        data: { session: null },
+        error: new Error("Supabase client unavailable"),
+      };
     }
-    return supabaseClient.auth.setSession(tokens);
+    return client.auth.setSession(tokens);
   }
 
-  function onAuthStateChange(callback) {
-    if (!supabaseClient) {
+  async function onAuthStateChange(callback) {
+    const client = await ensureSupabaseClient();
+    if (!client) {
       return { data: { subscription: { unsubscribe() {} } }, error: null };
     }
-    return supabaseClient.auth.onAuthStateChange(callback);
+    return client.auth.onAuthStateChange(callback);
   }
 
   async function getAccessToken() {
@@ -52,14 +117,18 @@
     return undefined;
   }
 
-  function writeLegacyToken(_token) {
-    if (supabaseClient) {
-      supabaseClient.auth.signOut().catch(() => {});
+  async function writeLegacyToken(_token) {
+    const client = await ensureSupabaseClient();
+    if (client) {
+      client.auth.signOut().catch(() => {});
     }
   }
 
   window.webUnlockerAuth = {
-    client: supabaseClient,
+    get client() {
+      return supabaseClient;
+    },
+    ready: ensureSupabaseClient,
     getSession,
     setSession,
     onAuthStateChange,
@@ -68,4 +137,6 @@
     syncLegacyTokenFromSession,
     writeLegacyToken,
   };
+
+  ensureSupabaseClient().catch(() => {});
 })();

@@ -231,7 +231,11 @@
       }
     });
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+      window.WEB_UNLOCKER_SUPABASE_URL = {{ supabase_url | tojson }};
+      window.WEB_UNLOCKER_SUPABASE_ANON_KEY = {{ supabase_key | tojson }};
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/static/js/auth.js"></script>
 <script src="/static/js/nav.js"></script>
 </body>

@@ -35,6 +35,8 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+WEB_UNLOCKER_SUPABASE_URL = os.getenv("WEB_UNLOCKER_SUPABASE_URL") or SUPABASE_URL
+WEB_UNLOCKER_SUPABASE_ANON_KEY = os.getenv("WEB_UNLOCKER_SUPABASE_ANON_KEY") or SUPABASE_KEY
 
 if not all([SUPABASE_URL, SUPABASE_KEY, SUPABASE_SERVICE_ROLE_KEY]):
     raise RuntimeError("❌ Missing Supabase environment variables")
@@ -107,6 +109,7 @@ PUBLIC_PATH_PREFIXES = (
 
 PUBLIC_PATHS = {
     "/api/auth/handoff/exchange",
+    "/api/public-config",
     "/webhooks/paddle",
 }
 
@@ -229,7 +232,22 @@ async def render_url(
 
 @app.get("/auth", response_class=HTMLResponse)
 async def auth_page(request: Request):
-    return templates.TemplateResponse("auth.html", {"request": request})
+    return templates.TemplateResponse(
+        "auth.html",
+        {
+            "request": request,
+            "supabase_url": WEB_UNLOCKER_SUPABASE_URL,
+            "supabase_key": WEB_UNLOCKER_SUPABASE_ANON_KEY,
+        },
+    )
+
+
+@app.get("/api/public-config", response_class=JSONResponse)
+async def public_config():
+    return {
+        "WEB_UNLOCKER_SUPABASE_URL": WEB_UNLOCKER_SUPABASE_URL,
+        "WEB_UNLOCKER_SUPABASE_ANON_KEY": WEB_UNLOCKER_SUPABASE_ANON_KEY,
+    }
 
 
 @app.get("/auth/handoff", response_class=HTMLResponse)
@@ -238,8 +256,8 @@ async def auth_handoff_page(request: Request):
         "auth_handoff.html",
         {
             "request": request,
-            "supabase_url": SUPABASE_URL,
-            "supabase_key": SUPABASE_KEY,
+            "supabase_url": WEB_UNLOCKER_SUPABASE_URL,
+            "supabase_key": WEB_UNLOCKER_SUPABASE_ANON_KEY,
         },
     )
 

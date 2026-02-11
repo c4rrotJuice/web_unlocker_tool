@@ -1,6 +1,13 @@
+async function authFetch(input, init) {
+  if (window.webUnlockerAuth?.authFetch) {
+    return window.webUnlockerAuth.authFetch(input, init);
+  }
+  return fetch(input, init);
+}
+
 async function verifyPaidAccess() {
   try {
-    const res = await fetch("/api/editor/access");
+    const res = await authFetch("/api/editor/access");
 
     if (!res.ok) {
       window.location.href = "/static/auth.html";
@@ -208,7 +215,7 @@ function startEditor() {
     };
 
     try {
-      const res = await fetch(`/api/docs/${currentDocId}`, {
+      const res = await authFetch(`/api/docs/${currentDocId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -231,7 +238,7 @@ function startEditor() {
   }
 
   async function loadDocsList() {
-    const res = await fetch("/api/docs");
+    const res = await authFetch("/api/docs");
 
     if (!res.ok) {
       docsList.innerHTML = "<p>Unable to load documents.</p>";
@@ -310,7 +317,7 @@ function startEditor() {
 
   async function openDoc(docId) {
     await autosaveDoc();
-    const res = await fetch(`/api/docs/${docId}`);
+    const res = await authFetch(`/api/docs/${docId}`);
 
     if (!res.ok) {
       console.error("Failed to load document");
@@ -482,7 +489,7 @@ function startEditor() {
 
   async function loadCheckpoints() {
     if (!ENABLE_CHECKPOINTS || !currentDocId) return;
-    const res = await fetch(`/api/docs/${currentDocId}/checkpoints?limit=15`);
+    const res = await authFetch(`/api/docs/${currentDocId}/checkpoints?limit=15`);
     if (!res.ok) {
       historyList.innerHTML = '<p class="empty-state">History unavailable.</p>';
       return;
@@ -533,7 +540,7 @@ function startEditor() {
     };
 
     try {
-      const res = await fetch(`/api/docs/${currentDocId}/checkpoints`, {
+      const res = await authFetch(`/api/docs/${currentDocId}/checkpoints`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -555,7 +562,7 @@ function startEditor() {
 
     await createCheckpointIfNeeded(true);
 
-    const res = await fetch(`/api/docs/${currentDocId}/restore`, {
+    const res = await authFetch(`/api/docs/${currentDocId}/restore`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ checkpoint_id: checkpointId }),
@@ -590,7 +597,7 @@ function startEditor() {
       params.set("search", search);
     }
 
-    const res = await fetch(`/api/citations?${params.toString()}`);
+    const res = await authFetch(`/api/citations?${params.toString()}`);
 
     if (!res.ok) {
       throw new Error("Failed to load citations");
@@ -608,7 +615,7 @@ function startEditor() {
     const params = new URLSearchParams();
     params.set("ids", ids.join(","));
 
-    const res = await fetch(`/api/citations/by_ids?${params.toString()}`);
+    const res = await authFetch(`/api/citations/by_ids?${params.toString()}`);
 
     if (!res.ok) {
       throw new Error("Failed to load citations");
@@ -880,7 +887,7 @@ function startEditor() {
     if (!currentDocId) return;
     exportModal.setAttribute("aria-hidden", "false");
 
-    const res = await fetch(`/api/docs/${currentDocId}/export`, {
+    const res = await authFetch(`/api/docs/${currentDocId}/export`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

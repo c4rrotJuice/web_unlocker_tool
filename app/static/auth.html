@@ -319,12 +319,12 @@
       </div>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="/static/js/auth.js"></script>
     <script>
       // --- CLEAR OLD TOKENS ON PAGE LOAD ---
       document.addEventListener("DOMContentLoaded", async () => {
-        // Remove any old Supabase token from previous sessions
-        localStorage.removeItem("access_token");
-        document.cookie = "access_token=; Path=/; Max-Age=0; SameSite=Lax";
+        await window.webUnlockerAuth?.syncLegacyTokenFromSession?.();
       });
 
       const loginContainer = document.getElementById("login-container");
@@ -368,7 +368,22 @@
           }
 
           try {
-            const res = await fetch("/api/signup", {
+            const signUpResult = await window.webUnlockerAuth.client?.auth.signUp({
+              email,
+              password,
+              options: {
+                data: {
+                  name,
+                  use_case: useCase,
+                },
+              },
+            });
+
+            if (signUpResult?.error) {
+              throw signUpResult.error;
+            }
+
+            const legacyRes = await fetch("/api/signup", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -379,13 +394,17 @@
               }),
             });
 
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || "Signup failed");
+            if (!legacyRes.ok) {
+              const legacyData = await legacyRes.json().catch(() => ({}));
+              const message = legacyData.detail || "Signup metadata sync failed";
+              console.warn("Signup metadata sync warning:", message);
+            }
+
             signupMsg.textContent =
               "✅ Signup successful! Please check your email.";
             signupMsg.className = "message success";
           } catch (err) {
-            signupMsg.textContent = "❌ Signup failed: " + err.message;
+            signupMsg.textContent = "❌ Signup failed: " + (err?.message || String(err));
             signupMsg.className = "message error";
           }
         });
@@ -401,26 +420,31 @@
           const password = document.getElementById("login-password").value;
 
           try {
-            const res = await fetch("/api/login", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ email, password }),
+            const loginResult = await window.webUnlockerAuth.client?.auth.signInWithPassword({
+              email,
+              password,
             });
 
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || "Login failed");
-
-            if (data.access_token) {
-              localStorage.setItem("access_token", data.access_token);
-              document.cookie = `access_token=${data.access_token}; Path=/; SameSite=Lax`;
-              loginMsg.textContent = "✅ Login successful!";
-              loginMsg.className = "message success";
-              setTimeout(() => (window.location.href = "/"), 800);
-            } else {
-              throw new Error("No access token received from server");
+            if (loginResult?.error) {
+              throw loginResult.error;
             }
+
+            const session = loginResult?.data?.session;
+            if (!session?.access_token || !session?.refresh_token) {
+              throw new Error("No session returned from Supabase");
+            }
+
+            await window.webUnlockerAuth.setSession({
+              access_token: session.access_token,
+              refresh_token: session.refresh_token,
+            });
+            await window.webUnlockerAuth.syncLegacyTokenFromSession();
+
+            loginMsg.textContent = "✅ Login successful!";
+            loginMsg.className = "message success";
+            setTimeout(() => (window.location.href = "/"), 800);
           } catch (err) {
-            loginMsg.textContent = "❌ Login failed: " + err.message;
+            loginMsg.textContent = "❌ Login failed: " + (err?.message || String(err));
             loginMsg.className = "message error";
           }
         });

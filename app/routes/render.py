@@ -41,8 +41,8 @@ async def post_view_clean_page(
     if not url:
         return HTMLResponse(content="<h3>Missing URL</h3>", status_code=400)
 
-    if authorization:
-        # Authenticated logic
+    if request.state.user_id:
+        # Authenticated logic (Authorization bearer token or compatible cookie fallback via middleware)
         try:
             login_status = await check_login(
             request,
@@ -68,7 +68,6 @@ async def post_view_clean_page(
         print(f"[🔒 AUTH] User ID: {user_id} | IP: {user_ip} | Unlock: True")
 
         try:
-            token = authorization.split(" ")[1]
             cleaned_html = await fetch_and_clean_page(
                 url=url,
                 user_ip=user_ip,
@@ -82,7 +81,7 @@ async def post_view_clean_page(
                 redis_incr=request.app.state.redis_incr,
                 redis_expire=request.app.state.redis_expire
             )
-            await save_unlock_history(user_id, url, token, request.app.state.http_session)
+            await save_unlock_history(user_id, url, None, request.app.state.http_session)
             #await save_unlock_history(user_id, url, request.app.state.http_session)
             return HTMLResponse(content=cleaned_html)
         except Exception as e:
@@ -135,7 +134,7 @@ async def get_view_clean_page(
     if not url:
         return HTMLResponse(content="<h3>Missing URL</h3>", status_code=400)
 
-    if authorization:
+    if request.state.user_id:
         try:
             login_status = await check_login(
                 request,
@@ -157,7 +156,6 @@ async def get_view_clean_page(
         priority = queue_priority(request.state.account_type)
 
         try:
-            token = authorization.split(" ")[1]
             cleaned_html = await fetch_and_clean_page(
                 url=url,
                 user_ip=user_ip,
@@ -171,7 +169,7 @@ async def get_view_clean_page(
                 redis_incr=request.app.state.redis_incr,
                 redis_expire=request.app.state.redis_expire,
             )
-            await save_unlock_history(user_id, url, token, request.app.state.http_session)
+            await save_unlock_history(user_id, url, None, request.app.state.http_session)
             return HTMLResponse(content=cleaned_html)
         except Exception as e:
             print(f"{e}")
@@ -344,7 +342,7 @@ async def fetch_and_clean_page_post(
 
         # Only log history if token is available, unregisterred guest users beed not consume this resource
         if token:
-            await save_unlock_history(user_id, url, token, request.app.state.http_session)
+            await save_unlock_history(user_id, url, None, request.app.state.http_session)
 
         return HTMLResponse(content=cleaned_html)
     except Exception as e:

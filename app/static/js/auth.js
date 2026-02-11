@@ -1,13 +1,13 @@
 (function () {
-  const SUPABASE_URL = window.WEB_UNLOCKER_SUPABASE_URL || "https://lrdpstewxrufbbgxfcgk.supabase.co";
-  const SUPABASE_ANON_KEY =
-    window.WEB_UNLOCKER_SUPABASE_ANON_KEY ||
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxyZHBzdGV3eHJ1ZmJiZ3hmY2drIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc5MzcxMzEsImV4cCI6MjA2MzUxMzEzMX0.-qEgFP2HhoO--iuCjslRSBQBHjQY_sGa5Lfx1UU4MBo";
+  const SUPABASE_URL = window.WEB_UNLOCKER_SUPABASE_URL;
+  const SUPABASE_ANON_KEY = window.WEB_UNLOCKER_SUPABASE_ANON_KEY;
 
   const canUseSupabase =
     typeof window !== "undefined" &&
     window.supabase &&
-    typeof window.supabase.createClient === "function";
+    typeof window.supabase.createClient === "function" &&
+    !!SUPABASE_URL &&
+    !!SUPABASE_ANON_KEY;
 
   const supabaseClient = canUseSupabase
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)

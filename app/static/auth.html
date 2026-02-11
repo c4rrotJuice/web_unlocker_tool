@@ -368,7 +368,14 @@
           }
 
           try {
-            const signUpResult = await window.webUnlockerAuth.client?.auth.signUp({
+            const authClient = window.webUnlockerAuth?.client;
+            if (!authClient?.auth) {
+              throw new Error(
+                "Signup service is currently unavailable. Please try again in a moment."
+              );
+            }
+
+            const signUpResult = await authClient.auth.signUp({
               email,
               password,
               options: {
@@ -397,7 +404,7 @@
             if (!legacyRes.ok) {
               const legacyData = await legacyRes.json().catch(() => ({}));
               const message = legacyData.detail || "Signup metadata sync failed";
-              console.warn("Signup metadata sync warning:", message);
+              throw new Error(message);
             }
 
             signupMsg.textContent =
@@ -420,18 +427,46 @@
           const password = document.getElementById("login-password").value;
 
           try {
-            const loginResult = await window.webUnlockerAuth.client?.auth.signInWithPassword({
-              email,
-              password,
-            });
+            const authClient = window.webUnlockerAuth?.client;
+            let session = null;
 
-            if (loginResult?.error) {
-              throw loginResult.error;
+            if (authClient?.auth) {
+              const loginResult = await authClient.auth.signInWithPassword({
+                email,
+                password,
+              });
+
+              if (loginResult?.error) {
+                throw loginResult.error;
+              }
+
+              session = loginResult?.data?.session;
             }
 
-            const session = loginResult?.data?.session;
-            if (!session?.access_token || !session?.refresh_token) {
-              throw new Error("No session returned from Supabase");
+            if (!session?.access_token) {
+              const legacyRes = await fetch("/api/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email, password }),
+              });
+
+              if (!legacyRes.ok) {
+                const legacyData = await legacyRes.json().catch(() => ({}));
+                const message = legacyData.detail || "Invalid email or password";
+                throw new Error(message);
+              }
+
+              const legacyData = await legacyRes.json().catch(() => ({}));
+              const accessToken = legacyData.access_token;
+
+              if (!accessToken) {
+                throw new Error("Login succeeded but no access token was returned");
+              }
+
+              session = {
+                access_token: accessToken,
+                refresh_token: null,
+              };
             }
 
             await window.webUnlockerAuth.setSession({

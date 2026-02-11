@@ -324,7 +324,6 @@
     <script>
       // --- CLEAR OLD TOKENS ON PAGE LOAD ---
       document.addEventListener("DOMContentLoaded", async () => {
-        await window.webUnlockerAuth?.syncLegacyTokenFromSession?.();
       });
 
       const loginContainer = document.getElementById("login-container");
@@ -443,37 +442,15 @@
               session = loginResult?.data?.session;
             }
 
-            if (!session?.access_token) {
-              const legacyRes = await fetch("/api/login", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email, password }),
-              });
-
-              if (!legacyRes.ok) {
-                const legacyData = await legacyRes.json().catch(() => ({}));
-                const message = legacyData.detail || "Invalid email or password";
-                throw new Error(message);
-              }
-
-              const legacyData = await legacyRes.json().catch(() => ({}));
-              const accessToken = legacyData.access_token;
-
-              if (!accessToken) {
-                throw new Error("Login succeeded but no access token was returned");
-              }
-
-              session = {
-                access_token: accessToken,
-                refresh_token: null,
-              };
+            if (!session?.access_token || !session?.refresh_token) {
+              throw new Error("Login succeeded but no session was returned");
             }
 
             await window.webUnlockerAuth.setSession({
+
               access_token: session.access_token,
               refresh_token: session.refresh_token,
             });
-            await window.webUnlockerAuth.syncLegacyTokenFromSession();
 
             loginMsg.textContent = "✅ Login successful!";
             loginMsg.className = "message success";

@@ -13,46 +13,30 @@
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
     : null;
 
-  function readLegacyToken() {
-    return localStorage.getItem("access_token") || null;
-  }
-
-  function writeLegacyToken(token) {
-    if (token) {
-      localStorage.setItem("access_token", token);
-      document.cookie = `access_token=${token}; Path=/; SameSite=Lax`;
-    } else {
-      localStorage.removeItem("access_token");
-      document.cookie = "access_token=; Path=/; Max-Age=0; SameSite=Lax";
-    }
-  }
-
   async function getSession() {
     if (!supabaseClient) {
-      const accessToken = readLegacyToken();
-      return { data: { session: accessToken ? { access_token: accessToken } : null }, error: null };
+      return { data: { session: null }, error: new Error("Supabase client unavailable") };
     }
     return supabaseClient.auth.getSession();
   }
 
   async function setSession(tokens) {
     if (!supabaseClient) {
-      writeLegacyToken(tokens?.access_token || null);
-      return { data: { session: tokens || null }, error: null };
+      return { data: { session: null }, error: new Error("Supabase client unavailable") };
     }
     return supabaseClient.auth.setSession(tokens);
   }
 
   function onAuthStateChange(callback) {
     if (!supabaseClient) {
-      return { data: { subscription: { unsubscribe() {} } } };
+      return { data: { subscription: { unsubscribe() {} } }, error: null };
     }
     return supabaseClient.auth.onAuthStateChange(callback);
   }
 
   async function getAccessToken() {
     const { data } = await getSession();
-    return data?.session?.access_token || readLegacyToken();
+    return data?.session?.access_token || null;
   }
 
   async function authFetch(url, options = {}) {
@@ -65,13 +49,14 @@
   }
 
   async function syncLegacyTokenFromSession() {
-    const token = await getAccessToken();
-    writeLegacyToken(token || null);
+    return undefined;
   }
 
-  onAuthStateChange((_event, session) => {
-    writeLegacyToken(session?.access_token || null);
-  });
+  function writeLegacyToken(_token) {
+    if (supabaseClient) {
+      supabaseClient.auth.signOut().catch(() => {});
+    }
+  }
 
   window.webUnlockerAuth = {
     client: supabaseClient,

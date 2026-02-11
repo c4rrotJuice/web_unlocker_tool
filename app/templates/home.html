@@ -67,14 +67,15 @@
 
 const iframe = document.getElementById('iframe');
 const loader = document.getElementById('loader');
-const token = localStorage.getItem('access_token');
-
-// Global headers
-const headers = {
-  'Content-Type': 'application/json',
-};
-if (token) {
-  headers['Authorization'] = `Bearer ${token}`;
+async function buildAuthHeaders() {
+  const token = await window.webUnlockerAuth?.getAccessToken?.();
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
 }
 
 // Load initial URL
@@ -91,7 +92,7 @@ async function loadInitialURL() {
   try {
     const response = await fetch('/view', {
       method: 'POST',
-      headers,
+      headers: await buildAuthHeaders(),
       body: JSON.stringify({ url: targetUrl, unlock: true })
     });
 
@@ -129,7 +130,7 @@ window.addEventListener('message', async (event) => {
   try {
     const response = await fetch('/fetch_and_clean_page', {
       method: 'POST',
-      headers,
+      headers: await buildAuthHeaders(),
       body: JSON.stringify({ url: newUrl, unlock: true })
     });
 
@@ -157,8 +158,6 @@ document.getElementById('unblockForm').addEventListener('submit', async (event) 
 
   const urlToFetch = document.getElementById('urlToFetch').value;
   const unlockMode = document.getElementById('unlockMode').checked;
-  const token = localStorage.getItem('access_token');
-
   if (!urlToFetch) return;
 
   loader.style.display = 'block';
@@ -169,17 +168,12 @@ document.getElementById('unblockForm').addEventListener('submit', async (event) 
     urlInView.innerText = `Viewing: ${urlToFetch}`;
   }
 
-  const headers = {
-    'Content-Type': 'application/json',
-  };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
+  const headers = await buildAuthHeaders();
 
   try {
     const response = await fetch('/view', {
       method: 'POST',
-      headers,
+      headers: await buildAuthHeaders(),
       body: JSON.stringify({ url: urlToFetch, unlock: unlockMode })
     });
 
@@ -209,7 +203,7 @@ window.addEventListener('message', async (event) => {
     try {
       const response = await fetch('/api/citations', {
         method: 'POST',
-        headers,
+        headers: await buildAuthHeaders(),
         body: JSON.stringify(citation),
       });
 

@@ -178,9 +178,9 @@ def test_exchange_rotates_tokens_after_refresh(monkeypatch):
     assert response.status_code == 200
     assert response.json()["redirect_path"] == "/editor?doc=1"
     assert admin._table.use_used_at_guard is True
-    cookie_header = response.headers.get("set-cookie", "")
-    assert "access_token=new-access" in cookie_header
-    assert "refresh_token=new-refresh" in cookie_header
+    payload = response.json()
+    assert payload["session"]["access_token"] == "new-access"
+    assert payload["session"]["refresh_token"] == "new-refresh"
 
 
 def test_exchange_rejects_reuse_race(monkeypatch):

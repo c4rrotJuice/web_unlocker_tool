@@ -6,7 +6,7 @@ When the extension user clicks **Work in Editor**, the extension requests a shor
 
 1. **Create code**: `POST /api/auth/handoff` with the Supabase access token in the `Authorization` header and an optional `redirect_path`.
 2. **Open handoff**: the extension opens `/auth/handoff?code=...` on the web app host.
-3. **Exchange**: the web app calls `POST /api/auth/handoff/exchange` to validate the one-time code, sets the `access_token` cookie, and redirects to the editor.
+3. **Exchange**: the web app calls `POST /api/auth/handoff/exchange` to validate the one-time code, applies the returned Supabase session via `supabase.auth.setSession`, and redirects to the editor.
 
 ### Security rationale
 

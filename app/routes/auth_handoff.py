@@ -5,7 +5,6 @@ import os
 import secrets
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from supabase import create_client
 
@@ -273,31 +272,12 @@ async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
         "exchange success: "
         f"code_prefix={code_prefix} user_id={user.id} redirect_path={redirect_path}"
     )
-    response = JSONResponse({"redirect_path": redirect_path})
-    cookie_secure_default = os.getenv("COOKIE_SECURE", "true").lower() != "false"
-    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
-    request_is_https = request.url.scheme == "https" or forwarded_proto == "https"
-    secure_cookie = cookie_secure_default and request_is_https
-    response.set_cookie(
-        "access_token",
-        access_token,
-        httponly=True,
-        secure=secure_cookie,
-        samesite="lax",
-        max_age=3600,
-        path="/",
-    )
-    response.set_cookie(
-        "refresh_token",
-        refresh_token,
-        httponly=True,
-        secure=secure_cookie,
-        samesite="lax",
-        max_age=(
-            int(expires_in)
-            if isinstance(expires_in, int) and expires_in > 0
-            else 60 * 60 * 24 * 30
-        ),
-        path="/",
-    )
-    return response
+    return {
+        "redirect_path": redirect_path,
+        "session": {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_in": expires_in,
+            "token_type": token_type,
+        },
+    }

@@ -1,14 +1,10 @@
 import { apiFetch } from "./lib/api.js";
-import {
-  loginWithPassword,
-  refreshSession,
-  signupWithPassword,
-} from "./lib/supabase.js";
+import { createSupabaseAuthClient } from "./lib/supabase.js";
 import { BACKEND_BASE_URL } from "./config.js";
 
-const SESSION_KEY = "session";
 const USAGE_KEY = "usage_snapshot";
 const REFRESH_WINDOW_SECONDS = 120;
+const supabaseClient = createSupabaseAuthClient();
 let debugEnabled = false;
 const debug = (...args) => {
   if (debugEnabled) {
@@ -48,18 +44,6 @@ async function clearStorage(keys) {
   await chrome.storage.local.remove(keys);
 }
 
-async function getSession() {
-  const { [SESSION_KEY]: session } = await readStorage([SESSION_KEY]);
-  return session || null;
-}
-
-async function setSession(session) {
-  await writeStorage({ [SESSION_KEY]: session });
-}
-
-async function clearSession() {
-  await clearStorage([SESSION_KEY]);
-}
 
 async function setUsageSnapshot(snapshot) {
   await writeStorage({ [USAGE_KEY]: snapshot });
@@ -68,6 +52,19 @@ async function setUsageSnapshot(snapshot) {
 async function getUsageSnapshot() {
   const { [USAGE_KEY]: snapshot } = await readStorage([USAGE_KEY]);
   return snapshot || null;
+}
+
+async function getSession() {
+  const { data } = await supabaseClient.auth.getSession();
+  return data?.session || null;
+}
+
+async function setSession(session) {
+  await supabaseClient.auth.setSession(session || null);
+}
+
+async function clearSession() {
+  await supabaseClient.auth.setSession(null);
 }
 
 async function ensureValidSession() {
@@ -81,7 +78,7 @@ async function ensureValidSession() {
   }
 
   try {
-    const refreshed = await refreshSession(session.refresh_token);
+    const refreshed = await supabaseClient.auth.refreshSession(session.refresh_token);
     const nextSession = {
       ...session,
       ...refreshed,
@@ -323,23 +320,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       switch (message.type) {
         case "login": {
-          const session = await loginWithPassword(
-            message.email,
-            message.password,
-          );
-          await setSession(session);
+          const { data } = await supabaseClient.auth.signInWithPassword({
+            email: message.email,
+            password: message.password,
+          });
           await clearStorage([USAGE_KEY]);
-          sendResponse({ session });
+          sendResponse({ session: data?.session || null });
           break;
         }
         case "signup": {
-          const session = await signupWithPassword(
-            message.email,
-            message.password,
-          );
-          await setSession(session);
+          const { data } = await supabaseClient.auth.signUp({
+            email: message.email,
+            password: message.password,
+          });
           await clearStorage([USAGE_KEY]);
-          sendResponse({ session });
+          sendResponse({ session: data?.session || null });
           break;
         }
         case "logout": {

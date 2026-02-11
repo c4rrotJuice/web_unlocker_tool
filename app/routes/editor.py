@@ -249,14 +249,6 @@ async def _patch_doc_with_fallback(user_id: str, doc_id: str, payload: dict) -> 
 
 @router.get("/editor", response_class=HTMLResponse)
 async def editor_page(request: Request):
-    user_id = request.state.user_id
-    if not user_id:
-        return RedirectResponse(url="/static/auth.html", status_code=302)
-
-    account_type = await _get_account_type(request, user_id)
-    if account_type not in PAID_TIERS:
-        return RedirectResponse(url="/static/pricing.html", status_code=302)
-
     return templates.TemplateResponse("editor.html", {"request": request})
 
 

@@ -130,6 +130,11 @@ async def auth_middleware(request: Request, call_next):
     public_path = is_public_path(request.url.path)
     auth_header = request.headers.get("authorization")
 
+    token = None
+    if auth_header and auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+    elif request.cookies.get("wu_access_token"):
+        token = request.cookies.get("wu_access_token")
 
     request.state.user_id = None
     request.state.account_type = None
@@ -137,9 +142,7 @@ async def auth_middleware(request: Request, call_next):
     request.state.name = None
     request.state.email = None
 
-    if auth_header and auth_header.lower().startswith("bearer "):
-        token = auth_header.split(" ")[1]
-
+    if token:
         # ✅ Let Supabase validate token
         try:
             user_res = supabase_anon.auth.get_user(token)

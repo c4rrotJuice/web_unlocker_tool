@@ -30,6 +30,19 @@
     }
   }
 
+
+  function setServerAuthCookie(token) {
+    const secure = window.location.protocol === "https:" ? "; Secure" : "";
+    const maxAge = token ? "; Max-Age=2592000" : "; Max-Age=0";
+    const value = token ? encodeURIComponent(token) : "";
+    document.cookie = `wu_access_token=${value}; Path=/; SameSite=Lax${secure}${maxAge}`;
+  }
+
+  async function syncServerAuthCookie() {
+    const token = await getAccessToken();
+    setServerAuthCookie(token);
+  }
+
   async function ensureSupabaseClient() {
     if (supabaseClient) {
       return supabaseClient;
@@ -60,6 +73,10 @@
           window.WEB_UNLOCKER_SUPABASE_URL = config.url;
           window.WEB_UNLOCKER_SUPABASE_ANON_KEY = config.key;
           supabaseClient = window.supabase.createClient(config.url, config.key);
+          supabaseClient.auth.onAuthStateChange(() => {
+            syncServerAuthCookie().catch(() => {});
+          });
+          await syncServerAuthCookie();
         }
 
         return supabaseClient;
@@ -88,7 +105,9 @@
         error: new Error("Supabase client unavailable"),
       };
     }
-    return client.auth.setSession(tokens);
+    const result = await client.auth.setSession(tokens);
+    await syncServerAuthCookie();
+    return result;
   }
 
   async function onAuthStateChange(callback) {
@@ -117,9 +136,10 @@
     return undefined;
   }
 
-  async function writeLegacyToken(_token) {
+  async function writeLegacyToken(token) {
+    setServerAuthCookie(token || null);
     const client = await ensureSupabaseClient();
-    if (client) {
+    if (!token && client) {
       client.auth.signOut().catch(() => {});
     }
   }

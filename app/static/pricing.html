@@ -8,6 +8,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Cite Unlocker Pricing</title>
     <script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="/static/js/auth.js"></script>
     <link rel="stylesheet" href="./css/pricing.css" />
   </head>
 
@@ -270,15 +272,15 @@
       let paddleReady = false;
       let paddleInitError = null;
 
-      function authHeaders() {
-        const token = localStorage.getItem("access_token");
+      async function authHeaders() {
+        const token = await window.webUnlockerAuth?.getAccessToken?.();
         return token ? { Authorization: `Bearer ${token}` } : {};
       }
 
       async function loadCurrentUser() {
         try {
           const res = await fetch("/api/me", {
-            headers: authHeaders(),
+            headers: await authHeaders(),
             credentials: "include",
           });
 
@@ -299,7 +301,7 @@
       async function initPaddle() {
         try {
           const res = await fetch("/get_paddle_token", {
-            headers: authHeaders(),
+            headers: await authHeaders(),
             credentials: "include",
           });
           if (!res.ok) {
@@ -351,11 +353,13 @@
           return;
         }
 
-        fetch("/create_paddle_checkout", {
+        (async () => {
+          const auth = await authHeaders();
+          fetch("/create_paddle_checkout", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...authHeaders(),
+            ...auth,
           },
           credentials: "include",
           body: JSON.stringify({ plan, cycle }),
@@ -391,6 +395,7 @@
               "We couldn't start the checkout. Please refresh and try again.",
             );
           });
+        })();
       }
     </script>
   </body>

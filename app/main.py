@@ -127,12 +127,6 @@ async def auth_middleware(request: Request, call_next):
     public_path = is_public_path(request.url.path)
     auth_header = request.headers.get("authorization")
 
-    if not auth_header:
-        token_cookie = request.cookies.get("access_token")
-        if token_cookie and not public_path:
-            auth_header = f"Bearer {token_cookie}"
-
-    refresh_token_cookie = request.cookies.get("refresh_token")
 
     request.state.user_id = None
     request.state.account_type = None
@@ -156,29 +150,9 @@ async def auth_middleware(request: Request, call_next):
 
         except Exception as e:
             print("[AuthMiddleware] Token validation failed:", e)
-            refreshed = False
-            if refresh_token_cookie and not public_path:
-                try:
-                    refresh_res = supabase_anon.auth.refresh_session(refresh_token_cookie)
-                    refreshed_session = getattr(refresh_res, "session", None)
-                    refreshed_access_token = getattr(refreshed_session, "access_token", None)
-                    refreshed_refresh_token = getattr(refreshed_session, "refresh_token", None)
-                    if refreshed_access_token:
-                        user_res = supabase_anon.auth.get_user(refreshed_access_token)
-                        user = user_res.user
-                        if user:
-                            request.state.user_id = user.id
-                            request.state.email = user.email
-                            request.state.refreshed_access_token = refreshed_access_token
-                            request.state.refreshed_refresh_token = refreshed_refresh_token
-                            refreshed = True
-                except Exception as refresh_error:
-                    print("[AuthMiddleware] Token refresh failed:", refresh_error)
-
-            if not refreshed:
-                if public_path:
-                    return await call_next(request)
-                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            if public_path:
+                return await call_next(request)
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
         # ✅ Fetch metadata with SERVICE ROLE
         try:
@@ -224,33 +198,6 @@ async def auth_middleware(request: Request, call_next):
             print("⚠️ Failed to fetch metadata:", e)
 
     response = await call_next(request)
-
-    refreshed_access_token = getattr(request.state, "refreshed_access_token", None)
-    if refreshed_access_token and not public_path:
-        refreshed_refresh_token = getattr(request.state, "refreshed_refresh_token", None)
-        cookie_secure_default = os.getenv("COOKIE_SECURE", "true").lower() != "false"
-        forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
-        request_is_https = request.url.scheme == "https" or forwarded_proto == "https"
-        secure_cookie = cookie_secure_default and request_is_https
-        response.set_cookie(
-            "access_token",
-            refreshed_access_token,
-            httponly=True,
-            secure=secure_cookie,
-            samesite="lax",
-            max_age=3600,
-            path="/",
-        )
-        if refreshed_refresh_token:
-            response.set_cookie(
-                "refresh_token",
-                refreshed_refresh_token,
-                httponly=True,
-                secure=secure_cookie,
-                samesite="lax",
-                max_age=60 * 60 * 24 * 30,
-                path="/",
-            )
 
     return response
 

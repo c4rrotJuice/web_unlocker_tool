@@ -1,5 +1,8 @@
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "../config.js";
 
+const SESSION_STORAGE_KEY = "session";
+const authListeners = new Set();
+
 function supabaseFetch(path, options = {}) {
   const headers = new Headers(options.headers || {});
   headers.set("apikey", SUPABASE_ANON_KEY);
@@ -73,4 +76,77 @@ export async function refreshSession(refreshToken) {
   );
   const payload = await parseResponse(response);
   return buildSessionPayload(payload);
+}
+
+async function readStoredSession() {
+  const { [SESSION_STORAGE_KEY]: session } = await chrome.storage.local.get([
+    SESSION_STORAGE_KEY,
+  ]);
+  return session || null;
+}
+
+async function writeStoredSession(session) {
+  if (session) {
+    await chrome.storage.local.set({ [SESSION_STORAGE_KEY]: session });
+    return;
+  }
+  await chrome.storage.local.remove([SESSION_STORAGE_KEY]);
+}
+
+function notifyAuthStateChange(event, session) {
+  for (const callback of authListeners) {
+    try {
+      callback(event, session);
+    } catch (_error) {
+      // ignore
+    }
+  }
+}
+
+function createSubscription(callback) {
+  authListeners.add(callback);
+  return {
+    unsubscribe() {
+      authListeners.delete(callback);
+    },
+  };
+}
+
+async function setSession(tokens) {
+  await writeStoredSession(tokens || null);
+  notifyAuthStateChange(tokens ? "SIGNED_IN" : "SIGNED_OUT", tokens || null);
+  return { data: { session: tokens || null }, error: null };
+}
+
+async function getSession() {
+  const session = await readStoredSession();
+  return { data: { session }, error: null };
+}
+
+function onAuthStateChange(callback) {
+  return { data: { subscription: createSubscription(callback) }, error: null };
+}
+
+async function signInWithPassword({ email, password }) {
+  const session = await loginWithPassword(email, password);
+  return setSession(session);
+}
+
+async function signUp({ email, password }) {
+  const session = await signupWithPassword(email, password);
+  await setSession(session);
+  return { data: { session, user: session?.user || null }, error: null };
+}
+
+export function createSupabaseAuthClient() {
+  return {
+    auth: {
+      getSession,
+      setSession,
+      onAuthStateChange,
+      signInWithPassword,
+      signUp,
+      refreshSession,
+    },
+  };
 }

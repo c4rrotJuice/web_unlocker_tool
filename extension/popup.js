@@ -26,6 +26,7 @@ const userTierEl = document.getElementById("user-tier");
 const remainingEl = document.getElementById("remaining");
 const resetAtEl = document.getElementById("reset-at");
 const usageInfoEl = document.getElementById("usage-info");
+const citationHistoryEl = document.getElementById("citation-history");
 
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
@@ -49,10 +50,120 @@ function formatReset(resetAt) {
   return date.toLocaleString();
 }
 
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function timeSince(date) {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+
+  const intervals = [
+    [31536000, "year"],
+    [2592000, "month"],
+    [86400, "day"],
+    [3600, "hour"],
+    [60, "minute"],
+  ];
+
+  for (const [interval, label] of intervals) {
+    const count = Math.floor(seconds / interval);
+    if (count >= 1) {
+      return `${count} ${label}${count > 1 ? "s" : ""}`;
+    }
+  }
+
+  return "just now";
+}
+
+function renderCitationHistoryUnavailable() {
+  if (!citationHistoryEl) return;
+  citationHistoryEl.innerHTML = '<li class="citation-history-empty"><p>citation history for logged-in users.</p></li>';
+}
+
+async function loadCitationHistory() {
+  if (!citationHistoryEl) return;
+
+  const sessionState = await sendMessage("get-session");
+  if (!sessionState?.session) {
+    renderCitationHistoryUnavailable();
+    return;
+  }
+
+  citationHistoryEl.innerHTML = "<li><p>Fetching ...</p></li>";
+  const response = await sendMessage("GET_RECENT_CITATIONS", { limit: 5 });
+
+  if (response?.status === 401 || response?.error === "unauthenticated") {
+    renderCitationHistoryUnavailable();
+    return;
+  }
+
+  if (response?.error || !Array.isArray(response?.data)) {
+    citationHistoryEl.innerHTML = '<li class="citation-history-empty"><p>Could not load citations.</p></li>';
+    return;
+  }
+
+  const citations = response.data.slice(0, 5);
+  if (!citations.length) {
+    citationHistoryEl.innerHTML = '<li class="citation-history-empty"><p>No recent citations yet.</p></li>';
+    return;
+  }
+
+  citationHistoryEl.innerHTML = "";
+  citations.forEach((citation) => {
+    const li = document.createElement("li");
+    li.className = "citation-item";
+
+    const excerpt = escapeHtml(citation.excerpt || "No excerpt available");
+    const citedAt = citation.cited_at ? new Date(citation.cited_at) : null;
+    const timeAgo = citedAt && !Number.isNaN(citedAt.getTime()) ? `${timeSince(citedAt)} ago` : "Recently";
+
+    const excerptDiv = document.createElement("div");
+    excerptDiv.className = "citation-excerpt";
+    excerptDiv.innerHTML = `
+      <span>${excerpt}</span>
+      <span class="badge">${escapeHtml(timeAgo)}</span>
+    `;
+
+    const modalDiv = document.createElement("div");
+    modalDiv.className = "citation-modal";
+
+    const fullTextP = document.createElement("p");
+    fullTextP.textContent = citation.full_text || "";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "copy-button";
+    copyBtn.type = "button";
+    copyBtn.textContent = "Copy Again";
+    copyBtn.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(citation.full_text || "");
+        showToast("Full citation copied!");
+      } catch (error) {
+        showToast("Failed to copy full citation.", true);
+      }
+    });
+
+    modalDiv.appendChild(fullTextP);
+    modalDiv.appendChild(copyBtn);
+
+    li.appendChild(excerptDiv);
+    li.appendChild(modalDiv);
+    citationHistoryEl.appendChild(li);
+  });
+}
+
 function renderSignedOut() {
   signedInPanel.classList.add("hidden");
   signedOutPanel.classList.remove("hidden");
   usageInfoEl.classList.add("hidden");
+  renderCitationHistoryUnavailable();
 }
 
 function renderSignedIn(session, usage) {
@@ -64,6 +175,7 @@ function renderSignedIn(session, usage) {
   } else {
     userTierEl.textContent = "Unknown";
   }
+  loadCitationHistory();
   if (usage) {
     usageInfoEl.classList.remove("hidden");
     const periodLabel = usage.usage_period
@@ -194,6 +306,7 @@ logoutButton.addEventListener("click", async () => {
   await sendMessage("logout");
   renderSignedOut();
   setStatus("Signed out.");
+  loadCitationHistory();
 });
 
 checkButton.addEventListener("click", async () => {
@@ -326,3 +439,4 @@ openDashboardButton.addEventListener("click", async () => {
 });
 
 loadSession();
+loadCitationHistory();

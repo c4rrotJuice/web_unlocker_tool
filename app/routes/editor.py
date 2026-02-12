@@ -12,14 +12,15 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from app.routes.http import http_client
 from app.services.entitlements import normalize_account_type
+from app.services.supabase_rest import SupabaseRestRepository
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+supabase_repo = SupabaseRestRepository(base_url=SUPABASE_URL, service_role_key=SUPABASE_KEY)
 
 PAID_TIERS = {"standard", "pro"}
 logger = logging.getLogger(__name__)
@@ -50,13 +51,6 @@ class CheckpointCreate(BaseModel):
 class RestoreCheckpointRequest(BaseModel):
     checkpoint_id: str
 
-
-def _supabase_headers() -> dict[str, str]:
-    return {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json",
-    }
 
 
 def _sanitize_html(html: str) -> str:
@@ -118,16 +112,13 @@ async def _get_account_type(request: Request, user_id: str) -> str:
         return normalize_account_type(request.state.account_type)
 
     try:
-        res = await http_client.get(
-            f"{SUPABASE_URL}/rest/v1/user_meta",
+        res = await supabase_repo.get(
+            "user_meta",
             params={
                 "user_id": f"eq.{user_id}",
                 "select": "account_type",
             },
-            headers={
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-            },
+            headers=supabase_repo.headers(include_content_type=False),
         )
         if res.status_code == 200:
             data = res.json()
@@ -154,14 +145,14 @@ async def _validate_citation_ids(user_id: str, citation_ids: list[str]) -> list[
     if not unique_ids:
         return []
 
-    res = await http_client.get(
-        f"{SUPABASE_URL}/rest/v1/citations",
+    res = await supabase_repo.get(
+        "citations",
         params={
             "id": f"in.({','.join(unique_ids)})",
             "user_id": f"eq.{user_id}",
             "select": "id",
         },
-        headers=_supabase_headers(),
+        headers=supabase_repo.headers(),
     )
     if res.status_code != 200:
         logger.error("editor.validate_citations_failed", extra={"status": res.status_code, "upstream": "supabase"})
@@ -181,20 +172,20 @@ async def _fetch_doc_with_fallback(user_id: str, doc_id: str) -> dict:
         "user_id": f"eq.{user_id}",
         "select": "id,title,content_delta,content_html,citation_ids,updated_at",
     }
-    res = await http_client.get(
-        f"{SUPABASE_URL}/rest/v1/documents",
+    res = await supabase_repo.get(
+        "documents",
         params=params,
-        headers=_supabase_headers(),
+        headers=supabase_repo.headers(),
     )
     if res.status_code != 200:
-        fallback = await http_client.get(
-            f"{SUPABASE_URL}/rest/v1/documents",
+        fallback = await supabase_repo.get(
+            "documents",
             params={
                 "id": f"eq.{doc_id}",
                 "user_id": f"eq.{user_id}",
                 "select": "id,title,content_delta,citation_ids,updated_at",
             },
-            headers=_supabase_headers(),
+            headers=supabase_repo.headers(),
         )
         if fallback.status_code != 200:
             logger.error("editor.get_doc_failed", extra={"status": fallback.status_code, "upstream": "supabase"})
@@ -213,28 +204,28 @@ async def _fetch_doc_with_fallback(user_id: str, doc_id: str) -> dict:
 
 
 async def _patch_doc_with_fallback(user_id: str, doc_id: str, payload: dict) -> dict:
-    res = await http_client.patch(
-        f"{SUPABASE_URL}/rest/v1/documents",
+    res = await supabase_repo.patch(
+        "documents",
         params={
             "id": f"eq.{doc_id}",
             "user_id": f"eq.{user_id}",
         },
         headers={
-            **_supabase_headers(),
+            **supabase_repo.headers(),
             "Prefer": "return=representation",
         },
         json=payload,
     )
     if res.status_code != 200 and "content_html" in payload:
         fallback_payload = {k: v for k, v in payload.items() if k != "content_html"}
-        res = await http_client.patch(
-            f"{SUPABASE_URL}/rest/v1/documents",
+        res = await supabase_repo.patch(
+            "documents",
             params={
                 "id": f"eq.{doc_id}",
                 "user_id": f"eq.{user_id}",
             },
             headers={
-                **_supabase_headers(),
+                **supabase_repo.headers(),
                 "Prefer": "return=representation",
             },
             json=fallback_payload,
@@ -300,10 +291,10 @@ async def create_doc(request: Request, payload: DocumentCreate):
         "expires_at": _doc_expiration(account_type),
     }
 
-    res = await http_client.post(
-        f"{SUPABASE_URL}/rest/v1/documents",
+    res = await supabase_repo.post(
+        "documents",
         headers={
-            **_supabase_headers(),
+            **supabase_repo.headers(),
             "Prefer": "return=representation",
         },
         json=insert_payload,
@@ -311,10 +302,10 @@ async def create_doc(request: Request, payload: DocumentCreate):
 
     if res.status_code not in (200, 201):
         insert_payload.pop("content_html", None)
-        res = await http_client.post(
-            f"{SUPABASE_URL}/rest/v1/documents",
+        res = await supabase_repo.post(
+            "documents",
             headers={
-                **_supabase_headers(),
+                **supabase_repo.headers(),
                 "Prefer": "return=representation",
             },
             json=insert_payload,
@@ -342,15 +333,15 @@ async def list_docs(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     now_iso = datetime.utcnow().isoformat()
-    res = await http_client.get(
-        f"{SUPABASE_URL}/rest/v1/documents",
+    res = await supabase_repo.get(
+        "documents",
         params={
             "user_id": f"eq.{user_id}",
             "select": "id,title,updated_at",
             "order": "updated_at.desc",
             "or": f"(expires_at.is.null,expires_at.gt.{now_iso})",
         },
-        headers=_supabase_headers(),
+        headers=supabase_repo.headers(),
     )
 
     if res.status_code != 200:
@@ -399,8 +390,8 @@ async def list_doc_checkpoints(request: Request, doc_id: str, limit: int = 10):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     safe_limit = max(1, min(limit, 20))
-    res = await http_client.get(
-        f"{SUPABASE_URL}/rest/v1/doc_checkpoints",
+    res = await supabase_repo.get(
+        "doc_checkpoints",
         params={
             "doc_id": f"eq.{doc_id}",
             "user_id": f"eq.{user_id}",
@@ -408,7 +399,7 @@ async def list_doc_checkpoints(request: Request, doc_id: str, limit: int = 10):
             "order": "created_at.desc",
             "limit": safe_limit,
         },
-        headers=_supabase_headers(),
+        headers=supabase_repo.headers(),
     )
 
     if res.status_code == 404:
@@ -437,10 +428,10 @@ async def create_doc_checkpoint(request: Request, doc_id: str, payload: Checkpoi
         "created_at": now_iso,
     }
 
-    res = await http_client.post(
-        f"{SUPABASE_URL}/rest/v1/doc_checkpoints",
+    res = await supabase_repo.post(
+        "doc_checkpoints",
         headers={
-            **_supabase_headers(),
+            **supabase_repo.headers(),
             "Prefer": "return=representation",
         },
         json=insert_payload,
@@ -464,8 +455,8 @@ async def restore_doc_checkpoint(request: Request, doc_id: str, payload: Restore
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    checkpoint_res = await http_client.get(
-        f"{SUPABASE_URL}/rest/v1/doc_checkpoints",
+    checkpoint_res = await supabase_repo.get(
+        "doc_checkpoints",
         params={
             "id": f"eq.{payload.checkpoint_id}",
             "doc_id": f"eq.{doc_id}",
@@ -473,7 +464,7 @@ async def restore_doc_checkpoint(request: Request, doc_id: str, payload: Restore
             "select": "id,content_delta,content_html",
             "limit": 1,
         },
-        headers=_supabase_headers(),
+        headers=supabase_repo.headers(),
     )
 
     if checkpoint_res.status_code != 200:
@@ -509,14 +500,14 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    doc_res = await http_client.get(
-        f"{SUPABASE_URL}/rest/v1/documents",
+    doc_res = await supabase_repo.get(
+        "documents",
         params={
             "id": f"eq.{doc_id}",
             "user_id": f"eq.{user_id}",
             "select": "title,content_delta,citation_ids",
         },
-        headers=_supabase_headers(),
+        headers=supabase_repo.headers(),
     )
     if doc_res.status_code != 200:
         logger.error("editor.export_load_doc_failed", extra={"status": doc_res.status_code, "upstream": "supabase"})
@@ -536,15 +527,15 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
 
     bibliography: list[str] = []
     if citation_ids:
-        citation_res = await http_client.get(
-            f"{SUPABASE_URL}/rest/v1/citations",
+        citation_res = await supabase_repo.get(
+            "citations",
             params={
                 "id": f"in.({','.join(citation_ids)})",
                 "user_id": f"eq.{user_id}",
                 "expires_at": f"gt.{datetime.utcnow().isoformat()}",
                 "select": "id,format,full_text,custom_format_template",
             },
-            headers=_supabase_headers(),
+            headers=supabase_repo.headers(),
         )
         if citation_res.status_code == 200:
             for citation in citation_res.json():

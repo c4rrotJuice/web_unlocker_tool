@@ -7,8 +7,8 @@ import pytz
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
-from app.routes.http import http_client
 from app.services.entitlements import normalize_account_type
+from app.services.supabase_rest import SupabaseRestRepository
 from app.services.IP_usage_limit import get_today_gmt3, get_user_ip, get_week_start_gmt3
 from app.routes.citations import CitationInput, create_citation
 from app.routes.editor import _doc_expiration, _get_account_type
@@ -23,6 +23,7 @@ EXTENSION_EDITOR_WEEKLY_LIMIT = 500
 PAID_TIERS = {"standard", "pro"}
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+supabase_repo = SupabaseRestRepository(base_url=SUPABASE_URL, service_role_key=SUPABASE_KEY)
 ANON_USAGE_PAIR_RATE_LIMIT_PER_MINUTE = 10
 
 
@@ -287,13 +288,10 @@ async def extension_selection(request: Request, payload: ExtensionSelectionReque
         "expires_at": _doc_expiration(account_type),
     }
 
-    res = await http_client.post(
-        f"{SUPABASE_URL}/rest/v1/documents",
+    res = await supabase_repo.post(
+        "documents",
         headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation",
+            **supabase_repo.headers(prefer="return=representation"),
         },
         json=insert_payload,
     )

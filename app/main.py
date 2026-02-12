@@ -389,8 +389,19 @@ async def auth_handoff_page(request: Request):
 
 @app.get("/login")
 async def login_redirect():
-    return RedirectResponse("/static/auth.html")
+    return RedirectResponse("/auth")
 
+
+
+
+@app.get("/signin")
+async def signin_redirect():
+    return RedirectResponse("/auth")
+
+
+@app.get("/auth/login")
+async def auth_login_redirect():
+    return RedirectResponse("/auth")
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard_page(request: Request):

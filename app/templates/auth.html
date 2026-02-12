@@ -121,7 +121,7 @@
           <li><a href="/static/pricing.html">Pricing</a></li>
           <li><a href="https://citeunlock.choneize.com/blog">Blog</a></li>
           <li><a href="https://citeunlock.choneize.com/terms">Terms & Policies</a></li>
-          <li><a href="/static/auth.html" class="active" id="authButton">Sign in/Up</a></li>
+          <li><a href="/auth" class="active" id="authButton">Sign in/Up</a></li>
         </ul>
       </nav>
 
@@ -166,6 +166,15 @@
   <script>
     const signupMsg = document.getElementById("signup-msg");
     const loginMsg = document.getElementById("login-msg");
+    const toast = window.webUnlockerUI?.createToastManager?.();
+    const nextPath = new URLSearchParams(window.location.search).get("next") || "/dashboard";
+
+    function showInlineMessage(target, text, isError = false) {
+      target.textContent = text;
+      target.className = `message ${isError ? "error" : "success"}`;
+    }
+
+    document.getElementById("login-email")?.focus();
 
     document.getElementById("signup-form").addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -178,27 +187,26 @@
       const useCase = useCaseInput ? useCaseInput.value : "";
 
       if (!useCase) {
-        signupMsg.textContent = "Please select your use case.";
-        signupMsg.className = "message error";
+        showInlineMessage(signupMsg, "Please select your use case.", true);
         return;
       }
 
       try {
         const res = await fetch("/api/signup", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name, email, password, use_case: useCase })
         });
 
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Signup failed");
-        signupMsg.textContent = "✅ Signup successful! Please check your email to confirm.";
-        signupMsg.className = "message success";
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const mapped = window.webUnlockerUI?.mapApiError?.(data) || { message: data?.message || "Signup failed" };
+          throw new Error(mapped.message);
+        }
+        showInlineMessage(signupMsg, "Signup successful. Check your email to confirm.");
+        toast?.show({ type: "success", message: "Account created. Please verify your email." });
       } catch (err) {
-        signupMsg.textContent = "❌ Signup failed: " + err.message;
-        signupMsg.className = "message error";
+        showInlineMessage(signupMsg, err.message || "Signup failed", true);
       }
     });
 
@@ -212,22 +220,23 @@
       try {
         const res = await fetch("/api/login", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email, password })
         });
 
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Login failed");
-        loginMsg.textContent = "✅ Login successful!";
-        loginMsg.className = "message success";
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const mapped = window.webUnlockerUI?.mapApiError?.(data) || { message: data?.message || "Login failed" };
+          throw new Error(mapped.message);
+        }
 
-        // Optional: redirect after login
-        // window.location.href = "/dashboard";
+        showInlineMessage(loginMsg, window.webUnlockerUI?.COPY?.success?.LOGIN_SUCCESS || "Signed in successfully.");
+        toast?.show({ type: "success", message: window.webUnlockerUI?.COPY?.success?.LOGIN_SUCCESS || "Signed in successfully." });
+        setTimeout(() => {
+          window.location.href = nextPath;
+        }, 450);
       } catch (err) {
-        loginMsg.textContent = "❌ Login failed: " + err.message;
-        loginMsg.className = "message error";
+        showInlineMessage(loginMsg, err.message || "Login failed", true);
       }
     });
   </script>
@@ -236,6 +245,7 @@
       window.WEB_UNLOCKER_SUPABASE_ANON_KEY = {{ supabase_key | tojson }};
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/static/js/ui_feedback.js"></script>
 <script src="/static/js/auth.js"></script>
 <script src="/static/js/nav.js"></script>
 </body>

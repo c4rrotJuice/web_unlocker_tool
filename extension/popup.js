@@ -1,4 +1,6 @@
 import { BACKEND_BASE_URL } from "./config.js";
+import { COPY, mapApiError } from "./lib/messages.js";
+import { createToastStatusManager } from "./lib/toast_status.js";
 
 const DEBUG = false;
 const debug = (...args) => {
@@ -44,19 +46,14 @@ function expandSignupFields() {
   signupExtraFields?.classList.remove("hidden");
 }
 
+const feedback = createToastStatusManager({ toastEl, statusEl });
+
 function setStatus(message, isError = false) {
-  statusEl.textContent = message;
-  statusEl.style.color = isError ? "#b42318" : "#596173";
+  feedback.setStatus(message, isError ? "error" : "info");
 }
 
 function showToast(message, isError = false) {
-  if (!toastEl) return;
-  toastEl.textContent = message;
-  toastEl.classList.remove("hidden");
-  toastEl.classList.toggle("error", Boolean(isError));
-  setTimeout(() => {
-    toastEl.classList.add("hidden");
-  }, 3000);
+  feedback.showToast({ message, type: isError ? "error" : "success" });
 }
 
 function formatReset(resetAt) {
@@ -98,7 +95,7 @@ function timeSince(date) {
 
 function renderCitationHistoryUnavailable() {
   if (!citationHistoryEl) return;
-  citationHistoryEl.innerHTML = '<li class="citation-history-empty"><p>citation history for logged-in users.</p></li>';
+  citationHistoryEl.innerHTML = '<li class="citation-history-empty"><p>Citation history is available for signed-in users.</p></li>';
 }
 
 async function loadCitationHistory() {
@@ -255,7 +252,7 @@ function isRestrictedUrl(url) {
 }
 
 async function loadSession() {
-  setStatus("Checking session…");
+  setStatus(COPY.info.VERIFYING_AUTH);
   const response = await sendMessage("get-session");
   if (response?.error) {
     renderSessionPanels(null, null);
@@ -295,7 +292,7 @@ async function loadSession() {
 
 loginButton.addEventListener("click", async () => {
   collapseSignupFields();
-  setStatus("Signing in…");
+  setStatus(COPY.info.PROCESSING_REQUEST);
   try {
     const session = await sendMessage("login", {
       email: emailInput.value.trim(),
@@ -306,7 +303,9 @@ loginButton.addEventListener("click", async () => {
     }
     await loadSession();
   } catch (error) {
-    setStatus(error.message || "Login failed.", true);
+    const mapped = mapApiError({ message: error.message });
+    setStatus(mapped.message, true);
+    feedback.showToast({ message: mapped.message, type: mapped.type });
   }
 });
 
@@ -317,7 +316,7 @@ signupButton.addEventListener("click", async () => {
     return;
   }
 
-  setStatus("Creating account…");
+  setStatus(COPY.info.PROCESSING_REQUEST);
   try {
     const name = signupNameInput?.value?.trim() || "";
     const useCase = signupUseCaseInput?.value || "";
@@ -343,21 +342,23 @@ signupButton.addEventListener("click", async () => {
     }
     await loadSession();
     collapseSignupFields();
-    showToast("Account created. Check your email to confirm.");
+showToast("Account created. Check your email to confirm.");
   } catch (error) {
-    setStatus(error.message || "Signup failed.", true);
+    const mapped = mapApiError({ message: error.message });
+    setStatus(mapped.message, true);
+    feedback.showToast({ message: mapped.message, type: mapped.type });
   }
 });
 
 logoutButton.addEventListener("click", async () => {
-  setStatus("Signing out…");
+  setStatus(COPY.info.PROCESSING_REQUEST);
   await sendMessage("logout");
   await loadSession();
   loadCitationHistory();
 });
 
 checkButton.addEventListener("click", async () => {
-  setStatus("Checking allowance…");
+  setStatus(COPY.info.PROCESSING_REQUEST);
   const url = await getCurrentTabUrl();
   const response = await sendMessage("peek-unlock", { url });
   if (response?.error) {
@@ -382,7 +383,8 @@ upgradeButton.addEventListener("click", () => {
 });
 
 enableButton.addEventListener("click", async () => {
-  setStatus("Enabling Copy+Cite…");
+  setStatus(COPY.info.UNLOCK_STARTED);
+  feedback.showToast({ message: COPY.info.FETCHING_CONTENT, type: "loading", duration: 0 });
   try {
     const tab = await getCurrentTab();
     if (!tab?.id || isRestrictedUrl(tab.url)) {
@@ -417,7 +419,9 @@ enableButton.addEventListener("click", async () => {
       target: { tabId: tab.id, allFrames: true },
       files: ["content/unlock_content.js"],
     });
-    setStatus("Copy+Cite enabled on this page.");
+    feedback.dismissToast();
+    showToast(COPY.success.UNLOCK_SUCCESS);
+    setStatus(COPY.success.UNLOCK_SUCCESS);
   } catch (error) {
     debug("Failed to inject content script.", error);
     setStatus("Failed to inject content script.", true);

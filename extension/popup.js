@@ -290,6 +290,10 @@ openEditorButton.addEventListener("click", async () => {
   }
 
   const response = await sendMessage("OPEN_EDITOR");
+  if (response?.error) {
+    setStatus(response.error, true);
+    return;
+  }
   if (response?.status === 401) {
     renderSignedOut();
     setStatus("Session expired. Please sign in again.", true);
@@ -305,6 +309,10 @@ openEditorButton.addEventListener("click", async () => {
 openDashboardButton.addEventListener("click", async () => {
   setStatus("Opening dashboard…");
   const response = await sendMessage("OPEN_DASHBOARD");
+  if (response?.error) {
+    setStatus(response.error, true);
+    return;
+  }
   if (response?.status === 401) {
     renderSignedOut();
     setStatus("Session expired. Please sign in again.", true);

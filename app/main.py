@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +29,7 @@ from app.services.priority_limiter import PriorityLimiter
 from app.routes import dashboard, history, citations, bookmarks, search, payments, editor, extension, auth_handoff
 from app.config.environment import validate_environment
 from app.logging_utils import configure_logging, set_request_context, clear_request_context
+from app.services.metrics import metrics, record_dependency_call
 import logging
 import time
 
@@ -86,7 +87,10 @@ supabase_admin = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 # Sanity check
 try:
-    supabase_admin.table("user_meta").select("id").limit(1).execute()
+    record_dependency_call(
+        "supabase",
+        lambda: supabase_admin.table("user_meta").select("id").limit(1).execute(),
+    )
     logger.info("supabase.admin_connection_ok")
 except Exception as e:
     logger.exception("supabase.connection_failed", extra={"error": str(e)})
@@ -188,7 +192,7 @@ async def auth_middleware(request: Request, call_next):
 
         # ✅ Let Supabase validate token
         try:
-            user_res = supabase_anon.auth.get_user(token)
+            user_res = record_dependency_call("supabase", lambda: supabase_anon.auth.get_user(token))
             user = user_res.user
             if not user:
                 raise Exception("Invalid token")
@@ -223,13 +227,16 @@ async def auth_middleware(request: Request, call_next):
                 )
                 request.state.usage_limit = cached_meta.get("daily_limit", 5)
             else:
-                meta = (
-                    supabase_admin
-                    .table("user_meta")
-                    .select("name, account_type, daily_limit")
-                    .eq("user_id", user.id)
-                    .single()
-                    .execute()
+                meta = record_dependency_call(
+                    "supabase",
+                    lambda: (
+                        supabase_admin
+                        .table("user_meta")
+                        .select("name, account_type, daily_limit")
+                        .eq("user_id", user.id)
+                        .single()
+                        .execute()
+                    ),
                 )
 
                 if meta.data:
@@ -261,6 +268,10 @@ async def auth_middleware(request: Request, call_next):
     finally:
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
         status = getattr(response, "status_code", 500)
+        metrics.inc("http.request_count")
+        metrics.observe_ms("http.request_latency", latency_ms)
+        if status >= 400:
+            metrics.inc("http.error_count")
         set_request_context(status=status, latency_ms=latency_ms, upstream=None)
         logger.info("request.completed")
         clear_request_context()
@@ -336,6 +347,12 @@ async def login_redirect():
 async def dashboard_page(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request})
 
+@app.get("/metrics")
+async def metrics_endpoint():
+    return PlainTextResponse(
+        content=metrics.render_prometheus(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 # --------------------------------------------------
 # ROUTERS

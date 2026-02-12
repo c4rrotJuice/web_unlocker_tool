@@ -15,6 +15,7 @@ from app.services.IP_usage_limit import check_login, get_user_ip
 from app.services.entitlements import queue_priority
 from app.routes.upstash_redis import redis_get, redis_set, redis_incr, redis_expire
 from app.routes.error_responses import safe_html_error_response
+from app.services.metrics import record_dependency_call_async
 
 
 load_dotenv()
@@ -263,11 +264,14 @@ async def save_unlock_history(
         params = {"on_conflict": "user_id,event_id"}
         headers["Prefer"] = "return=representation,resolution=ignore-duplicates"
 
-    res = await client.post(
-        f"{SUPABASE_URL}/rest/v1/unlock_history",
-        params=params,
-        headers=headers,
-        json=payload,
+    res = await record_dependency_call_async(
+        "supabase",
+        lambda: client.post(
+            f"{SUPABASE_URL}/rest/v1/unlock_history",
+            params=params,
+            headers=headers,
+            json=payload,
+        ),
     )
 
     if event_id and res.status_code == 400:
@@ -278,34 +282,40 @@ async def save_unlock_history(
             error_payload = {}
 
         if error_payload.get("code") == "42P10":
-            existing = await client.get(
-                f"{SUPABASE_URL}/rest/v1/unlock_history",
+            existing = await record_dependency_call_async(
+                "supabase",
+                lambda: client.get(
+                    f"{SUPABASE_URL}/rest/v1/unlock_history",
                 headers={
                     "apikey": SUPABASE_KEY,
                     "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
                     "Accept": "application/json",
                 },
-                params={
-                    "user_id": f"eq.{user_id}",
-                    "event_id": f"eq.{event_id}",
-                    "select": "id",
-                    "limit": 1,
-                },
+                    params={
+                        "user_id": f"eq.{user_id}",
+                        "event_id": f"eq.{event_id}",
+                        "select": "id",
+                        "limit": 1,
+                    },
+                ),
             )
             if existing.status_code == 200:
                 existing_payload = existing.json()
                 if existing_payload:
                     return "duplicate"
 
-            res = await client.post(
-                f"{SUPABASE_URL}/rest/v1/unlock_history",
+            res = await record_dependency_call_async(
+                "supabase",
+                lambda: client.post(
+                    f"{SUPABASE_URL}/rest/v1/unlock_history",
                 headers={
                     "apikey": SUPABASE_KEY,
                     "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
                     "Content-Type": "application/json",
                     "Prefer": "return=representation",
                 },
-                json=payload,
+                    json=payload,
+                ),
             )
 
     logger.info(

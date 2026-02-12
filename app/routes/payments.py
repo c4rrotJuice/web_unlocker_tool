@@ -7,6 +7,7 @@ import hmac
 import json
 from app.routes.http import http_client
 import os
+from app.services.metrics import record_dependency_call_async
 
 router = APIRouter()
 
@@ -53,6 +54,27 @@ PADDLE_SUBSCRIPTION_EVENTS = {
     "subscription.renewed",
     "subscription.activated",
 }
+
+
+
+
+async def _instrumented_request(dependency: str, method: str, url: str, **kwargs):
+    method_lower = method.lower()
+    client_method = getattr(http_client, method_lower, None)
+    if client_method is None:
+        client_method = lambda *args, **inner_kwargs: http_client.request(method.upper(), *args, **inner_kwargs)
+    return await record_dependency_call_async(
+        dependency,
+        lambda: client_method(url, **kwargs),
+    )
+
+
+async def _supabase_request(method: str, url: str, **kwargs):
+    return await _instrumented_request("supabase", method, url, **kwargs)
+
+
+async def _paddle_request(method: str, url: str, **kwargs):
+    return await _instrumented_request("paddle", method, url, **kwargs)
 
 
 def _parse_iso_datetime(value: str | None) -> str | None:
@@ -114,7 +136,8 @@ async def _lookup_user_id(customer_id: str | None, customer_email: str | None) -
         raise HTTPException(status_code=500, detail="SUPABASE_URL is not configured.")
 
     if customer_id:
-        res = await http_client.get(
+        res = await _supabase_request(
+            "GET",
             f"{SUPABASE_URL}/rest/v1/user_meta",
             params={"select": "user_id", "paddle_customer_id": f"eq.{customer_id}", "limit": 1},
             headers=_supabase_headers(),
@@ -125,7 +148,8 @@ async def _lookup_user_id(customer_id: str | None, customer_email: str | None) -
                 return rows[0].get("user_id")
 
     if customer_email:
-        res = await http_client.get(
+        res = await _supabase_request(
+            "GET",
             f"{SUPABASE_URL}/rest/v1/user_meta",
             params={"select": "user_id", "email": f"eq.{customer_email}", "limit": 1},
             headers=_supabase_headers(),
@@ -260,7 +284,7 @@ async def get_paddle_token(request: Request):
     
     headers = _paddle_headers()
 
-    res = await http_client.post(url, headers=headers, json={"name": token_name})
+    res = await _paddle_request("POST", url, headers=headers, json={"name": token_name})
 
     if res.status_code not in {200, 201}:
         raise HTTPException(
@@ -315,7 +339,8 @@ async def create_paddle_checkout(request: Request):
     }
 
     url = f"{_paddle_base_url()}/transactions"
-    res = await http_client.post(
+    res = await _paddle_request(
+        "POST",
         url,
         headers=_paddle_headers(),
         json=transaction_payload,
@@ -393,7 +418,8 @@ async def paddle_webhook(request: Request):
     if not account_type:
         if event_type and event_type.startswith("transaction."):
             if customer_id or subscription_id or paddle_price_id:
-                await http_client.patch(
+                await _supabase_request(
+                    "PATCH",
                     f"{SUPABASE_URL}/rest/v1/user_meta",
                     params={"user_id": f"eq.{user_id}"},
                     headers={
@@ -426,7 +452,8 @@ async def paddle_webhook(request: Request):
     if account_type == "free":
         update_payload["paid_until"] = None
 
-    res = await http_client.patch(
+    res = await _supabase_request(
+        "PATCH",
         f"{SUPABASE_URL}/rest/v1/user_meta",
         params={"user_id": f"eq.{user_id}"},
         headers={

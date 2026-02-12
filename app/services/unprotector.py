@@ -21,6 +21,7 @@ from selectolax.parser import HTMLParser
 
 from app.services.cloudscraper_pool import SessionPool
 from app.services.priority_limiter import PriorityLimiter
+from app.services.metrics import metrics, record_dependency_call_async, record_dependency_call
 
 # --- Setup Logging ---
 logger = logging.getLogger(__name__)
@@ -694,6 +695,7 @@ async def fetch_and_clean_page(
     redis_expire: callable = None  
 ) -> str:
     logger.info("Processing URL: %s", url)
+    metrics.inc("unlock_pipeline.request_count")
 
     if urlparse(url).scheme not in ('http', 'https'):
         logger.warning("Rejected URL due to invalid scheme: %s", url)
@@ -732,7 +734,10 @@ async def fetch_and_clean_page(
             merged_headers = {**session_headers, **request_headers}
             if "User-Agent" in session_headers:
                 merged_headers["User-Agent"] = session_headers["User-Agent"]
-            response = scraper.get(url, headers=merged_headers, timeout=FETCH_TIMEOUT_SECONDS)
+            response = record_dependency_call(
+                "cloudscraper",
+                lambda: scraper.get(url, headers=merged_headers, timeout=FETCH_TIMEOUT_SECONDS),
+            )
             logger.info(
                 "[cloudscraper] Response for hostname=%s status=%s headers=%s",
                 hostname,
@@ -755,12 +760,17 @@ async def fetch_and_clean_page(
             FETCH_TIMEOUT_SECONDS,
             connect=FETCH_CONNECT_TIMEOUT_SECONDS,
         )
-        response = await http_session.get(url, headers=headers, timeout=timeout)
+        response = await record_dependency_call_async(
+            "http_fetch",
+            lambda: http_session.get(url, headers=headers, timeout=timeout),
+        )
         response.raise_for_status()
         return response
 
     async def _fetch_with_retries():
         for attempt in range(1, FETCH_MAX_RETRIES + 1):
+            if attempt > 1:
+                metrics.inc("unlock_pipeline.retry_count")
             try:
                 if use_cloudscraper:
                     logger.info("[cloudscraper] Fetching with Cloudscraper...")
@@ -858,9 +868,11 @@ async def fetch_and_clean_page(
 
     try:
         if fetch_limiter:
-            async with fetch_limiter.limit(queue_priority):
+            async with fetch_limiter.limit(queue_priority) as queue_wait_ms:
+                metrics.observe_ms("unlock_pipeline.queue_wait", queue_wait_ms)
                 response_text, content_type, content_length, fetch_meta, response_headers = await _fetch_with_retries()
         else:
+            metrics.observe_ms("unlock_pipeline.queue_wait", 0.0)
             response_text, content_type, content_length, fetch_meta, response_headers = await _fetch_with_retries()
     except Exception as e:
         logger.error("Failed to fetch URL %s: %s", url, e)
@@ -906,6 +918,7 @@ async def fetch_and_clean_page(
         )
 
     if classification["is_blocked"] and classification["confidence"] == "high":
+        metrics.inc("unlock_pipeline.blocked_count")
         logger.warning(
             "blocked_response_detected hostname=%s status=%s provider=%s confidence=%s blocked_reason=%s ray_id=%s",
             hostname,

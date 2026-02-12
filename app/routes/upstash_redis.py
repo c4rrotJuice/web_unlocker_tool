@@ -6,6 +6,7 @@ import os
 import zlib
 import base64
 from dotenv import load_dotenv
+from app.services.metrics import record_dependency_call_async
 
 load_dotenv()
 
@@ -42,7 +43,10 @@ def decompress_from_storage(data: str) -> str:
 
 async def _cmd(client: httpx.AsyncClient, command: list):
     _check_env()
-    r = await client.post(UPSTASH_REDIS_REST_URL, headers=headers, json=command, timeout=20)
+    r = await record_dependency_call_async(
+        "upstash",
+        lambda: client.post(UPSTASH_REDIS_REST_URL, headers=headers, json=command, timeout=20),
+    )
     if r.status_code != 200:
         raise RuntimeError(f"Upstash command failed {r.status_code}: {r.text}")
     return r.json().get("result")

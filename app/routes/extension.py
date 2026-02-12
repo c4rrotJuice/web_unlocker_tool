@@ -23,6 +23,7 @@ EXTENSION_EDITOR_WEEKLY_LIMIT = 500
 PAID_TIERS = {"standard", "pro"}
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+ANON_USAGE_ID_HEADER = "x-extension-anon-id"
 
 
 class ExtensionPermitRequest(BaseModel):
@@ -108,24 +109,64 @@ def _week_reset_utc(now: datetime) -> tuple[str, int]:
     return reset_at.isoformat(), ttl_seconds
 
 
+def _sanitize_anon_usage_id(value: str | None) -> str | None:
+    anon_id = (value or "").strip()
+    if not anon_id:
+        return None
+    if len(anon_id) > 128:
+        return None
+    allowed_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+    if any(char not in allowed_chars for char in anon_id):
+        return None
+    return anon_id
+
+
 @router.post("/api/extension/unlock-permit")
 async def extension_unlock_permit(request: Request, payload: ExtensionPermitRequest):
     user_id = request.state.user_id
-    if not user_id:
-        return JSONResponse(
-            {
-                "allowed": False,
-                "remaining": 0,
-                "reset_at": None,
-                "reason": "unauthenticated",
-                "account_type": "freemium",
-            },
-            status_code=401,
-        )
 
     account_type = normalize_account_type(request.state.account_type)
     response_account_type = "freemium" if account_type == "free" else account_type
     usage_period = "week"
+
+    if not user_id:
+        anon_usage_id = _sanitize_anon_usage_id(request.headers.get(ANON_USAGE_ID_HEADER))
+        if not anon_usage_id:
+            return JSONResponse(
+                {
+                    "allowed": False,
+                    "remaining": 0,
+                    "reset_at": None,
+                    "reason": "anonymous_id_required",
+                    "account_type": "anonymous",
+                    "usage_period": "week",
+                },
+                status_code=400,
+            )
+
+        reset_at, ttl_seconds = _get_reset_at()
+        usage_key = f"extension_usage_week:anonymous:{anon_usage_id}:{get_week_start_gmt3()}"
+        usage_limit = EXTENSION_WEEKLY_LIMIT
+        usage_count = int(await request.app.state.redis_get(usage_key) or 0)
+
+        allowed = usage_count < usage_limit
+        if allowed and not payload.dry_run:
+            await request.app.state.redis_incr(usage_key)
+            if usage_count == 0:
+                await request.app.state.redis_expire(usage_key, ttl_seconds)
+            usage_count += 1
+
+        remaining = max(usage_limit - usage_count, 0)
+        reason = "ok" if allowed else "limit_reached"
+
+        return {
+            "allowed": allowed,
+            "remaining": remaining,
+            "reset_at": reset_at,
+            "reason": reason,
+            "account_type": "anonymous",
+            "usage_period": usage_period,
+        }
 
     if account_type == "pro":
         return {

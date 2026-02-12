@@ -14,6 +14,17 @@
         <p id="toast" class="toast hidden" role="status" aria-live="polite"></p>
       </header>
 
+      <div id="usage-info" class="usage hidden">
+        <p>
+          Remaining usage:
+          <strong id="remaining">--</strong>
+        </p>
+        <p>
+          Resets:
+          <strong id="reset-at">--</strong>
+        </p>
+      </div>
+
       <section id="signed-out" class="panel hidden">
         <label>
           Email
@@ -39,16 +50,6 @@
         <p class="meta">
           Tier: <strong id="user-tier">--</strong>
         </p>
-        <div id="usage-info" class="usage hidden">
-          <p>
-            Remaining usage:
-            <strong id="remaining">--</strong>
-          </p>
-          <p>
-            Resets:
-            <strong id="reset-at">--</strong>
-          </p>
-        </div>
         <div class="actions">
           <button id="check-usage">Check unlock allowance</button>
           <button id="open-editor" class="secondary">Open Editor</button>
@@ -58,14 +59,14 @@
         <button id="upgrade" class="link">Upgrade plan</button>
       </section>
 
+      <button id="enable-copy-cite" class="secondary">Enable Copy+Cite on this page</button>
+
       <section id="citation-history-panel" class="panel citation-history-panel">
         <h2 class="history-title">Recent Citations</h2>
         <ul id="citation-history" class="citation-list">
           <li><p>Fetching ...</p></li>
         </ul>
       </section>
-
-      <button id="enable-copy-cite" class="secondary">Enable Copy+Cite on this page</button>
     </main>
 
     <script type="module" src="popup.js"></script>

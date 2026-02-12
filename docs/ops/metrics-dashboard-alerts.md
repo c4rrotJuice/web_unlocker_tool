@@ -7,6 +7,7 @@ This service now exposes a Prometheus-style endpoint at `GET /metrics`.
 - `http_request_count`
 - `http_error_count`
 - `http_request_latency_milliseconds{quantile="0.50|0.95|0.99"}`
+- `process_memory_rss_mb`
 
 Recommended alerts:
 
@@ -41,6 +42,8 @@ Recommended alerts:
 - `unlock_pipeline_retry_count`
 - `unlock_pipeline_blocked_count`
 - `unlock_pipeline_queue_wait_milliseconds{quantile="0.50|0.95|0.99"}`
+- `unlock_pipeline_queue_depth`
+- `unlock_pipeline_in_flight`
 
 Derived rates to chart:
 

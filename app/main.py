@@ -76,6 +76,19 @@ configure_logging()
 logger = logging.getLogger(__name__)
 ENV = validate_environment()
 
+SECURITY_HEADERS = {
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+}
+
+
+def apply_baseline_security_headers(response):
+    for header, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(header, value)
+    return response
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -223,10 +236,10 @@ async def auth_middleware(request: Request, call_next):
             if public_path:
                 response = await call_next(request)
                 response.headers["X-Request-Id"] = request.state.request_id
-                return response
+                return apply_baseline_security_headers(response)
             response = JSONResponse({"error": "Unauthorized"}, status_code=401)
             response.headers["X-Request-Id"] = request.state.request_id
-            return response
+            return apply_baseline_security_headers(response)
 
         # ✅ Fetch metadata with SERVICE ROLE
         try:
@@ -294,8 +307,7 @@ async def auth_middleware(request: Request, call_next):
         clear_request_context()
 
     response.headers["X-Request-Id"] = request.state.request_id
-
-    return response
+    return apply_baseline_security_headers(response)
 
 
 

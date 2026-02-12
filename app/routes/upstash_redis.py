@@ -7,6 +7,7 @@ import zlib
 import base64
 from dotenv import load_dotenv
 from app.services.metrics import record_dependency_call_async
+from app.services.resilience import DEFAULT_TIMEOUT, RetryPolicy, call_with_retries
 
 load_dotenv()
 
@@ -43,9 +44,17 @@ def decompress_from_storage(data: str) -> str:
 
 async def _cmd(client: httpx.AsyncClient, command: list):
     _check_env()
-    r = await record_dependency_call_async(
-        "upstash",
-        lambda: client.post(UPSTASH_REDIS_REST_URL, headers=headers, json=command, timeout=20),
+    r = await call_with_retries(
+        lambda: record_dependency_call_async(
+            "upstash",
+            lambda: client.post(
+                UPSTASH_REDIS_REST_URL,
+                headers=headers,
+                json=command,
+                timeout=DEFAULT_TIMEOUT,
+            ),
+        ),
+        retry_policy=RetryPolicy(max_attempts=3, base_delay_s=0.15, max_delay_s=0.8, jitter_s=0.2),
     )
     if r.status_code != 200:
         raise RuntimeError(f"Upstash command failed {r.status_code}: {r.text}")

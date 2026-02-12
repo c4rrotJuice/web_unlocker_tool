@@ -130,8 +130,10 @@ def _build_app(monkeypatch):
     monkeypatch.setattr(supabase, "create_client", lambda url, key: DummyClient("user-1"))
 
     from app import main
+    from app.routes import auth_handoff
 
     importlib.reload(main)
+    importlib.reload(auth_handoff)
     return main
 
 

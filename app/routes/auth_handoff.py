@@ -8,6 +8,9 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from supabase import create_client
+from app.services.resilience import call_blocking_with_timeout
+import asyncio
+import random
 
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -27,6 +30,23 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
 HANDOFF_TTL_SECONDS = 60
 HANDOFF_RATE_LIMIT = 5
 logger = logging.getLogger(__name__)
+
+
+SUPABASE_AUTH_TIMEOUT_SECONDS = float(os.getenv("SUPABASE_AUTH_TIMEOUT_SECONDS", "4.0"))
+SUPABASE_AUTH_RETRY_ATTEMPTS = int(os.getenv("SUPABASE_AUTH_RETRY_ATTEMPTS", "2"))
+
+
+async def _supabase_call(fn):
+    last_exc = None
+    for attempt in range(1, SUPABASE_AUTH_RETRY_ATTEMPTS + 1):
+        try:
+            return await call_blocking_with_timeout(fn, timeout_s=SUPABASE_AUTH_TIMEOUT_SECONDS)
+        except TimeoutError as exc:
+            last_exc = exc
+            if attempt >= SUPABASE_AUTH_RETRY_ATTEMPTS:
+                raise
+            await asyncio.sleep(0.15 * attempt + random.uniform(0.0, 0.2))
+    raise RuntimeError("supabase call failed") from last_exc
 
 
 def _debug_log(message: str) -> None:
@@ -87,7 +107,7 @@ async def create_handoff(request: Request, payload: HandoffRequest):
 
     token = auth_header.split(" ")[1]
     try:
-        user_res = supabase_anon.auth.get_user(token)
+        user_res = await _supabase_call(lambda: supabase_anon.auth.get_user(token))
         user = user_res.user
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Invalid token") from exc
@@ -109,7 +129,7 @@ async def create_handoff(request: Request, payload: HandoffRequest):
         f"user_id={user.id} code_prefix={code_prefix} redirect_path={redirect_path}"
     )
 
-    insert_res = (
+    insert_res = await _supabase_call(lambda: (
         supabase_admin
         .table("auth_handoff_codes")
         .insert(
@@ -125,7 +145,7 @@ async def create_handoff(request: Request, payload: HandoffRequest):
             }
         )
         .execute()
-    )
+    ))
 
     data = getattr(insert_res, "data", None)
     if not data:
@@ -158,14 +178,14 @@ async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
     code_prefix = code[:6]
     _debug_log(f"exchange started: code_prefix={code_prefix}")
 
-    res = (
+    res = await _supabase_call(lambda: (
         supabase_admin
         .table("auth_handoff_codes")
         .select("*")
         .eq("code", code)
         .single()
         .execute()
-    )
+    ))
 
     record = getattr(res, "data", None)
     if not record:
@@ -206,14 +226,14 @@ async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
 
     user = None
     try:
-        user_res = supabase_anon.auth.get_user(access_token)
+        user_res = await _supabase_call(lambda: supabase_anon.auth.get_user(access_token))
         user = user_res.user
     except Exception as exc:
         _debug_log(f"exchange token check failed: code_prefix={code_prefix} {exc}")
 
     if not user:
         try:
-            refresh_res = supabase_anon.auth.refresh_session(refresh_token)
+            refresh_res = await _supabase_call(lambda: supabase_anon.auth.refresh_session(refresh_token))
             refreshed_session = getattr(refresh_res, "session", None)
             refreshed_access_token = getattr(refreshed_session, "access_token", None)
             refreshed_refresh_token = getattr(refreshed_session, "refresh_token", None)
@@ -227,7 +247,7 @@ async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
                     expires_in = refreshed_expires_in
                 if refreshed_token_type:
                     token_type = refreshed_token_type
-                user_res = supabase_anon.auth.get_user(access_token)
+                user_res = await _supabase_call(lambda: supabase_anon.auth.get_user(access_token))
                 user = user_res.user
         except Exception as exc:
             _debug_log(
@@ -256,7 +276,7 @@ async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
     if hasattr(update_query, "is_"):
         update_query = update_query.is_("used_at", "null")
 
-    update_res = update_query.execute()
+    update_res = await _supabase_call(lambda: update_query.execute())
 
     updated = getattr(update_res, "data", None)
     if not updated:

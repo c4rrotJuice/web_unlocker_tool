@@ -1,6 +1,6 @@
 #dashboard.py
 from fastapi import APIRouter, Request, Depends, Header, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from datetime import date, datetime, timedelta, timezone
 import httpx
@@ -22,6 +22,7 @@ from app.services.IP_usage_limit import (
 import os
 
 from app.routes.error_responses import safe_api_error_response
+from app.services.resilience import DEFAULT_TIMEOUT
 
 templates = Jinja2Templates(directory="app/templates")
 router = APIRouter()
@@ -130,7 +131,8 @@ async def get_user_metadata(request: Request):
             headers={
                 "apikey": SUPABASE_KEY,
                 "Authorization": f"Bearer {SUPABASE_KEY}",
-            }
+            },
+            timeout=DEFAULT_TIMEOUT,
         )
 
         if meta_res.status_code != 200:
@@ -142,21 +144,28 @@ async def get_user_metadata(request: Request):
 
         meta = meta[0]
 
-        # ── Fetch latest bookmarks
-        bookmarks_res = await http_client.get(
-            f"{SUPABASE_URL}/rest/v1/bookmarks",
-            params={
-                "user_id": f"eq.{user_id}",
-                "order": "created_at.desc",
-                "limit": 50
-            },
-            headers={
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-            }
-        )
-
-        bookmarks = bookmarks_res.json() if bookmarks_res.status_code == 200 else []
+        # ── Fetch latest bookmarks (degraded-mode friendly)
+        degraded_reasons: list[str] = []
+        try:
+            bookmarks_res = await http_client.get(
+                f"{SUPABASE_URL}/rest/v1/bookmarks",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "order": "created_at.desc",
+                    "limit": 50
+                },
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                },
+                timeout=DEFAULT_TIMEOUT,
+            )
+            bookmarks = bookmarks_res.json() if bookmarks_res.status_code == 200 else []
+            if bookmarks_res.status_code != 200:
+                degraded_reasons.append("BOOKMARKS_UNAVAILABLE")
+        except Exception:
+            bookmarks = []
+            degraded_reasons.append("BOOKMARKS_UNAVAILABLE")
 
         account_type = normalize_account_type(meta.get("account_type"))
         if account_type in {"standard", "pro"}:
@@ -181,7 +190,7 @@ async def get_user_metadata(request: Request):
                 json={"requests_today": usage_count},
             )
 
-        return {
+        payload = {
             "user_id": user_id,
             "name": meta.get("name"),
             "account_type": account_type,
@@ -192,6 +201,12 @@ async def get_user_metadata(request: Request):
             "usage_limit": usage_limit,
             "usage_period": usage_period,
         }
+        if degraded_reasons:
+            payload["degraded"] = True
+            payload["error_code"] = "DASHBOARD_PARTIAL_DATA"
+            payload["degraded_reasons"] = degraded_reasons
+            return JSONResponse(content=payload, status_code=206)
+        return payload
 
     except HTTPException:
         raise
@@ -213,7 +228,23 @@ async def get_momentum(request: Request):
     today = datetime.now(timezone.utc).date()
     month_start, month_end, _ = _get_month_range(None)
 
-    unlock_days = await _fetch_unlock_days(user_id)
+    try:
+        unlock_days = await _fetch_unlock_days(user_id)
+    except Exception:
+        return JSONResponse(
+            content={
+                "current_streak_days": 0,
+                "has_unlock_today": False,
+                "articles_unlocked_mtd": 0,
+                "articles_unlocked_all_time": 0,
+                "active_days_mtd": 0,
+                "milestone": None,
+                "degraded": True,
+                "error_code": "MOMENTUM_PARTIAL_DATA",
+            },
+            status_code=206,
+        )
+
     current_streak_days, has_unlock_today = calculate_streak(unlock_days, today)
     active_days_mtd = count_active_days_in_range(unlock_days, month_start, month_end)
 

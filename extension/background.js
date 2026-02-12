@@ -188,6 +188,35 @@ async function saveCitation(payload) {
 }
 
 
+
+async function fetchRecentCitations(limit = 5) {
+  const session = await ensureValidSession();
+  if (!session) {
+    return { error: "unauthenticated", status: 401 };
+  }
+
+  const params = new URLSearchParams({ limit: String(limit) });
+  const response = await apiFetch(
+    `/api/citations?${params.toString()}`,
+    { method: "GET" },
+    session.access_token,
+  );
+
+  if (response.status === 401) {
+    await clearSession();
+    await clearStorage([USAGE_KEY]);
+  }
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (error) {
+    // ignore
+  }
+
+  return { status: response.status, data };
+}
+
 async function openAuthedPath(redirectPath) {
   const session = await ensureValidSession();
   if (!session) {
@@ -382,6 +411,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case "SAVE_CITATION": {
           const result = await saveCitation(message.payload || {});
           debug("SAVE_CITATION result", result);
+          sendResponse(result);
+          break;
+        }
+        case "GET_RECENT_CITATIONS": {
+          const limit = Number.isFinite(message.limit) ? message.limit : 5;
+          const safeLimit = Math.max(1, Math.min(5, limit));
+          const result = await fetchRecentCitations(safeLimit);
+          debug("GET_RECENT_CITATIONS result", result);
           sendResponse(result);
           break;
         }

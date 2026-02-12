@@ -11,6 +11,9 @@ const statusEl = document.getElementById("status");
 const toastEl = document.getElementById("toast");
 const signedOutPanel = document.getElementById("signed-out");
 const signedInPanel = document.getElementById("signed-in");
+const signupExtraFields = document.getElementById("signup-extra-fields");
+const signupNameInput = document.getElementById("signup-name");
+const signupUseCaseInput = document.getElementById("signup-use-case");
 const emailInput = document.getElementById("email");
 const passwordInput = document.getElementById("password");
 const loginButton = document.getElementById("login");
@@ -27,6 +30,19 @@ const remainingEl = document.getElementById("remaining");
 const resetAtEl = document.getElementById("reset-at");
 const usageInfoEl = document.getElementById("usage-info");
 const citationHistoryEl = document.getElementById("citation-history");
+
+
+let signupExpanded = false;
+
+function collapseSignupFields() {
+  signupExpanded = false;
+  signupExtraFields?.classList.add("hidden");
+}
+
+function expandSignupFields() {
+  signupExpanded = true;
+  signupExtraFields?.classList.remove("hidden");
+}
 
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
@@ -190,6 +206,7 @@ function renderSessionPanels(session, usage) {
   } else {
     signedInPanel.classList.add("hidden");
     signedOutPanel.classList.remove("hidden");
+    collapseSignupFields();
     renderCitationHistoryUnavailable();
   }
 
@@ -277,6 +294,7 @@ async function loadSession() {
 }
 
 loginButton.addEventListener("click", async () => {
+  collapseSignupFields();
   setStatus("Signing in…");
   try {
     const session = await sendMessage("login", {
@@ -293,16 +311,39 @@ loginButton.addEventListener("click", async () => {
 });
 
 signupButton.addEventListener("click", async () => {
+  if (!signupExpanded) {
+    expandSignupFields();
+    setStatus("Enter your full name and use case, then tap Sign up again.");
+    return;
+  }
+
   setStatus("Creating account…");
   try {
+    const name = signupNameInput?.value?.trim() || "";
+    const useCase = signupUseCaseInput?.value || "";
+    const email = emailInput.value.trim();
+    const password = passwordInput.value;
+
+    if (!name) {
+      throw new Error("Full name is required for signup.");
+    }
+
+    if (!useCase) {
+      throw new Error("Please select a use case.");
+    }
+
     const session = await sendMessage("signup", {
-      email: emailInput.value.trim(),
-      password: passwordInput.value,
+      name,
+      use_case: useCase,
+      email,
+      password,
     });
     if (session?.error) {
       throw new Error(session.error);
     }
     await loadSession();
+    collapseSignupFields();
+    showToast("Account created. Check your email to confirm.");
   } catch (error) {
     setStatus(error.message || "Signup failed.", true);
   }

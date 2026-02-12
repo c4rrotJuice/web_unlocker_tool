@@ -27,6 +27,40 @@ from app.services.entitlements import normalize_account_type
 from app.services.priority_limiter import PriorityLimiter
 from app.routes import dashboard, history, citations, bookmarks, search, payments, editor, extension, auth_handoff
 
+
+def _parse_cors_origins(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [origin.strip() for origin in value.split(",") if origin.strip()]
+
+
+def get_cors_settings() -> tuple[list[str], bool]:
+    env = (os.getenv("ENV") or "dev").strip().lower()
+    configured_origins = _parse_cors_origins(os.getenv("CORS_ORIGINS"))
+
+    if env == "prod":
+        if not configured_origins:
+            raise RuntimeError("❌ CORS_ORIGINS must be set in prod and cannot be empty")
+        if any(origin == "*" for origin in configured_origins):
+            raise RuntimeError("❌ CORS_ORIGINS cannot contain '*' in prod")
+        allow_origins = configured_origins
+    else:
+        dev_localhost_origins = [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "http://localhost:4173",
+            "http://localhost:8080",
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:4173",
+            "http://127.0.0.1:8080",
+        ]
+        allow_origins = list(dict.fromkeys(configured_origins + dev_localhost_origins))
+
+    # This app uses cookie-based auth via wu_access_token and anon cookies.
+    uses_cookie_auth = True
+    return allow_origins, uses_cookie_auth
+
 # --------------------------------------------------
 # ENV + SUPABASE
 # --------------------------------------------------
@@ -89,10 +123,12 @@ app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
+cors_allow_origins, cors_allow_credentials = get_cors_settings()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in prod
-    allow_credentials=True,
+    allow_origins=cors_allow_origins,
+    allow_credentials=cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )

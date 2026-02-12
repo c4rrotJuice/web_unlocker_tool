@@ -1,6 +1,21 @@
 (function () {
   let supabaseClient = null;
   let bootPromise = null;
+  const ACCESS_COOKIE_NAME = "wu_access_token";
+
+  function writeAccessTokenCookie(token) {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    if (!token) {
+      document.cookie = `${ACCESS_COOKIE_NAME}=; Max-Age=0; Path=/; SameSite=Lax`;
+      return;
+    }
+
+    const encoded = encodeURIComponent(token);
+    document.cookie = `${ACCESS_COOKIE_NAME}=${encoded}; Path=/; SameSite=Lax`;
+  }
 
   function readConfigFromWindow() {
     return {
@@ -114,12 +129,15 @@
   }
 
   async function syncLegacyTokenFromSession() {
-    return undefined;
+    const token = await getAccessToken();
+    writeAccessTokenCookie(token);
+    return token;
   }
 
-  async function writeLegacyToken(_token) {
+  async function writeLegacyToken(token) {
+    writeAccessTokenCookie(token);
     const client = await ensureSupabaseClient();
-    if (client) {
+    if (!token && client) {
       client.auth.signOut().catch(() => {});
     }
   }
@@ -138,5 +156,14 @@
     writeLegacyToken,
   };
 
-  ensureSupabaseClient().catch(() => {});
+  ensureSupabaseClient()
+    .then(async (client) => {
+      await syncLegacyTokenFromSession();
+      if (client?.auth?.onAuthStateChange) {
+        client.auth.onAuthStateChange((_event, session) => {
+          writeAccessTokenCookie(session?.access_token || null);
+        });
+      }
+    })
+    .catch(() => {});
 })();

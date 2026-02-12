@@ -97,7 +97,7 @@ def test_editor_redirects_to_auth_without_token(monkeypatch):
     response = client.get("/editor", follow_redirects=False)
 
     assert response.status_code == 302
-    assert response.headers["location"] == "/static/auth.html"
+    assert response.headers["location"] == "/auth"
 
 
 def test_editor_redirects_free_tier_to_pricing(monkeypatch):

@@ -13,6 +13,7 @@ from app.services.unprotector import fetch_and_clean_page
 from app.services.IP_usage_limit import check_login, get_user_ip
 from app.services.entitlements import queue_priority
 from app.routes.upstash_redis import redis_get, redis_set, redis_incr, redis_expire
+from app.routes.error_responses import safe_html_error_response
 
 
 load_dotenv()
@@ -56,7 +57,12 @@ async def post_view_clean_page(
         except HTTPException as e:
             return HTMLResponse(content=f"<h3>{e.detail}</h3>", status_code=e.status_code)
         except Exception as e:
-            return HTMLResponse(content=f"<h3>Unexpected error: {str(e)}</h3>", status_code=500)
+            return safe_html_error_response(
+                request=request,
+                error_code="VIEW_LOGIN_CHECK_FAILED",
+                message="Unexpected server error while validating login.",
+                exc=e,
+            )
 
         if not isinstance(login_status, dict):
             return HTMLResponse(content=f"<h3>Login failed: {login_status}</h3>", status_code=401)
@@ -85,8 +91,12 @@ async def post_view_clean_page(
             #await save_unlock_history(user_id, url, request.app.state.http_session)
             return HTMLResponse(content=cleaned_html)
         except Exception as e:
-            print(f"{e}")
-            return HTMLResponse(content=f"<h1>Error loading page: {e}</h1>", status_code=500)
+            return safe_html_error_response(
+                request=request,
+                error_code="VIEW_RENDER_FAILED",
+                message="Unable to load page right now.",
+                exc=e,
+            )
 
     else:
         # No Authorization: fallback to GET /view behavior
@@ -118,8 +128,12 @@ async def post_view_clean_page(
         except HTTPException as e:
             return HTMLResponse(content=f"<h3>{e.detail}</h3>", status_code=e.status_code)            
         except Exception as e:
-            print(f"Error in fetch_and_clean_page: {e}")
-            return HTMLResponse(content=f"<h1>Error loading page (guest): {e}</h1>", status_code=500)
+            return safe_html_error_response(
+                request=request,
+                error_code="VIEW_GUEST_RENDER_FAILED",
+                message="Unable to load page right now.",
+                exc=e,
+            )
 
 
 @router.get("/view", response_class=HTMLResponse)
@@ -146,7 +160,12 @@ async def get_view_clean_page(
         except HTTPException as e:
             return HTMLResponse(content=f"<h3>{e.detail}</h3>", status_code=e.status_code)
         except Exception as e:
-            return HTMLResponse(content=f"<h3>Unexpected error: {str(e)}</h3>", status_code=500)
+            return safe_html_error_response(
+                request=request,
+                error_code="VIEW_LOGIN_CHECK_FAILED",
+                message="Unexpected server error while validating login.",
+                exc=e,
+            )
 
         if not isinstance(login_status, dict):
             return HTMLResponse(content=f"<h3>Login failed: {login_status}</h3>", status_code=401)
@@ -172,8 +191,12 @@ async def get_view_clean_page(
             await save_unlock_history(user_id, url, None, request.app.state.http_session)
             return HTMLResponse(content=cleaned_html)
         except Exception as e:
-            print(f"{e}")
-            return HTMLResponse(content=f"<h1>Error loading page: {e}</h1>", status_code=500)
+            return safe_html_error_response(
+                request=request,
+                error_code="VIEW_RENDER_FAILED",
+                message="Unable to load page right now.",
+                exc=e,
+            )
 
     try:
         await check_login(
@@ -201,8 +224,12 @@ async def get_view_clean_page(
     except HTTPException as e:
         return HTMLResponse(content=f"<h3>{e.detail}</h3>", status_code=e.status_code)
     except Exception as e:
-        print(f"Error in fetch_and_clean_page: {e}")
-        return HTMLResponse(content=f"<h1>Error loading page (guest): {e}</h1>", status_code=500)
+        return safe_html_error_response(
+            request=request,
+            error_code="VIEW_GUEST_RENDER_FAILED",
+            message="Unable to load page right now.",
+            exc=e,
+        )
 
 
 async def save_unlock_history(
@@ -308,7 +335,12 @@ async def fetch_and_clean_page_post(
     except HTTPException as e:
         return HTMLResponse(content=f"<h3>{e.detail}</h3>", status_code=e.status_code)
     except Exception as e:
-        return HTMLResponse(content=f"<h3>Unexpected error: {str(e)}</h3>", status_code=500)
+        return safe_html_error_response(
+            request=request,
+            error_code="FETCH_LOGIN_CHECK_FAILED",
+            message="Unexpected server error while validating login.",
+            exc=e,
+        )
 
     if not isinstance(login_status, dict):
         return HTMLResponse(content=f"<h3>Login failed: {login_status}</h3>", status_code=401)
@@ -346,5 +378,9 @@ async def fetch_and_clean_page_post(
 
         return HTMLResponse(content=cleaned_html)
     except Exception as e:
-        print(f"Error in fetch_and_clean_page: {e}")
-        return HTMLResponse(content=f"<h1>Error loading page: {e}</h1>", status_code=500)
+        return safe_html_error_response(
+            request=request,
+            error_code="FETCH_RENDER_FAILED",
+            message="Unable to load page right now.",
+            exc=e,
+        )

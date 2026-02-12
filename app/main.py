@@ -10,6 +10,7 @@ from supabase import create_client
 from app.routes.http import http_client
 from app.routes import upstash_redis as r
 import os
+from uuid import uuid4
 
 # Redis helpers
 from app.routes.upstash_redis import (
@@ -163,6 +164,7 @@ def is_public_path(path: str) -> bool:
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    request.state.request_id = request.headers.get("X-Request-ID") or str(uuid4())
     public_path = is_public_path(request.url.path)
     auth_header = request.headers.get("authorization")
     if not auth_header:

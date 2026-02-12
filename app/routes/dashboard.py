@@ -21,6 +21,8 @@ from app.services.IP_usage_limit import (
 )
 import os
 
+from app.routes.error_responses import safe_api_error_response
+
 templates = Jinja2Templates(directory="app/templates")
 router = APIRouter()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -194,8 +196,12 @@ async def get_user_metadata(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        print("🔥 Error in /api/me:", str(e))
-        raise HTTPException(status_code=500, detail="Internal server error")
+        return safe_api_error_response(
+            request=request,
+            error_code="DASHBOARD_METADATA_FAILED",
+            message="Internal server error",
+            exc=e,
+        )
 
 
 @router.get("/api/dashboard/momentum")

@@ -27,6 +27,7 @@ from app.services import authentication
 from app.services.entitlements import normalize_account_type
 from app.services.priority_limiter import PriorityLimiter
 from app.routes import dashboard, history, citations, bookmarks, search, payments, editor, extension, auth_handoff
+from app.config.environment import validate_environment
 
 
 def _parse_cors_origins(value: str | None) -> list[str]:
@@ -36,14 +37,14 @@ def _parse_cors_origins(value: str | None) -> list[str]:
 
 
 def get_cors_settings() -> tuple[list[str], bool]:
-    env = (os.getenv("ENV") or "dev").strip().lower()
+    env = ENV
     configured_origins = _parse_cors_origins(os.getenv("CORS_ORIGINS"))
 
-    if env == "prod":
+    if env in {"staging", "prod"}:
         if not configured_origins:
-            raise RuntimeError("❌ CORS_ORIGINS must be set in prod and cannot be empty")
+            raise RuntimeError("❌ CORS_ORIGINS must be set in staging/prod and cannot be empty")
         if any(origin == "*" for origin in configured_origins):
-            raise RuntimeError("❌ CORS_ORIGINS cannot contain '*' in prod")
+            raise RuntimeError("❌ CORS_ORIGINS cannot contain '*' in staging/prod")
         allow_origins = configured_origins
     else:
         dev_localhost_origins = [
@@ -66,15 +67,13 @@ def get_cors_settings() -> tuple[list[str], bool]:
 # ENV + SUPABASE
 # --------------------------------------------------
 load_dotenv()
+ENV = validate_environment()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 WEB_UNLOCKER_SUPABASE_URL = os.getenv("WEB_UNLOCKER_SUPABASE_URL") or SUPABASE_URL
 WEB_UNLOCKER_SUPABASE_ANON_KEY = os.getenv("WEB_UNLOCKER_SUPABASE_ANON_KEY") or SUPABASE_KEY
-
-if not all([SUPABASE_URL, SUPABASE_KEY, SUPABASE_SERVICE_ROLE_KEY]):
-    raise RuntimeError("❌ Missing Supabase environment variables")
 
 # Clients
 supabase_anon = create_client(SUPABASE_URL, SUPABASE_KEY)

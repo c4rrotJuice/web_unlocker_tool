@@ -33,6 +33,9 @@ def _load_main(monkeypatch, *, env="prod", cors_origins="https://web-unlocker-to
     monkeypatch.setenv("SUPABASE_URL", "http://example.com")
     monkeypatch.setenv("SUPABASE_KEY", "anon")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
+    monkeypatch.setenv("WEB_UNLOCKER_SUPABASE_URL", "http://example.com")
+    monkeypatch.setenv("WEB_UNLOCKER_SUPABASE_ANON_KEY", "anon")
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "whsec_test")
     monkeypatch.setenv("ENV", env)
     if cors_origins is None:
         monkeypatch.delenv("CORS_ORIGINS", raising=False)

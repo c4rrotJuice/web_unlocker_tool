@@ -11,6 +11,8 @@ const statusEl = document.getElementById("status");
 const toastEl = document.getElementById("toast");
 const signedOutPanel = document.getElementById("signed-out");
 const signedInPanel = document.getElementById("signed-in");
+const signupNameInput = document.getElementById("signup-name");
+const signupUseCaseInput = document.getElementById("signup-use-case");
 const emailInput = document.getElementById("email");
 const passwordInput = document.getElementById("password");
 const loginButton = document.getElementById("login");
@@ -295,14 +297,30 @@ loginButton.addEventListener("click", async () => {
 signupButton.addEventListener("click", async () => {
   setStatus("Creating account…");
   try {
+    const name = signupNameInput?.value?.trim() || "";
+    const useCase = signupUseCaseInput?.value || "";
+    const email = emailInput.value.trim();
+    const password = passwordInput.value;
+
+    if (!name) {
+      throw new Error("Full name is required for signup.");
+    }
+
+    if (!useCase) {
+      throw new Error("Please select a use case.");
+    }
+
     const session = await sendMessage("signup", {
-      email: emailInput.value.trim(),
-      password: passwordInput.value,
+      name,
+      use_case: useCase,
+      email,
+      password,
     });
     if (session?.error) {
       throw new Error(session.error);
     }
     await loadSession();
+    showToast("Account created. Check your email to confirm.");
   } catch (error) {
     setStatus(error.message || "Signup failed.", true);
   }

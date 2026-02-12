@@ -61,6 +61,17 @@ input {
   text-align: center;
 }
 
+
+select {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #d1d6e0;
+  font-size: 13px;
+  width: 100%;
+  text-align: center;
+  background: #fff;
+}
+
 .actions {
   display: flex;
   gap: 8px;

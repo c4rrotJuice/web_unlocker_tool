@@ -1,0 +1,79 @@
+{
+  "base_url": "http://127.0.0.1:8001",
+  "generated_at_epoch": 1770910251,
+  "results": [
+    {
+      "profile": "mixed-traffic",
+      "duration_seconds": 5,
+      "requests": 52,
+      "throughput_rps": 0.9105280659919543,
+      "p50_latency_ms": 14.968409001085092,
+      "p95_latency_ms": 51.61037200014107,
+      "p99_latency_ms": 68.13315199906356,
+      "avg_latency_ms": 20.987818557561976,
+      "error_rate": 0.7884615384615384,
+      "status_breakdown": {
+        "200": 11,
+        "401": 41
+      },
+      "memory_rss_mb": 77.023,
+      "queue_depth": 0.0,
+      "in_flight": 0.0,
+      "sample_errors": [
+        "{\"error\":\"Unauthorized\"}",
+        "{\"error\":\"Unauthorized\"}",
+        "{\"error\":\"Unauthorized\"}",
+        "{\"error\":\"Unauthorized\"}",
+        "{\"error\":\"Unauthorized\"}"
+      ]
+    },
+    {
+      "profile": "unlock-heavy-burst",
+      "duration_seconds": 5,
+      "requests": 162,
+      "throughput_rps": 5.536219794361682,
+      "p50_latency_ms": 13.662425000802614,
+      "p95_latency_ms": 22.198839998964104,
+      "p99_latency_ms": 29.667914001038298,
+      "avg_latency_ms": 14.863860277750693,
+      "error_rate": 1.0,
+      "status_breakdown": {
+        "401": 162
+      },
+      "memory_rss_mb": 77.664,
+      "queue_depth": 0.0,
+      "in_flight": 0.0,
+      "sample_errors": [
+        "{\"error\":\"Unauthorized\"}",
+        "{\"error\":\"Unauthorized\"}",
+        "{\"error\":\"Unauthorized\"}",
+        "{\"error\":\"Unauthorized\"}",
+        "{\"error\":\"Unauthorized\"}"
+      ]
+    },
+    {
+      "profile": "dependency-latency-injection",
+      "duration_seconds": 5,
+      "requests": 84,
+      "throughput_rps": 1.9438207057218844,
+      "p50_latency_ms": 14.028278001205763,
+      "p95_latency_ms": 20.942305000062333,
+      "p99_latency_ms": 30.997186000604415,
+      "avg_latency_ms": 15.268290809498943,
+      "error_rate": 1.0,
+      "status_breakdown": {
+        "401": 84
+      },
+      "memory_rss_mb": 77.723,
+      "queue_depth": 0.0,
+      "in_flight": 0.0,
+      "sample_errors": [
+        "{\"error\":\"Unauthorized\"}",
+        "{\"error\":\"Unauthorized\"}",
+        "{\"error\":\"Unauthorized\"}",
+        "{\"error\":\"Unauthorized\"}",
+        "{\"error\":\"Unauthorized\"}"
+      ]
+    }
+  ]
+}

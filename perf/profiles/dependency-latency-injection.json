@@ -1,0 +1,13 @@
+{
+  "name": "dependency-latency-injection",
+  "description": "Injects downstream latency signal via headers to validate degraded-mode handling.",
+  "virtual_users": 25,
+  "ramp_seconds": 45,
+  "duration_seconds": 900,
+  "request_timeout_seconds": 30,
+  "endpoints": [
+    {"method": "GET", "path": "/api/dashboard/momentum", "weight": 30, "headers": {"Authorization": "Bearer perf-token", "X-Dependency-Latency-Inject-Ms": "400"}},
+    {"method": "GET", "path": "/api/me", "weight": 20, "headers": {"Authorization": "Bearer perf-token", "X-Dependency-Latency-Inject-Ms": "250"}},
+    {"method": "POST", "path": "/fetch_and_clean_page", "weight": 50, "content_type": "form", "data": {"url": "https://example.com", "unlock": "on"}, "headers": {"Authorization": "Bearer perf-token", "X-Dependency-Latency-Inject-Ms": "500"}}
+  ]
+}

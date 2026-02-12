@@ -1,0 +1,16 @@
+{
+  "name": "mixed-traffic",
+  "description": "Balanced traffic across unlock, metrics, and read APIs.",
+  "virtual_users": 20,
+  "ramp_seconds": 60,
+  "duration_seconds": 900,
+  "request_timeout_seconds": 20,
+  "endpoints": [
+    {"method": "GET", "path": "/", "weight": 20},
+    {"method": "GET", "path": "/metrics", "weight": 10},
+    {"method": "GET", "path": "/api/me", "weight": 10, "headers": {"Authorization": "Bearer perf-token"}},
+    {"method": "GET", "path": "/api/dashboard/momentum", "weight": 10, "headers": {"Authorization": "Bearer perf-token"}},
+    {"method": "GET", "path": "/api/bookmarks", "weight": 10, "headers": {"Authorization": "Bearer perf-token"}},
+    {"method": "POST", "path": "/fetch_and_clean_page", "weight": 40, "content_type": "form", "data": {"url": "https://example.com", "unlock": "on"}, "headers": {"Authorization": "Bearer perf-token"}}
+  ]
+}

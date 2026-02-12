@@ -52,6 +52,14 @@ class PriorityLimiter:
     def max_concurrency(self) -> int:
         return self._max_concurrency
 
+    @property
+    def queue_depth(self) -> int:
+        return len(self._waiters)
+
+    @property
+    def in_flight(self) -> int:
+        return self._current
+
     async def set_max_concurrency(self, max_concurrency: int) -> None:
         if max_concurrency < 1:
             raise ValueError("max_concurrency must be >= 1")

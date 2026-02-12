@@ -6,6 +6,9 @@ from time import perf_counter
 from typing import Callable
 
 
+GaugeCallback = Callable[[], float]
+
+
 class MetricsStore:
     def __init__(self, max_samples: int = 2000) -> None:
         self._max_samples = max_samples
@@ -14,6 +17,7 @@ class MetricsStore:
         self._latency_samples: dict[str, deque[float]] = defaultdict(
             lambda: deque(maxlen=self._max_samples)
         )
+        self._gauges: dict[str, GaugeCallback] = {}
 
     def inc(self, name: str, value: int = 1) -> None:
         with self._lock:
@@ -42,6 +46,7 @@ class MetricsStore:
         with self._lock:
             counters = dict(self._counters)
             latencies = {k: list(v) for k, v in self._latency_samples.items()}
+            gauges = dict(self._gauges)
 
         for key in sorted(counters):
             metric = _to_prom_metric_name(key)
@@ -63,7 +68,20 @@ class MetricsStore:
             lines.append(f'{metric}_milliseconds{{quantile="0.99"}} {p99:.3f}')
             lines.append(f"{metric}_milliseconds_count {len(sorted_samples)}")
 
+        for key in sorted(gauges):
+            metric = _to_prom_metric_name(key)
+            try:
+                value = float(gauges[key]())
+            except Exception:
+                value = 0.0
+            lines.append(f"# TYPE {metric} gauge")
+            lines.append(f"{metric} {value:.3f}")
+
         return "\n".join(lines) + "\n"
+
+    def set_gauge_callback(self, name: str, callback: GaugeCallback) -> None:
+        with self._lock:
+            self._gauges[name] = callback
 
 
 def _to_prom_metric_name(name: str) -> str:

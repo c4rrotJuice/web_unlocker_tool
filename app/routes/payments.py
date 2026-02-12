@@ -9,6 +9,7 @@ from app.routes.http import http_client
 import os
 from app.services.metrics import record_dependency_call_async
 from app.services.resilience import DEFAULT_TIMEOUT
+from app.services.supabase_rest import SupabaseRestRepository
 
 router = APIRouter()
 
@@ -57,6 +58,13 @@ PADDLE_SUBSCRIPTION_EVENTS = {
 }
 
 
+def _supabase_repo() -> SupabaseRestRepository:
+    return SupabaseRestRepository(
+        base_url=SUPABASE_URL,
+        service_role_key=SUPABASE_SERVICE_ROLE_KEY,
+    )
+
+
 
 
 async def _instrumented_request(dependency: str, method: str, url: str, **kwargs):
@@ -78,7 +86,8 @@ async def _instrumented_request(dependency: str, method: str, url: str, **kwargs
         )
 
 
-async def _supabase_request(method: str, url: str, **kwargs):
+async def _supabase_request(method: str, resource: str, **kwargs):
+    url = _supabase_repo()._resource_url(resource)
     return await _instrumented_request("supabase", method, url, **kwargs)
 
 
@@ -147,9 +156,9 @@ async def _lookup_user_id(customer_id: str | None, customer_email: str | None) -
     if customer_id:
         res = await _supabase_request(
             "GET",
-            f"{SUPABASE_URL}/rest/v1/user_meta",
+            "user_meta",
             params={"select": "user_id", "paddle_customer_id": f"eq.{customer_id}", "limit": 1},
-            headers=_supabase_headers(),
+            headers=_supabase_repo().headers(),
         )
         if res.status_code == 200:
             rows = res.json()
@@ -159,9 +168,9 @@ async def _lookup_user_id(customer_id: str | None, customer_email: str | None) -
     if customer_email:
         res = await _supabase_request(
             "GET",
-            f"{SUPABASE_URL}/rest/v1/user_meta",
+            "user_meta",
             params={"select": "user_id", "email": f"eq.{customer_email}", "limit": 1},
-            headers=_supabase_headers(),
+            headers=_supabase_repo().headers(),
         )
         if res.status_code == 200:
             rows = res.json()
@@ -217,19 +226,6 @@ def _paddle_headers() -> dict[str, str]:
         "Content-Type": "application/json",
         "Paddle-Version": paddle_version,
     }
-
-def _supabase_headers() -> dict[str, str]:
-    if not SUPABASE_SERVICE_ROLE_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="Supabase service role key missing.",
-        )
-    return {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Content-Type": "application/json",
-    }
-
 
 def _extract_price_id(payload: dict) -> str | None:
     items = payload.get("items") or []
@@ -429,11 +425,10 @@ async def paddle_webhook(request: Request):
             if customer_id or subscription_id or paddle_price_id:
                 await _supabase_request(
                     "PATCH",
-                    f"{SUPABASE_URL}/rest/v1/user_meta",
+                    "user_meta",
                     params={"user_id": f"eq.{user_id}"},
                     headers={
-                        **_supabase_headers(),
-                        "Prefer": "return=minimal",
+                        **_supabase_repo().headers(prefer="return=minimal"),
                     },
                     json={
                         "paddle_customer_id": customer_id,
@@ -463,11 +458,10 @@ async def paddle_webhook(request: Request):
 
     res = await _supabase_request(
         "PATCH",
-        f"{SUPABASE_URL}/rest/v1/user_meta",
+        "user_meta",
         params={"user_id": f"eq.{user_id}"},
         headers={
-            **_supabase_headers(),
-            "Prefer": "return=representation",
+            **_supabase_repo().headers(prefer="return=representation"),
         },
         json=update_payload,
     )

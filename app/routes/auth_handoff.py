@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import os
 import secrets
+import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -25,11 +26,12 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
 HANDOFF_TTL_SECONDS = 60
 HANDOFF_RATE_LIMIT = 5
+logger = logging.getLogger(__name__)
 
 
 def _debug_log(message: str) -> None:
     if DEBUG_AUTH_HANDOFF:
-        print(f"[auth_handoff] {message}")
+        logger.info("auth_handoff.debug", extra={"detail": _redact_secrets(message, tokens=[SUPABASE_KEY or "", SUPABASE_SERVICE_ROLE_KEY or ""])})
 
 
 def _redact_secrets(message: str, *, tokens: list[str]) -> str:
@@ -74,7 +76,7 @@ async def _rate_limit_handoff(request: Request, user_id: str) -> None:
     except HTTPException:
         raise
     except Exception as exc:
-        print("⚠️ Failed to apply handoff rate limit:", exc)
+        logger.warning("auth_handoff.rate_limit_failed", extra={"error": str(exc), "upstream": "redis"})
 
 
 @router.post("/handoff")

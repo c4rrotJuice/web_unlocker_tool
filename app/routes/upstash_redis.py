@@ -21,7 +21,6 @@ headers = {
 
 # --- Setting up Logging, because console.log can only take me so far ---
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 def _check_env():
     if not UPSTASH_REDIS_REST_URL or not UPSTASH_REDIS_REST_TOKEN:
@@ -60,7 +59,7 @@ async def redis_get(key: str, client: httpx.AsyncClient):
         except Exception:
             return raw
     except Exception as e:
-        print(f"[ERROR] [redis_get] key={key} exc={repr(e)}")
+        logger.error("redis.get_failed", extra={"key": key, "error": repr(e), "upstream": "upstash"})
         raise
 
 async def redis_set(key: str, value: str | dict, client: httpx.AsyncClient, ttl_seconds: int | None = None):

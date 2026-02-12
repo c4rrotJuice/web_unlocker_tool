@@ -54,6 +54,24 @@ async function getUsageSnapshot() {
   return snapshot || null;
 }
 
+async function getUsageSnapshotForSession(session) {
+  const usage = await getUsageSnapshot();
+  if (!usage) {
+    return null;
+  }
+
+  if (session) {
+    return usage;
+  }
+
+  if (usage.account_type === "anonymous") {
+    return usage;
+  }
+
+  await clearStorage([USAGE_KEY]);
+  return null;
+}
+
 async function getSession() {
   const { data } = await supabaseClient.auth.getSession();
   return data?.session || null;
@@ -432,7 +450,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         case "get-session": {
           const session = await ensureValidSession();
-          const usage = await getUsageSnapshot();
+          const usage = await getUsageSnapshotForSession(session);
           sendResponse({ session, usage });
           break;
         }

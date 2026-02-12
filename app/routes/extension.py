@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import os
 from uuid import UUID
+from uuid import uuid4
 
 import pytz
 from fastapi import APIRouter, HTTPException, Request
@@ -23,7 +24,8 @@ EXTENSION_EDITOR_WEEKLY_LIMIT = 500
 PAID_TIERS = {"standard", "pro"}
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-ANON_USAGE_ID_HEADER = "x-extension-anon-id"
+ANON_USAGE_ID_COOKIE = "wu_anon_id"
+ANON_USAGE_ID_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
 
 
 class ExtensionPermitRequest(BaseModel):
@@ -109,16 +111,15 @@ def _week_reset_utc(now: datetime) -> tuple[str, int]:
     return reset_at.isoformat(), ttl_seconds
 
 
-def _sanitize_anon_usage_id(value: str | None) -> str | None:
+def _is_valid_anon_cookie_id(value: str | None) -> bool:
     anon_id = (value or "").strip()
     if not anon_id:
-        return None
-    if len(anon_id) > 128:
-        return None
-    allowed_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
-    if any(char not in allowed_chars for char in anon_id):
-        return None
-    return anon_id
+        return False
+    try:
+        UUID(anon_id)
+    except ValueError:
+        return False
+    return True
 
 
 @router.post("/api/extension/unlock-permit")
@@ -130,19 +131,11 @@ async def extension_unlock_permit(request: Request, payload: ExtensionPermitRequ
     usage_period = "week"
 
     if not user_id:
-        anon_usage_id = _sanitize_anon_usage_id(request.headers.get(ANON_USAGE_ID_HEADER))
-        if not anon_usage_id:
-            return JSONResponse(
-                {
-                    "allowed": False,
-                    "remaining": 0,
-                    "reset_at": None,
-                    "reason": "anonymous_id_required",
-                    "account_type": "anonymous",
-                    "usage_period": "week",
-                },
-                status_code=400,
-            )
+        anon_usage_id = request.cookies.get(ANON_USAGE_ID_COOKIE)
+        should_set_cookie = False
+        if not _is_valid_anon_cookie_id(anon_usage_id):
+            anon_usage_id = str(uuid4())
+            should_set_cookie = True
 
         reset_at, ttl_seconds = _get_reset_at()
         usage_key = f"extension_usage_week:anonymous:{anon_usage_id}:{get_week_start_gmt3()}"
@@ -159,7 +152,7 @@ async def extension_unlock_permit(request: Request, payload: ExtensionPermitRequ
         remaining = max(usage_limit - usage_count, 0)
         reason = "ok" if allowed else "limit_reached"
 
-        return {
+        response_body = {
             "allowed": allowed,
             "remaining": remaining,
             "reset_at": reset_at,
@@ -167,6 +160,21 @@ async def extension_unlock_permit(request: Request, payload: ExtensionPermitRequ
             "account_type": "anonymous",
             "usage_period": usage_period,
         }
+
+        if not should_set_cookie:
+            return response_body
+
+        response = JSONResponse(response_body)
+        response.set_cookie(
+            key=ANON_USAGE_ID_COOKIE,
+            value=anon_usage_id,
+            max_age=ANON_USAGE_ID_COOKIE_MAX_AGE,
+            httponly=True,
+            secure=request.url.scheme == "https",
+            samesite="lax",
+            path="/",
+        )
+        return response
 
     if account_type == "pro":
         return {

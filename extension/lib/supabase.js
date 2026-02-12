@@ -48,10 +48,16 @@ async function parseResponse(response) {
   return data;
 }
 
-export async function signupWithPassword(email, password) {
+export async function signupWithPassword(email, password, options = {}) {
+  const metadata = options?.data;
+  const body = { email, password };
+  if (metadata && Object.keys(metadata).length > 0) {
+    body.data = metadata;
+  }
+
   const response = await supabaseFetch("/auth/v1/signup", {
     method: "POST",
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify(body),
   });
   const payload = await parseResponse(response);
   return buildSessionPayload(payload);
@@ -132,8 +138,8 @@ async function signInWithPassword({ email, password }) {
   return setSession(session);
 }
 
-async function signUp({ email, password }) {
-  const session = await signupWithPassword(email, password);
+async function signUp({ email, password, options }) {
+  const session = await signupWithPassword(email, password, options);
   await setSession(session);
   return { data: { session, user: session?.user || null }, error: null };
 }

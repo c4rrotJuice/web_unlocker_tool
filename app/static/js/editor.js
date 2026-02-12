@@ -295,7 +295,7 @@ function startEditor() {
   document.getElementById("new-doc-btn").addEventListener("click", async () => {
     try {
       await autosaveDoc();
-      const res = await fetch("/api/docs", {
+      const res = await authFetch("/api/docs", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

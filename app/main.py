@@ -129,7 +129,10 @@ def is_public_path(path: str) -> bool:
 async def auth_middleware(request: Request, call_next):
     public_path = is_public_path(request.url.path)
     auth_header = request.headers.get("authorization")
-
+    if not auth_header:
+        access_cookie = request.cookies.get("wu_access_token")
+        if access_cookie:
+            auth_header = f"Bearer {access_cookie}"
 
     request.state.user_id = None
     request.state.account_type = None

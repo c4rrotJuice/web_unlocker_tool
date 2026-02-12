@@ -1,45 +1,174 @@
 # Web Unlocker Tool
 
-## Extension → Web App Auth Handoff
+Web Unlocker Tool is a FastAPI-based web application (plus companion browser extension) for opening paywall/anti-bot protected pages in a cleaned reader view, collecting citations, and managing a research workflow (history, bookmarks, and an integrated editor).
 
-When the extension user clicks **Work in Editor**, the extension requests a short-lived handoff code from the backend and then opens the web app handoff page:
+## What this project includes
 
-1. **Create code**: `POST /api/auth/handoff` with the Supabase access token in the `Authorization` header and an optional `redirect_path`.
-2. **Open handoff**: the extension opens `/auth/handoff?code=...` on the web app host.
-3. **Exchange**: the web app calls `POST /api/auth/handoff/exchange` to validate the one-time code, applies the returned Supabase session via `supabase.auth.setSession`, and redirects to the editor.
+- **Web app** (`app/`): unlock + clean remote pages, account-aware limits, dashboard/reporting, citations, bookmarks, rich-text editor, subscription-aware feature gating.
+- **Browser extension** (`extension/`): invokes unlock actions from the browser, sends selection/usage events, and supports secure auth handoff into the web editor.
+- **SQL migrations** (`sql/`): schema updates for editor checkpoints, auth handoff codes, payment/subscription tracking, and extension usage events.
+- **Tests** (`tests/`): API and service tests for auth handoff, editor auth flow, extension permits/events, payments webhooks, reports, and entitlements.
 
-### Security rationale
+## Core features
 
-- **No tokens in URLs**: access/refresh tokens never appear in query strings or referrers.
-- **Short-lived + one-time**: handoff codes expire after ~60 seconds and are marked used on exchange.
-- **Server-side validation**: the backend binds the code to the authenticated user and rate limits creation attempts.
+### 1) Unlock + clean page rendering
 
+- `GET/POST /view` and `POST /fetch_and_clean_page` fetch target pages and return sanitized HTML for rendering in an iframe.
+- Supports account-tier aware behavior (e.g., Cloudscraper for paid tiers, fallback handling for guests/free users).
+- Uses shared async HTTP client and queue priority controls.
 
-## Extension Usage Event Sync
+### 2) Authentication + account context
 
-The extension now records unlock usage to the same `unlock_history` stream used by web unlock flows.
+- Supabase-backed token validation in middleware.
+- Supports bearer-token auth and cookie fallback (`wu_access_token`) for web app sessions.
+- Caches user metadata (`account_type`, daily limit, etc.) in Upstash Redis.
 
-- Endpoint: `POST /api/extension/usage-event`
-- Auth: `Authorization: Bearer <supabase_access_token>`
-- Rate limit: 30 events/minute/user
-- Idempotency: pass `event_id` UUID; duplicates are ignored server-side via `(user_id, event_id)` unique index.
+### 3) Extension ↔ web app auth handoff
 
-### Request example
+- `POST /api/auth/handoff` creates a one-time, short-lived handoff code.
+- `POST /api/auth/handoff/exchange` redeems the code, returns session tokens, and marks code as used.
+- Designed to avoid putting long-lived tokens in URLs.
 
-```json
-{
-  "url": "https://example.com/article",
-  "event_id": "a5d54e8d-3eff-4a93-ae21-d74f0ebf8b7f"
-}
+### 4) Extension APIs
+
+- `POST /api/extension/unlock-permit`: checks whether a user can unlock.
+- `POST /api/extension/selection`: records captured selection details.
+- `POST /api/extension/usage-event`: writes idempotent unlock usage events into shared history stream.
+
+### 5) Research workflow APIs
+
+- **Citations**: create/list citations and bulk fetch by ID.
+- **Bookmarks**: create/list/delete bookmarks.
+- **History**: list unlock history and query/search history (paid tiers).
+- **Editor**: documents CRUD, checkpoints/history restore, export payload generation.
+
+### 6) Dashboard + reporting + billing
+
+- User info endpoint and momentum/dashboard metrics.
+- Monthly PDF report generation endpoint.
+- Paddle checkout helpers and webhook ingestion for subscription state sync.
+
+## Tech stack
+
+- **Backend:** FastAPI, httpx, Supabase Python SDK
+- **Data/cache:** Supabase Postgres + Upstash Redis (REST API)
+- **Content handling:** selectolax/BeautifulSoup/lxml/bleach + optional cloudscraper
+- **Reporting:** reportlab (PDF generation)
+- **Frontend:** Jinja templates + static JS/CSS + Quill editor
+- **Extension:** Manifest V3, vanilla JS
+
+## Repository layout
+
+```text
+.
+├── app/
+│   ├── main.py                # FastAPI app, middleware, router registration
+│   ├── routes/                # API routes
+│   ├── services/              # Unlocking/auth/entitlement/cache logic
+│   ├── templates/             # Jinja templates (home, dashboard, editor, auth)
+│   ├── static/                # CSS/JS/assets
+│   └── requirements.txt
+├── extension/                 # Browser extension source
+├── sql/                       # SQL schema/migration files
+├── tests/                     # Pytest suite
+└── README.md
 ```
 
-### Response example
+## Prerequisites
 
-```json
-{
-  "ok": true,
-  "deduped": false
-}
+- Python 3.11+ (recommended)
+- Supabase project (URL, anon key, service role key)
+- Upstash Redis REST credentials
+- Paddle credentials (if testing billing endpoints)
+
+## Environment variables
+
+Create `.env` in the project root (or otherwise export variables before start):
+
+```bash
+# Supabase
+SUPABASE_URL=
+SUPABASE_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+
+# Optional web auth config overrides (defaults to SUPABASE_URL / SUPABASE_KEY)
+WEB_UNLOCKER_SUPABASE_URL=
+WEB_UNLOCKER_SUPABASE_ANON_KEY=
+
+# Upstash Redis (required for rate limits/cache paths)
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
+
+# Fetch / unlock tuning (optional)
+FETCH_CONCURRENCY=5
+FETCH_MAX_RETRIES=2
+FETCH_TIMEOUT_SECONDS=15
+FETCH_CONNECT_TIMEOUT_SECONDS=5
+LOW_CONF_BLOCK_RETRY_ENABLED=false
+CLOUDSCRAPER_BROWSER=chrome
+CLOUDSCRAPER_PLATFORM=windows
+CLOUDSCRAPER_MOBILE=false
+CLOUDSCRAPER_DELAY=0
+
+# Payments (optional unless using Paddle endpoints)
+PADDLE_API=
+PADDLE_ENV=sandbox
+PADDLE_API_VERSION=1
+PADDLE_CLIENT_TOKEN_NAME=client_token
+PADDLE_WEBHOOK_SECRET=
+
+# Optional debug
+DEBUG_AUTH_HANDOFF=false
+DEV_HASH=
 ```
 
-If `deduped` is `true`, the event was already processed previously.
+## Local development
+
+```bash
+# 1) Create and activate venv
+python -m venv .venv
+source .venv/bin/activate
+
+# 2) Install dependencies
+pip install -r app/requirements.txt
+
+# 3) Run API server
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Open:
+
+- App home: `http://localhost:8000/`
+- Auth page: `http://localhost:8000/auth`
+- Editor: `http://localhost:8000/editor`
+
+## Running tests
+
+```bash
+pytest -q
+```
+
+If you only need a focused check while iterating:
+
+```bash
+pytest -q tests/test_auth_handoff.py tests/test_extension_usage_event.py
+```
+
+## Browser extension setup
+
+See `extension/README.md` for extension configuration details. In short, set backend + Supabase values in `extension/config.js`, then load the unpacked `extension/` folder in Chromium-based browsers.
+
+## API surface (high level)
+
+- Page unlock/render: `/view`, `/fetch_and_clean_page`
+- Auth handoff: `/api/auth/handoff`, `/api/auth/handoff/exchange`
+- Dashboard/reporting: `/api/me`, `/api/dashboard/momentum`, `/api/reports/monthly`
+- Research data: `/api/citations`, `/api/bookmarks`, `/api/unlocks`, `/api/history`
+- Editor: `/api/editor/access`, `/api/docs*`
+- Extension: `/api/extension/unlock-permit`, `/api/extension/selection`, `/api/extension/usage-event`
+- Billing: `/get_paddle_token`, `/create_paddle_checkout`, `/webhooks/paddle`
+
+## Notes
+
+- This service relies on external providers (Supabase, Upstash, Paddle). A fully offline local run is limited unless these dependencies are mocked.
+- The unlocking pipeline intentionally uses multiple heuristics and fallback behavior to handle different anti-bot/paywall patterns.

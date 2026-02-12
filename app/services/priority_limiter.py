@@ -47,3 +47,19 @@ class PriorityLimiter:
             yield wait_ms
         finally:
             await self.release()
+
+    @property
+    def max_concurrency(self) -> int:
+        return self._max_concurrency
+
+    async def set_max_concurrency(self, max_concurrency: int) -> None:
+        if max_concurrency < 1:
+            raise ValueError("max_concurrency must be >= 1")
+        async with self._lock:
+            self._max_concurrency = max_concurrency
+            while self._waiters and self._current < self._max_concurrency:
+                _, _, future = heapq.heappop(self._waiters)
+                if future.cancelled():
+                    continue
+                self._current += 1
+                future.set_result(True)

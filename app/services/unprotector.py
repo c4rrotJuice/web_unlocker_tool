@@ -10,6 +10,7 @@ import hashlib
 from urllib.parse import urlparse, urljoin
 from datetime import datetime
 import uuid
+from time import perf_counter
 
 import brotli
 import httpx
@@ -223,10 +224,87 @@ _cloudscraper_session_pool = SessionPool(
 
 CACHE_TTL_SECONDS = 3600
 BLOCKED_PAGE_TTL_SECONDS = 600
+
 FETCH_MAX_RETRIES = int(os.getenv("FETCH_MAX_RETRIES", "2"))
 FETCH_TIMEOUT_SECONDS = float(os.getenv("FETCH_TIMEOUT_SECONDS", "15"))
 FETCH_CONNECT_TIMEOUT_SECONDS = float(os.getenv("FETCH_CONNECT_TIMEOUT_SECONDS", "5"))
 LOW_CONF_BLOCK_RETRY_ENABLED = os.getenv("LOW_CONF_BLOCK_RETRY_ENABLED", "false").lower() == "true"
+
+MAX_PROCESSABLE_PAGE_BYTES = int(os.getenv("MAX_PROCESSABLE_PAGE_BYTES", "10000000"))
+MAX_PARSE_PAGE_BYTES = int(os.getenv("MAX_PARSE_PAGE_BYTES", "4000000"))
+SLOW_FETCH_THRESHOLD_MS = float(os.getenv("SLOW_FETCH_THRESHOLD_MS", "12000"))
+DYNAMIC_FETCH_RETRY_FLOOR = int(os.getenv("DYNAMIC_FETCH_RETRY_FLOOR", "1"))
+ENABLE_FETCH_AUTOTUNE = os.getenv("ENABLE_FETCH_AUTOTUNE", "true").lower() == "true"
+FETCH_AUTOTUNE_EVERY_N_REQUESTS = int(os.getenv("FETCH_AUTOTUNE_EVERY_N_REQUESTS", "40"))
+FETCH_CONCURRENCY_MIN = int(os.getenv("FETCH_CONCURRENCY_MIN", "2"))
+FETCH_CONCURRENCY_MAX = int(os.getenv("FETCH_CONCURRENCY_MAX", "12"))
+
+
+def _record_stage_timing(stage: str, started_at: float, extra: dict | None = None) -> float:
+    duration_ms = (perf_counter() - started_at) * 1000
+    metrics.observe_ms(f"unlock_pipeline.stage.{stage}", duration_ms)
+    details = ""
+    if extra:
+        details = " " + " ".join(f"{k}={v}" for k, v in extra.items())
+    logger.info("unlock_timing stage=%s duration_ms=%.2f%s", stage, duration_ms, details)
+    return duration_ms
+
+
+def _effective_retry_ceiling() -> int:
+    max_retries = max(1, FETCH_MAX_RETRIES)
+    p95_fetch_ms = metrics.percentile_ms("unlock_pipeline.stage.fetch", 95)
+    p95_queue_ms = metrics.percentile_ms("unlock_pipeline.queue_wait", 95)
+    if p95_fetch_ms >= max(SLOW_FETCH_THRESHOLD_MS, 1.0) or p95_queue_ms >= 1500:
+        return max(1, min(max_retries, DYNAMIC_FETCH_RETRY_FLOOR))
+    if p95_fetch_ms >= (SLOW_FETCH_THRESHOLD_MS * 0.8):
+        return max(1, min(max_retries, DYNAMIC_FETCH_RETRY_FLOOR + 1))
+    return max_retries
+
+
+def _desired_concurrency(current: int) -> int:
+    p95_fetch_ms = metrics.percentile_ms("unlock_pipeline.stage.fetch", 95)
+    p95_queue_ms = metrics.percentile_ms("unlock_pipeline.queue_wait", 95)
+    blocked = metrics.counter("unlock_pipeline.blocked_count")
+    retries = metrics.counter("unlock_pipeline.retry_count")
+    requests = max(1, metrics.counter("unlock_pipeline.request_count"))
+    retry_rate = retries / requests
+
+    desired = current
+    if p95_fetch_ms > (SLOW_FETCH_THRESHOLD_MS * 1.1) or retry_rate > 0.40:
+        desired = max(FETCH_CONCURRENCY_MIN, current - 1)
+    elif p95_queue_ms > 700 and retry_rate < 0.20 and blocked < (requests * 0.25):
+        desired = min(FETCH_CONCURRENCY_MAX, current + 1)
+
+    return max(FETCH_CONCURRENCY_MIN, min(FETCH_CONCURRENCY_MAX, desired))
+
+
+async def _maybe_autotune_fetch_controls(fetch_limiter: PriorityLimiter | None) -> None:
+    if not ENABLE_FETCH_AUTOTUNE or fetch_limiter is None:
+        return
+    request_count = metrics.counter("unlock_pipeline.request_count")
+    if request_count < 1 or request_count % max(1, FETCH_AUTOTUNE_EVERY_N_REQUESTS) != 0:
+        return
+
+    current = fetch_limiter.max_concurrency
+    desired = _desired_concurrency(current)
+    if desired == current:
+        logger.info(
+            "unlock_autotune no_change concurrency=%s p95_fetch_ms=%.1f p95_queue_ms=%.1f retry_rate=%.3f",
+            current,
+            metrics.percentile_ms("unlock_pipeline.stage.fetch", 95),
+            metrics.percentile_ms("unlock_pipeline.queue_wait", 95),
+            metrics.counter("unlock_pipeline.retry_count") / max(1, metrics.counter("unlock_pipeline.request_count")),
+        )
+        return
+
+    await fetch_limiter.set_max_concurrency(desired)
+    logger.warning(
+        "unlock_autotune concurrency_adjusted old=%s new=%s p95_fetch_ms=%.1f p95_queue_ms=%.1f",
+        current,
+        desired,
+        metrics.percentile_ms("unlock_pipeline.stage.fetch", 95),
+        metrics.percentile_ms("unlock_pipeline.queue_wait", 95),
+    )
 
 # --- SSRF Check ---
 async def is_ssrf_risk(url: str) -> bool:
@@ -701,17 +779,24 @@ async def fetch_and_clean_page(
         logger.warning("Rejected URL due to invalid scheme: %s", url)
         return "<div style='color:red;'>Invalid URL.</div>"
 
-    if await is_ssrf_risk(url):
+    ssrf_started_at = perf_counter()
+    ssrf_risk = await is_ssrf_risk(url)
+    _record_stage_timing("ssrf_check", ssrf_started_at, {"risk": ssrf_risk})
+    if ssrf_risk:
         logger.warning("Blocked URL due to SSRF risk: %s (IP: %s)", url, user_ip)
         return "<div style='color:red;'>Access denied due to SSRF risk.</div>"
 
     cache_key = f"html:{hash_url_key(url, unlock)}"
-    
+
+    cache_get_started_at = perf_counter()
     cached = await redis_get(cache_key)
+    _record_stage_timing("cache_get", cache_get_started_at, {"cache_hit": bool(cached)})
     try:
         if isinstance(cached, dict) and "result" in cached:
+            metrics.inc("unlock_pipeline.cache_hit_count")
             return cached["result"]
         if isinstance(cached, str):
+            metrics.inc("unlock_pipeline.cache_hit_count")
             return cached
 
     except Exception as e:
@@ -768,7 +853,9 @@ async def fetch_and_clean_page(
         return response
 
     async def _fetch_with_retries():
-        for attempt in range(1, FETCH_MAX_RETRIES + 1):
+        retry_ceiling = _effective_retry_ceiling()
+        logger.info("unlock_retry_ceiling selected=%s configured=%s", retry_ceiling, FETCH_MAX_RETRIES)
+        for attempt in range(1, retry_ceiling + 1):
             if attempt > 1:
                 metrics.inc("unlock_pipeline.retry_count")
             try:
@@ -793,10 +880,10 @@ async def fetch_and_clean_page(
                             classification.get("reasons"),
                             ray_id,
                         )
-                        if LOW_CONF_BLOCK_RETRY_ENABLED and attempt < FETCH_MAX_RETRIES:
+                        if LOW_CONF_BLOCK_RETRY_ENABLED and attempt < retry_ceiling:
                             await asyncio.sleep(0.75 * attempt + random.uniform(0, 0.35))
                             continue
-                    if blocked and attempt < FETCH_MAX_RETRIES:
+                    if blocked and attempt < retry_ceiling:
                         logger.warning(
                             "[cloudscraper] blocked_response_detected hostname=%s status=%s provider=%s confidence=%s blocked_reason=%s ray_id=%s attempt=%s/%s",
                             hostname,
@@ -806,7 +893,7 @@ async def fetch_and_clean_page(
                             ",".join(classification.get("reasons") or ["unknown"]),
                             ray_id,
                             attempt,
-                            FETCH_MAX_RETRIES,
+                            retry_ceiling,
                         )
                         _cloudscraper_session_pool.evict(hostname)
                         await asyncio.sleep(0.75 * attempt + random.uniform(0, 0.35))
@@ -849,24 +936,25 @@ async def fetch_and_clean_page(
                 logger.warning(
                     "Fetch attempt %s failed for %s: %s", attempt, url, e
                 )
-                if attempt >= FETCH_MAX_RETRIES:
+                if attempt >= retry_ceiling:
                     raise
                 await asyncio.sleep(0.25 * attempt + random.uniform(0.0, 0.3))
             except requests.RequestException as e:
                 logger.warning(
                     "Fetch attempt %s failed for %s: %s", attempt, url, e
                 )
-                if attempt >= FETCH_MAX_RETRIES:
+                if attempt >= retry_ceiling:
                     raise
                 await asyncio.sleep(0.25 * attempt + random.uniform(0.0, 0.3))
             except Exception as e:
                 logger.warning("Fetch attempt %s failed for %s: %s", attempt, url, e)
-                if attempt >= FETCH_MAX_RETRIES:
+                if attempt >= retry_ceiling:
                     raise
                 await asyncio.sleep(0.25 * attempt + random.uniform(0.0, 0.3))
 
 
     try:
+        fetch_started_at = perf_counter()
         if fetch_limiter:
             async with fetch_limiter.limit(queue_priority) as queue_wait_ms:
                 metrics.observe_ms("unlock_pipeline.queue_wait", queue_wait_ms)
@@ -874,6 +962,7 @@ async def fetch_and_clean_page(
         else:
             metrics.observe_ms("unlock_pipeline.queue_wait", 0.0)
             response_text, content_type, content_length, fetch_meta, response_headers = await _fetch_with_retries()
+        fetch_duration_ms = _record_stage_timing("fetch", fetch_started_at, {"method": fetch_meta.get("method")})
     except Exception as e:
         logger.error("Failed to fetch URL %s: %s", url, e)
         return f"<div style='color:red;'>Fetch error: {e}</div>"
@@ -889,9 +978,14 @@ async def fetch_and_clean_page(
     logger.info("Content-Type: %s", content_type)
     logger.info("Content-Length: %d bytes", content_length)
 
-    if content_length > 10_000_000:
-        logger.warning("Page too large: %s", url)
-        return "<div style='color:red;'>Page too large to process.</div>"
+    if content_length > MAX_PROCESSABLE_PAGE_BYTES:
+        logger.warning("Page too large: %s content_length=%s limit=%s", url, content_length, MAX_PROCESSABLE_PAGE_BYTES)
+        metrics.inc("unlock_pipeline.page_too_large_count")
+        return "<div style='color:red;'>This page is too large to unlock safely right now. Try the original site or narrow to a lighter page.</div>"
+
+    if fetch_duration_ms > SLOW_FETCH_THRESHOLD_MS:
+        logger.warning("Fetch exceeded slow threshold url=%s fetch_ms=%.2f threshold_ms=%.2f", url, fetch_duration_ms, SLOW_FETCH_THRESHOLD_MS)
+        metrics.inc("unlock_pipeline.slow_fetch_count")
 
     if not isinstance(response_text, str) or not response_text.strip():
         logger.error("Fetched HTML is not valid or empty.")
@@ -931,19 +1025,23 @@ async def fetch_and_clean_page(
         if fetch_meta.get("method") == "cloudscraper":
             _cloudscraper_session_pool.evict(hostname)
         if fetch_meta.get("method") == "httpx" and not use_cloudscraper:
+            cache_set_started_at = perf_counter()
             await redis_set(
                 cache_key,
                 {"result": UPGRADE_REQUIRED_HTML},
                 ttl_seconds=BLOCKED_PAGE_TTL_SECONDS,
             )
+            _record_stage_timing("cache_set", cache_set_started_at, {"ttl": BLOCKED_PAGE_TTL_SECONDS, "reason": "upgrade_required"})
             return UPGRADE_REQUIRED_HTML
         blocked_html = build_blocked_html(hostname, ray_id)
         cached_blocked_html = build_blocked_html(hostname, None)
+        cache_set_started_at = perf_counter()
         await redis_set(
             cache_key,
             {"result": cached_blocked_html},
             ttl_seconds=BLOCKED_PAGE_TTL_SECONDS,
         )
+        _record_stage_timing("cache_set", cache_set_started_at, {"ttl": BLOCKED_PAGE_TTL_SECONDS, "reason": "blocked"})
         return blocked_html
 
     if not unlock:
@@ -958,7 +1056,10 @@ async def fetch_and_clean_page(
             logger.error("UTF-8 normalization failed: %s", e)
             return "<div style='color:red;'>Encoding error.</div>"
 
+        cache_set_started_at = perf_counter()
         await redis_set(cache_key, {"result": safe_html}, ttl_seconds=CACHE_TTL_SECONDS)
+        _record_stage_timing("cache_set", cache_set_started_at, {"ttl": CACHE_TTL_SECONDS, "mode": "sanitize"})
+        await _maybe_autotune_fetch_controls(fetch_limiter)
         return safe_html
 
     response_text = response_text.encode('utf-8', 'replace').decode('utf-8', 'replace')
@@ -975,6 +1076,12 @@ async def fetch_and_clean_page(
         return raw_html
 
     response_text = clean_known_blockers(response_text)
+
+    parse_started_at = perf_counter()
+    if len(response_text.encode("utf-8", "replace")) > MAX_PARSE_PAGE_BYTES:
+        logger.warning("Skipping deep parse due to large body url=%s parse_bytes_limit=%s", url, MAX_PARSE_PAGE_BYTES)
+        metrics.inc("unlock_pipeline.parse_skipped_large_body_count")
+        return "<div style='color:red;'>This page is heavy and timed out during safe rewrite. Please open it directly and retry with a narrower page.</div>"
 
     try:
         tree = HTMLParser(response_text)
@@ -1022,7 +1129,7 @@ async def fetch_and_clean_page(
             )
         except Exception as fallback_error:
             logger.error("HTML parsing failed: %s", fallback_error)
-            return "<div style='color:red;'>Error parsing HTML for unlock true.</div>"
+            return "<div style='color:red;'>This page could not be safely rewritten. Please open the original page and retry.</div>"
 
     num_scripts_removed = apply_dom_cleanups(tree)
     logger.info("Script cleanup: num_scripts_removed=%s", num_scripts_removed)
@@ -1060,9 +1167,14 @@ async def fetch_and_clean_page(
         logger.error("Error injecting banner and script: %s", e)
         updated_html = "<div style='color:red;'>Failed to inject enhancements.</div>"
 
+    _record_stage_timing("parse_clean_rewrite", parse_started_at)
+
     try:
+        cache_set_started_at = perf_counter()
         await redis_set(cache_key, {"result": updated_html}, ttl_seconds=CACHE_TTL_SECONDS)
+        _record_stage_timing("cache_set", cache_set_started_at, {"ttl": CACHE_TTL_SECONDS})
         logger.info("Page processed and cached.")
+        await _maybe_autotune_fetch_controls(fetch_limiter)
         return updated_html
     except Exception as e:
         logger.error("Final serialization error: %s", e)

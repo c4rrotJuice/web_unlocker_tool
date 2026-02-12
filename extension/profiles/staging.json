@@ -1,0 +1,6 @@
+{
+  "extension_name": "Web Unlocker Tool (Staging)",
+  "backend_base_url": "https://staging-web-unlocker-tool.onrender.com",
+  "supabase_url": "https://lrdpstewxrufbbgxfcgk.supabase.co",
+  "supabase_anon_key": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxyZHBzdGV3eHJ1ZmJiZ3hmY2drIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc5MzcxMzEsImV4cCI6MjA2MzUxMzEzMX0.-qEgFP2HhoO--iuCjslRSBQBHjQY_sGa5Lfx1UU4MBo"
+}

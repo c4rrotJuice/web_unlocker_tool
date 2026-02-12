@@ -56,27 +56,28 @@ def _build_app(monkeypatch):
     return main
 
 
-def test_extension_unlock_permit_requires_anon_id_when_unauthenticated(monkeypatch):
+def test_extension_unlock_permit_sets_cookie_for_unauthenticated_user(monkeypatch):
     main = _build_app(monkeypatch)
     client = TestClient(main.app)
 
     response = client.post("/api/extension/unlock-permit", json={})
-    assert response.status_code == 400
-    assert response.json()["reason"] == "anonymous_id_required"
+    assert response.status_code == 200
+    assert response.json()["allowed"] is True
+    assert response.json()["account_type"] == "anonymous"
+    assert "wu_anon_id" in response.cookies
 
 
 def test_extension_unlock_permit_allows_anon_weekly_usage(monkeypatch):
     main = _build_app(monkeypatch)
     client = TestClient(main.app)
 
-    headers = {"X-Extension-Anon-Id": "anon-user-123"}
     for _ in range(5):
-        response = client.post("/api/extension/unlock-permit", headers=headers, json={})
+        response = client.post("/api/extension/unlock-permit", json={})
         assert response.status_code == 200
         assert response.json()["allowed"] is True
         assert response.json()["account_type"] == "anonymous"
 
-    denied = client.post("/api/extension/unlock-permit", headers=headers, json={})
+    denied = client.post("/api/extension/unlock-permit", json={})
     assert denied.status_code == 200
     assert denied.json()["allowed"] is False
     assert denied.json()["remaining"] == 0

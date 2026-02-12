@@ -50,7 +50,6 @@ function formatReset(resetAt) {
   return date.toLocaleString();
 }
 
-
 function escapeHtml(value) {
   return String(value || "")
     .replaceAll("&", "&amp;")
@@ -159,41 +158,42 @@ async function loadCitationHistory() {
   });
 }
 
-function renderSignedOut() {
-  signedInPanel.classList.add("hidden");
-  signedOutPanel.classList.remove("hidden");
-  usageInfoEl.classList.add("hidden");
-  renderCitationHistoryUnavailable();
+function renderUsage(usage) {
+  if (!usage) {
+    usageInfoEl.classList.add("hidden");
+    return;
+  }
+
+  usageInfoEl.classList.remove("hidden");
+  const periodLabel = usage.usage_period
+    ? usage.usage_period === "day"
+      ? "today"
+      : usage.usage_period === "week"
+        ? "this week"
+        : "unlimited"
+    : "this week";
+
+  remainingEl.textContent =
+    usage.remaining < 0
+      ? "Unlimited usages"
+      : `${usage.remaining} usages ${periodLabel}`;
+  resetAtEl.textContent = usage.remaining < 0 ? "--" : formatReset(usage.reset_at);
 }
 
-function renderSignedIn(session, usage) {
-  signedOutPanel.classList.add("hidden");
-  signedInPanel.classList.remove("hidden");
-  userEmailEl.textContent = session?.user?.email || "--";
-  if (usage?.account_type) {
-    userTierEl.textContent = usage.account_type;
+function renderSessionPanels(session, usage) {
+  if (session) {
+    signedOutPanel.classList.add("hidden");
+    signedInPanel.classList.remove("hidden");
+    userEmailEl.textContent = session?.user?.email || "--";
+    userTierEl.textContent = usage?.account_type || "Unknown";
+    loadCitationHistory();
   } else {
-    userTierEl.textContent = "Unknown";
+    signedInPanel.classList.add("hidden");
+    signedOutPanel.classList.remove("hidden");
+    renderCitationHistoryUnavailable();
   }
-  loadCitationHistory();
-  if (usage) {
-    usageInfoEl.classList.remove("hidden");
-    const periodLabel = usage.usage_period
-      ? usage.usage_period === "day"
-        ? "today"
-        : usage.usage_period === "week"
-          ? "this week"
-          : "unlimited"
-      : "this week";
-    remainingEl.textContent =
-      usage.remaining < 0
-        ? "Unlimited usages"
-        : `${usage.remaining} usages ${periodLabel}`;
-    resetAtEl.textContent =
-      usage.remaining < 0 ? "--" : formatReset(usage.reset_at);
-  } else {
-    usageInfoEl.classList.add("hidden");
-  }
+
+  renderUsage(usage);
 }
 
 function sendMessage(type, payload = {}) {
@@ -241,31 +241,38 @@ async function loadSession() {
   setStatus("Checking session…");
   const response = await sendMessage("get-session");
   if (response?.error) {
-    renderSignedOut();
+    renderSessionPanels(null, null);
     setStatus(`Extension error: ${response.error}`, true);
     return;
   }
+
+  renderSessionPanels(response?.session || null, response?.usage || null);
   if (response?.session) {
-    renderSignedIn(response.session, response.usage);
     setStatus("Signed in.");
-    if (!response.usage) {
-      const peek = await sendMessage("peek-unlock", {
-        url: await getCurrentTabUrl(),
-      });
-      if (peek?.error) {
-        setStatus(`Extension error: ${peek.error}`, true);
-        return;
-      }
+  } else {
+    setStatus("Signed out.");
+  }
+
+  if (!response?.usage) {
+    const peek = await sendMessage("peek-unlock", {
+      url: await getCurrentTabUrl(),
+    });
+    if (peek?.error) {
+      setStatus(`Extension error: ${peek.error}`, true);
+      return;
+    }
+    if (peek?.status && peek.status >= 400) {
+      setStatus("Signed out.");
+      return;
+    }
+    if (peek?.data) {
       const refreshed = await sendMessage("get-session");
       if (refreshed?.error) {
         setStatus(`Extension error: ${refreshed.error}`, true);
         return;
       }
-      renderSignedIn(refreshed.session, refreshed.usage);
+      renderSessionPanels(refreshed?.session || null, peek.data);
     }
-  } else {
-    renderSignedOut();
-    setStatus("Signed out.");
   }
 }
 
@@ -304,8 +311,7 @@ signupButton.addEventListener("click", async () => {
 logoutButton.addEventListener("click", async () => {
   setStatus("Signing out…");
   await sendMessage("logout");
-  renderSignedOut();
-  setStatus("Signed out.");
+  await loadSession();
   loadCitationHistory();
 });
 
@@ -317,16 +323,9 @@ checkButton.addEventListener("click", async () => {
     setStatus(`Extension error: ${response.error}`, true);
     return;
   }
-  if (response?.status === 401) {
-    renderSignedOut();
-    setStatus("Session expired. Please sign in again.", true);
-    return;
-  }
   if (response?.data) {
-    renderSignedIn(
-      (await sendMessage("get-session")).session,
-      response.data,
-    );
+    const sessionState = await sendMessage("get-session");
+    renderSessionPanels(sessionState?.session || null, response.data);
     if (!response.data.allowed) {
       setStatus("Limit reached. Upgrade for more unlocks.", true);
     } else {
@@ -354,33 +353,26 @@ enableButton.addEventListener("click", async () => {
       setStatus(`Extension error: ${usage.error}`, true);
       return;
     }
-    if (usage?.status === 401) {
-      renderSignedOut();
-      setStatus("Session expired. Please sign in again.", true);
-      return;
-    }
     if (usage?.data) {
-      renderSignedIn((await sendMessage("get-session")).session, usage.data);
+      const sessionState = await sendMessage("get-session");
+      renderSessionPanels(sessionState?.session || null, usage.data);
       if (!usage.data.allowed) {
         setStatus("Limit reached. Upgrade for more unlocks.", true);
         return;
       }
     }
 
-    const usageEvent = await sendMessage("LOG_USAGE_EVENT", {
-      payload: buildUsageEventPayload(tab.url),
-    });
-    if (usageEvent?.status === 401) {
-      renderSignedOut();
-      setStatus("Session expired. Please sign in again.", true);
-      return;
-    }
-    if (usageEvent?.status && usageEvent.status >= 400) {
-      setStatus("Copy+Cite enabled, but usage sync failed.", true);
+    const sessionState = await sendMessage("get-session");
+    if (sessionState?.session) {
+      const usageEvent = await sendMessage("LOG_USAGE_EVENT", {
+        payload: buildUsageEventPayload(tab.url),
+      });
+      if (usageEvent?.status && usageEvent.status >= 400) {
+        setStatus("Copy+Cite enabled, but usage sync failed.", true);
+      }
     }
 
     await chrome.scripting.executeScript({
-      // Inject into all frames so iframe selections can be handled.
       target: { tabId: tab.id, allFrames: true },
       files: ["content/unlock_content.js"],
     });
@@ -391,12 +383,11 @@ enableButton.addEventListener("click", async () => {
   }
 });
 
-
 openEditorButton.addEventListener("click", async () => {
   setStatus("Opening editor…");
   const sessionState = await sendMessage("get-session");
   const accountType = sessionState?.usage?.account_type;
-  if (accountType === "freemium") {
+  if (accountType === "freemium" || accountType === "anonymous") {
     showToast("Editor usage is a paid feature. Please upgrade your plan.", true);
     setStatus("Upgrade required for editor access.", true);
     return;
@@ -408,7 +399,7 @@ openEditorButton.addEventListener("click", async () => {
     return;
   }
   if (response?.status === 401) {
-    renderSignedOut();
+    renderSessionPanels(null, sessionState?.usage || null);
     setStatus("Session expired. Please sign in again.", true);
     return;
   }
@@ -427,7 +418,7 @@ openDashboardButton.addEventListener("click", async () => {
     return;
   }
   if (response?.status === 401) {
-    renderSignedOut();
+    await loadSession();
     setStatus("Session expired. Please sign in again.", true);
     return;
   }

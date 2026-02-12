@@ -24,7 +24,7 @@
           <li><a href="/static/pricing.html">Pricing</a></li>
           <li><a href="https://citeunlock.choneize.com/blog">Blog</a></li>
           <li><a href="https://citeunlock.choneize.com/terms">Terms & Policies</a></li>
-          <li><a href="/static/auth.html" id="authButton">Sign in/Up</a></li>
+          <li><a href="/auth" id="authButton">Sign in/Up</a></li>
         </ul>
       </nav>
 
@@ -195,16 +195,19 @@
   </footer>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/static/js/ui_feedback.js"></script>
 <script src="/static/js/auth.js"></script>
 <script>
 
+
+const toast = window.webUnlockerUI?.createToastManager?.();
 
 async function loadUserData() {
   const token = await window.webUnlockerAuth?.getAccessToken?.();
 
   if (!token) {
-    alert("No token found. Please log in again.");
-    window.location.href = "/auth";
+    toast?.show({ type: "warning", message: window.webUnlockerUI?.COPY?.errors?.AUTH_REQUIRED || "Please sign in to continue." });
+    window.location.href = "/auth?next=/dashboard";
     return;
   }
 
@@ -216,9 +219,9 @@ async function loadUserData() {
     });
 
     if (res.status === 401) {
-      alert("Unauthorized. Please log in again.");
+      toast?.show({ type: "warning", message: window.webUnlockerUI?.COPY?.errors?.TOKEN_EXPIRED || "Session expired. Please sign in again." });
       window.webUnlockerAuth?.writeLegacyToken?.(null);
-      window.location.href = "/static/auth.html";
+      window.location.href = "/auth?next=/dashboard&reason=session";
       return;
     }
 
@@ -289,7 +292,7 @@ async function loadUserData() {
 
   } catch (err) {
     console.error("🔥 Error loading user metadata:", err);
-    alert("Failed to load user info. Please try again.");
+    toast?.show({ type: "error", message: "Failed to load user info. Please try again." });
   }
 }
 
@@ -617,7 +620,7 @@ function detectAdblock() {
   window.addEventListener("DOMContentLoaded", async () => {
     const token = await window.webUnlockerAuth?.getAccessToken?.();
     if (!token) {
-      window.location.href = "/static/auth.html";
+      window.location.href = "/auth";
       return;
     }
 

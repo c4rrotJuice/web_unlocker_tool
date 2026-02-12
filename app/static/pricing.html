@@ -88,7 +88,7 @@
                 <li class="cs-li">Copied Text Citation Generator</li>
                 <li class="cs-li">5 Daily Usages</li>
               </ul>
-              <a href="/static/auth.html" class="cs-button-transparent"
+              <a href="/auth" class="cs-button-transparent"
                 >Sign Up</a
               >
             </div>
@@ -340,7 +340,7 @@
       function openCheckout(plan, cycle) {
         if (!currentUserId) {
           alert("Please log in before subscribing.");
-          window.location.href = "/static/auth.html";
+          window.location.href = "/auth";
           return;
         }
         if (!paddleReady) {

@@ -10,7 +10,7 @@ async function verifyPaidAccess() {
     const res = await authFetch("/api/editor/access");
 
     if (!res.ok) {
-      window.location.href = "/static/auth.html";
+      window.location.href = "/auth?next=/editor&reason=session";
       return false;
     }
 
@@ -52,6 +52,7 @@ function renderBlockedMessage(message) {
 
 function startEditor() {
   const ENABLE_MARKDOWN_SHORTCUTS = true;
+  const toast = window.webUnlockerUI?.createToastManager?.();
   const ENABLE_OUTLINE = true;
   const ENABLE_CHECKPOINTS = true;
   const AUTOSAVE_DEBOUNCE_MS = 2000;
@@ -196,6 +197,7 @@ function startEditor() {
 
   function queueAutosave() {
     setSaveStatus("Saving...");
+    toast?.show({ id: "editor-save", type: "info", loading: true, message: window.webUnlockerUI?.COPY?.info?.SAVING_DOCUMENT || "Saving document…", duration: 0 });
     if (autosaveTimer) {
       clearTimeout(autosaveTimer);
     }
@@ -229,11 +231,15 @@ function startEditor() {
 
       const data = await res.json();
       setSaveStatus("Saved");
+      toast?.dismiss("editor-save");
+      toast?.show({ type: "success", message: window.webUnlockerUI?.COPY?.success?.DOCUMENT_SAVED || "Document saved.", duration: 1800 });
       isDirty = false;
       updateDocInList(data);
     } catch (err) {
       console.error(err);
       setSaveStatus("Save failed");
+      toast?.dismiss("editor-save");
+      toast?.show({ type: "error", message: "Save failed. Please retry." });
     }
   }
 

@@ -28,6 +28,9 @@ from app.services.entitlements import normalize_account_type
 from app.services.priority_limiter import PriorityLimiter
 from app.routes import dashboard, history, citations, bookmarks, search, payments, editor, extension, auth_handoff
 from app.config.environment import validate_environment
+from app.logging_utils import configure_logging, set_request_context, clear_request_context
+import logging
+import time
 
 
 def _parse_cors_origins(value: str | None) -> list[str]:
@@ -67,6 +70,8 @@ def get_cors_settings() -> tuple[list[str], bool]:
 # ENV + SUPABASE
 # --------------------------------------------------
 load_dotenv()
+configure_logging()
+logger = logging.getLogger(__name__)
 ENV = validate_environment()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -82,9 +87,9 @@ supabase_admin = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 # Sanity check
 try:
     supabase_admin.table("user_meta").select("id").limit(1).execute()
-    print("✅ Supabase admin connection OK")
+    logger.info("supabase.admin_connection_ok")
 except Exception as e:
-    print("❌ Supabase connection failed:", e)
+    logger.exception("supabase.connection_failed", extra={"error": str(e)})
 
 
 # ============================== APP LIFESPAN =============================
@@ -105,14 +110,14 @@ async def lifespan(app: FastAPI):
     app.state.redis_incr = lambda key: r.redis_incr(key, app.state.http_session)
     app.state.redis_expire = lambda key, seconds: r.redis_expire(key, seconds, app.state.http_session)
 
-    print("✅ HTTP client + Redis ready")
+    logger.info("app.startup_ready")
 
     try:
         yield
     finally:
         # ✅ close the shared client (and remove the extra shutdown event below)
         await app.state.http_session.aclose()
-        print("👋 HTTP client closed")
+        logger.info("app.shutdown_http_client_closed")
 
 
 # --------------------------------------------------
@@ -163,8 +168,9 @@ def is_public_path(path: str) -> bool:
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    request.state.request_id = request.headers.get("X-Request-ID") or str(uuid4())
+    request.state.request_id = request.headers.get("X-Request-ID") or request.headers.get("X-Request-Id") or str(uuid4())
     public_path = is_public_path(request.url.path)
+    start = time.perf_counter()
     auth_header = request.headers.get("authorization")
     if not auth_header:
         access_cookie = request.cookies.get("wu_access_token")
@@ -189,13 +195,17 @@ async def auth_middleware(request: Request, call_next):
 
             request.state.user_id = user.id
             request.state.email = user.email
-            print("✅ user id:", user.id)
+            logger.info("auth.user_validated", extra={"user_id": user.id})
 
         except Exception as e:
-            print("[AuthMiddleware] Token validation failed:", e)
+            logger.warning("auth.token_validation_failed", extra={"error": str(e)})
             if public_path:
-                return await call_next(request)
-            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+                response = await call_next(request)
+                response.headers["X-Request-Id"] = request.state.request_id
+                return response
+            response = JSONResponse({"error": "Unauthorized"}, status_code=401)
+            response.headers["X-Request-Id"] = request.state.request_id
+            return response
 
         # ✅ Fetch metadata with SERVICE ROLE
         try:
@@ -204,7 +214,7 @@ async def auth_middleware(request: Request, call_next):
             try:
                 cached_meta = await request.app.state.redis_get(cache_key)
             except Exception as e:
-                print("⚠️ Failed to read metadata cache:", e)
+                logger.warning("auth.metadata_cache_read_failed", extra={"error": str(e)})
 
             if isinstance(cached_meta, dict):
                 request.state.name = cached_meta.get("name")
@@ -235,12 +245,27 @@ async def auth_middleware(request: Request, call_next):
                             ttl_seconds=300,
                         )
                     except Exception as e:
-                        print("⚠️ Failed to write metadata cache:", e)
+                        logger.warning("auth.metadata_cache_write_failed", extra={"error": str(e)})
 
         except Exception as e:
-            print("⚠️ Failed to fetch metadata:", e)
+            logger.warning("auth.metadata_fetch_failed", extra={"error": str(e)})
 
-    response = await call_next(request)
+    set_request_context(
+        request_id=request.state.request_id,
+        route=request.url.path,
+        user_id=request.state.user_id,
+    )
+    response = None
+    try:
+        response = await call_next(request)
+    finally:
+        latency_ms = round((time.perf_counter() - start) * 1000, 2)
+        status = getattr(response, "status_code", 500)
+        set_request_context(status=status, latency_ms=latency_ms, upstream=None)
+        logger.info("request.completed")
+        clear_request_context()
+
+    response.headers["X-Request-Id"] = request.state.request_id
 
     return response
 

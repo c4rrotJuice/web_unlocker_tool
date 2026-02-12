@@ -5,6 +5,7 @@ import os
 import re
 from typing import Optional
 import bleach
+import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -21,6 +22,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 PAID_TIERS = {"standard", "pro"}
+logger = logging.getLogger(__name__)
 
 
 class DocumentCreate(BaseModel):
@@ -134,7 +136,7 @@ async def _get_account_type(request: Request, user_id: str) -> str:
                 request.state.account_type = account_type
                 return account_type
     except Exception as e:
-        print("⚠️ Failed to fetch account type:", e)
+        logger.warning("editor.fetch_account_type_failed", extra={"error": str(e), "upstream": "supabase"})
 
     return normalize_account_type(None)
 
@@ -162,7 +164,7 @@ async def _validate_citation_ids(user_id: str, citation_ids: list[str]) -> list[
         headers=_supabase_headers(),
     )
     if res.status_code != 200:
-        print("❌ Failed to validate citations:", res.text)
+        logger.error("editor.validate_citations_failed", extra={"status": res.status_code, "upstream": "supabase"})
         raise HTTPException(status_code=500, detail="Failed to validate citations")
 
     found_ids = {item.get("id") for item in res.json()}
@@ -195,7 +197,7 @@ async def _fetch_doc_with_fallback(user_id: str, doc_id: str) -> dict:
             headers=_supabase_headers(),
         )
         if fallback.status_code != 200:
-            print("❌ Failed to get doc:", fallback.text)
+            logger.error("editor.get_doc_failed", extra={"status": fallback.status_code, "upstream": "supabase"})
             raise HTTPException(status_code=500, detail="Failed to load document")
         data = fallback.json()
         if not data:
@@ -238,7 +240,7 @@ async def _patch_doc_with_fallback(user_id: str, doc_id: str, payload: dict) -> 
             json=fallback_payload,
         )
     if res.status_code != 200:
-        print("❌ Failed to update doc:", res.text)
+        logger.error("editor.update_doc_failed", extra={"status": res.status_code, "upstream": "supabase"})
         raise HTTPException(status_code=500, detail="Failed to update document")
 
     data = res.json()
@@ -319,7 +321,7 @@ async def create_doc(request: Request, payload: DocumentCreate):
         )
 
     if res.status_code not in (200, 201):
-        print("❌ Failed to create doc:", res.text)
+        logger.error("editor.create_doc_failed", extra={"status": res.status_code, "upstream": "supabase"})
         raise HTTPException(status_code=500, detail="Failed to create document")
 
     data = res.json()[0]
@@ -352,7 +354,7 @@ async def list_docs(request: Request):
     )
 
     if res.status_code != 200:
-        print("❌ Failed to list docs:", res.text)
+        logger.error("editor.list_docs_failed", extra={"status": res.status_code, "upstream": "supabase"})
         raise HTTPException(status_code=500, detail="Failed to load documents")
 
     return res.json()
@@ -412,7 +414,7 @@ async def list_doc_checkpoints(request: Request, doc_id: str, limit: int = 10):
     if res.status_code == 404:
         return []
     if res.status_code != 200:
-        print("❌ Failed to list checkpoints:", res.text)
+        logger.error("editor.list_checkpoints_failed", extra={"status": res.status_code, "upstream": "supabase"})
         raise HTTPException(status_code=500, detail="Failed to load checkpoints")
 
     return res.json()
@@ -447,7 +449,7 @@ async def create_doc_checkpoint(request: Request, doc_id: str, payload: Checkpoi
     if res.status_code == 404:
         return {"created": False, "reason": "checkpoints_not_configured"}
     if res.status_code not in (200, 201):
-        print("❌ Failed to create checkpoint:", res.text)
+        logger.error("editor.create_checkpoint_failed", extra={"status": res.status_code, "upstream": "supabase"})
         raise HTTPException(status_code=500, detail="Failed to create checkpoint")
 
     created = res.json()[0]
@@ -475,7 +477,7 @@ async def restore_doc_checkpoint(request: Request, doc_id: str, payload: Restore
     )
 
     if checkpoint_res.status_code != 200:
-        print("❌ Failed to load checkpoint:", checkpoint_res.text)
+        logger.error("editor.load_checkpoint_failed", extra={"status": checkpoint_res.status_code, "upstream": "supabase"})
         raise HTTPException(status_code=500, detail="Failed to restore checkpoint")
 
     checkpoint_rows = checkpoint_res.json()
@@ -517,7 +519,7 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
         headers=_supabase_headers(),
     )
     if doc_res.status_code != 200:
-        print("❌ Failed to load doc for export:", doc_res.text)
+        logger.error("editor.export_load_doc_failed", extra={"status": doc_res.status_code, "upstream": "supabase"})
         raise HTTPException(status_code=500, detail="Failed to load document")
 
     doc_data = doc_res.json()

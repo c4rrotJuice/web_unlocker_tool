@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 import uuid
 import httpx
+import logging
 from app.routes.http import http_client
 
 from app.services.unprotector import fetch_and_clean_page
@@ -21,6 +22,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 
@@ -71,7 +73,7 @@ async def post_view_clean_page(
         use_cloudscraper = login_status.get("use_cloudscraper", False)
         priority = queue_priority(request.state.account_type)
 
-        print(f"[🔒 AUTH] User ID: {user_id} | IP: {user_ip} | Unlock: True")
+        logger.info("view.authenticated_request", extra={"user_id": user_id})
 
         try:
             cleaned_html = await fetch_and_clean_page(
@@ -100,7 +102,7 @@ async def post_view_clean_page(
 
     else:
         # No Authorization: fallback to GET /view behavior
-        print("[🌐 GUEST] No auth header, redirecting to /view")
+        logger.info("view.guest_request")
         try:
             await check_login(
                 request,
@@ -306,7 +308,10 @@ async def save_unlock_history(
                 json=payload,
             )
 
-    print(f"Insert status: {res.status_code}, body: {res.text}")
+    logger.info(
+        "unlock_history.insert_completed",
+        extra={"status": res.status_code, "upstream": "supabase"},
+    )
     if res.status_code not in (200, 201):
         return "failed"
     payload = res.json()
@@ -355,7 +360,7 @@ async def fetch_and_clean_page_post(
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ")[1]
 
-    print(f"User IP: {user_ip} | User ID: {user_id} | URL: {url}")
+    logger.info("fetch_and_clean.request_received", extra={"user_id": user_id})
 
     try:
         cleaned_html = await fetch_and_clean_page(

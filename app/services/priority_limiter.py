@@ -17,15 +17,17 @@ class PriorityLimiter:
         self._order = itertools.count()
         self._lock = asyncio.Lock()
 
-    async def acquire(self, priority: int) -> None:
+    async def acquire(self, priority: int) -> float:
         async with self._lock:
             if self._current < self._max_concurrency and not self._waiters:
                 self._current += 1
-                return
+                return 0.0
             loop = asyncio.get_running_loop()
             future: asyncio.Future[bool] = loop.create_future()
             heapq.heappush(self._waiters, (priority, next(self._order), future))
+        wait_start = asyncio.get_running_loop().time()
         await future
+        return max(0.0, (asyncio.get_running_loop().time() - wait_start) * 1000)
 
     async def release(self) -> None:
         async with self._lock:
@@ -39,9 +41,9 @@ class PriorityLimiter:
                 return
 
     @asynccontextmanager
-    async def limit(self, priority: int) -> AsyncIterator[None]:
-        await self.acquire(priority)
+    async def limit(self, priority: int) -> AsyncIterator[float]:
+        wait_ms = await self.acquire(priority)
         try:
-            yield
+            yield wait_ms
         finally:
             await self.release()

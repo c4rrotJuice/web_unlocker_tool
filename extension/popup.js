@@ -8,6 +8,7 @@ const debug = (...args) => {
 };
 
 const statusEl = document.getElementById("status");
+const toastEl = document.getElementById("toast");
 const signedOutPanel = document.getElementById("signed-out");
 const signedInPanel = document.getElementById("signed-in");
 const emailInput = document.getElementById("email");
@@ -17,6 +18,8 @@ const signupButton = document.getElementById("signup");
 const logoutButton = document.getElementById("logout");
 const checkButton = document.getElementById("check-usage");
 const upgradeButton = document.getElementById("upgrade");
+const openEditorButton = document.getElementById("open-editor");
+const openDashboardButton = document.getElementById("open-dashboard");
 const enableButton = document.getElementById("enable-copy-cite");
 const userEmailEl = document.getElementById("user-email");
 const userTierEl = document.getElementById("user-tier");
@@ -27,6 +30,16 @@ const usageInfoEl = document.getElementById("usage-info");
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
   statusEl.style.color = isError ? "#b42318" : "#596173";
+}
+
+function showToast(message, isError = false) {
+  if (!toastEl) return;
+  toastEl.textContent = message;
+  toastEl.classList.remove("hidden");
+  toastEl.classList.toggle("error", Boolean(isError));
+  setTimeout(() => {
+    toastEl.classList.add("hidden");
+  }, 3000);
 }
 
 function formatReset(resetAt) {
@@ -186,7 +199,7 @@ logoutButton.addEventListener("click", async () => {
 checkButton.addEventListener("click", async () => {
   setStatus("Checking allowance…");
   const url = await getCurrentTabUrl();
-  const response = await sendMessage("check-unlock", { url });
+  const response = await sendMessage("peek-unlock", { url });
   if (response?.error) {
     setStatus(`Extension error: ${response.error}`, true);
     return;
@@ -204,7 +217,7 @@ checkButton.addEventListener("click", async () => {
     if (!response.data.allowed) {
       setStatus("Limit reached. Upgrade for more unlocks.", true);
     } else {
-      setStatus("Usage updated.");
+      setStatus("Allowance checked.");
     }
     return;
   }
@@ -263,6 +276,45 @@ enableButton.addEventListener("click", async () => {
     debug("Failed to inject content script.", error);
     setStatus("Failed to inject content script.", true);
   }
+});
+
+
+openEditorButton.addEventListener("click", async () => {
+  setStatus("Opening editor…");
+  const sessionState = await sendMessage("get-session");
+  const accountType = sessionState?.usage?.account_type;
+  if (accountType === "freemium") {
+    showToast("Editor usage is a paid feature. Please upgrade your plan.", true);
+    setStatus("Upgrade required for editor access.", true);
+    return;
+  }
+
+  const response = await sendMessage("OPEN_EDITOR");
+  if (response?.status === 401) {
+    renderSignedOut();
+    setStatus("Session expired. Please sign in again.", true);
+    return;
+  }
+  if (response?.status && response.status >= 400) {
+    setStatus(response.error || "Could not open editor.", true);
+    return;
+  }
+  setStatus("Opened editor in new tab.");
+});
+
+openDashboardButton.addEventListener("click", async () => {
+  setStatus("Opening dashboard…");
+  const response = await sendMessage("OPEN_DASHBOARD");
+  if (response?.status === 401) {
+    renderSignedOut();
+    setStatus("Session expired. Please sign in again.", true);
+    return;
+  }
+  if (response?.status && response.status >= 400) {
+    setStatus(response.error || "Could not open dashboard.", true);
+    return;
+  }
+  setStatus("Opened dashboard in new tab.");
 });
 
 loadSession();

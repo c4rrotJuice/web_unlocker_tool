@@ -11,6 +11,7 @@
       <header>
         <h1>Web Unlocker</h1>
         <p id="status" class="status">Checking session…</p>
+        <p id="toast" class="toast hidden" role="status" aria-live="polite"></p>
       </header>
 
       <section id="signed-out" class="panel hidden">
@@ -50,6 +51,8 @@
         </div>
         <div class="actions">
           <button id="check-usage">Check unlock allowance</button>
+          <button id="open-editor" class="secondary">Open Editor</button>
+          <button id="open-dashboard" class="secondary">Open Dashboard</button>
           <button id="logout" class="secondary">Log out</button>
         </div>
         <button id="upgrade" class="link">Upgrade plan</button>

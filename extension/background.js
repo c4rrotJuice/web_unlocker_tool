@@ -187,6 +187,59 @@ async function saveCitation(payload) {
   return { status: response.status, data };
 }
 
+
+async function openAuthedPath(redirectPath) {
+  const session = await ensureValidSession();
+  if (!session) {
+    return { error: "unauthenticated", status: 401 };
+  }
+
+  const handoffResponse = await apiFetch(
+    "/api/auth/handoff",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        redirect_path: redirectPath,
+        refresh_token: session.refresh_token,
+        expires_in: session.expires_in,
+        token_type: session.token_type,
+      }),
+    },
+    session.access_token,
+  );
+
+  let handoffData = null;
+  try {
+    handoffData = await handoffResponse.json();
+  } catch (error) {
+    // ignore
+  }
+
+  if (!handoffResponse.ok) {
+    if (handoffResponse.status === 401) {
+      await clearSession();
+      await clearStorage([USAGE_KEY]);
+    }
+    return {
+      status: handoffResponse.status,
+      error: handoffData?.detail || handoffData?.error || "handoff_failed",
+    };
+  }
+
+  if (!handoffData?.code) {
+    return {
+      status: handoffResponse.status,
+      error: "handoff_code_missing",
+    };
+  }
+
+  const handoffUrl = `${BACKEND_BASE_URL}/auth/handoff?code=${encodeURIComponent(
+    handoffData.code,
+  )}`;
+  chrome.tabs.create({ url: handoffUrl });
+  return { status: 200, data: { redirect_path: redirectPath } };
+}
+
 async function workInEditor(payload) {
   try {
     const session = await ensureValidSession();
@@ -257,49 +310,11 @@ async function workInEditor(payload) {
     };
 
     const redirectPath = normalizeRedirectPath(data.editor_url);
-    const handoffResponse = await apiFetch(
-      "/api/auth/handoff",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          redirect_path: redirectPath,
-          refresh_token: session.refresh_token,
-          expires_in: session.expires_in,
-          token_type: session.token_type,
-        }),
-      },
-      session.access_token,
-    );
-
-    let handoffData = null;
-    try {
-      handoffData = await handoffResponse.json();
-    } catch (error) {
-      // ignore
+    const handoffResult = await openAuthedPath(redirectPath);
+    if (handoffResult?.status && handoffResult.status >= 400) {
+      return handoffResult;
     }
 
-    if (!handoffResponse.ok) {
-      if (handoffResponse.status === 401) {
-        await clearSession();
-        await clearStorage([USAGE_KEY]);
-      }
-      return {
-        status: handoffResponse.status,
-        error: handoffData?.detail || handoffData?.error || "handoff_failed",
-      };
-    }
-
-    if (!handoffData?.code) {
-      return {
-        status: handoffResponse.status,
-        error: "handoff_code_missing",
-      };
-    }
-
-    const handoffUrl = `${BACKEND_BASE_URL}/auth/handoff?code=${encodeURIComponent(
-      handoffData.code,
-    )}`;
-    chrome.tabs.create({ url: handoffUrl });
     return { status: response.status, data };
   } catch (error) {
     return { error: error?.message || "unexpected_error" };
@@ -379,6 +394,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case "LOG_USAGE_EVENT": {
           const result = await logUsageEvent(message.payload || {});
           debug("LOG_USAGE_EVENT result", result);
+          sendResponse(result);
+          break;
+        }
+        case "OPEN_EDITOR": {
+          const result = await openAuthedPath("/editor");
+          debug("OPEN_EDITOR result", result);
+          sendResponse(result);
+          break;
+        }
+        case "OPEN_DASHBOARD": {
+          const result = await openAuthedPath("/dashboard");
+          debug("OPEN_DASHBOARD result", result);
           sendResponse(result);
           break;
         }

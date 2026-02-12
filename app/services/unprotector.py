@@ -851,19 +851,19 @@ async def fetch_and_clean_page(
                 )
                 if attempt >= FETCH_MAX_RETRIES:
                     raise
-                await asyncio.sleep(0.5 * attempt)
+                await asyncio.sleep(0.25 * attempt + random.uniform(0.0, 0.3))
             except requests.RequestException as e:
                 logger.warning(
                     "Fetch attempt %s failed for %s: %s", attempt, url, e
                 )
                 if attempt >= FETCH_MAX_RETRIES:
                     raise
-                await asyncio.sleep(0.5 * attempt)
+                await asyncio.sleep(0.25 * attempt + random.uniform(0.0, 0.3))
             except Exception as e:
                 logger.warning("Fetch attempt %s failed for %s: %s", attempt, url, e)
                 if attempt >= FETCH_MAX_RETRIES:
                     raise
-                await asyncio.sleep(0.5 * attempt)
+                await asyncio.sleep(0.25 * attempt + random.uniform(0.0, 0.3))
 
 
     try:

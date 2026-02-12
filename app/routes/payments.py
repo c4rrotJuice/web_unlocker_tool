@@ -8,6 +8,7 @@ import json
 from app.routes.http import http_client
 import os
 from app.services.metrics import record_dependency_call_async
+from app.services.resilience import DEFAULT_TIMEOUT
 
 router = APIRouter()
 
@@ -63,10 +64,18 @@ async def _instrumented_request(dependency: str, method: str, url: str, **kwargs
     client_method = getattr(http_client, method_lower, None)
     if client_method is None:
         client_method = lambda *args, **inner_kwargs: http_client.request(method.upper(), *args, **inner_kwargs)
-    return await record_dependency_call_async(
-        dependency,
-        lambda: client_method(url, **kwargs),
-    )
+    kwargs.setdefault("timeout", DEFAULT_TIMEOUT)
+    try:
+        return await record_dependency_call_async(
+            dependency,
+            lambda: client_method(url, **kwargs),
+        )
+    except TypeError:
+        kwargs.pop("timeout", None)
+        return await record_dependency_call_async(
+            dependency,
+            lambda: client_method(url, **kwargs),
+        )
 
 
 async def _supabase_request(method: str, url: str, **kwargs):

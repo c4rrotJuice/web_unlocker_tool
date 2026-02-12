@@ -30,6 +30,7 @@ from app.routes import dashboard, history, citations, bookmarks, search, payment
 from app.config.environment import validate_environment
 from app.logging_utils import configure_logging, set_request_context, clear_request_context
 from app.services.metrics import metrics, record_dependency_call
+from app.services.resilience import call_blocking_with_timeout
 import logging
 import time
 
@@ -80,6 +81,22 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 WEB_UNLOCKER_SUPABASE_URL = os.getenv("WEB_UNLOCKER_SUPABASE_URL") or SUPABASE_URL
 WEB_UNLOCKER_SUPABASE_ANON_KEY = os.getenv("WEB_UNLOCKER_SUPABASE_ANON_KEY") or SUPABASE_KEY
+
+
+SUPABASE_CALL_TIMEOUT_SECONDS = float(os.getenv("SUPABASE_CALL_TIMEOUT_SECONDS", "4.0"))
+SUPABASE_RETRY_ATTEMPTS = int(os.getenv("SUPABASE_RETRY_ATTEMPTS", "2"))
+
+
+async def _supabase_call(callable_fn):
+    last_error = None
+    for attempt in range(1, SUPABASE_RETRY_ATTEMPTS + 1):
+        try:
+            return await call_blocking_with_timeout(callable_fn, timeout_s=SUPABASE_CALL_TIMEOUT_SECONDS)
+        except TimeoutError as exc:
+            last_error = exc
+            if attempt >= SUPABASE_RETRY_ATTEMPTS:
+                raise
+    raise RuntimeError("supabase call failed") from last_error
 
 # Clients
 supabase_anon = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -192,7 +209,7 @@ async def auth_middleware(request: Request, call_next):
 
         # ✅ Let Supabase validate token
         try:
-            user_res = record_dependency_call("supabase", lambda: supabase_anon.auth.get_user(token))
+            user_res = await _supabase_call(lambda: record_dependency_call("supabase", lambda: supabase_anon.auth.get_user(token)))
             user = user_res.user
             if not user:
                 raise Exception("Invalid token")
@@ -227,7 +244,7 @@ async def auth_middleware(request: Request, call_next):
                 )
                 request.state.usage_limit = cached_meta.get("daily_limit", 5)
             else:
-                meta = record_dependency_call(
+                meta = await _supabase_call(lambda: record_dependency_call(
                     "supabase",
                     lambda: (
                         supabase_admin
@@ -237,7 +254,7 @@ async def auth_middleware(request: Request, call_next):
                         .single()
                         .execute()
                     ),
-                )
+                ))
 
                 if meta.data:
                     request.state.name = meta.data.get("name")

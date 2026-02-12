@@ -1,16 +1,15 @@
 from datetime import datetime, timedelta
+import hashlib
 import os
 from uuid import UUID
-from uuid import uuid4
 
 import pytz
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
 from app.routes.http import http_client
 from app.services.entitlements import normalize_account_type
-from app.services.IP_usage_limit import get_today_gmt3, get_week_start_gmt3
+from app.services.IP_usage_limit import get_today_gmt3, get_user_ip, get_week_start_gmt3
 from app.routes.citations import CitationInput, create_citation
 from app.routes.editor import _doc_expiration, _get_account_type
 from app.routes.render import save_unlock_history
@@ -24,8 +23,7 @@ EXTENSION_EDITOR_WEEKLY_LIMIT = 500
 PAID_TIERS = {"standard", "pro"}
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-ANON_USAGE_ID_COOKIE = "wu_anon_id"
-ANON_USAGE_ID_COOKIE_MAX_AGE = 60 * 60 * 24 * 365
+ANON_USAGE_PAIR_RATE_LIMIT_PER_MINUTE = 10
 
 
 class ExtensionPermitRequest(BaseModel):
@@ -111,7 +109,7 @@ def _week_reset_utc(now: datetime) -> tuple[str, int]:
     return reset_at.isoformat(), ttl_seconds
 
 
-def _is_valid_anon_cookie_id(value: str | None) -> bool:
+def _is_valid_anon_usage_id(value: str | None) -> bool:
     anon_id = (value or "").strip()
     if not anon_id:
         return False
@@ -120,6 +118,41 @@ def _is_valid_anon_cookie_id(value: str | None) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _hash_ip(ip: str) -> str:
+    return hashlib.sha256((ip or "").encode("utf-8")).hexdigest()
+
+
+async def _enforce_anon_pair_rate_limit(request: Request, anon_usage_id: str, ip_hash: str) -> None:
+    minute_key = datetime.utcnow().strftime('%Y-%m-%dT%H:%M')
+    rate_limit_key = f"extension_anon_pair_rate:{ip_hash}:{anon_usage_id}:{minute_key}"
+    current_minute_usage = int(await request.app.state.redis_get(rate_limit_key) or 0)
+    if current_minute_usage >= ANON_USAGE_PAIR_RATE_LIMIT_PER_MINUTE:
+        raise HTTPException(status_code=429, detail="Too many extension guest requests.")
+
+    await request.app.state.redis_incr(rate_limit_key)
+    if current_minute_usage == 0:
+        await request.app.state.redis_expire(rate_limit_key, 120)
+
+
+async def _enforce_anon_id_binding(request: Request, anon_usage_id: str, ip_hash: str) -> None:
+    bind_key = f"extension_anon_binding:{ip_hash}:{get_week_start_gmt3()}"
+    existing_anon_id = await request.app.state.redis_get(bind_key)
+    if existing_anon_id and existing_anon_id != anon_usage_id:
+        raise HTTPException(status_code=429, detail="Anonymous identity mismatch for this IP.")
+
+    if not existing_anon_id:
+        await request.app.state.redis_set(bind_key, anon_usage_id)
+        _, ttl_seconds = _get_reset_at()
+        await request.app.state.redis_expire(bind_key, ttl_seconds)
+
+
+def _get_valid_anon_usage_id(request: Request) -> str:
+    anon_usage_id = request.headers.get("X-Extension-Anon-Id")
+    if not _is_valid_anon_usage_id(anon_usage_id):
+        raise HTTPException(status_code=422, detail="X-Extension-Anon-Id must be a valid UUID.")
+    return anon_usage_id
 
 
 @router.post("/api/extension/unlock-permit")
@@ -131,11 +164,10 @@ async def extension_unlock_permit(request: Request, payload: ExtensionPermitRequ
     usage_period = "week"
 
     if not user_id:
-        anon_usage_id = request.cookies.get(ANON_USAGE_ID_COOKIE)
-        should_set_cookie = False
-        if not _is_valid_anon_cookie_id(anon_usage_id):
-            anon_usage_id = str(uuid4())
-            should_set_cookie = True
+        anon_usage_id = _get_valid_anon_usage_id(request)
+        ip_hash = _hash_ip(get_user_ip(request))
+        await _enforce_anon_id_binding(request, anon_usage_id, ip_hash)
+        await _enforce_anon_pair_rate_limit(request, anon_usage_id, ip_hash)
 
         reset_at, ttl_seconds = _get_reset_at()
         usage_key = f"extension_usage_week:anonymous:{anon_usage_id}:{get_week_start_gmt3()}"
@@ -160,21 +192,7 @@ async def extension_unlock_permit(request: Request, payload: ExtensionPermitRequ
             "account_type": "anonymous",
             "usage_period": usage_period,
         }
-
-        if not should_set_cookie:
-            return response_body
-
-        response = JSONResponse(response_body)
-        response.set_cookie(
-            key=ANON_USAGE_ID_COOKIE,
-            value=anon_usage_id,
-            max_age=ANON_USAGE_ID_COOKIE_MAX_AGE,
-            httponly=True,
-            secure=request.url.scheme == "https",
-            samesite="lax",
-            path="/",
-        )
-        return response
+        return response_body
 
     if account_type == "pro":
         return {

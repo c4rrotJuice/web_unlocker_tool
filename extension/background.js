@@ -3,8 +3,6 @@ import { createSupabaseAuthClient } from "./lib/supabase.js";
 import { BACKEND_BASE_URL } from "./config.js";
 
 const USAGE_KEY = "usage_snapshot";
-const ANON_USAGE_ID_KEY = "anon_usage_id";
-const ANON_USAGE_HEADER = "X-Extension-Anon-Id";
 const REFRESH_WINDOW_SECONDS = 120;
 const supabaseClient = createSupabaseAuthClient();
 let debugEnabled = false;
@@ -71,20 +69,6 @@ async function clearSession() {
 
 
 
-async function getOrCreateAnonymousUsageId() {
-  const { [ANON_USAGE_ID_KEY]: existingId } = await readStorage([ANON_USAGE_ID_KEY]);
-  if (existingId) {
-    return existingId;
-  }
-
-  const anonId =
-    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  await writeStorage({ [ANON_USAGE_ID_KEY]: anonId });
-  return anonId;
-}
-
 async function ensureValidSession() {
   const session = await getSession();
   if (!session) {
@@ -112,18 +96,11 @@ async function ensureValidSession() {
 
 async function fetchUnlockPermit(payload) {
   const session = await ensureValidSession();
-  const headers = {};
-
-  if (!session) {
-    headers[ANON_USAGE_HEADER] = await getOrCreateAnonymousUsageId();
-  }
-
   const response = await apiFetch(
     "/api/extension/unlock-permit",
     {
       method: "POST",
       body: JSON.stringify(payload || {}),
-      headers,
     },
     session?.access_token,
   );

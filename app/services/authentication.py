@@ -1,6 +1,6 @@
 # app/services/authentication.py
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, EmailStr
 from supabase import create_client, Client
 import os
@@ -56,7 +56,7 @@ async def signup(payload: SignupRequest):
     return {"message": "Signup successful"}
 
 @router.post("/login")
-async def login(payload: LoginRequest):
+async def login(payload: LoginRequest, response: Response):
     try:
         res = supabase.auth.sign_in_with_password({
             "email": payload.email,
@@ -67,9 +67,21 @@ async def login(payload: LoginRequest):
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
         access_token = res.session.access_token
+        refresh_token = res.session.refresh_token
+
+        response.set_cookie(
+            key="wu_access_token",
+            value=access_token,
+            httponly=False,
+            samesite="lax",
+            secure=False,
+            path="/",
+        )
+
         return {
             "message": "Login successful",
             "access_token": access_token,
+            "refresh_token": refresh_token,
             "user": {
                 "id": res.user.id,
                 "email": res.user.email,
@@ -77,5 +89,4 @@ async def login(payload: LoginRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 

@@ -394,10 +394,55 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           break;
         }
         case "signup": {
-          const { data } = await supabaseClient.auth.signUp({
+          const name = (message.name || "").trim();
+          const useCase = (message.use_case || "").trim();
+          if (!name) {
+            sendResponse({ error: "Full name is required for signup." });
+            break;
+          }
+          if (!useCase) {
+            sendResponse({ error: "Use case is required for signup." });
+            break;
+          }
+
+          const { data, error } = await supabaseClient.auth.signUp({
             email: message.email,
             password: message.password,
+            options: {
+              data: {
+                name,
+                use_case: useCase,
+              },
+            },
           });
+
+          if (error) {
+            sendResponse({ error: error.message || "Signup failed." });
+            break;
+          }
+
+          const signupSyncResponse = await apiFetch("/api/signup", {
+            method: "POST",
+            body: JSON.stringify({
+              name,
+              email: message.email,
+              password: message.password,
+              use_case: useCase,
+            }),
+          });
+
+          if (!signupSyncResponse.ok) {
+            let detail = "Signup metadata sync failed";
+            try {
+              const payload = await signupSyncResponse.json();
+              detail = payload?.detail || detail;
+            } catch (error) {
+              // ignore
+            }
+            sendResponse({ error: detail });
+            break;
+          }
+
           await clearStorage([USAGE_KEY]);
           sendResponse({ session: data?.session || null });
           break;

@@ -1,18 +1,27 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import json
+from io import BytesIO
 import os
 import re
+import zipfile
 from typing import Optional
 import bleach
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from app.services.entitlements import FREE_TIER, PRO_TIER, STANDARD_TIER, normalize_account_type
+from app.services.entitlements import (
+    FREE_TIER,
+    PRO_TIER,
+    STANDARD_TIER,
+    get_tier_capabilities,
+    normalize_account_type,
+)
 from app.services.free_tier_gating import (
     ARCHIVED_DOC_MESSAGE,
     FREE_DOCS_PER_WEEK,
@@ -164,19 +173,22 @@ async def _count_docs_in_window(user_id: str, window_start: datetime, window_end
 
 def _quota_for_tier(account_type: str, now: Optional[datetime] = None) -> Optional[dict]:
     normalized = normalize_account_type(account_type)
+    capabilities = get_tier_capabilities(normalized)
+    if not capabilities.has_document_quota:
+        return None
     current = now or datetime.utcnow()
-    if normalized == FREE_TIER:
+    if capabilities.document_window_days == 7:
         window_start, window_end = current_week_window(current)
         return {
-            "limit": FREE_DOCS_PER_WEEK,
+            "limit": capabilities.document_limit or FREE_DOCS_PER_WEEK,
             "window_start": window_start,
             "window_end": window_end,
             "reset_at": window_end.isoformat(),
         }
-    if normalized == STANDARD_TIER:
-        window_start, window_end = rolling_window(current)
+    if capabilities.document_window_days:
+        window_start, window_end = rolling_window(current, capabilities.document_window_days)
         return {
-            "limit": STANDARD_DOCS_PER_14_DAYS,
+            "limit": capabilities.document_limit or STANDARD_DOCS_PER_14_DAYS,
             "window_start": window_start,
             "window_end": window_end,
             "reset_at": window_end.isoformat(),
@@ -230,7 +242,10 @@ async def _fetch_doc_core(user_id: str, doc_id: str) -> dict:
 
 
 def _doc_expiration(account_type: str) -> Optional[str]:
-    if account_type in PAID_TIERS:
+    capabilities = get_tier_capabilities(account_type)
+    if not capabilities.freeze_documents:
+        return None
+    if normalize_account_type(account_type) in PAID_TIERS:
         return (datetime.utcnow() + timedelta(days=14)).isoformat()
     return None
 
@@ -357,6 +372,7 @@ async def editor_access(request: Request):
     if not account_type:
         account_type = await _get_account_type(request, user_id)
     normalized = normalize_account_type(account_type)
+    capabilities = get_tier_capabilities(normalized)
     doc_quota = None
     quota = _quota_for_tier(normalized)
     if quota:
@@ -374,6 +390,9 @@ async def editor_access(request: Request):
         "account_type": normalized,
         "is_paid": normalized in {STANDARD_TIER, PRO_TIER},
         "doc_quota": doc_quota,
+        "can_delete_documents": capabilities.can_delete_documents,
+        "freeze_documents": capabilities.freeze_documents,
+        "can_zip_export": capabilities.can_zip_export,
     }
 
 
@@ -492,7 +511,7 @@ async def update_doc(request: Request, doc_id: str, payload: DocumentUpdate):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     account_type = await _get_account_type(request, user_id)
-    if account_type in {FREE_TIER, STANDARD_TIER}:
+    if get_tier_capabilities(account_type).freeze_documents:
         doc = await _fetch_doc_core(user_id, doc_id)
         if doc_is_archived(doc.get("created_at"), account_type):
             raise HTTPException(status_code=403, detail=_archived_doc_payload())
@@ -546,7 +565,7 @@ async def create_doc_checkpoint(request: Request, doc_id: str, payload: Checkpoi
 
     account_type = await _get_account_type(request, user_id)
     doc = await _fetch_doc_with_fallback(user_id, doc_id)
-    if account_type in {FREE_TIER, STANDARD_TIER} and doc_is_archived(doc.get("created_at"), account_type):
+    if get_tier_capabilities(account_type).freeze_documents and doc_is_archived(doc.get("created_at"), account_type):
         raise HTTPException(status_code=403, detail=_archived_doc_payload())
 
     now_iso = datetime.utcnow().isoformat()
@@ -587,7 +606,7 @@ async def restore_doc_checkpoint(request: Request, doc_id: str, payload: Restore
 
     account_type = await _get_account_type(request, user_id)
     doc = await _fetch_doc_core(user_id, doc_id)
-    if account_type in {FREE_TIER, STANDARD_TIER} and doc_is_archived(doc.get("created_at"), account_type):
+    if get_tier_capabilities(account_type).freeze_documents and doc_is_archived(doc.get("created_at"), account_type):
         raise HTTPException(status_code=403, detail=_archived_doc_payload())
 
     checkpoint_res = await supabase_repo.get(
@@ -697,3 +716,107 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
         "format": export_format,
         "archived": archived,
     }
+
+
+@router.get("/api/docs/export/zip")
+async def export_docs_zip(request: Request):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    account_type = await _get_account_type(request, user_id)
+    capabilities = get_tier_capabilities(account_type)
+    if not capabilities.can_zip_export:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "ZIP_EXPORT_LOCKED",
+                "message": "ZIP export is available on Pro only.",
+                "toast": "Upgrade to Pro to export all documents as ZIP.",
+            },
+        )
+
+    now_iso = datetime.utcnow().isoformat()
+    res = await supabase_repo.get(
+        "documents",
+        params={
+            "user_id": f"eq.{user_id}",
+            "select": "id,title,content_delta,citation_ids,created_at",
+            "order": "updated_at.desc",
+            "or": f"(expires_at.is.null,expires_at.gt.{now_iso})",
+            "limit": 1000,
+        },
+        headers=supabase_repo.headers(),
+    )
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to export documents")
+
+    docs = res.json() or []
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        manifest_rows: list[dict] = []
+        for idx, doc in enumerate(docs, start=1):
+            delta = doc.get("content_delta") or {}
+            text = _delta_to_text(delta)
+            html = _sanitize_html(_delta_to_html(delta))
+            safe_title = re.sub(r"[^a-zA-Z0-9_-]+", "_", (doc.get("title") or f"document_{idx}"))[:60]
+            folder = f"{idx:03d}_{safe_title}"
+            archive.writestr(f"{folder}/original.txt", text)
+            archive.writestr(f"{folder}/pdf_render.html", html)
+
+            bibliography: list[str] = []
+            citation_ids = doc.get("citation_ids") or []
+            if citation_ids:
+                citation_res = await supabase_repo.get(
+                    "citations",
+                    params={
+                        "id": f"in.({','.join(citation_ids)})",
+                        "user_id": f"eq.{user_id}",
+                        "select": "full_text",
+                    },
+                    headers=supabase_repo.headers(),
+                )
+                if citation_res.status_code == 200:
+                    bibliography = [item.get("full_text") or "" for item in citation_res.json()]
+            archive.writestr(f"{folder}/citations.txt", "\n".join(bibliography))
+            manifest_rows.append({"id": doc.get("id"), "title": doc.get("title"), "includes": ["original.txt", "pdf_render.html", "citations.txt"]})
+
+        archive.writestr("manifest.json", json.dumps({"documents": manifest_rows}))
+
+    zip_buffer.seek(0)
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="pro-documents-export.zip"'},
+    )
+
+
+@router.delete("/api/docs/{doc_id}")
+async def delete_doc(request: Request, doc_id: str):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    account_type = await _get_account_type(request, user_id)
+    if not get_tier_capabilities(account_type).can_delete_documents:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "DOC_DELETE_LOCKED",
+                "message": "Document deletion is available on Pro only.",
+                "toast": "Upgrade to Pro to permanently delete documents.",
+            },
+        )
+
+    res = await supabase_repo.delete(
+        "documents",
+        params={"id": f"eq.{doc_id}", "user_id": f"eq.{user_id}"},
+        headers={**supabase_repo.headers(), "Prefer": "return=representation"},
+    )
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to delete document")
+
+    rows = res.json() or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"deleted": True, "id": doc_id}

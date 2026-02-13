@@ -3,18 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from app.services.entitlements import FREE_TIER, PRO_TIER, STANDARD_TIER, normalize_account_type
+from app.services.entitlements import FREE_TIER, PRO_TIER, STANDARD_TIER, get_tier_capabilities, normalize_account_type
 
 FREE_UNLOCKS_PER_WEEK = 10
 STANDARD_UNLOCKS_PER_DAY = 15
 FREE_DOCS_PER_WEEK = 3
 STANDARD_DOCS_PER_14_DAYS = 15
 STANDARD_DOC_WINDOW_DAYS = 14
-FREE_ALLOWED_CITATION_FORMATS = {"apa", "mla"}
-STANDARD_ALLOWED_CITATION_FORMATS = {"apa", "mla", "chicago", "harvard"}
-FREE_ALLOWED_EXPORT_FORMATS = {"pdf"}
-STANDARD_ALLOWED_EXPORT_FORMATS = {"pdf", "docx", "txt"}
-PRO_ALLOWED_EXPORT_FORMATS = {"pdf", "docx", "txt"}
 
 ARCHIVED_DOC_MESSAGE = "This document is archived. Upgrade to Pro to restore editing."
 STANDARD_DOC_LIMIT_MESSAGE = "Document limit reached for this period. Upgrade to Pro for unlimited access."
@@ -95,13 +90,14 @@ def parse_iso_datetime(value: str | None) -> datetime | None:
 def doc_window_start(account_type: str | None, now: datetime | None = None) -> datetime | None:
     tier = normalize_account_type(account_type)
     current = (now or utc_now()).astimezone(timezone.utc)
-    if tier == FREE_TIER:
+    caps = get_tier_capabilities(tier)
+    if not caps.freeze_documents or not caps.document_window_days:
+        return None
+    if caps.document_window_days == 7:
         start, _ = current_week_window(current)
         return start
-    if tier == STANDARD_TIER:
-        start, _ = rolling_window(current, STANDARD_DOC_WINDOW_DAYS)
-        return start
-    return None
+    start, _ = rolling_window(current, caps.document_window_days)
+    return start
 
 
 def doc_is_archived(created_at: str | None, account_type: str | None, now: datetime | None = None) -> bool:
@@ -120,44 +116,32 @@ def doc_is_archived_for_free(created_at: str | None, now: datetime | None = None
 
 def allowed_export_formats(account_type: str | None) -> set[str]:
     tier = normalize_account_type(account_type)
-    if tier == FREE_TIER:
-        return set(FREE_ALLOWED_EXPORT_FORMATS)
-    if tier == STANDARD_TIER:
-        return set(STANDARD_ALLOWED_EXPORT_FORMATS)
-    return set(PRO_ALLOWED_EXPORT_FORMATS)
+    return set(get_tier_capabilities(tier).allowed_export_formats)
 
 
 def allowed_citation_formats(account_type: str | None) -> set[str]:
     tier = normalize_account_type(account_type)
-    if tier == FREE_TIER:
-        return set(FREE_ALLOWED_CITATION_FORMATS)
-    if tier == STANDARD_TIER:
-        return set(STANDARD_ALLOWED_CITATION_FORMATS)
-    if tier == PRO_TIER:
-        return set(STANDARD_ALLOWED_CITATION_FORMATS | {"custom"})
-    return set(FREE_ALLOWED_CITATION_FORMATS)
+    return set(get_tier_capabilities(tier).allowed_citation_formats)
 
 
 def unlock_window_for_tier(account_type: str | None, user_id: str, now: datetime | None = None) -> UnlockWindow | None:
     tier = normalize_account_type(account_type)
     current = (now or utc_now()).astimezone(timezone.utc)
-    if tier == PRO_TIER:
+    caps = get_tier_capabilities(tier)
+    if not caps.has_unlock_limits:
         return None
-    if tier == STANDARD_TIER:
-        _start, reset_at = current_utc_day_window(current)
-        return UnlockWindow(
-            key=f"extension_usage_day:{user_id}:{utc_day_key(current)}",
-            limit=STANDARD_UNLOCKS_PER_DAY,
-            usage_period="day",
-            reset_at=reset_at.isoformat(),
-            ttl_seconds=max(int((reset_at - current).total_seconds()), 60),
-        )
 
-    _start, reset_at = current_week_window(current)
+    if caps.unlock_usage_period == "day":
+        _start, reset_at = current_utc_day_window(current)
+        key = f"extension_usage_day:{user_id}:{utc_day_key(current)}"
+    else:
+        _start, reset_at = current_week_window(current)
+        key = f"extension_usage_week:{user_id}:{week_key(current)}"
+
     return UnlockWindow(
-        key=f"extension_usage_week:{user_id}:{week_key(current)}",
-        limit=FREE_UNLOCKS_PER_WEEK,
-        usage_period="week",
+        key=key,
+        limit=caps.unlock_limit or 0,
+        usage_period=caps.unlock_usage_period or "week",
         reset_at=reset_at.isoformat(),
         ttl_seconds=max(int((reset_at - current).total_seconds()), 60),
     )

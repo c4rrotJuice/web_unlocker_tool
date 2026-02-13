@@ -89,6 +89,15 @@ class SupabaseRestRepository:
     ):
         return await self.request("PATCH", resource=resource, params=params, json=json, headers=headers)
 
+    async def delete(
+        self,
+        resource: str,
+        *,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ):
+        return await self.request("DELETE", resource=resource, params=params, headers=headers)
+
 
 async def expect_ok(response, *, detail: str, allowed: set[int] | tuple[int, ...] = (200,)):
     if response.status_code not in set(allowed):

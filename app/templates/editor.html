@@ -61,10 +61,7 @@
         />
         <div class="editor-actions">
           <span id="save-status">Idle</span>
-          <div class="export-dropdown">
-            <button class="secondary" id="export-btn" type="button" aria-haspopup="true" aria-expanded="false">Export ▾</button>
-            <div class="export-menu" id="export-menu" aria-hidden="true"></div>
-          </div>
+          <button class="secondary" id="export-btn">Export</button>
         </div>
       </div>
       <div id="editor-toolbar">
@@ -144,6 +141,38 @@
         <div id="doc-citations-list" class="citations-list"></div>
       </div>
     </aside>
+  </div>
+
+  <div class="modal" id="export-modal" aria-hidden="true">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Export</h3>
+        <button class="text" id="close-export">Close</button>
+      </div>
+      <div class="modal-body">
+        <label for="export-style">Citation style</label>
+        <select id="export-style">
+          <option value="mla">MLA</option>
+          <option value="apa">APA</option>
+          <option value="chicago">Chicago</option>
+          <option value="harvard">Harvard</option>
+          <option value="custom">Custom</option>
+        </select>
+
+        <div class="export-section">
+          <h4>HTML</h4>
+          <pre id="export-html"></pre>
+        </div>
+        <div class="export-section">
+          <h4>Plain text</h4>
+          <pre id="export-text"></pre>
+        </div>
+        <div class="export-section">
+          <h4>Bibliography</h4>
+          <ul id="export-bibliography"></ul>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="https://cdn.quilljs.com/1.3.7/quill.js"></script>

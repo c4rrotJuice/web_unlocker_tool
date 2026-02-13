@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from app.routes.http import http_client
 import os
 from app.services.entitlements import normalize_account_type
+from app.services.free_tier_gating import FREE_ALLOWED_CITATION_FORMATS
 
 router = APIRouter()
 
@@ -29,14 +30,14 @@ async def create_citation(
 ) -> str:
     citation_format = (citation.format or "mla").strip().lower()
 
-    allowed_formats = {"mla", "apa"}
+    allowed_formats = set(FREE_ALLOWED_CITATION_FORMATS)
     if account_type in {"standard", "pro"}:
         allowed_formats.update({"chicago", "harvard"})
     if account_type == "pro":
         allowed_formats.add("custom")
 
     if citation_format not in allowed_formats:
-        raise HTTPException(status_code=403, detail="Citation format not available.")
+        raise HTTPException(status_code=403, detail={"code": "CITATION_FORMAT_LOCKED", "message": "Citation format not available on your plan.", "toast": "Upgrade to unlock this citation format."})
 
     if citation_format == "custom":
         if account_type != "pro":

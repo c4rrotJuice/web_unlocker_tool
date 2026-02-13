@@ -23,6 +23,7 @@
     lastCitationText: "",
     customFormatName: "",
     customFormatTemplate: "",
+    accountType: "anonymous",
   };
 
   const STYLE_ID = "web-unlocker-extension-style";
@@ -141,7 +142,15 @@
         flex: 1 1 auto;
       }
 
-      .web-unlocker-popup pre {
+      
+      .web-unlocker-row.is-disabled {
+        opacity: 0.5;
+      }
+
+      .web-unlocker-row.is-disabled .copy-btn {
+        cursor: not-allowed;
+      }
+.web-unlocker-popup pre {
         background: #f8fafc;
         padding: 10px;
         border-radius: 6px;
@@ -389,7 +398,8 @@
       return;
     }
     if (response?.status === 403) {
-      showToast("Upgrade to unlock this citation format.", true);
+      const message = response?.data?.detail?.toast || response?.data?.detail?.message || "Upgrade to unlock this citation format.";
+      showToast(message, true);
       return;
     }
     if (response?.error) {
@@ -442,6 +452,11 @@
       showToast("Weekly editor limit reached.", true);
       return;
     }
+    if (response?.data?.allowed === false) {
+      showToast(response?.data?.toast || "max documents allowed reached, please subscribe to remove restrictions", true);
+      closePopup();
+      return;
+    }
     if (response?.error) {
       showToast("Unable to open the editor.", true);
       return;
@@ -483,7 +498,7 @@
     delete body.dataset.webUnlockerPrevOverflow;
   }
 
-  function buildPopup() {
+  async function buildPopup() {
     closePopup();
     const selectionText = state.selectionText;
     debug("Building popup", { selectionLength: selectionText.length });
@@ -503,6 +518,10 @@
       accessedAt: new Date().toISOString(),
     };
 
+    const usagePeek = await sendMessage("peek-unlock", { url });
+    state.accountType = usagePeek?.data?.account_type || state.accountType || "anonymous";
+    const isFreeUser = ["free", "freemium"].includes(String(state.accountType).toLowerCase());
+    const allowedFormats = isFreeUser ? new Set(["mla", "apa"]) : new Set(["mla", "apa", "chicago", "harvard"]);
     const formats = ["mla", "apa", "chicago", "harvard"];
     const popup = document.createElement("div");
     popup.className = "web-unlocker-popup";
@@ -549,6 +568,12 @@
       button.className = "copy-btn";
       button.dataset.format = format;
       button.textContent = `Copy ${label}`;
+      const isLocked = !allowedFormats.has(format);
+      if (isLocked) {
+        row.classList.add("is-disabled");
+        button.disabled = true;
+        button.textContent = "Locked";
+      }
       row.appendChild(button);
 
       body.appendChild(row);
@@ -581,6 +606,10 @@
     customButton.className = "copy-btn";
     customButton.dataset.format = "custom";
     customButton.textContent = "Copy Custom";
+    if (isFreeUser) {
+      customRow.classList.add("is-disabled");
+      customButton.disabled = true;
+    }
     customRow.appendChild(customButton);
 
     body.appendChild(customRow);
@@ -638,6 +667,10 @@
       }
 
       if (target.classList.contains("copy-btn")) {
+        if (target.hasAttribute("disabled")) {
+          showToast("Upgrade to unlock this citation format.", true);
+          return;
+        }
         const format = target.dataset.format || "mla";
         if (format === "custom") {
           const template = customTemplateInput.value.trim();

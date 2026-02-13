@@ -5,7 +5,7 @@ async function authFetch(input, init) {
   return fetch(input, init);
 }
 
-async function verifyPaidAccess() {
+async function verifyEditorAccess() {
   try {
     const res = await authFetch("/api/editor/access");
 
@@ -16,12 +16,12 @@ async function verifyPaidAccess() {
 
     const data = await res.json();
     const isPaid = Boolean(data.is_paid);
-
-    if (!isPaid) {
-      renderBlockedMessage("Research Editor is available on paid plans.");
+    if (!isPaid && data.account_type === "anonymous") {
+      renderBlockedMessage("Please sign in to use the editor.");
       return false;
     }
 
+    window.__editorAccess = data;
     return true;
   } catch (error) {
     console.error("Failed to verify access:", error);
@@ -100,6 +100,20 @@ function startEditor() {
   const outlineToggleBtn = document.getElementById("outline-toggle");
   const historyList = document.getElementById("history-list");
   const historyRefreshBtn = document.getElementById("history-refresh");
+  const freeQuotaBanner = document.getElementById("free-doc-quota");
+  const freeQuotaText = document.getElementById("free-doc-quota-text");
+
+
+  function renderFreeQuota() {
+    const quota = window.__editorAccess?.doc_quota;
+    if (!freeQuotaBanner || !freeQuotaText || !quota) {
+      if (freeQuotaBanner) freeQuotaBanner.classList.add("hidden");
+      return;
+    }
+    freeQuotaBanner.classList.remove("hidden");
+    const resetAt = quota.reset_at ? new Date(quota.reset_at).toLocaleString() : "--";
+    freeQuotaText.textContent = `${quota.used}/${quota.limit} documents used · resets on ${resetAt}`;
+  }
 
   const quill = new Quill("#editor", {
     theme: "snow",
@@ -226,7 +240,8 @@ function startEditor() {
       });
 
       if (!res.ok) {
-        throw new Error("Failed to save");
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.detail?.toast || err?.detail?.message || "Failed to save");
       }
 
       const data = await res.json();
@@ -239,7 +254,7 @@ function startEditor() {
       console.error(err);
       setSaveStatus("Save failed");
       toast?.dismiss("editor-save");
-      toast?.show({ type: "error", message: "Save failed. Please retry." });
+      toast?.show({ type: "error", message: err?.message || "Save failed. Please retry." });
     }
   }
 
@@ -252,7 +267,11 @@ function startEditor() {
     }
 
     allDocs = await res.json();
+    if (window.__editorAccess?.doc_quota) {
+      window.__editorAccess.doc_quota.used = allDocs.filter((doc) => !doc.archived).length;
+    }
     renderDocs(allDocs);
+    renderFreeQuota();
   }
 
   function renderDocs(docs) {
@@ -277,9 +296,18 @@ function startEditor() {
 
       const meta = document.createElement("span");
       meta.className = "doc-meta";
-      meta.textContent = `Updated ${new Date(doc.updated_at).toLocaleString()}`;
+      const archivedLabel = doc.archived ? " · Archived" : "";
+      meta.textContent = `Updated ${new Date(doc.updated_at).toLocaleString()}${archivedLabel}`;
 
-      item.append(title, meta);
+      const exportDocBtn = document.createElement("button");
+      exportDocBtn.className = "secondary";
+      exportDocBtn.textContent = "Export PDF";
+      exportDocBtn.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        await exportDocumentById(doc.id, "pdf");
+      });
+
+      item.append(title, meta, exportDocBtn);
       item.addEventListener("click", () => openDoc(doc.id));
       docsList.appendChild(item);
     });
@@ -310,7 +338,11 @@ function startEditor() {
       });
 
       if (!res.ok) {
-        throw new Error("Failed to create doc");
+        const err = await res.json().catch(() => ({}));
+        const detail = err?.detail || {};
+        toast?.show({ type: "error", message: detail.toast || detail.message || "Failed to create doc" });
+        renderFreeQuota();
+        return;
       }
 
       const doc = await res.json();
@@ -331,6 +363,9 @@ function startEditor() {
     }
 
     const doc = await res.json();
+    if (doc.archived) {
+      toast?.show({ type: "error", message: "This document is archived. Upgrade to restore." });
+    }
     currentDocId = doc.id;
     currentCitationIds = doc.citation_ids || [];
     docTitleInput.value = doc.title;
@@ -889,6 +924,30 @@ function startEditor() {
     });
   });
 
+  async function exportDocumentById(docId, format = "pdf") {
+    const res = await authFetch(`/api/docs/${docId}/export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ style: exportStyle.value, format }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      toast?.show({ type: "error", message: err?.detail?.toast || err?.detail?.message || "Export failed." });
+      return null;
+    }
+    const data = await res.json();
+    exportHtml.textContent = data.html || "";
+    exportText.textContent = data.text || "";
+    exportBibliography.innerHTML = "";
+    (data.bibliography || []).forEach((entry) => {
+      const li = document.createElement("li");
+      li.textContent = entry;
+      exportBibliography.appendChild(li);
+    });
+    exportModal.classList.add("open");
+    return data;
+  }
+
   exportBtn.addEventListener("click", async () => {
     if (!currentDocId) return;
     exportModal.setAttribute("aria-hidden", "false");
@@ -959,7 +1018,7 @@ function startEditor() {
 }
 
 (async () => {
-  if (await verifyPaidAccess()) {
+  if (await verifyEditorAccess()) {
     startEditor();
   }
 })();

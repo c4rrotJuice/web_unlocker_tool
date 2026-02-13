@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import base64
+import html
 import json
 from io import BytesIO
 import os
@@ -125,6 +127,114 @@ def _delta_to_html(delta: dict) -> str:
     )
     escaped = escaped.replace("\n", "<br>")
     return f"<p>{escaped}</p>"
+
+
+def _build_plain_text_export(title: str, text: str, bibliography: list[str]) -> bytes:
+    bib = "\n".join(f"- {entry}" for entry in bibliography) if bibliography else ""
+    sections = [title.strip() or "Untitled", "", text.strip()]
+    if bib:
+        sections.extend(["", "Bibliography", bib])
+    return "\n".join(sections).encode("utf-8")
+
+
+def _build_docx_export(title: str, text: str, bibliography: list[str]) -> bytes:
+    lines = [line for line in text.splitlines() if line.strip()]
+    escaped_title = html.escape(title.strip() or "Untitled")
+    paragraph_xml = [f"<w:p><w:r><w:t>{escaped_title}</w:t></w:r></w:p>"]
+    for line in lines:
+        paragraph_xml.append(
+            f"<w:p><w:r><w:t xml:space=\"preserve\">{html.escape(line)}</w:t></w:r></w:p>"
+        )
+    if bibliography:
+        paragraph_xml.append("<w:p><w:r><w:t>Bibliography</w:t></w:r></w:p>")
+        for entry in bibliography:
+            paragraph_xml.append(
+                f"<w:p><w:r><w:t xml:space=\"preserve\">{html.escape(entry)}</w:t></w:r></w:p>"
+            )
+
+    document_xml = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+        "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">"
+        f"<w:body>{''.join(paragraph_xml)}"
+        "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>"
+        "<w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/>"
+        "</w:sectPr></w:body></w:document>"
+    )
+
+    content_types = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+        "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+        "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+        "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+        "</Types>"
+    )
+    rels = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>"
+        "</Relationships>"
+    )
+
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as docx_zip:
+        docx_zip.writestr("[Content_Types].xml", content_types)
+        docx_zip.writestr("_rels/.rels", rels)
+        docx_zip.writestr("word/document.xml", document_xml)
+    return buffer.getvalue()
+
+
+def _build_pdf_export(title: str, text: str, bibliography: list[str]) -> bytes:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    y = height - 72
+
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(72, y, title.strip() or "Untitled")
+    y -= 28
+
+    pdf.setFont("Helvetica", 11)
+    for raw_line in (text or "").splitlines() or [""]:
+        pdf.drawString(72, y, (raw_line.strip() or " ")[:110])
+        y -= 16
+        if y < 90:
+            pdf.showPage()
+            y = height - 72
+            pdf.setFont("Helvetica", 11)
+
+    if bibliography:
+        if y < 120:
+            pdf.showPage()
+            y = height - 72
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.drawString(72, y, "Bibliography")
+        y -= 20
+        pdf.setFont("Helvetica", 11)
+        for entry in bibliography:
+            pdf.drawString(72, y, f"- {entry}"[:110])
+            y -= 16
+            if y < 90:
+                pdf.showPage()
+                y = height - 72
+                pdf.setFont("Helvetica", 11)
+
+    pdf.save()
+    return buffer.getvalue()
+
+
+def _build_export_file(export_format: str, title: str, text: str, bibliography: list[str]) -> tuple[bytes, str, str]:
+    fmt = (export_format or "pdf").lower()
+    if fmt == "txt":
+        return _build_plain_text_export(title, text, bibliography), "text/plain; charset=utf-8", "txt"
+    if fmt == "docx":
+        return _build_docx_export(title, text, bibliography), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"
+    if fmt == "pdf":
+        return _build_pdf_export(title, text, bibliography), "application/pdf", "pdf"
+    raise HTTPException(status_code=400, detail="Unsupported export format")
 
 
 async def _get_account_type(request: Request, user_id: str) -> str:
@@ -393,6 +503,7 @@ async def editor_access(request: Request):
         "can_delete_documents": capabilities.can_delete_documents,
         "freeze_documents": capabilities.freeze_documents,
         "can_zip_export": capabilities.can_zip_export,
+        "allowed_export_formats": sorted(capabilities.allowed_export_formats),
     }
 
 
@@ -682,8 +793,6 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
     delta = doc.get("content_delta") or {}
     citation_ids = doc.get("citation_ids") or []
 
-    raw_html = _delta_to_html(delta)
-    html = _sanitize_html(raw_html)
     text = _delta_to_text(delta)
 
     bibliography: list[str] = []
@@ -708,13 +817,21 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
                 else:
                     bibliography.append(full_text)
 
+    file_bytes, media_type, file_ext = _build_export_file(
+        export_format,
+        doc.get("title") or "Untitled",
+        text,
+        bibliography,
+    )
+    filename_base = re.sub(r"[^A-Za-z0-9._-]+", "-", (doc.get("title") or "Untitled")).strip("-") or "document"
+
     return {
-        "html": html,
-        "text": text,
-        "bibliography": bibliography,
-        "style": payload.style,
         "format": export_format,
         "archived": archived,
+        "title": doc.get("title") or "Untitled",
+        "filename": f"{filename_base}.{file_ext}",
+        "media_type": media_type,
+        "file_content": base64.b64encode(file_bytes).decode("ascii"),
     }
 
 

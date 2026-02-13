@@ -173,6 +173,40 @@ def test_standard_archived_doc_blocks_edit_but_allows_export(monkeypatch):
     assert export_res.status_code == 200
     assert export_res.json()["archived"] is True
     assert export_res.json()["format"] == "docx"
+    assert export_res.json()["filename"].endswith(".docx")
+    assert export_res.json()["file_content"]
+
+
+def test_free_tier_export_blocks_docx(monkeypatch):
+    app = _build_app(monkeypatch, account_type="free")
+    client = TestClient(app)
+
+    export_res = client.post(
+        "/api/docs/doc-1/export",
+        json={"format": "docx"},
+        headers={"Authorization": "Bearer valid"},
+    )
+
+    assert export_res.status_code == 403
+    assert export_res.json()["detail"]["code"] == "EXPORT_FORMAT_LOCKED"
+
+
+def test_free_tier_export_pdf_returns_download_payload(monkeypatch):
+    app = _build_app(monkeypatch, account_type="free")
+    client = TestClient(app)
+
+    export_res = client.post(
+        "/api/docs/doc-1/export",
+        json={"format": "pdf"},
+        headers={"Authorization": "Bearer valid"},
+    )
+
+    assert export_res.status_code == 200
+    payload = export_res.json()
+    assert payload["format"] == "pdf"
+    assert payload["filename"].endswith(".pdf")
+    assert payload["media_type"] == "application/pdf"
+    assert payload["file_content"]
 
 
 def test_pro_unlock_permit_unlimited(monkeypatch):

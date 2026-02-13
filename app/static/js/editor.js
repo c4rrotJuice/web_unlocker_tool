@@ -83,15 +83,17 @@ function startEditor() {
   let citationSearchTimer = null;
   let lastCheckpointAt = 0;
   let changedSinceCheckpoint = 0;
-  let exportTargetDocId = null;
 
   const saveStatus = document.getElementById("save-status");
   const docTitleInput = document.getElementById("doc-title");
   const docsList = document.getElementById("docs-list");
   const docSearchInput = document.getElementById("doc-search");
   const exportBtn = document.getElementById("export-btn");
-  const exportMenu = document.getElementById("export-menu");
-  const EXPORT_FORMATS = ["pdf", "docx", "txt"];
+  const exportModal = document.getElementById("export-modal");
+  const exportHtml = document.getElementById("export-html");
+  const exportText = document.getElementById("export-text");
+  const exportBibliography = document.getElementById("export-bibliography");
+  const exportStyle = document.getElementById("export-style");
   const outlineList = document.getElementById("outline-list");
   const outlinePanel = document.getElementById("outline-panel");
   const outlineRefreshBtn = document.getElementById("outline-refresh");
@@ -280,87 +282,6 @@ function startEditor() {
     renderFreeQuota();
   }
 
-  function exportFilename(title, format) {
-    const safeTitle = (title || "document")
-      .replace(/[^a-z0-9\-_.\s]/gi, "")
-      .trim()
-      .replace(/\s+/g, "-") || "document";
-    return `${safeTitle}.${format}`;
-  }
-
-  function triggerDownload(data) {
-    const content = data?.file_content;
-    if (!content) {
-      toast?.show({ type: "error", message: "No export file generated." });
-      return;
-    }
-    const binary = atob(content);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    const blob = new Blob([bytes], { type: data.media_type || "application/octet-stream" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = data.filename || exportFilename(data.title, data.format || "txt");
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  }
-
-  function userAllowedExportFormats() {
-    const allowed = window.__editorAccess?.allowed_export_formats;
-    if (Array.isArray(allowed) && allowed.length) {
-      return new Set(allowed.map((fmt) => String(fmt).toLowerCase()));
-    }
-    const tier = (window.__editorAccess?.account_type || "free").toLowerCase();
-    if (tier === "standard" || tier === "pro") {
-      return new Set(["pdf", "docx", "txt"]);
-    }
-    return new Set(["pdf"]);
-  }
-
-  function renderExportMenu(doc = null) {
-    if (!exportMenu) return;
-    const allowed = new Set((doc?.allowed_export_formats || [...userAllowedExportFormats()]).map((fmt) => String(fmt).toLowerCase()));
-    exportMenu.innerHTML = "";
-    EXPORT_FORMATS.forEach((format) => {
-      const option = document.createElement("button");
-      option.type = "button";
-      option.className = "export-option";
-      option.dataset.format = format;
-      option.textContent = format.toUpperCase();
-      if (!allowed.has(format)) {
-        option.disabled = true;
-        option.title = "Upgrade your plan to export this format.";
-      }
-      option.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        const targetDocId = exportTargetDocId || currentDocId;
-        if (!targetDocId || option.disabled) return;
-        closeExportMenu();
-        await exportDocumentById(targetDocId, format);
-      });
-      exportMenu.appendChild(option);
-    });
-  }
-
-  function openExportMenu() {
-    if (!exportMenu) return;
-    exportMenu.classList.add("open");
-    exportMenu.setAttribute("aria-hidden", "false");
-    exportBtn.setAttribute("aria-expanded", "true");
-  }
-
-  function closeExportMenu() {
-    if (!exportMenu) return;
-    exportMenu.classList.remove("open");
-    exportMenu.setAttribute("aria-hidden", "true");
-    exportBtn.setAttribute("aria-expanded", "false");
-  }
-
   function renderDocs(docs) {
     docsList.innerHTML = "";
     const query = docSearchInput.value.toLowerCase();
@@ -391,12 +312,10 @@ function startEditor() {
 
       const exportDocBtn = document.createElement("button");
       exportDocBtn.className = "secondary";
-      exportDocBtn.textContent = "Export";
+      exportDocBtn.textContent = "Export PDF";
       exportDocBtn.addEventListener("click", async (event) => {
         event.stopPropagation();
-        exportTargetDocId = doc.id;
-        renderExportMenu(doc);
-        openExportMenu();
+        await exportDocumentById(doc.id, "pdf");
       });
       actions.appendChild(exportDocBtn);
 
@@ -499,9 +418,7 @@ function startEditor() {
       toast?.show({ type: "error", message: "This document is archived. Upgrade to Pro to restore editing." });
     }
     currentDocId = doc.id;
-    exportTargetDocId = doc.id;
     currentCitationIds = doc.citation_ids || [];
-    renderExportMenu(doc);
     docTitleInput.value = doc.title;
 
     if (doc.content_delta && Array.isArray(doc.content_delta.ops) && doc.content_delta.ops.length) {
@@ -1062,7 +979,7 @@ function startEditor() {
     const res = await authFetch(`/api/docs/${docId}/export`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ format }),
+      body: JSON.stringify({ style: exportStyle.value, format }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -1070,33 +987,65 @@ function startEditor() {
       return null;
     }
     const data = await res.json();
-    triggerDownload(data);
-    toast?.show({ type: "success", message: `Downloaded ${String(format).toUpperCase()} export.` });
+    exportHtml.textContent = data.html || "";
+    exportText.textContent = data.text || "";
+    exportBibliography.innerHTML = "";
+    (data.bibliography || []).forEach((entry) => {
+      const li = document.createElement("li");
+      li.textContent = entry;
+      exportBibliography.appendChild(li);
+    });
+    exportModal.classList.add("open");
     return data;
   }
 
-  exportBtn.addEventListener("click", async (event) => {
-    event.stopPropagation();
+  exportBtn.addEventListener("click", async () => {
     if (!currentDocId) return;
-    const activeDoc = allDocs.find((doc) => doc.id === currentDocId);
-    renderExportMenu(activeDoc || null);
-    if (exportMenu.classList.contains("open")) {
-      closeExportMenu();
-    } else {
-      openExportMenu();
+    exportModal.setAttribute("aria-hidden", "false");
+
+    const res = await authFetch(`/api/docs/${currentDocId}/export`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        style: exportStyle.value,
+        html: quill.root.innerHTML,
+        text: quill.getText(),
+      }),
+    });
+
+    if (!res.ok) {
+      exportHtml.textContent = "Export failed";
+      exportText.textContent = "";
+      exportBibliography.innerHTML = "";
+      return;
+    }
+
+    const data = await res.json();
+    exportHtml.textContent = data.html || "";
+    exportText.textContent = data.text || "";
+    exportBibliography.innerHTML = "";
+    (data.bibliography || []).forEach((entry) => {
+      const li = document.createElement("li");
+      li.textContent = entry;
+      exportBibliography.appendChild(li);
+    });
+  });
+
+  exportStyle.addEventListener("change", () => {
+    if (exportModal.getAttribute("aria-hidden") === "false") {
+      exportBtn.click();
     }
   });
 
-  document.addEventListener("click", (event) => {
-    if (!exportMenu.classList.contains("open")) return;
-    if (!event.target.closest(".export-dropdown")) {
-      closeExportMenu();
-    }
+  document.getElementById("close-export").addEventListener("click", () => {
+    exportModal.setAttribute("aria-hidden", "true");
   });
 
-  window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      closeExportMenu();
+  window.addEventListener("click", (event) => {
+    if (event.target === exportModal) {
+      exportModal.setAttribute("aria-hidden", "true");
     }
   });
 

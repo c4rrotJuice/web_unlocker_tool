@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
-from app.services.entitlements import normalize_account_type
+from app.services.entitlements import get_tier_capabilities, normalize_account_type
 from app.services.supabase_rest import SupabaseRestRepository
 from app.services.IP_usage_limit import get_user_ip
 from app.routes.citations import CitationInput, create_citation
@@ -228,7 +228,7 @@ async def extension_selection(request: Request, payload: ExtensionSelectionReque
     usage_key = f"ext_unlocks:{user_id}:{_iso_week_key(now)}"
     usage_count = int(await request.app.state.redis_get(usage_key) or 0)
 
-    if usage_count >= EXTENSION_EDITOR_WEEKLY_LIMIT:
+    if get_tier_capabilities(account_type).has_unlock_limits and usage_count >= EXTENSION_EDITOR_WEEKLY_LIMIT:
         raise HTTPException(status_code=429, detail="Extension editor limit reached.")
 
     quota = _quota_for_tier(account_type, now)
@@ -294,12 +294,15 @@ async def extension_selection(request: Request, payload: ExtensionSelectionReque
     if not data:
         raise HTTPException(status_code=500, detail="Failed to create document")
 
-    if usage_count == 0:
-        await request.app.state.redis_expire(usage_key, ttl_seconds)
-    await request.app.state.redis_incr(usage_key)
-    usage_count += 1
+    if get_tier_capabilities(account_type).has_unlock_limits:
+        if usage_count == 0:
+            await request.app.state.redis_expire(usage_key, ttl_seconds)
+        await request.app.state.redis_incr(usage_key)
+        usage_count += 1
+        remaining = max(EXTENSION_EDITOR_WEEKLY_LIMIT - usage_count, 0)
+    else:
+        remaining = -1
 
-    remaining = max(EXTENSION_EDITOR_WEEKLY_LIMIT - usage_count, 0)
     return {
         "doc_id": data[0].get("id"),
         "editor_url": f"/editor?doc={data[0].get('id')}",

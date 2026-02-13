@@ -2,6 +2,7 @@ from app.services.entitlements import (
     can_use_bookmarks,
     can_use_cloudscraper,
     can_use_history_search,
+    get_tier_capabilities,
     normalize_account_type,
     should_show_ads,
 )
@@ -36,3 +37,12 @@ def test_ads_show_only_for_free():
     assert should_show_ads("free") is True
     assert should_show_ads("standard") is False
     assert should_show_ads("pro") is False
+
+
+def test_pro_capabilities_unlimited_and_no_freeze():
+    caps = get_tier_capabilities("pro")
+    assert caps.has_unlock_limits is False
+    assert caps.has_document_quota is False
+    assert caps.freeze_documents is False
+    assert caps.can_delete_documents is True
+    assert caps.can_zip_export is True

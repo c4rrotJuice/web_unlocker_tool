@@ -355,3 +355,15 @@ button.text {
 .ql-toolbar .ql-formats:last-child button {
   min-width: 70px;
 }
+
+
+.doc-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.doc-delete-btn {
+  color: #b42318;
+  font-weight: 700;
+}

@@ -38,8 +38,8 @@
 
 <div class="section profile-box">
   <div><strong>User:</strong> <span id="user-name">Loading...</span></div>
-  <div><strong>Plan:</strong> <span id="account-type">Loading...</span></div>
-  <div><strong>Usage:</strong> <span id="usage">--</span> / 
+  <div><strong>Plan:</strong> <span id="account-type">Loading...</span> <span id="pro-unlimited-pill" style="display:none;background:#ecfdf3;color:#027a48;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;">Pro Plan – Unlimited Unlocks</span></div>
+  <div id="usage-row"><strong>Usage:</strong> <span id="usage">--</span> / 
     <span id="limit">--</span> unlocks <span id="usage-period">today</span></div>
 </div>
 
@@ -244,6 +244,10 @@ async function loadUserData() {
     const isPro = accountType === "pro";
     const isStandard = accountType === "standard";
     const isFree = accountType === "free";
+    const proPill = document.getElementById("pro-unlimited-pill");
+    const usageRow = document.getElementById("usage-row");
+    if (proPill) proPill.style.display = isPro ? "inline-block" : "none";
+    if (usageRow) usageRow.style.display = isPro ? "none" : "block";
     const canBookmark = isPro || isStandard;
     const canUseHistorySearch = isPro || isStandard;
 

@@ -102,11 +102,19 @@ function startEditor() {
   const historyRefreshBtn = document.getElementById("history-refresh");
   const freeQuotaBanner = document.getElementById("free-doc-quota");
   const freeQuotaText = document.getElementById("free-doc-quota-text");
+  const proBadge = document.getElementById("pro-unlimited-badge");
 
+
+  function isProTier() {
+    return (window.__editorAccess?.account_type || "").toLowerCase() === "pro";
+  }
 
   function renderFreeQuota() {
+    if (proBadge) {
+      proBadge.classList.toggle("hidden", !isProTier());
+    }
     const quota = window.__editorAccess?.doc_quota;
-    if (!freeQuotaBanner || !freeQuotaText || !quota) {
+    if (!freeQuotaBanner || !freeQuotaText || !quota || isProTier()) {
       if (freeQuotaBanner) freeQuotaBanner.classList.add("hidden");
       return;
     }
@@ -296,8 +304,11 @@ function startEditor() {
 
       const meta = document.createElement("span");
       meta.className = "doc-meta";
-      const archivedLabel = doc.archived ? " · Archived" : "";
+      const archivedLabel = doc.archived && !isProTier() ? " · Archived" : "";
       meta.textContent = `Updated ${new Date(doc.updated_at).toLocaleString()}${archivedLabel}`;
+
+      const actions = document.createElement("div");
+      actions.className = "doc-actions";
 
       const exportDocBtn = document.createElement("button");
       exportDocBtn.className = "secondary";
@@ -306,8 +317,21 @@ function startEditor() {
         event.stopPropagation();
         await exportDocumentById(doc.id, "pdf");
       });
+      actions.appendChild(exportDocBtn);
 
-      item.append(title, meta, exportDocBtn);
+      if (isProTier()) {
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "text doc-delete-btn";
+        deleteBtn.textContent = "✕";
+        deleteBtn.title = "Delete document";
+        deleteBtn.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          await deleteDocument(doc.id);
+        });
+        actions.appendChild(deleteBtn);
+      }
+
+      item.append(title, meta, actions);
       item.addEventListener("click", () => openDoc(doc.id));
       docsList.appendChild(item);
     });
@@ -353,6 +377,30 @@ function startEditor() {
     }
   });
 
+
+
+  async function deleteDocument(docId) {
+    if (!docId || !isProTier()) return;
+    const confirmed = window.confirm("Permanently delete this document?");
+    if (!confirmed) return;
+    try {
+      const res = await authFetch(`/api/docs/${docId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.detail?.toast || err?.detail?.message || "Failed to delete document");
+      }
+      if (currentDocId === docId) {
+        currentDocId = null;
+        quill.setContents(normalizeDelta({ ops: [{ insert: "\n" }] }), "silent");
+        docTitleInput.value = "";
+      }
+      await loadDocsList();
+      toast?.show({ type: "success", message: "Document deleted." });
+    } catch (error) {
+      toast?.show({ type: "error", message: error?.message || "Failed to delete document." });
+    }
+  }
+
   async function openDoc(docId) {
     await autosaveDoc();
     const res = await authFetch(`/api/docs/${docId}`);
@@ -366,7 +414,7 @@ function startEditor() {
     const readOnly = Boolean(doc.archived);
     quill.enable(!readOnly);
     docTitleInput.readOnly = readOnly;
-    if (doc.archived) {
+    if (doc.archived && !isProTier()) {
       toast?.show({ type: "error", message: "This document is archived. Upgrade to Pro to restore editing." });
     }
     currentDocId = doc.id;

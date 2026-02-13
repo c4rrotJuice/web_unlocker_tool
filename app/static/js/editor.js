@@ -112,7 +112,7 @@ function startEditor() {
     }
     freeQuotaBanner.classList.remove("hidden");
     const resetAt = quota.reset_at ? new Date(quota.reset_at).toLocaleString() : "--";
-    freeQuotaText.textContent = `${quota.used}/${quota.limit} documents used · resets on ${resetAt}`;
+    freeQuotaText.textContent = `${quota.used} / ${quota.limit} documents used in ${quota.period_label || "current period"} · next reset ${resetAt}`;
   }
 
   const quill = new Quill("#editor", {
@@ -363,8 +363,11 @@ function startEditor() {
     }
 
     const doc = await res.json();
+    const readOnly = Boolean(doc.archived);
+    quill.enable(!readOnly);
+    docTitleInput.readOnly = readOnly;
     if (doc.archived) {
-      toast?.show({ type: "error", message: "This document is archived. Upgrade to restore." });
+      toast?.show({ type: "error", message: "This document is archived. Upgrade to Pro to restore editing." });
     }
     currentDocId = doc.id;
     currentCitationIds = doc.citation_ids || [];

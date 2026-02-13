@@ -4,8 +4,8 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 from app.routes.http import http_client
 import os
-from app.services.entitlements import normalize_account_type
-from app.services.free_tier_gating import FREE_ALLOWED_CITATION_FORMATS
+from app.services.entitlements import PRO_TIER, normalize_account_type
+from app.services.free_tier_gating import allowed_citation_formats
 
 router = APIRouter()
 
@@ -29,19 +29,15 @@ async def create_citation(
     citation: CitationInput,
 ) -> str:
     citation_format = (citation.format or "mla").strip().lower()
-
-    allowed_formats = set(FREE_ALLOWED_CITATION_FORMATS)
-    if account_type in {"standard", "pro"}:
-        allowed_formats.update({"chicago", "harvard"})
-    if account_type == "pro":
-        allowed_formats.add("custom")
+    normalized_account_type = normalize_account_type(account_type)
+    allowed_formats = allowed_citation_formats(normalized_account_type)
 
     if citation_format not in allowed_formats:
         raise HTTPException(status_code=403, detail={"code": "CITATION_FORMAT_LOCKED", "message": "Citation format not available on your plan.", "toast": "Upgrade to unlock this citation format."})
 
     if citation_format == "custom":
-        if account_type != "pro":
-            raise HTTPException(status_code=403, detail="Custom format is Pro-only.")
+        if normalized_account_type != PRO_TIER:
+            raise HTTPException(status_code=403, detail={"code": "CITATION_FORMAT_PRO_ONLY", "message": "Custom citation format is available on Pro only.", "toast": "Upgrade to Pro to unlock custom citations."})
         if not citation.custom_format_template or not citation.custom_format_template.strip():
             raise HTTPException(
                 status_code=422,
@@ -59,7 +55,7 @@ async def create_citation(
                 detail="Custom format template only allowed for custom format.",
             )
 
-    if account_type == "pro" and citation.url not in citation.full_text:
+    if normalized_account_type == PRO_TIER and citation.url not in citation.full_text:
         raise HTTPException(
             status_code=422,
             detail="Citations must include the source URL.",

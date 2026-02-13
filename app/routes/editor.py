@@ -12,7 +12,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from app.services.entitlements import normalize_account_type
+from app.services.entitlements import FREE_TIER, normalize_account_type
+from app.services.free_tier_gating import (
+    FREE_DOCS_PER_WEEK,
+    FREE_ALLOWED_EXPORT_FORMATS,
+    current_week_window,
+    doc_is_archived_for_free,
+    is_free_authenticated,
+)
 from app.services.supabase_rest import SupabaseRestRepository
 
 router = APIRouter()
@@ -39,6 +46,7 @@ class DocumentUpdate(BaseModel):
 
 class ExportRequest(BaseModel):
     style: str = "mla"
+    format: str = "pdf"
     html: Optional[str] = None
     text: Optional[str] = None
 
@@ -132,6 +140,58 @@ async def _get_account_type(request: Request, user_id: str) -> str:
     return normalize_account_type(None)
 
 
+
+
+async def _count_docs_in_current_week(user_id: str, now: Optional[datetime] = None) -> int:
+    week_start, week_end = current_week_window(now)
+    res = await supabase_repo.get(
+        "documents",
+        params={
+            "user_id": f"eq.{user_id}",
+            "and": f"(created_at.gte.{week_start.isoformat()},created_at.lt.{week_end.isoformat()})",
+            "select": "id",
+            "limit": 1000,
+        },
+        headers=supabase_repo.headers(),
+    )
+    if res.status_code != 200:
+        logger.error("editor.count_week_docs_failed", extra={"status": res.status_code, "upstream": "supabase"})
+        raise HTTPException(status_code=500, detail="Failed to check document quota")
+    return len(res.json() or [])
+
+
+async def _fetch_doc_core(user_id: str, doc_id: str) -> dict:
+    res = await supabase_repo.get(
+        "documents",
+        params={
+            "id": f"eq.{doc_id}",
+            "user_id": f"eq.{user_id}",
+            "select": "id,title,content_delta,content_html,citation_ids,updated_at,created_at",
+            "limit": 1,
+        },
+        headers=supabase_repo.headers(),
+    )
+    if res.status_code != 200:
+        logger.error("editor.get_doc_failed", extra={"status": res.status_code, "upstream": "supabase"})
+        raise HTTPException(status_code=500, detail="Failed to load document")
+    rows = res.json()
+    if not rows:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return rows[0]
+
+
+def _free_doc_toast_payload(used: int, reset_at: str) -> dict:
+    return {
+        "code": "FREE_DOC_LIMIT_REACHED",
+        "message": "Maximum of 3 active documents reached. Upgrade to remove limits.",
+        "toast": "Maximum of 3 active documents reached. Upgrade to remove limits.",
+        "quota": {
+            "used": used,
+            "limit": FREE_DOCS_PER_WEEK,
+            "reset_at": reset_at,
+        },
+    }
+
 def _doc_expiration(account_type: str) -> Optional[str]:
     if account_type in PAID_TIERS:
         return (datetime.utcnow() + timedelta(days=14)).isoformat()
@@ -170,7 +230,7 @@ async def _fetch_doc_with_fallback(user_id: str, doc_id: str) -> dict:
     params = {
         "id": f"eq.{doc_id}",
         "user_id": f"eq.{user_id}",
-        "select": "id,title,content_delta,content_html,citation_ids,updated_at",
+        "select": "id,title,content_delta,content_html,citation_ids,updated_at,created_at",
     }
     res = await supabase_repo.get(
         "documents",
@@ -183,7 +243,7 @@ async def _fetch_doc_with_fallback(user_id: str, doc_id: str) -> dict:
             params={
                 "id": f"eq.{doc_id}",
                 "user_id": f"eq.{user_id}",
-                "select": "id,title,content_delta,citation_ids,updated_at",
+                "select": "id,title,content_delta,citation_ids,updated_at,created_at",
             },
             headers=supabase_repo.headers(),
         )
@@ -246,10 +306,7 @@ async def editor_page(request: Request):
     if not user_id:
         return RedirectResponse(url="/auth", status_code=302)
 
-    account_type = await _get_account_type(request, user_id)
-    if account_type not in PAID_TIERS:
-        return RedirectResponse(url="/static/pricing.html", status_code=302)
-
+    await _get_account_type(request, user_id)
     return templates.TemplateResponse("editor.html", {"request": request})
 
 
@@ -263,9 +320,20 @@ async def editor_access(request: Request):
     if not account_type:
         account_type = await _get_account_type(request, user_id)
     normalized = normalize_account_type(account_type)
+    week_start, reset_at = current_week_window()
+    doc_quota = None
+    if normalized == FREE_TIER:
+        used = await _count_docs_in_current_week(user_id)
+        doc_quota = {
+            "used": used,
+            "limit": FREE_DOCS_PER_WEEK,
+            "reset_at": reset_at.isoformat(),
+            "window_start": week_start.isoformat(),
+        }
     return {
         "account_type": normalized,
         "is_paid": normalized in PAID_TIERS,
+        "doc_quota": doc_quota,
     }
 
 
@@ -276,10 +344,14 @@ async def create_doc(request: Request, payload: DocumentCreate):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     account_type = await _get_account_type(request, user_id)
-    if account_type not in PAID_TIERS:
-        raise HTTPException(status_code=403, detail="Editor access requires a paid tier.")
+    now = datetime.utcnow()
+    now_iso = now.isoformat()
+    if account_type == FREE_TIER:
+        used = await _count_docs_in_current_week(user_id, now)
+        if used >= FREE_DOCS_PER_WEEK:
+            _, reset_at = current_week_window()
+            raise HTTPException(status_code=403, detail=_free_doc_toast_payload(used, reset_at.isoformat()))
 
-    now_iso = datetime.utcnow().isoformat()
     insert_payload = {
         "user_id": user_id,
         "title": payload.title or "Untitled",
@@ -337,7 +409,7 @@ async def list_docs(request: Request):
         "documents",
         params={
             "user_id": f"eq.{user_id}",
-            "select": "id,title,updated_at",
+            "select": "id,title,updated_at,created_at",
             "order": "updated_at.desc",
             "or": f"(expires_at.is.null,expires_at.gt.{now_iso})",
         },
@@ -348,7 +420,15 @@ async def list_docs(request: Request):
         logger.error("editor.list_docs_failed", extra={"status": res.status_code, "upstream": "supabase"})
         raise HTTPException(status_code=500, detail="Failed to load documents")
 
-    return res.json()
+    account_type = await _get_account_type(request, user_id)
+    docs = res.json()
+    if account_type == FREE_TIER:
+        for doc in docs:
+            archived = doc_is_archived_for_free(doc.get("created_at"))
+            doc["archived"] = archived
+            doc["can_edit"] = not archived
+            doc["allowed_export_formats"] = ["pdf"]
+    return docs
 
 
 @router.get("/api/docs/{doc_id}")
@@ -357,7 +437,14 @@ async def get_doc(request: Request, doc_id: str):
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    return await _fetch_doc_with_fallback(user_id, doc_id)
+    account_type = await _get_account_type(request, user_id)
+    doc = await _fetch_doc_with_fallback(user_id, doc_id)
+    if account_type == FREE_TIER:
+        archived = doc_is_archived_for_free(doc.get("created_at"))
+        doc["archived"] = archived
+        doc["can_edit"] = not archived
+        doc["allowed_export_formats"] = ["pdf"]
+    return doc
 
 
 @router.put("/api/docs/{doc_id}")
@@ -367,8 +454,10 @@ async def update_doc(request: Request, doc_id: str, payload: DocumentUpdate):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     account_type = await _get_account_type(request, user_id)
-    if account_type not in PAID_TIERS:
-        raise HTTPException(status_code=403, detail="Editor access requires a paid tier.")
+    if account_type == FREE_TIER:
+        doc = await _fetch_doc_core(user_id, doc_id)
+        if doc_is_archived_for_free(doc.get("created_at")):
+            raise HTTPException(status_code=403, detail={"code": "DOC_ARCHIVED", "message": "This document is archived. Upgrade to restore.", "toast": "This document is archived. Upgrade to restore."})
 
     validated_citations = await _validate_citation_ids(user_id, payload.citation_ids or [])
     update_payload = {
@@ -417,7 +506,10 @@ async def create_doc_checkpoint(request: Request, doc_id: str, payload: Checkpoi
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    await _fetch_doc_with_fallback(user_id, doc_id)
+    account_type = await _get_account_type(request, user_id)
+    doc = await _fetch_doc_with_fallback(user_id, doc_id)
+    if account_type == FREE_TIER and doc_is_archived_for_free(doc.get("created_at")):
+        raise HTTPException(status_code=403, detail={"code": "DOC_ARCHIVED", "message": "This document is archived. Upgrade to restore.", "toast": "This document is archived. Upgrade to restore."})
 
     now_iso = datetime.utcnow().isoformat()
     insert_payload = {
@@ -454,6 +546,11 @@ async def restore_doc_checkpoint(request: Request, doc_id: str, payload: Restore
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+    account_type = await _get_account_type(request, user_id)
+    doc = await _fetch_doc_core(user_id, doc_id)
+    if account_type == FREE_TIER and doc_is_archived_for_free(doc.get("created_at")):
+        raise HTTPException(status_code=403, detail={"code": "DOC_ARCHIVED", "message": "This document is archived. Upgrade to restore.", "toast": "This document is archived. Upgrade to restore."})
 
     checkpoint_res = await supabase_repo.get(
         "doc_checkpoints",
@@ -505,7 +602,7 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
         params={
             "id": f"eq.{doc_id}",
             "user_id": f"eq.{user_id}",
-            "select": "title,content_delta,citation_ids",
+            "select": "title,content_delta,citation_ids,created_at",
         },
         headers=supabase_repo.headers(),
     )
@@ -518,6 +615,14 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
         raise HTTPException(status_code=404, detail="Document not found")
 
     doc = doc_data[0]
+    account_type = await _get_account_type(request, user_id)
+    export_format = (payload.format or "pdf").strip().lower()
+    archived = account_type == FREE_TIER and doc_is_archived_for_free(doc.get("created_at"))
+    if account_type == FREE_TIER and export_format not in FREE_ALLOWED_EXPORT_FORMATS:
+        raise HTTPException(status_code=403, detail={"code": "EXPORT_FORMAT_LOCKED", "message": "Free tier supports PDF export only.", "toast": "Free tier supports PDF export only."})
+    if archived and export_format != "pdf":
+        raise HTTPException(status_code=403, detail={"code": "ARCHIVED_EXPORT_RESTRICTED", "message": "Archived documents can be exported as PDF only.", "toast": "Archived documents can be exported as PDF only."})
+
     delta = doc.get("content_delta") or {}
     citation_ids = doc.get("citation_ids") or []
 
@@ -552,4 +657,6 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
         "text": text,
         "bibliography": bibliography,
         "style": payload.style,
+        "format": export_format,
+        "archived": archived,
     }

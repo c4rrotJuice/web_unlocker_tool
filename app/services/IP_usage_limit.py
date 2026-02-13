@@ -9,11 +9,8 @@ from fastapi import Request, HTTPException
 
 from app.routes.http import http_client
 from app.routes.upstash_redis import redis_get, redis_set, redis_incr, redis_expire
-from app.services.entitlements import (
-    can_use_cloudscraper,
-    has_daily_limit,
-    normalize_account_type,
-)
+from app.services.entitlements import can_use_cloudscraper, normalize_account_type
+from app.services.free_tier_gating import FREE_UNLOCKS_PER_WEEK, seconds_until_reset, week_key
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -172,8 +169,7 @@ async def check_login(request: Request, redis_get,
     if request.state.user_id:
         user_id = request.state.user_id
         account_type = normalize_account_type(request.state.account_type)
-        daily_limit = request.state.usage_limit or MAX_DAILY_USES
-        week_start = get_week_start_gmt3()
+        week_start = week_key()
 
         if await is_rate_limited_user(user_id, redis_incr, redis_expire):
             raise HTTPException(
@@ -181,7 +177,7 @@ async def check_login(request: Request, redis_get,
                 detail="⏱️ Too many requests. Please slow down.",
             )
 
-        if not has_daily_limit(account_type):
+        if account_type in {"standard", "pro"}:
             weekly_key = f"user_usage_week:{user_id}:{week_start}"
             current_weekly = int(await redis_get(weekly_key,) or 0)
             if current_weekly >= MAX_WEEKLY_USES:
@@ -200,19 +196,18 @@ async def check_login(request: Request, redis_get,
                 "reason": "Paid tier user",
             }
 
-        # Freemium user (Redis-based)
-        usage_key = f"user_usage:{user_id}:{today}"
+        usage_key = f"user_usage_week:{user_id}:{week_start}"
         current = int(await redis_get(usage_key,) or 0)
 
-        if current >= daily_limit:
+        if current >= FREE_UNLOCKS_PER_WEEK:
             raise HTTPException(
                 status_code=429,
-                detail="🚫 Daily limit reached. Upgrade to Standard.",
+                detail="🚫 Weekly limit reached. Upgrade to Standard.",
             )
 
         await redis_incr(usage_key)
         if current == 0:
-            await redis_expire(usage_key, 86400)
+            await redis_expire(usage_key, seconds_until_reset())
 
         return {
             "use_cloudscraper": can_use_cloudscraper(account_type),
@@ -227,4 +222,3 @@ async def check_login(request: Request, redis_get,
         "user_id": None,
         "reason": "Guest IP usage",
     }
-

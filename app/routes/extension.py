@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import os
 from uuid import UUID
@@ -9,10 +9,11 @@ from pydantic import BaseModel, field_validator
 
 from app.services.entitlements import normalize_account_type
 from app.services.supabase_rest import SupabaseRestRepository
-from app.services.IP_usage_limit import get_today_gmt3, get_user_ip, get_week_start_gmt3
+from app.services.IP_usage_limit import get_today_gmt3, get_user_ip
 from app.routes.citations import CitationInput, create_citation
-from app.routes.editor import _doc_expiration, _get_account_type
+from app.routes.editor import _count_docs_in_current_week, _doc_expiration, _get_account_type
 from app.routes.render import save_unlock_history
+from app.services.free_tier_gating import FREE_DOCS_PER_WEEK, FREE_UNLOCKS_PER_WEEK, current_week_window, week_key
 
 
 router = APIRouter()
@@ -70,11 +71,8 @@ class ExtensionSelectionRequest(BaseModel):
 
 
 def _get_reset_at() -> tuple[str, int]:
-    timezone = pytz.timezone("Africa/Kampala")
-    now = datetime.now(timezone)
-    week_start = datetime.strptime(get_week_start_gmt3(), "%Y-%m-%d")
-    week_start = timezone.localize(week_start)
-    reset_at = week_start + timedelta(days=7)
+    now = datetime.now(timezone.utc)
+    _, reset_at = current_week_window(now)
     ttl_seconds = max(int((reset_at - now).total_seconds()), 60)
     return reset_at.isoformat(), ttl_seconds
 
@@ -138,7 +136,7 @@ async def _enforce_anon_pair_rate_limit(request: Request, anon_usage_id: str, ip
 
 
 async def _enforce_anon_id_binding(request: Request, anon_usage_id: str, ip_hash: str) -> None:
-    bind_key = f"extension_anon_binding:{ip_hash}:{get_week_start_gmt3()}"
+    bind_key = f"extension_anon_binding:{ip_hash}:{week_key()}"
     existing_anon_id = await request.app.state.redis_get(bind_key)
     if existing_anon_id and existing_anon_id != anon_usage_id:
         raise HTTPException(status_code=429, detail="Anonymous identity mismatch for this IP.")
@@ -171,7 +169,7 @@ async def extension_unlock_permit(request: Request, payload: ExtensionPermitRequ
         await _enforce_anon_pair_rate_limit(request, anon_usage_id, ip_hash)
 
         reset_at, ttl_seconds = _get_reset_at()
-        usage_key = f"extension_usage_week:anonymous:{anon_usage_id}:{get_week_start_gmt3()}"
+        usage_key = f"extension_usage_week:anonymous:{anon_usage_id}:{week_key()}"
         usage_limit = EXTENSION_WEEKLY_LIMIT
         usage_count = int(await request.app.state.redis_get(usage_key) or 0)
 
@@ -212,8 +210,8 @@ async def extension_unlock_permit(request: Request, payload: ExtensionPermitRequ
         usage_period = "day"
     else:
         reset_at, ttl_seconds = _get_reset_at()
-        usage_key = f"extension_usage_week:{user_id}:{get_week_start_gmt3()}"
-        usage_limit = EXTENSION_WEEKLY_LIMIT
+        usage_key = f"extension_usage_week:{user_id}:{week_key()}"
+        usage_limit = FREE_UNLOCKS_PER_WEEK
 
     usage_count = int(await request.app.state.redis_get(usage_key) or 0)
 
@@ -244,8 +242,6 @@ async def extension_selection(request: Request, payload: ExtensionSelectionReque
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     account_type = await _get_account_type(request, user_id)
-    if account_type not in PAID_TIERS:
-        raise HTTPException(status_code=403, detail="Editor access requires a paid tier.")
 
     selected_text = (payload.selected_text or "").strip()
     if not selected_text:
@@ -258,6 +254,19 @@ async def extension_selection(request: Request, payload: ExtensionSelectionReque
 
     if usage_count >= EXTENSION_EDITOR_WEEKLY_LIMIT:
         raise HTTPException(status_code=429, detail="Extension editor limit reached.")
+
+    if account_type == "free":
+        used = await _count_docs_in_current_week(user_id, now)
+        if used >= FREE_DOCS_PER_WEEK:
+            _, reset_at = current_week_window()
+            return {
+                "allowed": False,
+                "reason": "doc_limit_reached",
+                "account_type": normalize_account_type(account_type),
+                "editor_url": "/editor?quota=max_docs",
+                "toast": "max documents allowed reached, please subscribe to remove restrictions",
+                "quota": {"used": used, "limit": FREE_DOCS_PER_WEEK, "reset_at": reset_at.isoformat()},
+            }
 
     citation_id = None
     if payload.citation_format:

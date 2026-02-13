@@ -113,6 +113,48 @@ body {
   color: var(--muted);
 }
 
+
+.export-dropdown {
+  position: relative;
+}
+
+.export-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 170px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(16, 24, 40, 0.12);
+  padding: 6px;
+  display: none;
+}
+
+.export-menu.open {
+  display: block;
+}
+
+.export-option {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text);
+}
+
+.export-option:hover:not(:disabled) {
+  background: #f3f6ff;
+}
+
+.export-option:disabled {
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
 #editor-toolbar {
   border: 1px solid var(--border);
   border-radius: 8px;

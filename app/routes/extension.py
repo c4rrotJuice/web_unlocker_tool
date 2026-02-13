@@ -3,23 +3,21 @@ import hashlib
 import os
 from uuid import UUID
 
-import pytz
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
 from app.services.entitlements import normalize_account_type
 from app.services.supabase_rest import SupabaseRestRepository
-from app.services.IP_usage_limit import get_today_gmt3, get_user_ip
+from app.services.IP_usage_limit import get_user_ip
 from app.routes.citations import CitationInput, create_citation
-from app.routes.editor import _count_docs_in_current_week, _doc_expiration, _get_account_type
+from app.routes.editor import _count_docs_in_window, _doc_expiration, _get_account_type, _quota_for_tier, _doc_limit_toast_payload
 from app.routes.render import save_unlock_history
-from app.services.free_tier_gating import FREE_DOCS_PER_WEEK, FREE_UNLOCKS_PER_WEEK, current_week_window, week_key
+from app.services.free_tier_gating import current_week_window, unlock_window_for_tier, week_key
 
 
 router = APIRouter()
 
 EXTENSION_WEEKLY_LIMIT = 5
-EXTENSION_DAILY_LIMIT = 5
 EXTENSION_EDITOR_WEEKLY_LIMIT = 500
 PAID_TIERS = {"standard", "pro"}
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -75,19 +73,6 @@ def _get_reset_at() -> tuple[str, int]:
     _, reset_at = current_week_window(now)
     ttl_seconds = max(int((reset_at - now).total_seconds()), 60)
     return reset_at.isoformat(), ttl_seconds
-
-
-def _get_daily_reset_at() -> tuple[str, int]:
-    timezone = pytz.timezone("Africa/Kampala")
-    now = datetime.now(timezone)
-    next_day = (now + timedelta(days=1)).replace(
-        hour=0,
-        minute=0,
-        second=0,
-        microsecond=0,
-    )
-    ttl_seconds = max(int((next_day - now).total_seconds()), 60)
-    return next_day.isoformat(), ttl_seconds
 
 
 def _iso_week_key(now: datetime) -> str:
@@ -193,7 +178,8 @@ async def extension_unlock_permit(request: Request, payload: ExtensionPermitRequ
         }
         return response_body
 
-    if account_type == "pro":
+    unlock_window = unlock_window_for_tier(account_type, user_id)
+    if unlock_window is None:
         return {
             "allowed": True,
             "remaining": -1,
@@ -203,35 +189,25 @@ async def extension_unlock_permit(request: Request, payload: ExtensionPermitRequ
             "usage_period": "unlimited",
         }
 
-    if account_type == "standard":
-        reset_at, ttl_seconds = _get_daily_reset_at()
-        usage_key = f"extension_usage_day:{user_id}:{get_today_gmt3()}"
-        usage_limit = EXTENSION_DAILY_LIMIT
-        usage_period = "day"
-    else:
-        reset_at, ttl_seconds = _get_reset_at()
-        usage_key = f"extension_usage_week:{user_id}:{week_key()}"
-        usage_limit = FREE_UNLOCKS_PER_WEEK
+    usage_count = int(await request.app.state.redis_get(unlock_window.key) or 0)
 
-    usage_count = int(await request.app.state.redis_get(usage_key) or 0)
-
-    allowed = usage_count < usage_limit
+    allowed = usage_count < unlock_window.limit
     if allowed and not payload.dry_run:
-        await request.app.state.redis_incr(usage_key)
+        await request.app.state.redis_incr(unlock_window.key)
         if usage_count == 0:
-            await request.app.state.redis_expire(usage_key, ttl_seconds)
+            await request.app.state.redis_expire(unlock_window.key, unlock_window.ttl_seconds)
         usage_count += 1
 
-    remaining = max(usage_limit - usage_count, 0)
+    remaining = max(unlock_window.limit - usage_count, 0)
     reason = "ok" if allowed else "limit_reached"
 
     return {
         "allowed": allowed,
         "remaining": remaining,
-        "reset_at": reset_at,
+        "reset_at": unlock_window.reset_at,
         "reason": reason,
         "account_type": response_account_type,
-        "usage_period": usage_period,
+        "usage_period": unlock_window.usage_period,
     }
 
 
@@ -255,17 +231,23 @@ async def extension_selection(request: Request, payload: ExtensionSelectionReque
     if usage_count >= EXTENSION_EDITOR_WEEKLY_LIMIT:
         raise HTTPException(status_code=429, detail="Extension editor limit reached.")
 
-    if account_type == "free":
-        used = await _count_docs_in_current_week(user_id, now)
-        if used >= FREE_DOCS_PER_WEEK:
-            _, reset_at = current_week_window()
+    quota = _quota_for_tier(account_type, now)
+    if quota:
+        used = await _count_docs_in_window(user_id, quota["window_start"], quota["window_end"])
+        if used >= quota["limit"]:
             return {
                 "allowed": False,
                 "reason": "doc_limit_reached",
                 "account_type": normalize_account_type(account_type),
                 "editor_url": "/editor?quota=max_docs",
-                "toast": "max documents allowed reached, please subscribe to remove restrictions",
-                "quota": {"used": used, "limit": FREE_DOCS_PER_WEEK, "reset_at": reset_at.isoformat()},
+                "toast": _doc_limit_toast_payload(account_type, used, quota["limit"], quota["reset_at"])["toast"],
+                "quota": {
+                    "used": used,
+                    "limit": quota["limit"],
+                    "reset_at": quota["reset_at"],
+                    "window_start": quota["window_start"].isoformat(),
+                    "window_end": quota["window_end"].isoformat(),
+                },
             }
 
     citation_id = None

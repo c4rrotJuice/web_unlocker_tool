@@ -449,11 +449,11 @@
       return;
     }
     if (response?.status === 429) {
-      showToast("Weekly editor limit reached.", true);
+      showToast("Editor usage limit reached.", true);
       return;
     }
     if (response?.data?.allowed === false) {
-      showToast(response?.data?.toast || "max documents allowed reached, please subscribe to remove restrictions", true);
+      showToast(response?.data?.toast || "Document limit reached for this period. Upgrade to Pro for unlimited access.", true);
       closePopup();
       return;
     }
@@ -520,8 +520,12 @@
 
     const usagePeek = await sendMessage("peek-unlock", { url });
     state.accountType = usagePeek?.data?.account_type || state.accountType || "anonymous";
-    const isFreeUser = ["free", "freemium"].includes(String(state.accountType).toLowerCase());
-    const allowedFormats = isFreeUser ? new Set(["mla", "apa"]) : new Set(["mla", "apa", "chicago", "harvard"]);
+    const normalizedTier = String(state.accountType || "").toLowerCase();
+    const isFreeUser = ["free", "freemium", "anonymous"].includes(normalizedTier);
+    const isProUser = normalizedTier === "pro";
+    const allowedFormats = isFreeUser
+      ? new Set(["mla", "apa"])
+      : new Set(["mla", "apa", "chicago", "harvard"]);
     const formats = ["mla", "apa", "chicago", "harvard"];
     const popup = document.createElement("div");
     popup.className = "web-unlocker-popup";
@@ -606,7 +610,7 @@
     customButton.className = "copy-btn";
     customButton.dataset.format = "custom";
     customButton.textContent = "Copy Custom";
-    if (isFreeUser) {
+    if (!isProUser) {
       customRow.classList.add("is-disabled");
       customButton.disabled = true;
     }

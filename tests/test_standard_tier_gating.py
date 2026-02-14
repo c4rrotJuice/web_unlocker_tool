@@ -175,6 +175,36 @@ def test_standard_archived_doc_blocks_edit_but_allows_export(monkeypatch):
     assert export_res.json()["format"] == "docx"
 
 
+def test_standard_export_file_pdf_returns_real_pdf(monkeypatch):
+    app = _build_app(monkeypatch, account_type="standard")
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/docs/doc-1/export/file?format=pdf&style=mla",
+        headers={"Authorization": "Bearer valid"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert response.content.startswith(b"%PDF")
+
+
+def test_standard_export_file_docx_returns_zip_container(monkeypatch):
+    app = _build_app(monkeypatch, account_type="standard")
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/docs/doc-1/export/file?format=docx&style=mla",
+        headers={"Authorization": "Bearer valid"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert response.content[:2] == b"PK"
+
+
 def test_pro_unlock_permit_unlimited(monkeypatch):
     app = _build_app(monkeypatch, account_type="pro")
     client = TestClient(app)

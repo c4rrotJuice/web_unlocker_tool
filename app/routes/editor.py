@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import html
 import json
 from io import BytesIO
 import os
@@ -9,6 +10,10 @@ import zipfile
 from typing import Optional
 import bleach
 import logging
+from bs4 import BeautifulSoup
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -125,6 +130,128 @@ def _delta_to_html(delta: dict) -> str:
     )
     escaped = escaped.replace("\n", "<br>")
     return f"<p>{escaped}</p>"
+
+
+def _iter_export_blocks(content_html: str, bibliography: list[str]) -> list[dict]:
+    soup = BeautifulSoup(content_html or "", "html.parser")
+    blocks: list[dict] = []
+
+    for node in soup.find_all(["h1", "h2", "h3", "p", "li", "ul", "ol", "blockquote", "pre"], recursive=True):
+        tag_name = node.name or "p"
+        if node.find_parent(["ul", "ol"]) and tag_name == "li":
+            list_type = "ol" if node.find_parent("ol") else "ul"
+            blocks.append({"type": "list_item", "list_type": list_type, "text": node.get_text("\n", strip=True)})
+            continue
+        if tag_name in {"ul", "ol", "li"}:
+            continue
+        blocks.append({"type": "paragraph", "tag": tag_name, "text": node.get_text("\n", strip=True)})
+
+    if bibliography:
+        blocks.append({"type": "paragraph", "tag": "h4", "text": "Bibliography"})
+        for entry in bibliography:
+            blocks.append({"type": "list_item", "list_type": "ul", "text": entry})
+    return blocks
+
+
+def _build_docx_bytes(content_html: str, bibliography: list[str]) -> bytes:
+    paragraphs: list[str] = []
+    for block in _iter_export_blocks(content_html, bibliography):
+        text = (block.get("text") or "").strip()
+        if not text:
+            continue
+        escaped = html.escape(text)
+        escaped = escaped.replace("\n", "</w:t><w:br/><w:t>")
+        paragraphs.append(
+            '<w:p><w:r><w:t xml:space="preserve">' + escaped + '</w:t></w:r></w:p>'
+        )
+
+    document_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" '
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+        'xmlns:o="urn:schemas-microsoft-com:office:office" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '
+        'xmlns:v="urn:schemas-microsoft-com:vml" '
+        'xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" '
+        'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+        'xmlns:w10="urn:schemas-microsoft-com:office:word" '
+        'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
+        'xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" '
+        'xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk" '
+        'xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml" '
+        'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" mc:Ignorable="w14 wp14">'
+        '<w:body>'
+        + "".join(paragraphs)
+        + '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>'
+        '</w:body></w:document>'
+    )
+
+    content_types = """<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"""
+
+    rels = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"""
+
+    output = BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types)
+        zf.writestr("_rels/.rels", rels)
+        zf.writestr("word/document.xml", document_xml)
+    return output.getvalue()
+
+
+def _build_pdf_bytes(content_html: str, bibliography: list[str], title: str) -> bytes:
+    output = BytesIO()
+    doc = SimpleDocTemplate(output, rightMargin=0.75 * inch, leftMargin=0.75 * inch, topMargin=0.75 * inch, bottomMargin=0.75 * inch)
+    styles = getSampleStyleSheet()
+    story = [Paragraph(html.escape(title or "Document"), styles["Title"]), Spacer(1, 0.2 * inch)]
+    pending_list: list[dict] = []
+
+    def flush_list() -> None:
+        nonlocal pending_list
+        if not pending_list:
+            return
+        list_items = [ListItem(Paragraph(html.escape(item["text"]), styles["Normal"])) for item in pending_list if item.get("text")]
+        if list_items:
+            bullet_type = "1" if pending_list[0].get("list_type") == "ol" else "bullet"
+            story.append(ListFlowable(list_items, bulletType=bullet_type, leftIndent=18))
+            story.append(Spacer(1, 0.1 * inch))
+        pending_list = []
+
+    for block in _iter_export_blocks(content_html, bibliography):
+        if block["type"] == "list_item":
+            pending_list.append(block)
+            continue
+
+        flush_list()
+        tag = (block.get("tag") or "p").lower()
+        text = (block.get("text") or "").strip()
+        if not text:
+            continue
+        style_name = {
+            "h1": "Heading1",
+            "h2": "Heading2",
+            "h3": "Heading3",
+            "h4": "Heading4",
+            "blockquote": "Italic",
+            "pre": "Code",
+        }.get(tag, "Normal")
+        style = styles.get(style_name, styles["Normal"])
+        text = "<br/>".join(html.escape(part) for part in text.split("\n"))
+        story.append(Paragraph(text, style))
+        story.append(Spacer(1, 0.1 * inch))
+
+    flush_list()
+    doc.build(story)
+    return output.getvalue()
 
 
 async def _get_account_type(request: Request, user_id: str) -> str:
@@ -716,6 +843,37 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
         "format": export_format,
         "archived": archived,
     }
+
+
+@router.get("/api/docs/{doc_id}/export/file")
+async def export_doc_file(request: Request, doc_id: str, format: str = "pdf", style: str = "mla"):
+    payload = ExportRequest(style=style, format=format)
+    export_data = await export_doc(request, doc_id, payload)
+
+    export_format = (format or "pdf").strip().lower()
+    title = (export_data.get("text") or "document").splitlines()[0][:80] or "document"
+    safe_title = re.sub(r"[^a-zA-Z0-9_-]+", "-", title).strip("-") or "document"
+    bibliography = export_data.get("bibliography") or []
+    content_html = export_data.get("html") or ""
+
+    if export_format == "txt":
+        text_content = export_data.get("text") or ""
+        if bibliography:
+            text_content += "\n\nBibliography\n" + "\n".join(f"- {entry}" for entry in bibliography)
+        media_type = "text/plain; charset=utf-8"
+        body = text_content.encode("utf-8")
+    elif export_format == "docx":
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        body = _build_docx_bytes(content_html, bibliography)
+    else:
+        media_type = "application/pdf"
+        body = _build_pdf_bytes(content_html, bibliography, title=title)
+
+    return StreamingResponse(
+        BytesIO(body),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{safe_title}.{export_format}"'},
+    )
 
 
 @router.get("/api/docs/export/zip")

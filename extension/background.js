@@ -423,6 +423,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               email: message.email,
               password: message.password,
               use_case: useCase,
+              user_id: data?.user?.id || null,
             }),
           });
 

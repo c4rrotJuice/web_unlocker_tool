@@ -21,6 +21,7 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str
     use_case: str
+    user_id: str | None = None
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -29,31 +30,37 @@ class LoginRequest(BaseModel):
 # Routes
 @router.post("/signup")
 async def signup(payload: SignupRequest):
+    res = None
+    if not payload.user_id:
+        try:
+            res = supabase.auth.sign_up({
+                "email": payload.email,
+                "password": payload.password
+            })
+        except AuthApiError as exc:
+            raise HTTPException(status_code=400, detail=exc.message)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    user_id = payload.user_id
+    if not user_id:
+        user = res.user
+        if not user:
+            raise HTTPException(status_code=500, detail="Signup succeeded but user not returned.")
+        user_id = user.id
+
     try:
-        res = supabase.auth.sign_up({
-            "email": payload.email,
-            "password": payload.password
-        })
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        supabase.table("user_meta").upsert({
+            "user_id": user_id,
+            "name": payload.name,
+            "use_case": payload.use_case,
+            "account_type": "free",
+            "daily_limit": 5
+        }, on_conflict="user_id").execute()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to save metadata.") from exc
 
-    user = res.user
-    if not user:
-        raise HTTPException(status_code=500, detail="Signup succeeded but user not returned.")
-
-    insert_res = supabase.table("user_meta").insert({
-        "user_id": user.id,
-        "name": payload.name,
-        "use_case": payload.use_case,
-        "account_type": "free",
-        "daily_limit": 5
-    }).execute()
     return {"message": "Signup successful. Please check your email to confirm."}
-
-    if insert_res.error:
-        raise HTTPException(status_code=500, detail="Failed to save metadata.")
-
-    return {"message": "Signup successful"}
 
 @router.post("/login")
 async def login(payload: LoginRequest, response: Response):
@@ -89,4 +96,3 @@ async def login(payload: LoginRequest, response: Response):
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-

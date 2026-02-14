@@ -333,10 +333,7 @@ function startEditor() {
         exportDocBtn.addEventListener("click", async (event) => {
           event.stopPropagation();
           if (!enabled) return;
-          const exported = await exportDocumentById(doc.id, format);
-          if (exported) {
-            downloadExport(doc, exported, format);
-          }
+          await downloadExportFile(doc, format);
         });
         formatActions.appendChild(exportDocBtn);
       });
@@ -1027,8 +1024,27 @@ function startEditor() {
     return [data.text || "", bibliography ? `\n\nBibliography\n${bibliography}` : ""].join("");
   }
 
-  function triggerFileDownload(filename, mimeType, content) {
-    const blob = new Blob([content], { type: mimeType });
+  async function downloadExportFile(doc, format) {
+    const res = await authFetch(
+      `/api/docs/${doc.id}/export/file?format=${encodeURIComponent(format)}&style=${encodeURIComponent(exportStyle.value)}`,
+      { method: "GET" }
+    );
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      toast?.show({ type: "error", message: err?.detail?.toast || err?.detail?.message || "Export failed." });
+      return;
+    }
+
+    const blob = await res.blob();
+    const contentDisposition = res.headers.get("content-disposition") || "";
+    const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+    const safeTitle = (doc?.title || "document")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "") || "document";
+
+    const filename = filenameMatch?.[1] || `${safeTitle}.${format}`;
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -1037,28 +1053,6 @@ function startEditor() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-  }
-
-  function downloadExport(doc, data, format) {
-    const safeTitle = (doc?.title || "document")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "") || "document";
-
-    const exportTextContent = buildExportText(data);
-    if (format === "txt") {
-      triggerFileDownload(`${safeTitle}.txt`, "text/plain;charset=utf-8", exportTextContent);
-      return;
-    }
-
-    if (format === "docx") {
-      const docxContent = `${data.html || ""}<hr /><h4>Bibliography</h4><ul>${(data.bibliography || []).map((entry) => `<li>${entry}</li>`).join("")}</ul>`;
-      triggerFileDownload(`${safeTitle}.docx`, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docxContent);
-      return;
-    }
-
-    const pdfLikeContent = `<!doctype html><html><head><meta charset=\"utf-8\"><title>${doc?.title || "Document"}</title></head><body>${data.html || ""}<h4>Bibliography</h4><ul>${(data.bibliography || []).map((entry) => `<li>${entry}</li>`).join("")}</ul></body></html>`;
-    triggerFileDownload(`${safeTitle}.pdf`, "application/pdf", pdfLikeContent);
   }
 
   exportBtn.addEventListener("click", async () => {

@@ -109,6 +109,16 @@ function startEditor() {
     return (window.__editorAccess?.account_type || "").toLowerCase() === "pro";
   }
 
+  function accountTier() {
+    return (window.__editorAccess?.account_type || "free").toLowerCase();
+  }
+
+  function allowedFormatsForTier(tier = accountTier()) {
+    if (tier === "pro") return ["pdf", "docx", "txt"];
+    if (tier === "standard") return ["pdf", "docx"];
+    return ["pdf"];
+  }
+
   function renderFreeQuota() {
     if (proBadge) {
       proBadge.classList.toggle("hidden", !isProTier());
@@ -310,14 +320,27 @@ function startEditor() {
       const actions = document.createElement("div");
       actions.className = "doc-actions";
 
-      const exportDocBtn = document.createElement("button");
-      exportDocBtn.className = "secondary";
-      exportDocBtn.textContent = "Export PDF";
-      exportDocBtn.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        await exportDocumentById(doc.id, "pdf");
+      const formatActions = document.createElement("div");
+      formatActions.className = "doc-export-actions";
+      const unlockedFormats = new Set((doc.allowed_export_formats || allowedFormatsForTier()).map((fmt) => (fmt || "").toLowerCase()));
+      ["pdf", "docx", "txt"].forEach((format) => {
+        const exportDocBtn = document.createElement("button");
+        exportDocBtn.className = "secondary doc-export-btn";
+        exportDocBtn.textContent = format.toUpperCase();
+        const enabled = unlockedFormats.has(format);
+        exportDocBtn.disabled = !enabled;
+        exportDocBtn.classList.toggle("is-disabled", !enabled);
+        exportDocBtn.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          if (!enabled) return;
+          const exported = await exportDocumentById(doc.id, format);
+          if (exported) {
+            downloadExport(doc, exported, format);
+          }
+        });
+        formatActions.appendChild(exportDocBtn);
       });
-      actions.appendChild(exportDocBtn);
+      actions.appendChild(formatActions);
 
       if (isProTier()) {
         const deleteBtn = document.createElement("button");
@@ -997,6 +1020,45 @@ function startEditor() {
     });
     exportModal.classList.add("open");
     return data;
+  }
+
+  function buildExportText(data) {
+    const bibliography = (data.bibliography || []).map((entry) => `- ${entry}`).join("\n");
+    return [data.text || "", bibliography ? `\n\nBibliography\n${bibliography}` : ""].join("");
+  }
+
+  function triggerFileDownload(filename, mimeType, content) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  function downloadExport(doc, data, format) {
+    const safeTitle = (doc?.title || "document")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "") || "document";
+
+    const exportTextContent = buildExportText(data);
+    if (format === "txt") {
+      triggerFileDownload(`${safeTitle}.txt`, "text/plain;charset=utf-8", exportTextContent);
+      return;
+    }
+
+    if (format === "docx") {
+      const docxContent = `${data.html || ""}<hr /><h4>Bibliography</h4><ul>${(data.bibliography || []).map((entry) => `<li>${entry}</li>`).join("")}</ul>`;
+      triggerFileDownload(`${safeTitle}.docx`, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docxContent);
+      return;
+    }
+
+    const pdfLikeContent = `<!doctype html><html><head><meta charset=\"utf-8\"><title>${doc?.title || "Document"}</title></head><body>${data.html || ""}<h4>Bibliography</h4><ul>${(data.bibliography || []).map((entry) => `<li>${entry}</li>`).join("")}</ul></body></html>`;
+    triggerFileDownload(`${safeTitle}.pdf`, "application/pdf", pdfLikeContent);
   }
 
   exportBtn.addEventListener("click", async () => {

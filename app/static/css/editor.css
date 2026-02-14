@@ -363,6 +363,25 @@ button.text {
   gap: 8px;
 }
 
+
+.doc-export-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.doc-export-btn {
+  min-width: 56px;
+  padding: 6px 10px;
+}
+
+.doc-export-btn.is-disabled,
+.doc-export-btn:disabled {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
 .doc-delete-btn {
   color: #b42318;
   font-weight: 700;

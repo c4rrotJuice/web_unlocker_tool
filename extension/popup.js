@@ -432,9 +432,9 @@ openEditorButton.addEventListener("click", async () => {
   setStatus("Opening editor…");
   const sessionState = await sendMessage("get-session");
   const accountType = sessionState?.usage?.account_type;
-  if (accountType === "freemium" || accountType === "anonymous") {
-    showToast("Editor usage is a paid feature. Please upgrade your plan.", true);
-    setStatus("Upgrade required for editor access.", true);
+  if (accountType === "anonymous") {
+    showToast("Please sign in to use the editor.", true);
+    setStatus("Sign in required for editor access.", true);
     return;
   }
 

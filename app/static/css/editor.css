@@ -1,11 +1,11 @@
 :root {
-  --bg: #f6f7fb;
-  --panel: #ffffff;
-  --border: #e0e4ef;
-  --text: #1d1f2b;
-  --muted: #6c7185;
-  --accent: #2563eb;
-  --accent-light: #e8efff;
+  --bg: var(--wu-bg);
+  --panel: var(--wu-surface-1);
+  --border: var(--wu-border);
+  --text: var(--wu-text);
+  --muted: var(--wu-text-muted);
+  --accent: var(--wu-accent);
+  --accent-light: var(--wu-surface-inset);
 }
 
 * {
@@ -138,7 +138,7 @@ body {
   padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #f9faff;
+  background: var(--wu-surface-2);
   cursor: pointer;
 }
 
@@ -166,7 +166,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .citation-card.selected {
@@ -195,7 +195,7 @@ select {
 
 button {
   border: 1px solid var(--border);
-  background: #fff;
+  background: var(--panel);
   padding: 8px 12px;
   border-radius: 8px;
   cursor: pointer;
@@ -209,8 +209,8 @@ button.primary {
 }
 
 button.secondary {
-  background: #f1f4ff;
-  border-color: #d6dfff;
+  background: var(--wu-surface-inset);
+  border-color: var(--wu-border);
   color: var(--accent);
 }
 
@@ -235,7 +235,7 @@ button.text {
 }
 
 .modal-content {
-  background: #fff;
+  background: var(--panel);
   border-radius: 12px;
   padding: 20px;
   width: min(780px, 100%);
@@ -254,7 +254,7 @@ button.text {
 }
 
 .export-section pre {
-  background: #f6f7fb;
+  background: var(--wu-surface-inset);
   padding: 12px;
   border-radius: 8px;
   white-space: pre-wrap;
@@ -284,7 +284,7 @@ button.text {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px;
-  background: #fbfcff;
+  background: var(--wu-surface-2);
 }
 
 .panel-header {
@@ -316,7 +316,7 @@ button.text {
 .outline-item {
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
   text-align: left;
   width: 100%;
   padding: 6px 10px;
@@ -339,7 +339,7 @@ button.text {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .empty-state {
@@ -376,13 +376,13 @@ button.text {
 
 .doc-export-btn.is-disabled,
 .doc-export-btn:disabled {
-  background: #f3f4f6;
-  border-color: #d1d5db;
-  color: #9ca3af;
+  background: var(--wu-surface-inset);
+  border-color: var(--wu-border);
+  color: var(--wu-text-muted);
   cursor: not-allowed;
 }
 
 .doc-delete-btn {
-  color: #b42318;
+  color: #b91c1c;
   font-weight: 700;
 }

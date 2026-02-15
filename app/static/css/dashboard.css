@@ -1,13 +1,13 @@
  body {
       margin: 0;
       font-family: 'Inter', sans-serif;
-      background-color: #d7e7f7;
-      color: #1E293B;
+      background-color: var(--wu-bg);
+      color: var(--wu-text);
     }
 
     header.dashboard-header {
-      background-color: #1E293B;
-      color: #fff;
+      background-color: var(--wu-text);
+      color: var(--wu-accent-contrast);
       padding: 20px;
       text-align: center;
     }
@@ -16,7 +16,7 @@
       max-width: 95vw;
       margin: 30px auto;
       padding: 20px;
-      background: #ffffff;
+      background: var(--wu-surface-1);
       border-radius: 12px;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     }
@@ -27,14 +27,14 @@
 
     h2 {
       margin-bottom: 10px;
-      color: #334155;
+      color: var(--wu-text-subtle);
     }
 
     .profile-box {
       display: flex;
       justify-content: space-between;
       flex-wrap: wrap;
-      background: #f1f5f9;
+      background: var(--wu-surface-inset);
       padding: 15px;
       border-radius: 8px;
     }
@@ -53,13 +53,13 @@
       flex: 1;
       padding: 12px;
       border-radius: 6px;
-      border: 1px solid #cbd5e1;
+      border: 1px solid var(--wu-border);
       font-size: 16px;
     }
 
     button {
-      background-color: #4f46e5;
-      color: #fff;
+      background-color: var(--wu-accent);
+      color: var(--wu-accent-contrast);
       padding: 12px 20px;
       border: none;
       border-radius: 6px;
@@ -69,7 +69,7 @@
     }
 
     button:hover {
-      background-color: #4338ca;
+      background-color: #1d4ed8;
     }
 
     .history-list {
@@ -79,14 +79,14 @@
 
     .history-list li {
       padding: 10px;
-      border-bottom: 1px solid #e2e8f0;
+      border-bottom: 1px solid var(--wu-border);
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
 
     .badge {
-      background: #94a3b8;
+      background: var(--wu-text-muted);
       color: white;
       font-size: 12px;
       padding: 3px 8px;
@@ -104,7 +104,7 @@
     footer {
       margin-top: 40px;
       text-align: center;
-      color: #64748b;
+      color: var(--wu-text-subtle);
       font-size: 14px;
     }
 
@@ -126,7 +126,7 @@
 }
 
 .history-column {
-  background: #f9fafb;
+  background: var(--wu-surface-2);
   padding: 20px;
   border-radius: 12px;
   box-shadow: 0 0 8px rgba(0, 0, 0, 0.04);
@@ -148,22 +148,22 @@
   display: flex;
   justify-content: space-between;
   padding: 8px 0;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--wu-border);
 }
 
 .badge {
-  background: #cbd5e1;
+  background: var(--wu-surface-inset);
   border-radius: 6px;
   padding: 2px 8px;
   font-size: 0.8em;
-  color: #1e293b;
+  color: var(--wu-text);
 }
 
 
 .citation-item {
   position: relative;
   padding: 10px 0;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--wu-border);
   cursor: pointer;
 }
 
@@ -178,8 +178,8 @@
   top: 100%;
   left: 0;
   z-index: 10;
-  background-color: #ffffff;
-  border: 1px solid #cbd5e1;
+  background-color: var(--wu-surface-1);
+  border: 1px solid var(--wu-border);
   padding: 15px;
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
@@ -195,12 +195,12 @@
 .citation-modal p {
   margin: 0 0 10px;
   font-size: 14px;
-  color: #1e293b;
+  color: var(--wu-text);
 }
 
 .copy-button {
-  background-color: #4f46e5;
-  color: #fff;
+  background-color: var(--wu-accent);
+  color: var(--wu-accent-contrast);
   padding: 6px 12px;
   font-size: 14px;
   border: none;
@@ -209,7 +209,7 @@
 }
 
 .copy-button:hover {
-  background-color: #4338ca;
+  background-color: #1d4ed8;
 }
 
 @keyframes fadeIn {
@@ -228,20 +228,20 @@
 }
 
 .support-slot {
-  background-color: #f1f5f9;
-  border: 1px solid #cbd5e1;
+  background-color: var(--wu-surface-inset);
+  border: 1px solid var(--wu-border);
   border-radius: 10px;
   padding: 15px;
   margin: 25px 0;
   text-align: center;
   position: relative;
   font-size: 14px;
-  color: #334155;
+  color: var(--wu-text-subtle);
 }
 
 .funding-message .fallback {
   font-style: italic;
-  color: #64748b;
+  color: var(--wu-text-subtle);
   font-size: 13px;
   margin: 0;
 }
@@ -257,7 +257,7 @@
 
 
 .card {
-  background: white;
+  background: var(--wu-surface-1);
   padding: 16px;
   border-radius: 8px;
   margin-bottom: 16px;
@@ -284,7 +284,7 @@
 }
 
 .btn-upgrade {
-  background: #2563eb;
+  background: var(--wu-accent);
   color: white;
   border: none;
   padding: 8px 12px;
@@ -293,7 +293,7 @@
 }
 
 .btn-disabled {
-  background: gray;
+  background: var(--wu-text-muted);
   color: white;
   border: none;
   padding: 8px 12px;
@@ -336,7 +336,7 @@
 
 .momentum-card .momentum-unit {
   font-size: 0.95rem;
-  color: #6b7280;
+  color: var(--wu-text-muted);
 }
 
 .momentum-card .momentum-subtext {
@@ -346,40 +346,40 @@
 
 .momentum-card .momentum-all-time {
   display: block;
-  color: #6b7280;
+  color: var(--wu-text-muted);
   margin-top: 0.2rem;
 }
 
 .momentum-card .momentum-microcopy {
   font-size: 0.9rem;
-  color: #2563eb;
+  color: var(--wu-accent);
   margin-bottom: 0.4rem;
 }
 
 .momentum-card .momentum-milestone {
   font-size: 0.85rem;
-  color: #16a34a;
+  color: var(--wu-success);
   margin: 0;
 }
 
 .report-card .report-subtext {
-  color: #6b7280;
+  color: var(--wu-text-muted);
   margin-bottom: 0.6rem;
 }
 
 .report-card .status-text {
   font-size: 0.85rem;
-  color: #6b7280;
+  color: var(--wu-text-muted);
   margin-top: 0.5rem;
 }
 
 
 /* Optional: Make Pro Teaser card stand out a bit */
 .pro-teaser {
-  background: #f3f4f6;
+  background: var(--wu-surface-2);
 }
 .dashboard-card {
-  background: white;
+  background: var(--wu-surface-1);
   border-radius: 8px;
   padding: 1em;
   margin-bottom: 1.5em;
@@ -388,7 +388,7 @@
 
 .locked-msg {
   font-size: 0.9em;
-  color: #888;
+  color: var(--wu-text-muted);
   margin-top: 0.5em;
 }
 
@@ -401,7 +401,7 @@
   padding: 0.5em;
   margin-bottom: 1em;
   width: 100%;
-  border: 1px solid #ccc;
+  border: 1px solid var(--wu-border);
   border-radius: 4px;
 }
 
@@ -412,8 +412,8 @@
 }
 
 #bookmark-list li {
-  background: #1e1e1e; /* dark mode card */
-  color: #fff;
+  background: var(--wu-surface-inset);
+  color: var(--wu-text);
   border-radius: 8px;
   padding: 10px 14px;
   margin-bottom: 8px;
@@ -425,12 +425,12 @@
 }
 
 #bookmark-list li:hover {
-  background: #2a2a2a;
+  background: var(--wu-surface-2);
 }
 
 #bookmark-list .bookmark-link {
   cursor: pointer;
-  color: #4cc3ff;
+  color: var(--wu-accent);
   text-decoration: none;
   font-weight: 500;
 }
@@ -442,19 +442,19 @@
 #bookmark-list .remove-bookmark {
   background: none;
   border: none;
-  color: #ff6b6b;
+  color: #ef4444;
   font-size: 1.1rem;
   cursor: pointer;
   transition: color 0.2s ease;
 }
 
 #bookmark-list .remove-bookmark:hover {
-  color: #ff4c4c;
+  color: #dc2626;
 }
 
 #bookmark-status {
   font-size: 0.9rem;
-  color: #ccc;
+  color: var(--wu-text-muted);
   margin-top: 5px;
 }
 
@@ -491,13 +491,13 @@
 
 #history-list::-webkit-scrollbar-thumb,
 #bookmark-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
+  background: color-mix(in srgb, var(--wu-text) 20%, transparent);
   border-radius: 4px;
 }
 
 #history-list::-webkit-scrollbar-thumb:hover,
 #bookmark-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.4);
+  background: color-mix(in srgb, var(--wu-text) 35%, transparent);
 }
 
 /*==========================pro list syling=================*/
@@ -505,13 +505,13 @@
 
 /* Each history item */
 #history-list li {
-  background: rgba(7, 7, 7, 1); /* subtle background */
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--wu-surface-inset);
+  border: 1px solid var(--wu-border);
   padding: 0.6rem 0.8rem;
   margin-bottom: 0.5rem;
   border-radius: 8px;
   font-size: 0.95rem;
-  color: #f5f5f5;
+  color: var(--wu-text);
   display: flex;
   justify-content: space-between; /* if you later add buttons/icons */
   align-items: left;
@@ -520,7 +520,7 @@
 
 /* Hover effect */
 #history-list li:hover {
-  background: rgba(101, 129, 134, 1);
+  background: var(--wu-surface-2);
   transform: translateY(-1px);
 }
 

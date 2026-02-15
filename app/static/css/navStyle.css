@@ -6,7 +6,7 @@
   width: 90%;
   max-width: 1200px;
   height: fit-content;
-  background: white;
+  background: var(--wu-nav-bg);
   border-radius: 20px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
   z-index: 1000;
@@ -32,7 +32,7 @@
 
 .nav-links li a {
   text-decoration: none;
-  color: black;
+  color: var(--wu-nav-text);
   font-size: 15px;
   padding: 8px 12px;
   border-radius: 4px;
@@ -40,11 +40,12 @@
 }
 
 .nav-links li a:hover {
-  background: #f7f7f7;
+  background: var(--wu-nav-hover);
 }
 
 .nav-links li a.active {
-  background: #ffc107;
+  background: var(--wu-nav-active-bg);
+  color: var(--wu-nav-active-text);
   font-weight: bold;
 }
 
@@ -55,16 +56,16 @@
 
 .btn {
   padding: 8px 16px;
-  border: 1px solid black;
+  border: 1px solid var(--wu-nav-text);
   border-radius: 20px;
   text-decoration: none;
-  color: black;
+  color: var(--wu-nav-text);
   transition: 0.3s;
 }
 
 .btn:hover {
-  background: black;
-  color: white;
+  background: var(--wu-nav-text);
+  color: var(--wu-accent-contrast);
 }
 
 body.has-navbar {

@@ -205,6 +205,59 @@ def test_standard_export_file_docx_returns_zip_container(monkeypatch):
     assert response.content[:2] == b"PK"
 
 
+
+
+def test_standard_export_file_uses_document_title_for_filename(monkeypatch):
+    app = _build_app(monkeypatch, account_type="standard")
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/docs/doc-1/export/file?format=pdf&style=mla",
+        headers={"Authorization": "Bearer valid"},
+    )
+
+    assert response.status_code == 200
+    assert 'filename="Doc.pdf"' in response.headers["content-disposition"]
+
+
+def test_standard_export_file_docx_preserves_inline_formatting(monkeypatch):
+    app = _build_app(monkeypatch, account_type="standard")
+    from app.routes import editor
+
+    class RichDocRepo(DummyRepo):
+        async def get(self, *args, **kwargs):
+            return DummyResp(
+                200,
+                [
+                    {
+                        "title": "Rich Doc",
+                        "content_delta": {"ops": [{"insert": "Bold Italic\n"}]},
+                        "content_html": "<p><strong>Bold</strong> <em>Italic</em></p>",
+                        "citation_ids": [],
+                        "created_at": "2020-01-01T00:00:00+00:00",
+                    }
+                ],
+            )
+
+    editor.supabase_repo = RichDocRepo()
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/docs/doc-1/export/file?format=docx&style=mla",
+        headers={"Authorization": "Bearer valid"},
+    )
+
+    assert response.status_code == 200
+
+    import zipfile
+    from io import BytesIO
+
+    with zipfile.ZipFile(BytesIO(response.content)) as archive:
+        document_xml = archive.read("word/document.xml").decode("utf-8")
+
+    assert "<w:b/>" in document_xml
+    assert "<w:i/>" in document_xml
+
 def test_pro_unlock_permit_unlimited(monkeypatch):
     app = _build_app(monkeypatch, account_type="pro")
     client = TestClient(app)

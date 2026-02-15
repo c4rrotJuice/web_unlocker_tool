@@ -93,6 +93,10 @@ def _sanitize_html(html: str) -> str:
             "blockquote",
             "pre",
             "code",
+            "strong",
+            "em",
+            "u",
+            "s",
         }
     )
     allowed_attributes = {
@@ -100,6 +104,7 @@ def _sanitize_html(html: str) -> str:
         "a": ["href", "title", "rel"],
         "span": ["class"],
         "p": ["class"],
+        "ol": ["start"],
     }
     cleaned = bleach.clean(
         html,
@@ -132,6 +137,54 @@ def _delta_to_html(delta: dict) -> str:
     return f"<p>{escaped}</p>"
 
 
+def _inline_html_to_docx_runs(node) -> str:
+    runs: list[str] = []
+
+    for child in getattr(node, "children", []):
+        if getattr(child, "name", None) is None:
+            text = str(child)
+            if not text:
+                continue
+            escaped = html.escape(text)
+            escaped = escaped.replace("\n", "</w:t><w:br/><w:t>")
+            runs.append(f'<w:r><w:t xml:space="preserve">{escaped}</w:t></w:r>')
+            continue
+
+        tag = (child.name or "").lower()
+        if tag == "br":
+            runs.append("<w:r><w:br/></w:r>")
+            continue
+
+        nested_runs = _inline_html_to_docx_runs(child)
+        if not nested_runs:
+            continue
+
+        is_bold = tag in {"strong", "b"}
+        is_italic = tag in {"em", "i"}
+        is_underline = tag == "u"
+        is_strike = tag in {"s", "strike"}
+        is_code = tag == "code"
+
+        if any([is_bold, is_italic, is_underline, is_strike, is_code]):
+            rpr = "<w:rPr>"
+            if is_bold:
+                rpr += "<w:b/>"
+            if is_italic:
+                rpr += "<w:i/>"
+            if is_underline:
+                rpr += '<w:u w:val="single"/>'
+            if is_strike:
+                rpr += "<w:strike/>"
+            if is_code:
+                rpr += '<w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/>'
+            rpr += "</w:rPr>"
+            nested_runs = re.sub(r"<w:r>(.*?)</w:r>", fr"<w:r>{rpr}\\1</w:r>", nested_runs, flags=re.S)
+
+        runs.append(nested_runs)
+
+    return "".join(runs)
+
+
 def _iter_export_blocks(content_html: str, bibliography: list[str]) -> list[dict]:
     soup = BeautifulSoup(content_html or "", "html.parser")
     blocks: list[dict] = []
@@ -140,11 +193,11 @@ def _iter_export_blocks(content_html: str, bibliography: list[str]) -> list[dict
         tag_name = node.name or "p"
         if node.find_parent(["ul", "ol"]) and tag_name == "li":
             list_type = "ol" if node.find_parent("ol") else "ul"
-            blocks.append({"type": "list_item", "list_type": list_type, "text": node.get_text("\n", strip=True)})
+            blocks.append({"type": "list_item", "list_type": list_type, "text": node.get_text("\n", strip=True), "html": "".join(str(child) for child in node.contents)})
             continue
         if tag_name in {"ul", "ol", "li"}:
             continue
-        blocks.append({"type": "paragraph", "tag": tag_name, "text": node.get_text("\n", strip=True)})
+        blocks.append({"type": "paragraph", "tag": tag_name, "text": node.get_text("\n", strip=True), "html": "".join(str(child) for child in node.contents)})
 
     if bibliography:
         blocks.append({"type": "paragraph", "tag": "h4", "text": "Bibliography"})
@@ -156,14 +209,23 @@ def _iter_export_blocks(content_html: str, bibliography: list[str]) -> list[dict
 def _build_docx_bytes(content_html: str, bibliography: list[str]) -> bytes:
     paragraphs: list[str] = []
     for block in _iter_export_blocks(content_html, bibliography):
-        text = (block.get("text") or "").strip()
-        if not text:
+        if block.get("type") == "list_item":
+            list_prefix = "1. " if block.get("list_type") == "ol" else "• "
+            item_html = f"{html.escape(list_prefix)}{block.get('html') or ''}"
+            soup = BeautifulSoup(f"<p>{item_html}</p>", "html.parser")
+            run_xml = _inline_html_to_docx_runs(soup.p)
+            if run_xml:
+                paragraphs.append(f"<w:p>{run_xml}</w:p>")
             continue
-        escaped = html.escape(text)
-        escaped = escaped.replace("\n", "</w:t><w:br/><w:t>")
-        paragraphs.append(
-            '<w:p><w:r><w:t xml:space="preserve">' + escaped + '</w:t></w:r></w:p>'
-        )
+
+        block_html = block.get("html") or ""
+        if not (block_html or block.get("text")):
+            continue
+        soup = BeautifulSoup(f"<p>{block_html}</p>", "html.parser")
+        run_xml = _inline_html_to_docx_runs(soup.p)
+        if not run_xml:
+            continue
+        paragraphs.append(f"<w:p>{run_xml}</w:p>")
 
     document_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -219,7 +281,7 @@ def _build_pdf_bytes(content_html: str, bibliography: list[str], title: str) -> 
         nonlocal pending_list
         if not pending_list:
             return
-        list_items = [ListItem(Paragraph(html.escape(item["text"]), styles["Normal"])) for item in pending_list if item.get("text")]
+        list_items = [ListItem(Paragraph(item.get("html") or html.escape(item["text"]), styles["Normal"])) for item in pending_list if item.get("text")]
         if list_items:
             bullet_type = "1" if pending_list[0].get("list_type") == "ol" else "bullet"
             story.append(ListFlowable(list_items, bulletType=bullet_type, leftIndent=18))
@@ -245,8 +307,8 @@ def _build_pdf_bytes(content_html: str, bibliography: list[str], title: str) -> 
             "pre": "Code",
         }.get(tag, "Normal")
         style = styles.get(style_name, styles["Normal"])
-        text = "<br/>".join(html.escape(part) for part in text.split("\n"))
-        story.append(Paragraph(text, style))
+        paragraph_html = (block.get("html") or "").strip() or "<br/>".join(html.escape(part) for part in text.split("\n"))
+        story.append(Paragraph(paragraph_html, style))
         story.append(Spacer(1, 0.1 * inch))
 
     flush_list()
@@ -786,7 +848,7 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
         params={
             "id": f"eq.{doc_id}",
             "user_id": f"eq.{user_id}",
-            "select": "title,content_delta,citation_ids,created_at",
+            "select": "title,content_delta,content_html,citation_ids,created_at",
         },
         headers=supabase_repo.headers(),
     )
@@ -809,7 +871,7 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
     delta = doc.get("content_delta") or {}
     citation_ids = doc.get("citation_ids") or []
 
-    raw_html = _delta_to_html(delta)
+    raw_html = doc.get("content_html") or _delta_to_html(delta)
     html = _sanitize_html(raw_html)
     text = _delta_to_text(delta)
 
@@ -836,6 +898,7 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
                     bibliography.append(full_text)
 
     return {
+        "title": doc.get("title") or "Untitled",
         "html": html,
         "text": text,
         "bibliography": bibliography,
@@ -851,7 +914,7 @@ async def export_doc_file(request: Request, doc_id: str, format: str = "pdf", st
     export_data = await export_doc(request, doc_id, payload)
 
     export_format = (format or "pdf").strip().lower()
-    title = (export_data.get("text") or "document").splitlines()[0][:80] or "document"
+    title = (export_data.get("title") or "document")[:80] or "document"
     safe_title = re.sub(r"[^a-zA-Z0-9_-]+", "-", title).strip("-") or "document"
     bibliography = export_data.get("bibliography") or []
     content_html = export_data.get("html") or ""

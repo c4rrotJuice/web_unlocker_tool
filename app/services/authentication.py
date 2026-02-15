@@ -27,6 +27,36 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
+
+def _sync_user_meta(user_id: str, payload: SignupRequest) -> None:
+    metadata = {
+        "name": payload.name,
+        "use_case": payload.use_case,
+        "account_type": "free",
+        "daily_limit": 5,
+        "requests_today": 0,
+    }
+
+    existing = (
+        supabase.table("user_meta")
+        .select("id")
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+
+    existing_rows = existing.data if isinstance(existing.data, list) else []
+    if existing_rows:
+        existing_id = existing_rows[0].get("id")
+        update_query = supabase.table("user_meta").update(metadata)
+        if existing_id:
+            update_query.eq("id", existing_id).execute()
+        else:
+            update_query.eq("user_id", user_id).execute()
+        return
+
+    supabase.table("user_meta").insert({"user_id": user_id, **metadata}).execute()
+
 # Routes
 @router.post("/signup")
 async def signup(payload: SignupRequest):
@@ -50,13 +80,7 @@ async def signup(payload: SignupRequest):
         user_id = user.id
 
     try:
-        supabase.table("user_meta").upsert({
-            "user_id": user_id,
-            "name": payload.name,
-            "use_case": payload.use_case,
-            "account_type": "free",
-            "daily_limit": 5
-        }, on_conflict="user_id").execute()
+        _sync_user_meta(user_id=user_id, payload=payload)
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Failed to save metadata.") from exc
 

@@ -7,11 +7,27 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Cite Unlocker Pricing</title>
+    <script>
+    (function () {
+      var key = "web_unlocker_theme";
+      var mode = "system";
+      try {
+        var stored = localStorage.getItem(key);
+        if (stored === "light" || stored === "dark" || stored === "system") mode = stored;
+      } catch (_e) {}
+      var dark = mode === "dark" || (mode === "system" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.classList.toggle("dark", !!dark);
+      document.documentElement.dataset.themeMode = mode;
+      document.documentElement.style.colorScheme = dark ? "dark" : "light";
+    })();
+  </script>
     <script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="/static/js/auth.js"></script>
+    <script src="/static/js/theme.js"></script>
     <link rel="stylesheet" href="./css/pricing.css" />
-  </head>
+    <link rel="stylesheet" href="/static/css/theme.css" />
+</head>
 
   <body>
     <header class="navbar">
@@ -33,6 +49,7 @@
               >
             </li>
             <li><a href="https://citeunlock.choneize.com/blog">Blog</a></li>
+            <li><a href="/auth" id="authButton">Sign in/Up</a></li>
           </ul>
         </nav>
 
@@ -398,5 +415,6 @@
         })();
       }
     </script>
+      <script src="/static/js/nav.js"></script>
   </body>
 </html>

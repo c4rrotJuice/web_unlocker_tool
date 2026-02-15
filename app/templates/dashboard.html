@@ -7,6 +7,21 @@
   <link rel="stylesheet" href="/static/css/style.css">
   <link rel="stylesheet" href="/static/css/navStyle.css">
   <title>Cite Unlocker Dashboard</title>
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <script>
+    (function () {
+      var key = "web_unlocker_theme";
+      var mode = "system";
+      try {
+        var stored = localStorage.getItem(key);
+        if (stored === "light" || stored === "dark" || stored === "system") mode = stored;
+      } catch (_e) {}
+      var dark = mode === "dark" || (mode === "system" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.classList.toggle("dark", !!dark);
+      document.documentElement.dataset.themeMode = mode;
+      document.documentElement.style.colorScheme = dark ? "dark" : "light";
+    })();
+  </script>
 </head>
 <body class="has-navbar">
 
@@ -197,6 +212,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/static/js/ui_feedback.js"></script>
 <script src="/static/js/auth.js"></script>
+<script src="/static/js/theme.js"></script>
 <script>
 
 

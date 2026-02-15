@@ -1,0 +1,90 @@
+:root {
+  --wu-bg: #d7e7f7;
+  --wu-bg-elevated: #ffffff;
+  --wu-bg-soft: #f1f5f9;
+  --wu-text: #1e293b;
+  --wu-text-muted: #64748b;
+  --wu-border: #cbd5e1;
+  --wu-nav-bg: #ffffff;
+  --wu-nav-text: #000000;
+  --wu-nav-hover: #f7f7f7;
+}
+
+html.dark {
+  --wu-bg: #0f172a;
+  --wu-bg-elevated: #111827;
+  --wu-bg-soft: #1f2937;
+  --wu-text: #e2e8f0;
+  --wu-text-muted: #94a3b8;
+  --wu-border: #334155;
+  --wu-nav-bg: #111827;
+  --wu-nav-text: #e2e8f0;
+  --wu-nav-hover: #1f2937;
+
+  --bg: #0f172a;
+  --panel: #111827;
+  --border: #334155;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent-light: #1e3a8a;
+}
+
+body {
+  background: var(--wu-bg);
+  color: var(--wu-text);
+}
+
+.container,
+.card,
+.history-column,
+.sidebar,
+.editor-main,
+.editor-secondary-panel,
+.modal-content {
+  background: var(--wu-bg-elevated);
+  color: var(--wu-text);
+  border-color: var(--wu-border);
+}
+
+.profile-box,
+.support-slot,
+#free-doc-quota {
+  background: var(--wu-bg-soft);
+  color: var(--wu-text);
+  border-color: var(--wu-border);
+}
+
+.navbar {
+  background: var(--wu-nav-bg);
+}
+
+.nav-links li a,
+.btn {
+  color: var(--wu-nav-text);
+  border-color: var(--wu-nav-text);
+}
+
+.nav-links li a:hover,
+.theme-toggle-btn:hover {
+  background: var(--wu-nav-hover);
+}
+
+footer {
+  color: var(--wu-text-muted);
+  background: transparent;
+}
+
+.theme-toggle-item {
+  display: flex;
+  align-items: center;
+}
+
+.theme-toggle-btn {
+  border: 1px solid var(--wu-nav-text);
+  color: var(--wu-nav-text);
+  background: transparent;
+  border-radius: 14px;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}

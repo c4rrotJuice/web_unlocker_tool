@@ -1,11 +1,25 @@
 document.addEventListener("DOMContentLoaded", async () => {
-  const authButton = document.getElementById("authButton");
-  if (!authButton) return;
+  const navLinks = document.querySelector(".nav-links");
+  const existingToggle = document.getElementById("themeToggle");
 
+  if (navLinks && !existingToggle) {
+    const themeItem = document.createElement("li");
+    themeItem.className = "theme-toggle-item";
+    themeItem.innerHTML = '<button type="button" id="themeToggle" class="theme-toggle-btn" aria-live="polite"></button>';
+    navLinks.appendChild(themeItem);
+  }
+
+  window.webUnlockerTheme?.bindThemeToggle?.();
+
+  const authButton = document.getElementById("authButton");
   const dashboardLink = document.getElementById("dashboardLink");
   const editorLink = document.getElementById("editorLink");
   const token = await window.webUnlockerAuth?.getAccessToken?.();
   const toast = window.webUnlockerUI?.createToastManager?.();
+
+  if (!authButton) {
+    return;
+  }
 
   if (token) {
     authButton.textContent = "Sign out";

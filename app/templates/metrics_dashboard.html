@@ -34,13 +34,243 @@
     <div class="section">
       <h2>Developer Runtime Metrics</h2>
       <p id="metrics-summary">Loading metrics...</p>
-      <pre id="metrics-output" style="white-space: pre-wrap; max-height: 65vh; overflow: auto; padding: 12px; background: #0b1220; color: #d1d5db; border-radius: 8px;"></pre>
+      <div class="metrics-legend" aria-label="Metric health legend">
+        <span><i class="legend-dot legend-good"></i>Healthy</span>
+        <span><i class="legend-dot legend-fair"></i>Watch</span>
+        <span><i class="legend-dot legend-bad"></i>Unfavorable</span>
+      </div>
+
+      <section id="metrics-overview" class="metrics-overview" aria-live="polite"></section>
+      <section id="metrics-groups" class="metrics-groups" aria-live="polite"></section>
+
+      <details class="metrics-raw">
+        <summary>Raw Prometheus metrics</summary>
+        <pre id="metrics-output"></pre>
+      </details>
     </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="/static/js/auth.js"></script>
   <script>
+    function parsePrometheusMetrics(body) {
+      const metricTypes = {};
+      const families = {};
+      const lines = body.split('\n').map((line) => line.trim()).filter(Boolean);
+
+      for (const line of lines) {
+        if (line.startsWith('# TYPE')) {
+          const parts = line.split(/\s+/);
+          metricTypes[parts[2]] = parts[3] || 'unknown';
+          continue;
+        }
+
+        if (line.startsWith('#')) {
+          continue;
+        }
+
+        const metricMatch = line.match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)(\{[^}]*\})?\s+(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)$/i);
+        if (!metricMatch) {
+          continue;
+        }
+
+        const metricName = metricMatch[1];
+        const labelsRaw = metricMatch[2] || '';
+        const value = Number(metricMatch[3]);
+
+        let familyName = metricName;
+        if (metricName.endsWith('_count')) {
+          familyName = metricName.slice(0, -6);
+        } else if (metricName.endsWith('_sum')) {
+          familyName = metricName.slice(0, -4);
+        }
+
+        if (!families[familyName]) {
+          families[familyName] = {
+            name: familyName,
+            type: metricTypes[familyName] || metricTypes[metricName] || 'unknown',
+            samples: []
+          };
+        }
+
+        const labels = {};
+        if (labelsRaw) {
+          const labelContent = labelsRaw.slice(1, -1);
+          for (const pair of labelContent.split(',')) {
+            const [k, v] = pair.split('=');
+            if (k && v) {
+              labels[k] = v.replace(/^"|"$/g, '');
+            }
+          }
+        }
+
+        families[familyName].samples.push({ metricName, labels, value });
+      }
+
+      return Object.values(families).sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    function humanizeMetricName(name) {
+      return name
+        .replaceAll('_', ' ')
+        .replace(/\b\w/g, (ch) => ch.toUpperCase())
+        .replace('Rss', 'RSS');
+    }
+
+    function formatNumber(value, digits = 2) {
+      if (!Number.isFinite(value)) return '—';
+      return value.toLocaleString(undefined, { maximumFractionDigits: digits });
+    }
+
+    function scoreMetric(metric, context) {
+      const val = metric.value;
+      const isLatency = metric.name.includes('latency_milliseconds');
+
+      if (metric.name === 'http_error_count' && Number.isFinite(context.httpRequestCount) && context.httpRequestCount > 0) {
+        const rate = (val / context.httpRequestCount) * 100;
+        if (rate <= 1) return { status: 'good', note: `Error rate ${formatNumber(rate)}%` };
+        if (rate <= 3) return { status: 'fair', note: `Error rate ${formatNumber(rate)}%` };
+        return { status: 'bad', note: `Error rate ${formatNumber(rate)}%` };
+      }
+
+      if (metric.name === 'http_error_count') {
+        if (val <= 1) return { status: 'good', note: 'No meaningful error spike' };
+        if (val <= 5) return { status: 'fair', note: 'Error count elevated' };
+        return { status: 'bad', note: 'Error count high' };
+      }
+
+      if (isLatency) {
+        if (val <= 500) return { status: 'good', note: 'Latency within target' };
+        if (val <= 1200) return { status: 'fair', note: 'Latency slightly elevated' };
+        return { status: 'bad', note: 'Latency high' };
+      }
+
+      if (metric.name === 'process_memory_rss_mb') {
+        if (val <= 150) return { status: 'good', note: 'Memory usage healthy' };
+        if (val <= 300) return { status: 'fair', note: 'Memory usage increasing' };
+        return { status: 'bad', note: 'Memory pressure risk' };
+      }
+
+      if (metric.name.includes('queue_depth') || metric.name.includes('in_flight')) {
+        if (val <= 1) return { status: 'good', note: 'No pipeline congestion' };
+        if (val <= 5) return { status: 'fair', note: 'Moderate queue pressure' };
+        return { status: 'bad', note: 'Pipeline congestion detected' };
+      }
+
+      return { status: 'good', note: 'Within expected bounds' };
+    }
+
+    function summarizeFamily(family) {
+      const quantiles = family.samples
+        .filter((sample) => sample.labels.quantile)
+        .reduce((acc, sample) => {
+          acc[sample.labels.quantile] = sample.value;
+          return acc;
+        }, {});
+
+      const countSample = family.samples.find((sample) => sample.metricName.endsWith('_count'));
+      const plainSample = family.samples.find((sample) => Object.keys(sample.labels).length === 0 && sample.metricName === family.name);
+
+      if (Object.keys(quantiles).length) {
+        return {
+          value: quantiles['0.95'] ?? quantiles['0.50'] ?? quantiles['0.99'] ?? NaN,
+          unit: 'ms',
+          details: `p50 ${formatNumber(quantiles['0.50'])} · p95 ${formatNumber(quantiles['0.95'])} · p99 ${formatNumber(quantiles['0.99'])}`,
+          count: countSample ? countSample.value : null,
+        };
+      }
+
+      const fallbackValue = plainSample ? plainSample.value : family.samples[0]?.value;
+      return {
+        value: fallbackValue,
+        unit: family.name.includes('_count') ? '' : '',
+        details: `${family.samples.length} series`,
+        count: countSample ? countSample.value : null,
+      };
+    }
+
+    function renderMetricsDashboard(families, body) {
+      const summaryEl = document.getElementById('metrics-summary');
+      const overviewEl = document.getElementById('metrics-overview');
+      const groupsEl = document.getElementById('metrics-groups');
+      const rawOutputEl = document.getElementById('metrics-output');
+      rawOutputEl.textContent = body;
+
+      const allRows = families.map((family) => {
+        const summarized = summarizeFamily(family);
+        return {
+          name: family.name,
+          label: humanizeMetricName(family.name),
+          type: family.type,
+          ...summarized,
+        };
+      });
+
+      const context = {
+        httpRequestCount: allRows.find((row) => row.name === 'http_request_count')?.value
+      };
+
+      const scoredRows = allRows.map((metric) => ({
+        ...metric,
+        ...scoreMetric(metric, context),
+      }));
+
+      const featuredMetricNames = new Set([
+        'http_request_count',
+        'http_error_count',
+        'http_request_latency_milliseconds',
+        'dependency_supabase_latency_milliseconds',
+        'dependency_upstash_latency_milliseconds',
+        'process_memory_rss_mb',
+        'unlock_pipeline_queue_depth',
+        'unlock_pipeline_in_flight'
+      ]);
+
+      const featured = scoredRows.filter((row) => featuredMetricNames.has(row.name));
+      const extra = scoredRows.filter((row) => !featuredMetricNames.has(row.name));
+
+      summaryEl.textContent = `Loaded ${families.length} metric families. Health indicators use operational thresholds.`;
+
+      overviewEl.innerHTML = featured.map((metric) => `
+        <article class="metric-card metric-${metric.status}">
+          <header>
+            <h3>${metric.label}</h3>
+            <span class="metric-chip">${metric.status.toUpperCase()}</span>
+          </header>
+          <p class="metric-value">${formatNumber(metric.value)}${metric.unit ? ` <small>${metric.unit}</small>` : ''}</p>
+          <p class="metric-note">${metric.note}</p>
+          <p class="metric-details">${metric.details}${metric.count !== null ? ` · count ${formatNumber(metric.count, 0)}` : ''}</p>
+        </article>
+      `).join('');
+
+      groupsEl.innerHTML = `
+        <div class="metrics-table-wrap">
+          <table class="metrics-table">
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>Type</th>
+                <th>Value</th>
+                <th>Status</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${[...featured, ...extra].map((metric) => `
+                <tr>
+                  <td>${metric.label}</td>
+                  <td>${metric.type}</td>
+                  <td>${formatNumber(metric.value)}${metric.unit ? ` ${metric.unit}` : ''}</td>
+                  <td><span class="table-chip metric-${metric.status}">${metric.status}</span></td>
+                  <td>${metric.note}. ${metric.details}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
     async function loadDeveloperMetrics() {
       const token = await window.webUnlockerAuth?.getAccessToken?.();
       if (!token) {
@@ -78,9 +308,8 @@
       }
 
       const body = await metricsRes.text();
-      const lines = body.split('\n').filter(line => line && !line.startsWith('#'));
-      document.getElementById('metrics-summary').textContent = `Loaded ${lines.length} runtime metric series.`;
-      document.getElementById('metrics-output').textContent = body;
+      const families = parsePrometheusMetrics(body);
+      renderMetricsDashboard(families, body);
     }
 
     loadDeveloperMetrics().catch((err) => {

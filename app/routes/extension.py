@@ -19,7 +19,7 @@ router = APIRouter()
 
 EXTENSION_WEEKLY_LIMIT = 5
 EXTENSION_EDITOR_WEEKLY_LIMIT = 500
-PAID_TIERS = {"standard", "pro"}
+PAID_TIERS = {"standard", "pro", "dev"}
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase_repo = SupabaseRestRepository(base_url=SUPABASE_URL, service_role_key=SUPABASE_KEY)

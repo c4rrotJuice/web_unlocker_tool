@@ -20,7 +20,7 @@ async def get_user_unlocks(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     account_type = normalize_account_type(request.state.account_type)
-    if account_type not in {"free", "standard", "pro"}:
+    if account_type not in {"free", "standard", "pro", "dev"}:
         raise HTTPException(status_code=403, detail="History access not available.")
 
     

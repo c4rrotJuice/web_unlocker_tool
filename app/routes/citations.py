@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from app.routes.http import http_client
 from app.services.citation_templates import render_template, validate_template
-from app.services.entitlements import PRO_TIER, get_tier_capabilities, normalize_account_type
+from app.services.entitlements import get_tier_capabilities, normalize_account_type
 from app.services.free_tier_gating import allowed_citation_formats
 
 router = APIRouter()
@@ -69,7 +69,7 @@ async def create_citation(
                 detail="Custom format template only allowed for custom format.",
             )
 
-    if normalized_account_type == PRO_TIER and citation.url not in citation.full_text:
+    if get_tier_capabilities(normalized_account_type).can_use_custom_citation_templates and citation.url not in citation.full_text:
         raise HTTPException(
             status_code=422,
             detail="Citations must include the source URL.",

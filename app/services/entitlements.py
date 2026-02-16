@@ -6,6 +6,7 @@ from typing import Optional
 FREE_TIER = "free"
 STANDARD_TIER = "standard"
 PRO_TIER = "pro"
+DEV_TIER = "dev"
 
 LEGACY_TIER_MAP = {
     "freemium": FREE_TIER,
@@ -76,6 +77,21 @@ TIER_CAPABILITIES: dict[str, TierCapabilities] = {
         allowed_citation_formats=frozenset({"apa", "mla", "chicago", "harvard", "custom"}),
         can_use_custom_citation_templates=True,
     ),
+    DEV_TIER: TierCapabilities(
+        queue_priority=0,
+        has_unlock_limits=False,
+        unlock_usage_period=None,
+        unlock_limit=None,
+        has_document_quota=False,
+        document_limit=None,
+        document_window_days=None,
+        freeze_documents=False,
+        can_delete_documents=True,
+        allowed_export_formats=frozenset({"pdf", "docx", "txt"}),
+        can_zip_export=True,
+        allowed_citation_formats=frozenset({"apa", "mla", "chicago", "harvard", "custom"}),
+        can_use_custom_citation_templates=True,
+    ),
 }
 
 
@@ -93,7 +109,7 @@ def get_tier_capabilities(account_type: Optional[str]) -> TierCapabilities:
 
 def can_use_cloudscraper(account_type: Optional[str]) -> bool:
     tier = normalize_account_type(account_type)
-    return tier in {STANDARD_TIER, PRO_TIER}
+    return tier in {STANDARD_TIER, PRO_TIER, DEV_TIER}
 
 
 def has_daily_limit(account_type: Optional[str]) -> bool:
@@ -102,12 +118,12 @@ def has_daily_limit(account_type: Optional[str]) -> bool:
 
 def can_use_bookmarks(account_type: Optional[str]) -> bool:
     tier = normalize_account_type(account_type)
-    return tier in {STANDARD_TIER, PRO_TIER}
+    return tier in {STANDARD_TIER, PRO_TIER, DEV_TIER}
 
 
 def can_use_history_search(account_type: Optional[str]) -> bool:
     tier = normalize_account_type(account_type)
-    return tier in {STANDARD_TIER, PRO_TIER}
+    return tier in {STANDARD_TIER, PRO_TIER, DEV_TIER}
 
 
 def should_show_ads(account_type: Optional[str]) -> bool:

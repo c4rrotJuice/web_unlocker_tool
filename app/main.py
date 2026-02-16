@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -407,8 +407,18 @@ async def auth_login_redirect():
 async def dashboard_page(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request})
 
+
+@app.get("/dashboard/metrics", response_class=HTMLResponse)
+async def metrics_dashboard_page(request: Request):
+    return templates.TemplateResponse("metrics_dashboard.html", {"request": request})
+
+
 @app.get("/metrics")
-async def metrics_endpoint():
+async def metrics_endpoint(request: Request):
+    if not request.state.user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if normalize_account_type(request.state.account_type) != "dev":
+        raise HTTPException(status_code=403, detail="Metrics access requires a dev account.")
     return PlainTextResponse(
         content=metrics.render_prometheus(),
         media_type="text/plain; version=0.0.4; charset=utf-8",

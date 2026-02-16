@@ -168,7 +168,7 @@ async def get_user_metadata(request: Request):
             degraded_reasons.append("BOOKMARKS_UNAVAILABLE")
 
         account_type = normalize_account_type(meta.get("account_type"))
-        if account_type in {"standard", "pro"}:
+        if account_type in {"standard", "pro", "dev"}:
             usage_key = f"user_usage_week:{user_id}:{get_week_start_gmt3()}"
             usage_limit = MAX_WEEKLY_USES
             usage_period = "week"
@@ -314,7 +314,7 @@ async def get_monthly_report(request: Request, month: str | None = None):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     account_type = normalize_account_type(request.state.account_type)
-    if account_type not in {"standard", "pro"}:
+    if account_type not in {"standard", "pro", "dev"}:
         raise HTTPException(status_code=403, detail="Report access requires a paid plan.")
 
     month_start, month_end, month_label = _get_month_range(month)

@@ -36,6 +36,7 @@
           <li><a href="/">Home</a></li>
           <li><a href="/dashboard" class="active" id="dashboardLink">Dashboard</a></li>
           <li><a href="/editor" id="editorLink">Editor</a></li>
+          <li id="metrics-nav-item" style="display:none;"><a href="/dashboard/metrics" id="metricsLink">Metrics</a></li>
           <li><a href="/static/pricing.html">Pricing</a></li>
           <li><a href="https://citeunlock.choneize.com/blog">Blog</a></li>
           <li><a href="https://citeunlock.choneize.com/terms">Terms & Policies</a></li>
@@ -258,14 +259,17 @@ async function loadUserData() {
 
     const accountType = (data.account_type || "").toLowerCase();
     const isPro = accountType === "pro";
+    const isDev = accountType === "dev";
     const isStandard = accountType === "standard";
     const isFree = accountType === "free";
     const proPill = document.getElementById("pro-unlimited-pill");
     const usageRow = document.getElementById("usage-row");
-    if (proPill) proPill.style.display = isPro ? "inline-block" : "none";
-    if (usageRow) usageRow.style.display = isPro ? "none" : "block";
-    const canBookmark = isPro || isStandard;
-    const canUseHistorySearch = isPro || isStandard;
+    if (proPill) proPill.style.display = (isPro || isDev) ? "inline-block" : "none";
+    if (usageRow) usageRow.style.display = (isPro || isDev) ? "none" : "block";
+    const canBookmark = isPro || isStandard || isDev;
+    const canUseHistorySearch = isPro || isStandard || isDev;
+    const metricsNavItem = document.getElementById("metrics-nav-item");
+    if (metricsNavItem) metricsNavItem.style.display = isDev ? "list-item" : "none";
 
     // After fetching `data` from /api/me:
     renderBookmarks(data.bookmarks);

@@ -177,7 +177,7 @@ async def check_login(request: Request, redis_get,
                 detail="⏱️ Too many requests. Please slow down.",
             )
 
-        if account_type in {"standard", "pro"}:
+        if account_type in {"standard", "pro", "dev"}:
             weekly_key = f"user_usage_week:{user_id}:{week_start}"
             current_weekly = int(await redis_get(weekly_key,) or 0)
             if current_weekly >= MAX_WEEKLY_USES:

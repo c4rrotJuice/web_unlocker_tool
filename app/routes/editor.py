@@ -46,7 +46,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase_repo = SupabaseRestRepository(base_url=SUPABASE_URL, service_role_key=SUPABASE_KEY)
 
-PAID_TIERS = {"standard", "pro"}
+PAID_TIERS = {"standard", "pro", "dev"}
 logger = logging.getLogger(__name__)
 
 
@@ -577,7 +577,7 @@ async def editor_access(request: Request):
         }
     return {
         "account_type": normalized,
-        "is_paid": normalized in {STANDARD_TIER, PRO_TIER},
+        "is_paid": normalized in {STANDARD_TIER, PRO_TIER, "dev"},
         "doc_quota": doc_quota,
         "can_delete_documents": capabilities.can_delete_documents,
         "freeze_documents": capabilities.freeze_documents,

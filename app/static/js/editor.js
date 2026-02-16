@@ -106,7 +106,8 @@ function startEditor() {
 
 
   function isProTier() {
-    return (window.__editorAccess?.account_type || "").toLowerCase() === "pro";
+    const tier = (window.__editorAccess?.account_type || "").toLowerCase();
+    return tier === "pro" || tier === "dev";
   }
 
   function accountTier() {
@@ -114,7 +115,7 @@ function startEditor() {
   }
 
   function allowedFormatsForTier(tier = accountTier()) {
-    if (tier === "pro") return ["pdf", "docx", "txt"];
+    if (tier === "pro" || tier === "dev") return ["pdf", "docx", "txt"];
     if (tier === "standard") return ["pdf", "docx"];
     return ["pdf"];
   }

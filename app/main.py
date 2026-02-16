@@ -102,6 +102,24 @@ def apply_baseline_security_headers(response):
         response.headers.setdefault(header, value)
     return response
 
+
+def _status_bucket(status_code: int) -> str:
+    if status_code >= 500:
+        return "5xx"
+    if status_code >= 400:
+        return "4xx"
+    if status_code >= 300:
+        return "3xx"
+    return "2xx"
+
+
+def _route_metric_key(path: str) -> str:
+    normalized = path.strip("/") or "root"
+    safe = []
+    for char in normalized:
+        safe.append(char if char.isalnum() else "_")
+    return "".join(safe)[:80]
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -257,7 +275,7 @@ async def auth_middleware(request: Request, call_next):
                 response = await call_next(request)
                 response.headers["X-Request-Id"] = request.state.request_id
                 return apply_baseline_security_headers(response)
-            response = JSONResponse({"error": "Unauthorized"}, status_code=401)
+            response = JSONResponse({"code": "AUTH_INVALID", "message": "Unauthorized"}, status_code=401)
             response.headers["X-Request-Id"] = request.state.request_id
             return apply_baseline_security_headers(response)
 
@@ -320,6 +338,9 @@ async def auth_middleware(request: Request, call_next):
         status = getattr(response, "status_code", 500)
         metrics.inc("http.request_count")
         metrics.observe_ms("http.request_latency", latency_ms)
+        route_key = _route_metric_key(request.url.path)
+        status_bucket = _status_bucket(status)
+        metrics.inc(f"http.route.{route_key}.{status_bucket}")
         if status >= 400:
             metrics.inc("http.error_count")
         set_request_context(status=status, latency_ms=latency_ms, upstream=None)

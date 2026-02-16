@@ -24,14 +24,14 @@
       font-size: 18px;
     }
 
-    nav a {
+    header.app-header nav a {
       text-decoration: none;
       color: var(--wu-text);
       margin-left: 20px;
       font-weight: 500;
     }
 
-    nav a:hover {
+    header.app-header nav a:hover {
       color: var(--wu-accent);
     }
 

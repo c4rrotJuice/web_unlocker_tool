@@ -609,6 +609,14 @@
           gap: 0.75rem;
           position: relative;
         }
+        #pricing-1387 .cs-tier-subtitle {
+          width: 100%;
+          font-size: 0.95rem;
+          line-height: 1.5;
+          color: var(--bodyTextColor);
+          text-align: center;
+          margin-top: 0.75rem;
+        }
         #pricing-1387 .cs-li {
           font-size: 1rem;
           list-style: none;
@@ -619,6 +627,19 @@
           padding: 0;
           color: var(--bodyTextColor);
           display: block;
+        }
+        #pricing-1387 .cs-value-line,
+        #pricing-1387 .cs-limitations {
+          width: 100%;
+          font-size: 0.92rem;
+          line-height: 1.45;
+          color: var(--bodyTextColor);
+          text-align: center;
+          margin: -0.75rem 0 1.5rem;
+        }
+        #pricing-1387 .cs-value-line {
+          font-weight: 600;
+          color: var(--headerColor);
         }
         #pricing-1387 .cs-li.cs-disabled {
           opacity: 0.5;
@@ -665,6 +686,45 @@
           to resue acorss the entire site */
           margin-top: auto;
         }
+        #pricing-1387 .cs-comparison-wrap {
+          width: 100%;
+          margin-top: clamp(1.5rem, 3vw, 2.5rem);
+          background: var(--pricing-surface);
+          border-radius: 1rem;
+          border: 1px solid var(--pricing-soft);
+          padding: clamp(1rem, 2vw, 1.5rem);
+        }
+        #pricing-1387 .cs-comparison-title {
+          font-size: clamp(1.2rem, 2.5vw, 1.5rem);
+          color: var(--headerColor);
+          margin-bottom: 0.75rem;
+          text-align: left;
+        }
+        #pricing-1387 .cs-table-scroll {
+          overflow-x: auto;
+        }
+        #pricing-1387 .cs-comparison-table {
+          width: 100%;
+          min-width: 42rem;
+          border-collapse: collapse;
+          color: var(--bodyTextColor);
+        }
+        #pricing-1387 .cs-comparison-table th,
+        #pricing-1387 .cs-comparison-table td {
+          padding: 0.75rem 0.9rem;
+          border-bottom: 1px solid var(--pricing-soft);
+          text-align: left;
+          font-size: 0.95rem;
+          vertical-align: top;
+        }
+        #pricing-1387 .cs-comparison-table th {
+          color: var(--headerColor);
+          font-weight: 700;
+          background: color-mix(in oklab, var(--pricing-soft) 60%, transparent);
+        }
+        #pricing-1387 .cs-comparison-table tbody tr:last-child td {
+          border-bottom: none;
+        }
       } /* Tablet - 768px */
       @media only screen and (min-width: 48rem) {
         #pricing-1387 .cs-container {
@@ -678,7 +738,7 @@
       @media only screen and (min-width: 64rem) {
         #pricing-1387 .cs-container {
           flex-direction: row;
-          align-items: center;
+          align-items: flex-start;
           justify-content: space-between;
         }
         #pricing-1387 .cs-content {
@@ -688,6 +748,11 @@
         }
         #pricing-1387 .cs-info {
           min-height: 27rem;
+        }
+        #pricing-1387 .cs-tier-subtitle,
+        #pricing-1387 .cs-value-line,
+        #pricing-1387 .cs-limitations {
+          text-align: left;
         }
       }
 

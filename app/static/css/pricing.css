@@ -305,21 +305,28 @@
         }
         #pricing-1387 .cs-container {
           width: 100%;
-          max-width: 36.5rem;
+          max-width: 75rem;
           margin: auto;
           display: flex;
           flex-direction: column;
-          align-items: center;
-          gap: clamp(3rem, 3vw, 4rem);
+          align-items: stretch;
+          gap: clamp(2rem, 3.5vw, 3rem);
           position: relative;
+        }
+        #pricing-1387 .cs-top-layout {
+          width: 100%;
+          display: grid;
+          gap: clamp(1.5rem, 3vw, 2.5rem);
+          align-items: start;
         }
         #pricing-1387 .cs-content {
           text-align: center;
           width: 100%;
-          max-width: 33.875rem;
+          max-width: 34rem;
           display: flex;
           flex-direction: column;
           align-items: center;
+          margin: 0 auto;
         }
         #pricing-1387 .cs-title {
           max-width: 20ch;
@@ -398,7 +405,7 @@
         }
         #pricing-1387 .cs-card-group {
           width: 100%;
-          max-width: 39.375rem;
+          max-width: 100%;
           margin: 0;
           display: flex;
           flex-direction: column;
@@ -688,7 +695,7 @@
         }
         #pricing-1387 .cs-comparison-wrap {
           width: 100%;
-          margin-top: clamp(1.5rem, 3vw, 2.5rem);
+          margin-top: 0;
           background: var(--pricing-surface);
           border-radius: 1rem;
           border: 1px solid var(--pricing-soft);
@@ -727,24 +734,24 @@
         }
       } /* Tablet - 768px */
       @media only screen and (min-width: 48rem) {
-        #pricing-1387 .cs-container {
-          max-width: 70rem;
-        }
-        #pricing-1387 .cs-container .cs-card-group {
+        #pricing-1387 .cs-top-layout .cs-card-group {
           flex-direction: row;
           align-items: stretch;
         }
       } /* Desktop - 1024px */
       @media only screen and (min-width: 64rem) {
-        #pricing-1387 .cs-container {
-          flex-direction: row;
-          align-items: flex-start;
-          justify-content: space-between;
+        #pricing-1387 .cs-top-layout {
+          grid-template-columns: minmax(17rem, 0.9fr) minmax(0, 1.6fr);
+          column-gap: clamp(2rem, 4vw, 3.5rem);
         }
         #pricing-1387 .cs-content {
           text-align: left;
-          width: 37%;
+          width: 100%;
           align-items: flex-start;
+          margin: 0;
+        }
+        #pricing-1387 .cs-toggle-group {
+          justify-content: flex-start;
         }
         #pricing-1387 .cs-info {
           min-height: 27rem;
@@ -754,79 +761,4 @@
         #pricing-1387 .cs-limitations {
           text-align: left;
         }
-      }
-
-      * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-      }
-
-      body {
-        font-family: Arial, sans-serif;
-        background: var(--pricing-bg);
-      }
-
-      .navbar {
-        position: fixed;
-        top: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        width: 90%;
-        max-width: 1200px;
-        height: fit-content;
-        background: var(--wu-nav-bg);
-        border-radius: 20px;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-        z-index: 1000;
-      }
-
-      .navbar-container {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 12px 25px;
-      }
-
-      .logo img {
-        height: 40px;
-      }
-
-      .nav-links {
-        list-style: none;
-        display: flex;
-        gap: 30px;
-      }
-
-      .nav-links li a {
-        text-decoration: none;
-        color: var(--wu-nav-text);
-        font-size: 15px;
-        padding: 8px 12px;
-        border-radius: 4px;
-        transition: 0.3s;
-      }
-
-      .nav-links li a:hover {
-        background: var(--wu-nav-hover);
-      }
-
-      .nav-links li a.active {
-        background: var(--wu-nav-active-bg);
-        color: var(--wu-nav-active-text);
-        font-weight: bold;
-      }
-
-      .btn {
-        padding: 8px 16px;
-        border: 1px solid var(--wu-nav-text);
-        border-radius: 20px;
-        text-decoration: none;
-        color: var(--wu-nav-text);
-        transition: 0.3s;
-      }
-
-      .btn:hover {
-        background: var(--wu-nav-text);
-        color: var(--wu-accent-contrast);
       }

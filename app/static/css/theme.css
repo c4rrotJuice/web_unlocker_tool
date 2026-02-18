@@ -1,24 +1,24 @@
 :root {
-  --wu-bg: #f4f7fb;
+  --wu-bg: #f8fafc;
   --wu-bg-elevated: #ffffff;
-  --wu-bg-soft: #e9eef5;
-  --wu-text: #1f2937;
-  --wu-text-muted: #64748b;
-  --wu-text-subtle: #475569;
+  --wu-bg-soft: #f1f5f9;
+  --wu-text: #0f172a;
+  --wu-text-muted: #475569;
+  --wu-text-subtle: #334155;
   --wu-border: #cbd5e1;
   --wu-nav-bg: #ffffff;
-  --wu-nav-text: #1f2937;
-  --wu-nav-hover: #f7f7f7;
+  --wu-nav-text: #0f172a;
+  --wu-nav-hover: #eef2ff;
   --wu-surface-1: var(--wu-bg-elevated);
-  --wu-surface-2: #f8fbff;
-  --wu-surface-inset: #eef3f9;
+  --wu-surface-2: #f8faff;
+  --wu-surface-inset: #eff6ff;
   --wu-accent: #2563eb;
   --wu-accent-contrast: #ffffff;
   --wu-success: #16a34a;
   --wu-warning: #b45309;
   --wu-focus: #3b82f6;
   --wu-nav-active-bg: #dbeafe;
-  --wu-nav-active-text: #1e40af;
+  --wu-nav-active-text: #1d4ed8;
 }
 
 html.dark {

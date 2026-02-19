@@ -1,24 +1,25 @@
 :root {
-  --wu-bg: #f8fafc;
-  --wu-bg-elevated: #ffffff;
-  --wu-bg-soft: #f1f5f9;
-  --wu-text: #0f172a;
-  --wu-text-muted: #475569;
-  --wu-text-subtle: #334155;
-  --wu-border: #cbd5e1;
+  --wu-bg: #ffffff;
+  --wu-bg-elevated: #f7f8fa;
+  --wu-bg-soft: #f7f8fa;
+  --wu-text: #111827;
+  --wu-text-muted: #6b7280;
+  --wu-text-subtle: #6b7280;
+  --wu-border: #e1e4e8;
   --wu-nav-bg: #ffffff;
-  --wu-nav-text: #0f172a;
-  --wu-nav-hover: #eef2ff;
+  --wu-nav-text: #111827;
+  --wu-nav-hover: #f7f8fa;
   --wu-surface-1: var(--wu-bg-elevated);
-  --wu-surface-2: #f8faff;
-  --wu-surface-inset: #eff6ff;
-  --wu-accent: #2563eb;
+  --wu-surface-2: #f7f8fa;
+  --wu-surface-inset: #f7f8fa;
+  --wu-accent: #0057ff;
   --wu-accent-contrast: #ffffff;
-  --wu-success: #16a34a;
+  --wu-success: #10b981;
+  --wu-error: #ef4444;
   --wu-warning: #b45309;
-  --wu-focus: #3b82f6;
-  --wu-nav-active-bg: #dbeafe;
-  --wu-nav-active-text: #1d4ed8;
+  --wu-focus: #00c2ff;
+  --wu-nav-active-bg: #e6f8ff;
+  --wu-nav-active-text: #0057ff;
 }
 
 html.dark {

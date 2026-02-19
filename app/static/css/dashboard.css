@@ -69,7 +69,7 @@
     }
 
     button:hover {
-      background-color: #1d4ed8;
+      background-color: #0057ff;
     }
 
     .history-list {
@@ -94,7 +94,7 @@
     }
 
     .upgrade-box {
-      background: linear-gradient(to right, #6366f1, #60a5fa);
+      background: linear-gradient(to right, #0057ff, #00c2ff);
       color: white;
       padding: 20px;
       border-radius: 12px;
@@ -209,7 +209,7 @@
 }
 
 .copy-button:hover {
-  background-color: #1d4ed8;
+  background-color: #0057ff;
 }
 
 @keyframes fadeIn {
@@ -449,7 +449,7 @@
 }
 
 #bookmark-list .remove-bookmark:hover {
-  color: #dc2626;
+  color: #ef4444;
 }
 
 #bookmark-status {
@@ -552,8 +552,8 @@
   display: inline-block;
 }
 
-.legend-good { background: #22c55e; }
-.legend-fair { background: #f59e0b; }
+.legend-good { background: #10b981; }
+.legend-fair { background: #00c2ff; }
 .legend-bad { background: #ef4444; }
 
 .metrics-overview {
@@ -616,15 +616,15 @@
 }
 
 .metric-good {
-  border-color: color-mix(in srgb, #22c55e 50%, var(--wu-border));
-  color: #166534;
-  background: color-mix(in srgb, #22c55e 13%, var(--wu-surface-2));
+  border-color: color-mix(in srgb, #10b981 50%, var(--wu-border));
+  color: #0f766e;
+  background: color-mix(in srgb, #10b981 13%, var(--wu-surface-2));
 }
 
 .metric-fair {
-  border-color: color-mix(in srgb, #f59e0b 50%, var(--wu-border));
-  color: #92400e;
-  background: color-mix(in srgb, #f59e0b 15%, var(--wu-surface-2));
+  border-color: color-mix(in srgb, #00c2ff 50%, var(--wu-border));
+  color: #075985;
+  background: color-mix(in srgb, #00c2ff 15%, var(--wu-surface-2));
 }
 
 .metric-bad {

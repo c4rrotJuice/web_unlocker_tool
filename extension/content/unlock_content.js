@@ -246,13 +246,7 @@
   }
 
   function enableSelection() {
-    const events = [
-      "contextmenu",
-      "copy",
-      "cut",
-      "selectstart",
-      "mousedown",
-    ];
+    const events = ["contextmenu", "copy", "cut", "selectstart", "mousedown"];
 
     events.forEach((eventName) => {
       window.addEventListener(eventName, (event) => event.stopPropagation(), {
@@ -319,19 +313,134 @@
     });
   }
 
-  function formatCitation(format, selectionText, title, url, accessed) {
-    const safeTitle = title ? `*${title}*` : "";
-    const year = new Date(accessed).getFullYear();
+  /* ===========================
+   CITATION METADATA UTILITIES
+   =========================== */
+
+  function cleanUrl(rawUrl) {
+    try {
+      const u = new URL(rawUrl);
+      u.hash = "";
+      const removeParams = [
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_term",
+        "utm_content",
+        "fbclid",
+        "gclid",
+      ];
+      removeParams.forEach((p) => u.searchParams.delete(p));
+      return u.toString();
+    } catch {
+      return rawUrl;
+    }
+  }
+
+  function getArticleTitle() {
+    const og = document.querySelector('meta[property="og:title"]');
+    if (og?.content) return og.content.trim();
+
+    const twitter = document.querySelector('meta[name="twitter:title"]');
+    if (twitter?.content) return twitter.content.trim();
+
+    const title = document.title;
+    return title ? title.trim() : "Untitled Page";
+  }
+
+  function getSiteName() {
+    const metaSite =
+      document.querySelector('meta[property="og:site_name"]') ||
+      document.querySelector('meta[name="application-name"]');
+
+    if (metaSite?.content) return metaSite.content.trim();
+
+    const hostname = location.hostname.replace("www.", "");
+    return hostname.split(".")[0];
+  }
+
+  function getAuthor() {
+    const metaAuthor =
+      document.querySelector('meta[name="author"]') ||
+      document.querySelector('meta[property="article:author"]');
+
+    if (metaAuthor?.content) return metaAuthor.content.trim();
+
+    const schema = document.querySelector('script[type="application/ld+json"]');
+    if (schema) {
+      try {
+        const data = JSON.parse(schema.textContent);
+
+        if (data.author) {
+          if (typeof data.author === "string") return data.author;
+
+          if (Array.isArray(data.author) && data.author[0]?.name) {
+            return data.author[0].name;
+          }
+
+          if (data.author.name) return data.author.name;
+        }
+      } catch {}
+    }
+
+    return null;
+  }
+
+  function getParagraphNumber() {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
+
+    let node = selection.anchorNode;
+
+    while (node && node.nodeType !== 1) {
+      node = node.parentNode;
+    }
+
+    const paragraph = node?.closest("p");
+    if (!paragraph) return null;
+
+    const paragraphs = Array.from(document.querySelectorAll("p"));
+    const index = paragraphs.indexOf(paragraph);
+
+    return index >= 0 ? index + 1 : null;
+  }
+
+  function formatCitation(
+    format,
+    selectionText,
+    title,
+    url,
+    accessed,
+    siteName,
+    author,
+  ) {
+    const year = new Date().getFullYear();
+    const para = getParagraphNumber();
+    const locator = para ? `para. ${para}` : "";
+
+    const quote = selectionText ? `"${selectionText}"` : "";
+
+    const authorText = author ? author : siteName;
+
     switch (format) {
       case "apa":
-        return `(${year}). ${title || "Untitled"}. Retrieved from ${url}\n\n"${selectionText}"`;
+        return `${authorText}. (${year}). ${title}. ${url}
+
+${quote} (${authorText}, ${year}${locator ? `, ${locator}` : ""})`;
+
       case "chicago":
-        return `"${selectionText}" ${safeTitle}. Accessed ${accessed}. ${url}.`;
+        return `${quote}
+${authorText}. "${title}." ${siteName}. Accessed ${accessed}. ${url}${locator ? `. ${locator}` : ""}.`;
+
       case "harvard":
-        return `${title || "Untitled"}. (${year}). Available at: ${url} (Accessed: ${accessed}).`;
+        return `${authorText} (${year}) ${title}. Available at: ${url} (Accessed: ${accessed})${locator ? `, ${locator}` : ""}.
+
+${quote}`;
+
       case "mla":
       default:
-        return `"${selectionText}" ${safeTitle}. Accessed ${accessed}, ${url}.`;
+        return `${quote}
+"${title}." ${siteName}, ${year}, ${url}. Accessed ${accessed}${locator ? `, ${locator}` : ""}.`;
     }
   }
 
@@ -398,7 +507,10 @@
       return;
     }
     if (response?.status === 403) {
-      const message = response?.data?.detail?.toast || response?.data?.detail?.message || "Upgrade to unlock this citation format.";
+      const message =
+        response?.data?.detail?.toast ||
+        response?.data?.detail?.message ||
+        "Upgrade to unlock this citation format.";
       showToast(message, true);
       return;
     }
@@ -432,6 +544,8 @@
       metadata: {
         source: "extension",
         title: metadata.title,
+        author: metadata.author || null,
+        site_name: metadata.siteName || null,
         selected_text: metadata.selectionText,
         accessed_at: metadata.accessedAt,
       },
@@ -453,7 +567,11 @@
       return;
     }
     if (response?.data?.allowed === false) {
-      showToast(response?.data?.toast || "Document limit reached for this period. Upgrade to Pro for unlimited access.", true);
+      showToast(
+        response?.data?.toast ||
+          "Document limit reached for this period. Upgrade to Pro for unlimited access.",
+        true,
+      );
       closePopup();
       return;
     }
@@ -502,8 +620,10 @@
     closePopup();
     const selectionText = state.selectionText;
     debug("Building popup", { selectionLength: selectionText.length });
-    const url = window.location.href;
-    const title = document.title || "Untitled Page";
+    const url = cleanUrl(window.location.href);
+    const title = getArticleTitle();
+    const siteName = getSiteName();
+    const author = getAuthor();
     const accessed = new Date().toLocaleDateString("en-US", {
       year: "numeric",
       month: "long",
@@ -519,9 +639,12 @@
     };
 
     const usagePeek = await sendMessage("peek-unlock", { url });
-    state.accountType = usagePeek?.data?.account_type || state.accountType || "anonymous";
+    state.accountType =
+      usagePeek?.data?.account_type || state.accountType || "anonymous";
     const normalizedTier = String(state.accountType || "").toLowerCase();
-    const isFreeUser = ["free", "freemium", "anonymous"].includes(normalizedTier);
+    const isFreeUser = ["free", "freemium", "anonymous"].includes(
+      normalizedTier,
+    );
     const isProUser = normalizedTier === "pro";
     const allowedFormats = isFreeUser
       ? new Set(["mla", "apa"])
@@ -553,7 +676,15 @@
 
     formats.forEach((format) => {
       const label = format.toUpperCase();
-      const text = formatCitation(format, selectionText, title, url, accessed);
+      const text = formatCitation(
+        format,
+        selectionText,
+        title,
+        url,
+        accessed,
+        siteName,
+        author,
+      );
 
       const row = document.createElement("div");
       row.className = "web-unlocker-row";
@@ -679,7 +810,13 @@
         if (format === "custom") {
           const template = customTemplateInput.value.trim();
           const name = customNameInput.value.trim();
-          const text = formatCustomCitation(template, selectionText, title, url, accessed);
+          const text = formatCustomCitation(
+            template,
+            selectionText,
+            title,
+            url,
+            accessed,
+          );
           if (!text) {
             showToast("Add a custom template first.", true);
             return;
@@ -694,7 +831,13 @@
           return;
         }
 
-        const text = formatCitation(format, selectionText, title, url, accessed);
+        const text = formatCitation(
+          format,
+          selectionText,
+          title,
+          url,
+          accessed,
+        );
         await handleCopy(format, text, metadata);
       }
     });
@@ -713,7 +856,13 @@
 
     function updateCustomPreview() {
       const template = customTemplateInput.value.trim();
-      const text = formatCustomCitation(template, selectionText, title, url, accessed);
+      const text = formatCustomCitation(
+        template,
+        selectionText,
+        title,
+        url,
+        accessed,
+      );
       state.customFormatTemplate = template;
       customPreviewEl.textContent = text || "Custom preview";
     }
@@ -907,9 +1056,11 @@
       return;
     }
     const target = event.target;
-    const inPopup = target instanceof Element && target.closest(".web-unlocker-popup");
+    const inPopup =
+      target instanceof Element && target.closest(".web-unlocker-popup");
     const isButton =
-      target instanceof Element && target.classList.contains("web-unlocker-copy-btn");
+      target instanceof Element &&
+      target.classList.contains("web-unlocker-copy-btn");
     if (!inPopup && !isButton) {
       removeCopyButton();
     }
@@ -947,7 +1098,10 @@
     document.addEventListener(
       "pointerdown",
       (event) => {
-        const elements = document.elementsFromPoint(event.clientX, event.clientY);
+        const elements = document.elementsFromPoint(
+          event.clientX,
+          event.clientY,
+        );
         debug("Pointerdown elementsFromPoint", elements);
       },
       true,

@@ -405,44 +405,36 @@
     return index >= 0 ? index + 1 : null;
   }
 
-  function formatCitation(
-    format,
-    selectionText,
-    title,
-    url,
-    accessed,
-    siteName,
-    author,
-  ) {
-    const year = new Date().getFullYear();
-    const para = getParagraphNumber();
-    const locator = para ? `para. ${para}` : "";
+  function formatCitation(format, selectionText, title, url, accessed, siteName, author) {
+  const year = new Date().getFullYear();
+  const para = getParagraphNumber();
+  const locator = para ? `para. ${para}` : "";
+  const quote = selectionText ? `"${selectionText}"` : "";
 
-    const quote = selectionText ? `"${selectionText}"` : "";
 
-    const authorText = author ? author : siteName;
+  const authorText = author || siteName || "Unknown Source";
 
-    switch (format) {
-      case "apa":
-        return `${authorText}. (${year}). ${title}. ${url}
+  switch (format) {
+    case "apa":
+      return `${authorText}. (${year}). ${title}. ${url}
 
 ${quote} (${authorText}, ${year}${locator ? `, ${locator}` : ""})`;
 
-      case "chicago":
-        return `${quote}
+    case "chicago":
+      return `${quote}
 ${authorText}. "${title}." ${siteName}. Accessed ${accessed}. ${url}${locator ? `. ${locator}` : ""}.`;
 
-      case "harvard":
-        return `${authorText} (${year}) ${title}. Available at: ${url} (Accessed: ${accessed})${locator ? `, ${locator}` : ""}.
+    case "harvard":
+      return `${authorText} (${year}) ${title}. Available at: ${url} (Accessed: ${accessed})${locator ? `, ${locator}` : ""}.
 
 ${quote}`;
 
-      case "mla":
-      default:
-        return `${quote}
+    case "mla":
+    default:
+      return `${quote}
 "${title}." ${siteName}, ${year}, ${url}. Accessed ${accessed}${locator ? `, ${locator}` : ""}.`;
-    }
   }
+}
 
   function formatCustomCitation(template, selectionText, title, url, accessed) {
     if (!template) {
@@ -631,12 +623,14 @@ ${quote}`;
     });
 
     const metadata = {
-      url,
-      title,
-      selectionText,
-      excerpt: selectionText.slice(0, 140),
-      accessedAt: new Date().toISOString(),
-    };
+  url,
+  title,
+  selectionText,
+  excerpt: selectionText.slice(0, 140),
+  accessedAt: new Date().toISOString(),
+  author,
+  siteName,
+};
 
     const usagePeek = await sendMessage("peek-unlock", { url });
     state.accountType =

@@ -782,7 +782,15 @@ ${quote}`;
         const citationFormat = state.lastFormat || "mla";
         const citationText =
           state.lastCitationText ||
-          formatCitation(citationFormat, selectionText, title, url, accessed);
+          formatCitation(
+            citationFormat,
+            selectionText,
+            title,
+            url,
+            accessed,
+            siteName,
+            author,
+          );
         await handleWorkInEditor({
           url,
           title,
@@ -825,13 +833,18 @@ ${quote}`;
           return;
         }
 
-        const text = formatCitation(
-          format,
-          selectionText,
-          title,
-          url,
-          accessed,
-        );
+        const citationPreview = popup.querySelector(`#cite-${format}`);
+        const text =
+          citationPreview?.textContent ||
+          formatCitation(
+            format,
+            selectionText,
+            title,
+            url,
+            accessed,
+            siteName,
+            author,
+          );
         await handleCopy(format, text, metadata);
       }
     });

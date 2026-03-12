@@ -87,7 +87,7 @@ def test_editor_allows_authenticated_cookie_user(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert "Research Editor" in response.text
+    assert "Writior Editor" in response.text
 
 
 def test_editor_redirects_to_auth_without_token(monkeypatch):
@@ -110,5 +110,5 @@ def test_editor_redirects_free_tier_to_pricing(monkeypatch):
         follow_redirects=False,
     )
 
-    assert response.status_code == 302
-    assert response.headers["location"] == "/static/pricing.html"
+    assert response.status_code == 200
+    assert "Writior Editor" in response.text

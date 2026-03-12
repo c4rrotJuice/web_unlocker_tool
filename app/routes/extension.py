@@ -509,16 +509,20 @@ async def list_notes(
     source: str | None = None,
     sort: str = "desc",
     limit: int = 100,
+    offset: int = 0,
 ):
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    order = "updated_at.asc" if sort == "asc" else "updated_at.desc"
+    order = "created_at.asc" if sort == "asc" else "created_at.desc"
+    normalized_limit = min(max(limit, 1), 500)
+    normalized_offset = max(offset, 0)
     params = {
         "user_id": f"eq.{user_id}",
         "order": order,
-        "limit": min(max(limit, 1), 200),
+        "limit": str(normalized_limit),
+        "offset": str(normalized_offset),
         "select": "id,title,highlight_text,note_body,source_url,source_domain,project_id,created_at,updated_at",
     }
 
@@ -537,14 +541,14 @@ async def list_notes(
         )
         project_rows = project_res.json() if project_res.status_code == 200 else []
         if not project_rows:
-            return []
+            return {"ok": True, "total_count": 0, "notes": []}
         project_ids = ",".join([row.get("id") for row in project_rows if row.get("id")])
         params["project_id"] = f"in.({project_ids})"
 
     res = await supabase_repo.get(
         "notes",
         params=params,
-        headers=supabase_repo.headers(include_content_type=False),
+        headers=supabase_repo.headers(include_content_type=False, prefer="count=exact"),
     )
     if res.status_code != 200:
         raise HTTPException(status_code=500, detail="Failed to load notes")
@@ -564,7 +568,7 @@ async def list_notes(
         tag_rows = tag_res.json() if tag_res.status_code == 200 else []
         tag_ids = [row.get("id") for row in tag_rows if row.get("id")]
         if not tag_ids:
-            return []
+            return {"ok": True, "total_count": 0, "notes": []}
         tag_join = await supabase_repo.get(
             "note_note_tags",
             params={
@@ -579,7 +583,15 @@ async def list_notes(
         allowed_ids = {row.get("note_id") for row in (tag_join.json() or []) if row.get("note_id")}
         notes = [note for note in notes if note.get("id") in allowed_ids]
 
-    return notes
+    total_count = len(notes)
+    content_range = res.headers.get("content-range") if hasattr(res, "headers") else None
+    if content_range and "/" in content_range:
+        try:
+            total_count = int(content_range.split("/")[-1])
+        except (TypeError, ValueError):
+            total_count = len(notes)
+
+    return {"ok": True, "total_count": total_count, "notes": notes}
 
 
 @router.get("/api/note-projects")

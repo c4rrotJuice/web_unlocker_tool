@@ -615,7 +615,8 @@ function startEditor() {
     params.set("sort", sort);
     const res = await authFetch(`/api/notes?${params.toString()}`);
     if (!res.ok) { notesList.innerHTML = '<li class="empty-state">Unable to load notes.</li>'; return; }
-    allNotes = (await res.json()) || [];
+    const payload = await res.json();
+    allNotes = Array.isArray(payload) ? payload : (payload?.notes || []);
     renderNotes();
   }
 

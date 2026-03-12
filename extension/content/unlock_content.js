@@ -457,28 +457,52 @@
     }
   }
 
-  function toAuthorObject(fullName) {
-    const normalized = textValue(fullName).replace(/^by\s+/i, "");
-    if (!normalized) return null;
-    if (/\b(editorial|staff|team)\b/i.test(normalized)) {
-      return { firstName: "", lastName: normalized, initials: "", fullName: normalized, isOrganization: true };
-    }
-    const parts = normalized.split(/\s+/).filter(Boolean);
-    const firstName = parts.slice(0, -1).join(" ") || parts[0] || "";
-    const lastName = parts.length > 1 ? parts[parts.length - 1] : firstName;
-    const initials = firstName
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((part) => part[0]?.toUpperCase())
-      .join(".");
-    return { firstName, lastName, initials, fullName: normalized, isOrganization: false };
-  }
 
-  function sentenceCase(text) {
-    const value = textValue(text);
-    if (!value) return "Untitled page";
-    return `${value[0].toUpperCase()}${value.slice(1).toLowerCase()}`;
-  }
+  const METADATA_SELECTOR_REGISTRY = {
+    highwireTitle: 'meta[name="citation_title"]',
+    openGraphTitle: 'meta[property="og:title"]',
+    openGraphSiteName: 'meta[property="og:site_name"]',
+    metaAuthor: 'meta[name="author"]',
+    dublinCoreTitle: 'meta[name="DC.title"]',
+    microHeadline: '[itemprop="headline"]',
+  };
+
+  const METADATA_SOURCE_CONFIDENCE = {
+    highwire: 0.95,
+    schema: 0.9,
+    jsonld: 0.9,
+    dublin: 0.85,
+    opengraph: 0.75,
+    standard: 0.7,
+    dom: 0.6,
+    url: 0.3,
+  };
+
+  const DOMAIN_INTELLIGENCE = {
+    "monitor.co.ug": "newspaper_article",
+    "nytimes.com": "newspaper_article",
+    "medium.com": "blog_post",
+    "substack.com": "blog_post",
+    "who.int": "organizational_webpage",
+    "arxiv.org": "preprint",
+    "nature.com": "journal_article",
+    "sciencedirect.com": "journal_article",
+    "medrxiv.org": "preprint",
+    "biorxiv.org": "preprint",
+  };
+
+  const SITE_TRANSLATORS = {
+    "arxiv.org": () => ({
+      doi: textValue(document.querySelector('meta[name="citation_doi"]')?.content),
+      journalTitle: "arXiv",
+      articleType: "preprint",
+    }),
+    "nature.com": () => ({
+      journalTitle: textValue(document.querySelector('meta[name="citation_journal_title"]')?.content) || "Nature",
+      articleType: "scholarly",
+    }),
+    "nytimes.com": () => ({ articleType: "news" }),
+  };
 
   function parseDateBits(value) {
     const raw = textValue(value);
@@ -492,138 +516,225 @@
       raw,
       iso: parsed.toISOString(),
       year: String(parsed.getUTCFullYear()),
+      month: parsed.getUTCMonth() + 1,
+      day: parsed.getUTCDate(),
       short: parsed.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }),
       long: parsed.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
+      mla: parsed.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" }),
+      apa: parsed.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
+      chicago: parsed.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
+      harvard: parsed.toLocaleDateString("en-US", { day: "numeric", month: "long", year: "numeric" }),
     };
   }
 
-  function parseJsonLd() {
+  function toAuthorObject(fullName) {
+    const normalized = textValue(fullName).replace(/^by\s+/i, "");
+    if (!normalized) return null;
+    if (normalized.includes(",")) {
+      const [lastName, firstName] = normalized.split(",").map((v) => v.trim());
+      const initials = firstName?.split(/\s+/).filter(Boolean).map((p) => p[0]?.toUpperCase()).join(".") || "";
+      return { firstName, lastName, initials, fullName: `${firstName} ${lastName}`.trim(), isOrganization: false };
+    }
+    if (/\b(editorial|staff|team|inc\.?|corp\.?|organization|agency|ministry|department|university|office|world health organization|united nations)\b/i.test(normalized)) {
+      return { firstName: "", lastName: normalized, initials: "", fullName: normalized, isOrganization: true };
+    }
+    const parts = normalized.split(/\s+/).filter(Boolean);
+    const firstName = parts.slice(0, -1).join(" ") || parts[0] || "";
+    const lastName = parts.length > 1 ? parts[parts.length - 1] : firstName;
+    const initials = firstName.split(/\s+/).filter(Boolean).map((part) => part[0]?.toUpperCase()).join(".");
+    return { firstName, lastName, initials, fullName: normalized, isOrganization: false };
+  }
+
+  function titleCase(text) {
+    const value = textValue(text);
+    if (!value) return "Untitled page";
+    return value.replace(/\w\S*/g, (word) => word[0].toUpperCase() + word.slice(1).toLowerCase());
+  }
+
+  function sentenceCase(text) {
+    const value = textValue(text);
+    if (!value) return "Untitled page";
+    return `${value[0].toUpperCase()}${value.slice(1).toLowerCase()}`;
+  }
+
+  function deriveSiteNameFromDomain(url) {
+    try {
+      const host = new URL(url).hostname.replace(/^www\./i, "");
+      return host.split(".")[0].replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    } catch {
+      return "Unknown source";
+    }
+  }
+
+  function readMeta(name, attr = "name") {
+    return textValue(document.querySelector(`meta[${attr}="${name}"]`)?.content);
+  }
+
+  function parseJsonLdBlocks() {
     const blocks = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
+    const nodes = [];
     for (const block of blocks) {
       const text = textValue(block.textContent);
       if (!text) continue;
       try {
         const parsed = JSON.parse(text);
-        const entries = Array.isArray(parsed)
-          ? parsed
-          : Array.isArray(parsed["@graph"])
-            ? parsed["@graph"]
-            : [parsed];
-        for (const entry of entries) {
-          if (!entry || typeof entry !== "object") continue;
-          const authorValue = entry.author;
-          const authorCandidates = Array.isArray(authorValue) ? authorValue : [authorValue];
-          const authors = authorCandidates
-            .map((candidate) => {
-              if (!candidate) return null;
-              if (typeof candidate === "string") return candidate;
-              return candidate.name || candidate.alternateName || null;
-            })
-            .filter(Boolean);
-
-          return {
-            title: textValue(entry.headline || entry.name),
-            siteName: textValue(entry.publisher?.name || entry.sourceOrganization?.name),
-            publisher: textValue(entry.publisher?.name),
-            datePublished: textValue(entry.datePublished || entry.dateCreated),
-            section: textValue(entry.articleSection),
-            authors,
-          };
-        }
+        const entries = Array.isArray(parsed) ? parsed : (Array.isArray(parsed["@graph"]) ? parsed["@graph"] : [parsed]);
+        nodes.push(...entries.filter((entry) => entry && typeof entry === "object"));
       } catch {
         continue;
       }
     }
-    return null;
+    return nodes;
+  }
+
+  function sourceField(candidates) {
+    return candidates.sort((a, b) => b.confidence - a.confidence)[0]?.value || "";
   }
 
   function getParagraphNumber() {
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return null;
-
     let node = selection.anchorNode;
-    while (node && node.nodeType !== 1) {
-      node = node.parentNode;
-    }
-
+    while (node && node.nodeType !== 1) node = node.parentNode;
     const paragraph = node?.closest("p");
     if (!paragraph) return null;
-
-    const paragraphs = Array.from(document.querySelectorAll("p"));
+    const paragraphs = Array.from(document.querySelectorAll("article p, main p, p"));
     const index = paragraphs.indexOf(paragraph);
     return index >= 0 ? index + 1 : null;
   }
 
+  function classifySource(meta) {
+    const domain = (() => {
+      try { return new URL(meta.url).hostname.replace(/^www\./, ""); } catch { return ""; }
+    })();
+    const schemaType = (meta.articleType || "").toLowerCase();
+    let source_type = "general_webpage";
+    let confidence = 0.45;
+    if (schemaType.includes("newsarticle") || schemaType.includes("news") || DOMAIN_INTELLIGENCE[domain] === "newspaper_article") {
+      source_type = "newspaper_article"; confidence = 0.92;
+    } else if (meta.journalTitle || (meta.doi && (schemaType.includes("scholarly") || DOMAIN_INTELLIGENCE[domain] === "journal_article"))) {
+      source_type = "journal_article"; confidence = 0.94;
+    } else if (["arxiv.org", "medrxiv.org", "biorxiv.org"].some((d) => domain.endsWith(d))) {
+      source_type = "preprint"; confidence = 0.95;
+    } else if (domain.endsWith(".gov")) {
+      source_type = "government_document"; confidence = 0.88;
+    } else if (schemaType.includes("blog") || DOMAIN_INTELLIGENCE[domain] === "blog_post") {
+      source_type = "blog_post"; confidence = 0.85;
+    }
+    return { source_type, confidence };
+  }
+
   function getCitationMetadata(selectionText) {
-    const url = cleanUrl(window.location.href);
+    const canonical = textValue(document.querySelector('link[rel="canonical"]')?.href);
+    const url = cleanUrl(canonical || window.location.href);
     const now = new Date();
-    const jsonLd = parseJsonLd() || {};
+    const jsonLdNodes = parseJsonLdBlocks();
+    const schemaNode = jsonLdNodes.find((n) => /(NewsArticle|ScholarlyArticle|BlogPosting|Report|WebPage|Article)/i.test(String(n["@type"] || ""))) || {};
+    const domain = (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; } })();
+    const translator = Object.entries(SITE_TRANSLATORS).find(([host]) => domain.endsWith(host))?.[1];
+    const translatorData = translator ? translator() : {};
 
-    const ogTitle = textValue(document.querySelector('meta[property="og:title"]')?.content);
-    const ogSite = textValue(document.querySelector('meta[property="og:site_name"]')?.content);
-    const ogAuthor = textValue(document.querySelector('meta[property="article:author"]')?.content);
-    const ogPublished = textValue(document.querySelector('meta[property="article:published_time"]')?.content);
-    const metaAuthor = textValue(document.querySelector('meta[name="author"]')?.content);
-    const metaPublisher = textValue(document.querySelector('meta[name="publisher"]')?.content);
-    const metaDate = textValue(document.querySelector('meta[name="date"]')?.content) || textValue(document.querySelector('meta[name="publication_date"]')?.content);
-    const articleNode = document.querySelector("article");
-    const articleTitle = textValue(articleNode?.querySelector("h1")?.textContent);
-    const timeTag = textValue(articleNode?.querySelector("time")?.getAttribute("datetime") || document.querySelector("time")?.getAttribute("datetime"));
-    const microdataTitle = textValue(document.querySelector('[itemprop="headline"]')?.textContent);
-    const microdataAuthor = textValue(document.querySelector('[itemprop="author"]')?.textContent);
-    const microdataPublisher = textValue(document.querySelector('[itemprop="publisher"]')?.textContent);
-    const microdataDate = textValue(document.querySelector('[itemprop="datePublished"]')?.getAttribute("content") || document.querySelector('[itemprop="datePublished"]')?.textContent);
-    const heuristicAuthor = AUTHOR_HINT_SELECTORS.map((selector) => textValue(document.querySelector(selector)?.textContent)).find(Boolean);
+    const highwireAuthors = Array.from(document.querySelectorAll('meta[name="citation_author"]')).map((m) => textValue(m.content)).filter(Boolean);
+    const schemaAuthors = (Array.isArray(schemaNode.author) ? schemaNode.author : [schemaNode.author]).map((a) => typeof a === "string" ? a : a?.name).filter(Boolean);
+    const bylineAuthor = AUTHOR_HINT_SELECTORS.map((selector) => textValue(document.querySelector(selector)?.textContent)).find(Boolean);
 
-    const title = jsonLd.title || ogTitle || microdataTitle || articleTitle || textValue(document.querySelector('meta[name="twitter:title"]')?.content) || textValue(document.title) || "Untitled Page";
+    const title = sourceField([
+      { value: readMeta("citation_title"), confidence: METADATA_SOURCE_CONFIDENCE.highwire },
+      { value: textValue(schemaNode.headline || schemaNode.name), confidence: METADATA_SOURCE_CONFIDENCE.schema },
+      { value: readMeta("title", "property"), confidence: METADATA_SOURCE_CONFIDENCE.opengraph },
+      { value: readMeta("DC.title"), confidence: METADATA_SOURCE_CONFIDENCE.dublin },
+      { value: textValue(document.title), confidence: METADATA_SOURCE_CONFIDENCE.standard },
+    ].filter((x) => x.value));
 
-    const authorsRaw = [
-      ...(jsonLd.authors || []),
-      ogAuthor,
-      metaAuthor,
-      microdataAuthor,
-      heuristicAuthor,
-    ]
-      .filter(Boolean)
-      .flatMap((value) => String(value).split(/,|\band\b|&/i))
-      .map((value) => value.trim())
-      .filter(Boolean);
+    const subtitle = sourceField([
+      { value: readMeta("citation_subtitle"), confidence: METADATA_SOURCE_CONFIDENCE.highwire },
+      { value: textValue(schemaNode.alternativeHeadline), confidence: METADATA_SOURCE_CONFIDENCE.schema },
+    ].filter((x) => x.value));
 
-    const normalizedAuthors = Array.from(new Set(authorsRaw)).map(toAuthorObject).filter(Boolean);
-    const siteName = jsonLd.siteName || ogSite || metaPublisher || microdataPublisher || textValue(document.querySelector('meta[name="application-name"]')?.content) || deriveSiteNameFromDomain(url);
-    const parsedPublished = parseDateBits(jsonLd.datePublished || ogPublished || metaDate || timeTag || microdataDate || "");
+    const authorNames = [
+      ...highwireAuthors,
+      ...schemaAuthors,
+      textValue(readMeta("author")),
+      textValue(readMeta("article:author", "property")),
+      bylineAuthor,
+    ].flatMap((name) => String(name || "").split(/,|\band\b|&/i)).map((v) => v.trim()).filter(Boolean);
 
-    return {
-      title,
+    const publisher = sourceField([
+      { value: readMeta("citation_publisher"), confidence: METADATA_SOURCE_CONFIDENCE.highwire },
+      { value: textValue(schemaNode.publisher?.name), confidence: METADATA_SOURCE_CONFIDENCE.schema },
+      { value: readMeta("publisher"), confidence: METADATA_SOURCE_CONFIDENCE.standard },
+    ].filter((x) => x.value));
+
+    const siteName = sourceField([
+      { value: readMeta("citation_journal_title"), confidence: METADATA_SOURCE_CONFIDENCE.highwire },
+      { value: textValue(schemaNode.isPartOf?.name || schemaNode.publisher?.name), confidence: METADATA_SOURCE_CONFIDENCE.schema },
+      { value: readMeta("og:site_name", "property"), confidence: METADATA_SOURCE_CONFIDENCE.opengraph },
+      { value: deriveSiteNameFromDomain(url), confidence: METADATA_SOURCE_CONFIDENCE.url },
+    ].filter((x) => x.value));
+
+    const datePublished = sourceField([
+      { value: readMeta("citation_publication_date"), confidence: METADATA_SOURCE_CONFIDENCE.highwire },
+      { value: textValue(schemaNode.datePublished || schemaNode.dateCreated), confidence: METADATA_SOURCE_CONFIDENCE.schema },
+      { value: readMeta("DC.date"), confidence: METADATA_SOURCE_CONFIDENCE.dublin },
+      { value: readMeta("article:published_time", "property"), confidence: METADATA_SOURCE_CONFIDENCE.opengraph },
+      { value: textValue(document.querySelector("time")?.getAttribute("datetime")), confidence: METADATA_SOURCE_CONFIDENCE.standard },
+      { value: textValue(document.querySelector('meta[name="last-modified"]')?.content), confidence: METADATA_SOURCE_CONFIDENCE.standard },
+    ].filter((x) => x.value));
+
+    const normalizedAuthors = Array.from(new Set(authorNames)).map(toAuthorObject).filter(Boolean);
+    const normalizedTitle = subtitle ? `${title}: ${subtitle}` : title;
+    const parsedDate = parseDateBits(datePublished);
+
+    const meta = {
+      title: normalizedTitle || "Untitled Page",
+      title_case: titleCase(normalizedTitle || "Untitled Page"),
+      sentence_case: sentenceCase(normalizedTitle || "Untitled Page"),
+      subtitle,
       author: normalizedAuthors[0]?.fullName || "",
       authors: normalizedAuthors,
       siteName,
-      publisher: jsonLd.publisher || metaPublisher || siteName,
-      datePublished: parsedPublished?.iso || parsedPublished?.raw || "",
+      publisher,
+      datePublished: parsedDate?.iso || datePublished || "",
+      dateModified: textValue(schemaNode.dateModified || readMeta("article:modified_time", "property")),
       dateAccessed: now.toISOString(),
+      articleType: textValue(schemaNode["@type"] || translatorData.articleType || ""),
+      articleSection: textValue(readMeta("citation_section") || schemaNode.articleSection),
+      journalTitle: textValue(readMeta("citation_journal_title") || translatorData.journalTitle),
+      volume: textValue(readMeta("citation_volume")),
+      issue: textValue(readMeta("citation_issue")),
+      doi: textValue(readMeta("citation_doi") || schemaNode.identifier?.value || translatorData.doi),
       url,
-      section: jsonLd.section || textValue(document.querySelector('[itemprop="articleSection"]')?.textContent),
+      canonicalUrl: url,
       paragraph: getParagraphNumber() || null,
       selectionText,
       excerpt: (selectionText || "").slice(0, 140),
     };
-  }
 
+    meta.classification = classifySource(meta);
+    return meta;
+  }
 
   function validateCitationMetadata(meta) {
     const fallbackSite = deriveSiteNameFromDomain(meta.url || window.location.href);
+    const normalizedAuthors = (meta.authors || []).length
+      ? meta.authors
+      : [toAuthorObject(textValue(meta.author) || textValue(meta.publisher) || textValue(meta.siteName) || fallbackSite)].filter(Boolean);
     return {
       ...meta,
       title: textValue(meta.title) || "Untitled Page",
+      title_case: titleCase(meta.title || "Untitled Page"),
+      sentence_case: sentenceCase(meta.title || "Untitled Page"),
       siteName: textValue(meta.siteName) || fallbackSite,
-      author: textValue(meta.author) || textValue(meta.siteName) || fallbackSite,
+      publisher: textValue(meta.publisher) || textValue(meta.siteName) || fallbackSite,
+      author: textValue(meta.author) || normalizedAuthors[0]?.fullName || fallbackSite,
       datePublished: textValue(meta.datePublished),
-      authors: (meta.authors || []).length ? meta.authors : [toAuthorObject(textValue(meta.author) || textValue(meta.siteName) || fallbackSite)].filter(Boolean),
+      authors: normalizedAuthors,
+      classification: meta.classification || classifySource(meta),
     };
   }
 
   function leadAuthor(meta) {
-    return meta.authors?.[0] || toAuthorObject(meta.author) || toAuthorObject(meta.siteName) || {
+    return meta.authors?.[0] || toAuthorObject(meta.author) || toAuthorObject(meta.publisher) || toAuthorObject(meta.siteName) || {
       fullName: meta.siteName || "Unknown source",
       firstName: "",
       lastName: meta.siteName || "Unknown source",
@@ -638,18 +749,14 @@
     const mapped = list.map((author) => {
       if (author.isOrganization) return author.fullName;
       if (style === "apa" || style === "harvard") {
-        const initials = (author.initials || "")
-          .split(".")
-          .filter(Boolean)
-          .map((item) => `${item}.`)
-          .join(" ");
+        const initials = (author.initials || "").split(".").filter(Boolean).map((item) => `${item}.`).join(" ");
         return `${author.lastName}, ${initials}`.trim();
       }
-      return author.fullName;
+      return `${author.lastName}, ${author.firstName}`.trim().replace(/,\s*$/, "");
     });
     if (mapped.length === 1) return mapped[0];
-    if (style === "mla") return `${mapped[0]}, et al.`;
-    if (style === "apa") return mapped.length === 2 ? `${mapped[0]} & ${mapped[1]}` : `${mapped[0]} et al.`;
+    if (style === "mla") return mapped.length === 2 ? `${mapped[0]}, and ${mapped[1]}` : `${mapped[0]}, et al.`;
+    if (style === "apa" || style === "harvard") return mapped.length === 2 ? `${mapped[0]} & ${mapped[1]}` : `${mapped[0]} et al.`;
     return `${mapped.slice(0, -1).join(", ")}, and ${mapped[mapped.length - 1]}`;
   }
 
@@ -659,28 +766,43 @@
     const last = author.lastName || author.fullName;
     const year = parseDateBits(meta.datePublished)?.year || "n.d.";
     const para = meta.paragraph;
-    if (style === "mla") return `\n\n“${meta.selectionText}” (${last}${para ? `, par. ${para}` : ""})`;
-    if (style === "chicago") return para ? `\n\n“${meta.selectionText}” (${last}, para. ${para})` : `\n\n“${meta.selectionText}”`;
-    return `\n\n“${meta.selectionText}” (${last}, ${year}${para ? `, para. ${para}` : ""})`;
+    if (style === "mla") return `
+
+“${meta.selectionText}” (${last}${para ? `, par. ${para}` : ""})`;
+    if (style === "chicago") return para ? `
+
+“${meta.selectionText}” (${last}, para. ${para})` : `
+
+“${meta.selectionText}” (${last})`;
+    return `
+
+“${meta.selectionText}” (${last}, ${year}${para ? `, para. ${para}` : ""})`;
   }
 
-  function formatCitation(format, meta) {
-    const published = parseDateBits(meta.datePublished);
+  function formatCitation(format, metadata) {
+    const meta = validateCitationMetadata(metadata);
+    const published = parseDateBits(meta.datePublished || meta.dateModified);
     const accessLong = parseDateBits(meta.dateAccessed)?.long || new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
-    const authorText = formatAuthorsForStyle(meta.authors, format) || meta.siteName || "Unknown source";
+    const authorText = formatAuthorsForStyle(meta.authors, format) || meta.publisher || meta.siteName || "Unknown source";
     const year = published?.year || "n.d.";
-    const sectionBit = meta.section ? ` ${meta.section}.` : "";
+    const titleText = (format === "apa" || format === "harvard") ? meta.sentence_case : meta.title_case;
+    const dateText = format === "mla" ? published?.mla : format === "apa" ? published?.apa : format === "chicago" ? published?.chicago : published?.harvard;
+
+    if (meta.classification?.source_type === "journal_article" && meta.doi) {
+      const journalBit = [meta.journalTitle || meta.siteName, meta.volume, meta.issue ? `(${meta.issue})` : ""].filter(Boolean).join(" ");
+      return `${authorText}. (${year}). ${titleText}. ${journalBit}. https://doi.org/${meta.doi.replace(/^https?:\/\/doi.org\//, "")}.${formatInTextQuote(format, meta)}`;
+    }
 
     switch (format) {
       case "apa":
-        return `${authorText}. (${year}). ${sentenceCase(meta.title)}. ${meta.siteName}. ${meta.url}.${formatInTextQuote("apa", meta)}`;
+        return `${authorText}. (${year}). ${titleText}. ${meta.siteName}. ${meta.url}.${formatInTextQuote("apa", meta)}`;
       case "chicago":
-        return `${authorText}. "${meta.title}." ${meta.siteName}.${sectionBit} ${published?.long ? `Published ${published.long}.` : `Accessed ${accessLong}.`} ${meta.url}.${formatInTextQuote("chicago", meta)}`;
+        return `${authorText}. "${titleText}." ${meta.siteName}. ${published?.chicago ? `Published ${published.chicago}.` : `Accessed ${accessLong}.`} ${meta.url}.${formatInTextQuote("chicago", meta)}`;
       case "harvard":
-        return `${authorText} (${year}) ${sentenceCase(meta.title)}. ${meta.siteName}. Available at: ${meta.url} (Accessed: ${accessLong}).${formatInTextQuote("harvard", meta)}`;
+        return `${authorText} (${year}) ${titleText}. ${meta.siteName}. Available at: ${meta.url} (Accessed: ${accessLong}).${formatInTextQuote("harvard", meta)}`;
       case "mla":
       default:
-        return `${authorText}. "${meta.title}." *${meta.siteName}*, ${published?.short || year}, ${meta.url}. Accessed ${accessLong}.${formatInTextQuote("mla", meta)}`;
+        return `${authorText}. "${titleText}." *${meta.siteName}*, ${dateText || year}, ${meta.url}. Accessed ${accessLong}.${formatInTextQuote("mla", meta)}`;
     }
   }
 

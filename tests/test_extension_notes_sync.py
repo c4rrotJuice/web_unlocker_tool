@@ -166,3 +166,50 @@ def test_notes_delete_sync(monkeypatch):
     assert response.status_code == 200
     assert response.json()["ok"] is True
     assert any(call[0] == "delete" and call[1] == "notes" for call in repo.calls)
+
+
+def test_notes_create_sync_generates_id_when_missing(monkeypatch):
+    main = _build_app(monkeypatch)
+    from app.routes import extension
+
+    repo = FakeSupabaseRepo()
+    extension.supabase_repo = repo
+
+    client = TestClient(main.app)
+    payload = {
+        "title": "No ID",
+        "note_body": "Body",
+        "source_url": "https://example.com/a",
+        "tags": [],
+    }
+
+    response = client.post("/api/notes", headers={"Authorization": "Bearer token"}, json=payload)
+
+    assert response.status_code == 200
+    note_id = response.json()["note_id"]
+    assert isinstance(note_id, str)
+    assert len(note_id) == 36
+
+
+def test_notes_create_sync_accepts_comma_separated_tags(monkeypatch):
+    main = _build_app(monkeypatch)
+    from app.routes import extension
+
+    repo = FakeSupabaseRepo()
+    extension.supabase_repo = repo
+
+    client = TestClient(main.app)
+    payload = {
+        "id": "2f3f2367-64f3-422d-b14d-cf70650fc4ca",
+        "title": "Tags",
+        "note_body": "Body",
+        "tags": "43f2fbbf-2390-4ea3-bfc4-28ea0803aca7, 5ec57fbc-5662-47f5-8abf-4f95ce13fd77",
+    }
+
+    response = client.post("/api/notes", headers={"Authorization": "Bearer token"}, json=payload)
+
+    assert response.status_code == 200
+    join_posts = [call for call in repo.calls if call[0] == "post" and call[1] == "note_note_tags"]
+    assert len(join_posts) == 1
+    rows = join_posts[0][2]["json"]
+    assert len(rows) == 2

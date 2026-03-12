@@ -60,15 +60,15 @@
         <div class="analytics-stack">
           <div class="analytics-block">
             <h3>Words Written</h3>
-            <canvas id="usageChart"></canvas>
+            <div class="chart-wrap"><canvas id="usageChart"></canvas></div>
           </div>
           <div class="analytics-block">
             <h3>Notes Created (Mock)</h3>
-            <canvas id="notesChart"></canvas>
+            <div class="chart-wrap"><canvas id="notesChart"></canvas></div>
           </div>
           <div class="analytics-block">
             <h3>Citations Saved</h3>
-            <canvas id="citationsChart"></canvas>
+            <div class="chart-wrap"><canvas id="citationsChart"></canvas></div>
           </div>
         </div>
       </article>
@@ -287,7 +287,10 @@ function renderUsageAnalytics(history) {
         pointRadius: 2,
       }],
     },
-    options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } },
+    options: buildCompactChartOptions({
+      integerTicks: false,
+      suggestedMax: getSuggestedMax(Object.values(counts).map(v => v * 750)),
+    }),
   });
 
   renderMockNotesAnalytics(Object.keys(counts));
@@ -303,7 +306,7 @@ function renderMockNotesAnalytics(labels) {
       labels,
       datasets: [{ label: "Notes Created", data: notesData, backgroundColor: "rgba(148, 163, 184, 0.8)", borderRadius: 5 }],
     },
-    options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } },
+    options: buildCompactChartOptions({ integerTicks: true }),
   });
 }
 
@@ -322,8 +325,56 @@ function renderCitationAnalytics(citations) {
         borderRadius: 5,
       }],
     },
-    options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } },
+    options: buildCompactChartOptions({ integerTicks: true }),
   });
+}
+
+function getSuggestedMax(values) {
+  const maxValue = Math.max(0, ...values);
+  if (!maxValue) return 10;
+  return Math.ceil(maxValue * 1.12);
+}
+
+function buildCompactChartOptions({ integerTicks = false, suggestedMax } = {}) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    normalized: true,
+    layout: { padding: { top: 2, bottom: 2, left: 0, right: 0 } },
+    plugins: {
+      legend: { display: false },
+      tooltip: { mode: "index", intersect: false },
+    },
+    interaction: { mode: "index", intersect: false },
+    scales: {
+      x: {
+        grid: { display: false },
+        ticks: {
+          color: "rgba(148, 163, 184, 0.85)",
+          autoSkip: true,
+          maxTicksLimit: 4,
+          maxRotation: 0,
+          minRotation: 0,
+          font: { size: 10 },
+        },
+      },
+      y: {
+        beginAtZero: true,
+        suggestedMax,
+        grace: "8%",
+        grid: { color: "rgba(148, 163, 184, 0.15)", drawBorder: false },
+        ticks: {
+          color: "rgba(148, 163, 184, 0.85)",
+          maxTicksLimit: 4,
+          precision: integerTicks ? 0 : undefined,
+          callback: integerTicks
+            ? (value) => Number.isInteger(value) ? value : ""
+            : undefined,
+        },
+      },
+    },
+  };
 }
 
 function aggregateCountsByDay(items, dateKey) {

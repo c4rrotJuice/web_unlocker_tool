@@ -3,6 +3,8 @@ import { createSupabaseAuthClient } from "./lib/supabase.js";
 import { BACKEND_BASE_URL } from "./config.js";
 
 const USAGE_KEY = "usage_snapshot";
+const NOTES_KEY = "notes_state";
+const NOTES_SYNC_QUEUE_KEY = "notes_sync_queue";
 const REFRESH_WINDOW_SECONDS = 120;
 const supabaseClient = createSupabaseAuthClient();
 let debugEnabled = false;
@@ -42,6 +44,166 @@ async function writeStorage(payload) {
 
 async function clearStorage(keys) {
   await chrome.storage.local.remove(keys);
+}
+
+function createId(prefix = "id") {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `${prefix}_${crypto.randomUUID()}`;
+  }
+  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function normalizeTier(accountType) {
+  return String(accountType || "anonymous").toLowerCase();
+}
+
+function getSyncStorageLimitBytes(accountType, isAuthenticated) {
+  if (!isAuthenticated) return Number.POSITIVE_INFINITY;
+  const tier = normalizeTier(accountType);
+  if (tier === "pro") return 30 * 1024 * 1024;
+  if (tier === "standard") return 10 * 1024 * 1024;
+  return 5 * 1024 * 1024;
+}
+
+function estimateSize(value) {
+  return new TextEncoder().encode(JSON.stringify(value)).length;
+}
+
+function parseTagsInput(input) {
+  if (Array.isArray(input)) return input.map((v) => String(v).trim()).filter(Boolean);
+  return String(input || "").split(",").map((v) => v.trim()).filter(Boolean);
+}
+
+async function getNotesState() {
+  const { [NOTES_KEY]: notesState } = await readStorage([NOTES_KEY]);
+  return notesState || { notes: [], tags: [], projects: [] };
+}
+
+async function setNotesState(state) {
+  await writeStorage({ [NOTES_KEY]: state });
+}
+
+async function getSyncQueue() {
+  const { [NOTES_SYNC_QUEUE_KEY]: queue } = await readStorage([NOTES_SYNC_QUEUE_KEY]);
+  return Array.isArray(queue) ? queue : [];
+}
+
+async function setSyncQueue(queue) {
+  await writeStorage({ [NOTES_SYNC_QUEUE_KEY]: queue });
+}
+
+function upsertNamedEntity(list, name) {
+  const cleaned = String(name || "").trim();
+  if (!cleaned) return { list, entity: null };
+  const existing = list.find((item) => item.name.toLowerCase() === cleaned.toLowerCase());
+  if (existing) return { list, entity: existing };
+  const entity = { id: createId("n"), name: cleaned, created_at: new Date().toISOString() };
+  return { list: [...list, entity], entity };
+}
+
+async function upsertNote(notePayload = {}) {
+  const state = await getNotesState();
+  const now = new Date().toISOString();
+  let nextProjects = state.projects || [];
+  const projectResult = upsertNamedEntity(nextProjects, notePayload.project);
+  nextProjects = projectResult.list;
+
+  let nextTags = state.tags || [];
+  const resolvedTagIds = [];
+  for (const tagName of parseTagsInput(notePayload.tags)) {
+    const result = upsertNamedEntity(nextTags, tagName);
+    nextTags = result.list;
+    if (result.entity) {
+      resolvedTagIds.push(result.entity.id);
+    }
+  }
+
+  const note = {
+    id: notePayload.id || createId("note"),
+    title: (notePayload.title || "").trim(),
+    highlight_text: notePayload.highlight_text || null,
+    note_body: notePayload.note_body || "",
+    source_url: notePayload.source_url || null,
+    project_id: projectResult.entity?.id || notePayload.project_id || null,
+    tags: resolvedTagIds,
+    created_at: notePayload.created_at || now,
+    updated_at: now,
+    sync_status: "pending",
+  };
+
+  const existingIdx = (state.notes || []).findIndex((item) => item.id === note.id);
+  const nextNotes = [...(state.notes || [])];
+  if (existingIdx >= 0) {
+    nextNotes[existingIdx] = {
+      ...nextNotes[existingIdx],
+      ...note,
+      created_at: nextNotes[existingIdx].created_at || note.created_at,
+    };
+  } else {
+    nextNotes.unshift(note);
+  }
+
+  const nextState = { notes: nextNotes, tags: nextTags, projects: nextProjects };
+  await setNotesState(nextState);
+  return { note: existingIdx >= 0 ? nextNotes[existingIdx] : note, state: nextState };
+}
+
+function applyFilters(notes, state, filters = {}, sort = "desc") {
+  const tagFilter = String(filters.tag || "").trim().toLowerCase();
+  const projectFilter = String(filters.project || "").trim().toLowerCase();
+  const sourceFilter = String(filters.source || "").trim().toLowerCase();
+  const tagIds = (state.tags || []).filter((t) => t.name.toLowerCase().includes(tagFilter)).map((t) => t.id);
+  const projectIds = (state.projects || []).filter((p) => p.name.toLowerCase().includes(projectFilter)).map((p) => p.id);
+
+  return notes
+    .filter((note) => {
+      const byTag = !tagFilter || note.tags?.some((id) => tagIds.includes(id));
+      const byProject = !projectFilter || projectIds.includes(note.project_id);
+      const bySource = !sourceFilter || String(note.source_url || "").toLowerCase().includes(sourceFilter);
+      return byTag && byProject && bySource;
+    })
+    .sort((a, b) => {
+      const av = new Date(a.created_at).getTime();
+      const bv = new Date(b.created_at).getTime();
+      return sort === "asc" ? av - bv : bv - av;
+    });
+}
+
+async function enqueueSyncOperation(operation) {
+  const queue = await getSyncQueue();
+  queue.push({ ...operation, queued_at: new Date().toISOString() });
+  await setSyncQueue(queue);
+}
+
+let syncInFlight = false;
+async function flushSyncQueue() {
+  if (syncInFlight) return;
+  syncInFlight = true;
+  try {
+    const session = await ensureValidSession();
+    if (!session) return;
+    let queue = await getSyncQueue();
+    if (!queue.length) return;
+
+    const remaining = [];
+    for (const item of queue) {
+      const endpoint = item.type === "delete" ? `/api/notes/${encodeURIComponent(item.note.id)}` : "/api/notes";
+      const method = item.type === "delete" ? "DELETE" : item.type === "update" ? "PATCH" : "POST";
+      const response = await apiFetch(endpoint, { method, body: item.type === "delete" ? undefined : JSON.stringify(item.note) }, session.access_token);
+      if (!response.ok) {
+        if (response.status === 401) {
+          await clearSession();
+          remaining.push(item);
+          break;
+        }
+        remaining.push(item);
+      }
+    }
+    queue = remaining;
+    await setSyncQueue(queue);
+  } finally {
+    syncInFlight = false;
+  }
 }
 
 
@@ -506,6 +668,62 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const result = await openAuthedPath("/dashboard");
           debug("OPEN_DASHBOARD result", result);
           sendResponse(result);
+          break;
+        }
+
+        case "NOTE_SAVE": {
+          const session = await ensureValidSession();
+          const usage = await getUsageSnapshotForSession(session);
+          const accountType = usage?.account_type || "anonymous";
+          const { note, state } = await upsertNote(message.note || {});
+          const localSize = estimateSize(state.notes || []);
+          const syncLimit = getSyncStorageLimitBytes(accountType, Boolean(session));
+          const syncBlocked = Boolean(session) && localSize > syncLimit;
+          if (session && !syncBlocked) {
+            await enqueueSyncOperation({ type: "create", note });
+            void flushSyncQueue();
+          }
+          sendResponse({ status: 200, data: { note, sync_blocked: syncBlocked, storage_bytes: localSize, sync_limit_bytes: Number.isFinite(syncLimit) ? syncLimit : null } });
+          break;
+        }
+        case "NOTES_LIST": {
+          const state = await getNotesState();
+          const limit = Number.isFinite(message.limit) ? Math.max(1, Math.min(500, message.limit)) : 100;
+          const notes = applyFilters(state.notes || [], state, message.filters || {}, message.sort || "desc").slice(0, limit);
+          sendResponse({ status: 200, data: { notes, tags: state.tags || [], projects: state.projects || [] } });
+          break;
+        }
+        case "NOTE_UPDATE": {
+          const state = await getNotesState();
+          const note = (state.notes || []).find((item) => item.id === message.id);
+          if (!note) {
+            sendResponse({ status: 404, error: "Note not found." });
+            break;
+          }
+          const merged = { ...note, ...(message.patch || {}), id: note.id };
+          const result = await upsertNote(merged);
+          const session = await ensureValidSession();
+          if (session) {
+            await enqueueSyncOperation({ type: "update", note: result.note });
+            void flushSyncQueue();
+          }
+          sendResponse({ status: 200, data: { note: result.note } });
+          break;
+        }
+        case "NOTE_DELETE": {
+          const state = await getNotesState();
+          const notes = (state.notes || []).filter((item) => item.id !== message.id);
+          if (notes.length === (state.notes || []).length) {
+            sendResponse({ status: 404, error: "Note not found." });
+            break;
+          }
+          await setNotesState({ ...state, notes });
+          const session = await ensureValidSession();
+          if (session) {
+            await enqueueSyncOperation({ type: "delete", note: { id: message.id } });
+            void flushSyncQueue();
+          }
+          sendResponse({ status: 200, data: { deleted: true } });
           break;
         }
         default:

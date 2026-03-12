@@ -14,23 +14,14 @@
         <div id="toast" class="toast hidden" role="status" aria-live="polite" tabindex="0"></div>
       </header>
 
-      <div id="usage-info" class="usage hidden">
-        <p>
-          Remaining usage:
-          <strong id="remaining">--</strong>
-        </p>
-        <p>
-          Resets:
-          <strong id="reset-at">--</strong>
-        </p>
-      </div>
+      <section id="usage-info" class="tile usage hidden">
+        <p>Remaining usage: <strong id="remaining">--</strong></p>
+        <p>Resets: <strong id="reset-at">--</strong></p>
+      </section>
 
-      <section id="signed-out" class="panel hidden">
+      <section id="signed-out" class="tile panel hidden">
         <div id="signup-extra-fields" class="panel hidden">
-          <label>
-            Full name
-            <input type="text" id="signup-name" placeholder="Jane Doe" />
-          </label>
+          <label>Full name <input type="text" id="signup-name" placeholder="Jane Doe" /></label>
           <label>
             Use case
             <select id="signup-use-case">
@@ -39,47 +30,74 @@
             </select>
           </label>
         </div>
-        
-        <label>
-          Email
-          <input type="email" id="email" placeholder="you@example.com" />
-        </label>
-        <label>
-          Password
-          <input type="password" id="password" placeholder="••••••••" />
-        </label>
+
+        <label>Email <input type="email" id="email" placeholder="you@example.com" /></label>
+        <label>Password <input type="password" id="password" placeholder="••••••••" /></label>
         <div class="actions">
-          <button id="login">Log in</button>
-          <button id="signup" class="secondary">Sign up</button>
+          <button id="login" class="pill pill-primary">Log in</button>
+          <button id="signup" class="pill">Sign up</button>
         </div>
-        <p class="hint">
-          Don’t have an account? Sign up to unlock weekly extension usage.
-        </p>
+        <p class="hint">Don’t have an account? Sign up to unlock weekly extension usage.</p>
       </section>
 
-      <section id="signed-in" class="panel hidden">
-        <p class="meta">
-          Signed in as <strong id="user-email">--</strong>
-        </p>
-        <p class="meta">
-          Tier: <strong id="user-tier">--</strong>
-        </p>
-        <div class="actions">
-          <button id="check-usage">Check unlock allowance</button>
-          <button id="open-editor" class="secondary">Open Editor</button>
-          <button id="open-dashboard" class="secondary">Open Dashboard</button>
-          <button id="logout" class="secondary">Log out</button>
-        </div>
+      <section id="signed-in" class="tile panel hidden">
+        <p class="meta">Signed in as <strong id="user-email">--</strong></p>
+        <p class="meta">Tier: <strong id="user-tier">--</strong></p>
+        <button id="enable-copy-cite" class="pill pill-primary full">Enable Copy + Cite on this page</button>
         <button id="upgrade" class="link">Upgrade plan</button>
       </section>
 
-      <button id="enable-copy-cite" class="secondary">Enable Copy+Cite on this page</button>
+      <section class="tile action-tile">
+        <div class="actions actions-main">
+          <button id="open-editor" class="pill">Open Editor</button>
+          <button id="open-dashboard" class="pill">Open Dashboard</button>
+          <button id="logout" class="pill">Logout</button>
+        </div>
+      </section>
 
-      <section id="citation-history-panel" class="panel citation-history-panel">
+      <section class="tile nav-tile">
+        <div class="tab-pills" role="tablist" aria-label="Popup sections">
+          <button id="tab-citations" class="pill tab-pill is-active" data-tab="citations" role="tab" aria-selected="true">Citations</button>
+          <button id="tab-notes" class="pill tab-pill" data-tab="notes" role="tab" aria-selected="false">Notes</button>
+          <button id="tab-note" class="pill tab-pill" data-tab="note" role="tab" aria-selected="false">Note</button>
+        </div>
+      </section>
+
+      <section id="tab-content-citations" class="tile content-tile">
         <h2 class="history-title">Recent Citations</h2>
-        <ul id="citation-history" class="citation-list">
+        <ul id="citation-history" class="pill-list">
           <li><p>Fetching ...</p></li>
         </ul>
+      </section>
+
+      <section id="tab-content-notes" class="tile content-tile hidden">
+        <div class="note-filters">
+          <input id="notes-filter-tag" type="text" placeholder="Filter by tag" />
+          <input id="notes-filter-project" type="text" placeholder="Filter by project" />
+          <input id="notes-filter-source" type="text" placeholder="Filter by source" />
+          <select id="notes-sort">
+            <option value="desc">Newest first</option>
+            <option value="asc">Oldest first</option>
+          </select>
+        </div>
+        <ul id="notes-list" class="pill-list"></ul>
+      </section>
+
+      <section id="tab-content-note" class="tile content-tile hidden">
+        <label>Title <input id="quick-note-title" type="text" placeholder="Quick note title" /></label>
+        <div class="format-toolbar">
+          <button type="button" class="pill mini" data-format="bold">B</button>
+          <button type="button" class="pill mini" data-format="italic">I</button>
+          <button type="button" class="pill mini" data-format="bullet">• List</button>
+          <button type="button" class="pill mini" data-format="link">Link</button>
+        </div>
+        <label>Note <textarea id="quick-note-body" rows="6" placeholder="Write your note..."></textarea></label>
+        <label>Tags (optional) <input id="quick-note-tags" type="text" placeholder="tag1, tag2" /></label>
+        <label>Project (optional) <input id="quick-note-project" type="text" placeholder="Project name" /></label>
+        <div class="actions">
+          <button id="save-quick-note" class="pill pill-primary">Save</button>
+          <button id="cancel-quick-note" class="pill">Cancel</button>
+        </div>
       </section>
     </main>
 

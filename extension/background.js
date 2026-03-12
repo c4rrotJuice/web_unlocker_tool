@@ -110,8 +110,14 @@ async function upsertNote(notePayload = {}) {
 
   let nextTags = state.tags || [];
   const resolvedTagIds = [];
-  for (const tagName of parseTagsInput(notePayload.tags)) {
-    const result = upsertNamedEntity(nextTags, tagName);
+  for (const tagValue of parseTagsInput(notePayload.tags)) {
+    const existingTag = nextTags.find((item) => item.id === tagValue);
+    if (existingTag) {
+      resolvedTagIds.push(existingTag.id);
+      continue;
+    }
+
+    const result = upsertNamedEntity(nextTags, tagValue);
     nextTags = result.list;
     if (result.entity) {
       resolvedTagIds.push(result.entity.id);

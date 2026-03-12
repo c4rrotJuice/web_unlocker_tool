@@ -509,7 +509,7 @@ function startEditor() {
 
     const copyBtn = document.createElement("button");
     copyBtn.textContent = "Copy full";
-    copyBtn.addEventListener("click", async (e) => { e.stopPropagation(); await navigator.clipboard.writeText(citation.full_text || ""); });
+    copyBtn.addEventListener("click", async (e) => { e.stopPropagation(); await navigator.clipboard.writeText(citation.full_citation || citation.full_text || ""); });
     actions.append(copyBtn);
 
     const removeBtn = document.createElement("button");
@@ -571,6 +571,7 @@ function startEditor() {
   }
 
   function buildInlineCitation(citationData) {
+    if (citationData.inline_citation) return citationData.inline_citation;
     const metadata = citationData.metadata || {};
     const author = metadata.author || metadata.creator || metadata.last_name;
     const year = metadata.year || metadata.published_year || metadata.date;
@@ -597,7 +598,7 @@ function startEditor() {
   function insertCitationQuote() {
     const citationData = selectedCitationId ? citationCache.get(selectedCitationId) : null;
     if (!citationData) return alert("Select a citation to insert a quote.");
-    const quoteText = citationData.excerpt || citationData.full_text || "";
+    const quoteText = citationData.excerpt || citationData.full_citation || citationData.full_text || "";
     const token = `${citeTokenPrefix}${citationData.id}${citeTokenSuffix}`;
     const inText = buildInlineCitation(citationData);
     const range = quill.getSelection(true);

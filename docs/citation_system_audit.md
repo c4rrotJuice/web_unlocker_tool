@@ -30,3 +30,12 @@
 - Added style-specific formatter behavior for MLA/APA/Chicago/Harvard.
 - Added quote-aware in-text references with optional paragraph locators.
 - Unified copy flows to ensure fully formatted citation strings are copied.
+
+## Metadata-first citation architecture (2026-03)
+
+- Citation metadata is now normalized server-side and treated as the source of truth.
+- The API derives and persists two explicit outputs per style:
+  - `inline_citation` (in-text form)
+  - `full_citation` (bibliography/reference entry)
+- `full_text` is retained for backward compatibility and mirrors `full_citation` when missing.
+- The extension/web injector now submit structured metadata plus explicit inline/full outputs so the editor can insert in-text citations separately from bibliography entries.

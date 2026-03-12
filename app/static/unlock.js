@@ -267,6 +267,18 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     }
 
+
+    function formatInlineCitation(format, metadata) {
+      const meta = validateCitationMetadata(metadata);
+      const author = leadAuthor(meta);
+      const last = author.lastName || author.fullName;
+      const year = parseDateBits(meta.datePublished || meta.dateModified)?.year || "n.d.";
+      const para = meta.paragraph;
+      if (format === "mla") return `(${last}${para ? `, par. ${para}` : ""})`;
+      if (format === "chicago") return para ? `(${last}, para. ${para})` : `(${last})`;
+      return `(${last}, ${year}${para ? `, para. ${para}` : ""})`;
+    }
+
     function showCitationPopup(text) {
         const metadata = validateCitationMetadata(getCitationMetadata(text, realSourceUrl || window.location.href));
 
@@ -316,6 +328,8 @@ document.addEventListener("DOMContentLoaded", function () {
         const citationPayload = {
             url: normalizedMeta.url,
             excerpt: normalizedMeta.excerpt || selectedText || "",
+            inline_citation: formatInlineCitation(format || "mla", normalizedMeta),
+            full_citation: citationText,
             full_text: citationText,
             format: format || "mla",
             metadata: normalizedMeta,

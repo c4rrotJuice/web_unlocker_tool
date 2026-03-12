@@ -126,7 +126,10 @@ async def get_user_metadata(request: Request):
             f"{SUPABASE_URL}/rest/v1/user_meta",
             params={
                 "user_id": f"eq.{user_id}",
-                "select": "name,account_type,daily_limit,requests_today"
+                "select": (
+                    "name,use_case,account_type,daily_limit,requests_today,"
+                    "paid_until,auto_renew,paddle_customer_id,paddle_subscription_id"
+                ),
             },
             headers={
                 "apikey": SUPABASE_KEY,
@@ -193,9 +196,14 @@ async def get_user_metadata(request: Request):
         payload = {
             "user_id": user_id,
             "name": meta.get("name"),
+            "use_case": meta.get("use_case"),
             "account_type": account_type,
             "daily_limit": meta.get("daily_limit"),
             "requests_today": usage_count,
+            "paid_until": meta.get("paid_until"),
+            "auto_renew": meta.get("auto_renew"),
+            "has_billing_profile": bool(meta.get("paddle_customer_id")),
+            "has_subscription": bool(meta.get("paddle_subscription_id")),
             "bookmarks": bookmarks,
             "usage_count": usage_count,
             "usage_limit": usage_limit,

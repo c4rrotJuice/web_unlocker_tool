@@ -97,6 +97,10 @@ body {
   gap: 12px;
 }
 
+.stat-item strong {
+  font-weight: 650;
+}
+
 .stat-item:last-child {
   border-right: none;
 }
@@ -123,6 +127,25 @@ body {
 
 .dashboard-card h2 {
   margin: 0 0 12px;
+}
+
+.analytics-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.analytics-block {
+  padding: 8px 10px;
+  border: 1px solid var(--wu-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--wu-surface-1) 88%, transparent);
+}
+
+.analytics-block h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  color: var(--wu-text-muted);
+  font-weight: 600;
 }
 
 .usage-card {
@@ -219,14 +242,17 @@ button {
 }
 
 .bookmark-link {
-  color: var(--wu-accent);
+  color: var(--wu-text);
   text-decoration: none;
 }
 
 .remove-bookmark {
-  background: none;
-  color: #ef4444;
-  padding: 0;
+  background: color-mix(in srgb, #ef4444 14%, transparent);
+  color: #f87171;
+  border: 1px solid color-mix(in srgb, #ef4444 45%, transparent);
+  padding: 2px 7px;
+  line-height: 1;
+  border-radius: 999px;
 }
 
 .badge {
@@ -239,6 +265,12 @@ button {
 .citation-item {
   position: relative;
   cursor: pointer;
+  border: 1px solid var(--wu-border);
+  border-radius: 12px;
+  margin: 6px 0;
+  padding: 10px;
+  background: color-mix(in srgb, var(--wu-surface-inset) 40%, transparent);
+  border-bottom: 1px solid var(--wu-border) !important;
 }
 
 .citation-excerpt {
@@ -247,6 +279,12 @@ button {
   align-items: center;
   width: 100%;
   gap: 8px;
+}
+
+.citation-excerpt-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .citation-modal {
@@ -269,6 +307,28 @@ button {
 
 .copy-button {
   margin-top: 8px;
+}
+
+.bookmark-pill {
+  border: 1px solid var(--wu-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--wu-surface-inset) 46%, transparent);
+  padding: 8px 10px !important;
+  margin: 6px 0;
+  border-bottom: 1px solid var(--wu-border) !important;
+}
+
+.subscription-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0 8px;
+}
+
+.btn-secondary {
+  background: var(--wu-surface-inset);
+  color: var(--wu-text);
+  border: 1px solid var(--wu-border);
 }
 
 .empty,

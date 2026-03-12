@@ -62,22 +62,56 @@
 
       .web-unlocker-copy-btn {
         position: fixed;
-        background: #282c34;
+        background: #111827;
         color: #fff;
-        padding: 6px 10px;
+        padding: 4px;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        font-size: 12px;
-        font-weight: 600;
-        border-radius: 6px;
+        border-radius: 999px;
         z-index: 2147483647;
-        cursor: pointer;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        transition: transform 0.1s ease-out;
+        box-shadow: 0 6px 16px rgba(0,0,0,0.25);
         pointer-events: auto;
+        display: flex;
+        gap: 4px;
       }
 
-      .web-unlocker-copy-btn:hover {
-        transform: scale(1.04);
+      .web-unlocker-inline-action {
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: #fff;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+
+      .web-unlocker-inline-action:hover {
+        background: rgba(255,255,255,0.15);
+      }
+
+      .web-unlocker-note-modal {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: min(460px, 92vw);
+        background: #fff;
+        border-radius: 14px;
+        border: 1px solid #e5e7eb;
+        z-index: 2147483647;
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .web-unlocker-note-modal textarea,
+      .web-unlocker-note-modal input,
+      .web-unlocker-note-modal select {
+        width: 100%;
+        border: 1px solid #d1d5db;
+        border-radius: 10px;
+        padding: 8px;
       }
 
       .web-unlocker-backdrop {
@@ -475,7 +509,10 @@ ${quote}`;
           resolve({ error: "Extension context invalidated." });
           return;
         }
-        chrome.runtime.sendMessage({ type, payload }, (response) => {
+        const message = type.startsWith("NOTE_") || type === "NOTES_LIST"
+          ? { type, ...(payload || {}) }
+          : { type, payload };
+        chrome.runtime.sendMessage(message, (response) => {
           if (chrome.runtime.lastError) {
             debug("Message error", chrome.runtime.lastError.message);
             resolve({ error: chrome.runtime.lastError.message });
@@ -888,39 +925,104 @@ ${quote}`;
   let ignoreClearUntil = 0;
   let repositionListenersActive = false;
 
+  function closeNoteModal() {
+    document.querySelector(".web-unlocker-note-modal")?.remove();
+    document.querySelector(".web-unlocker-backdrop")?.remove();
+    unlockPageScroll();
+  }
+
+  async function openNoteModal() {
+    removeCopyButton();
+    closeNoteModal();
+    const root = document.body || document.documentElement;
+    if (!root) return;
+
+    const backdrop = document.createElement("div");
+    backdrop.className = "web-unlocker-backdrop";
+    backdrop.addEventListener("click", closeNoteModal);
+
+    const modal = document.createElement("div");
+    modal.className = "web-unlocker-note-modal";
+    modal.innerHTML = `
+      <strong>Save Highlight Note</strong>
+      <div>${sanitizeText(state.selectionText.slice(0, 220))}</div>
+      <input id="wu-note-title" type="text" placeholder="Title (optional)" />
+      <textarea id="wu-note-body" rows="4" placeholder="Add a note..."></textarea>
+      <input id="wu-note-tags" type="text" placeholder="Tags (comma separated)" />
+      <input id="wu-note-project" type="text" placeholder="Project (optional)" />
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="secondary" id="wu-note-cancel" type="button">Cancel</button>
+        <button id="wu-note-save" type="button">Save</button>
+      </div>
+    `;
+    root.appendChild(backdrop);
+    root.appendChild(modal);
+    lockPageScroll();
+
+    modal.querySelector("#wu-note-cancel")?.addEventListener("click", closeNoteModal);
+    modal.querySelector("#wu-note-save")?.addEventListener("click", async () => {
+      const noteBody = modal.querySelector("#wu-note-body")?.value?.trim();
+      if (!noteBody) {
+        showToast("Note body is required.", true);
+        return;
+      }
+      const response = await sendMessage("NOTE_SAVE", {
+        note: {
+          title: modal.querySelector("#wu-note-title")?.value?.trim() || "",
+          highlight_text: state.selectionText,
+          note_body: noteBody,
+          source_url: cleanUrl(window.location.href),
+          tags: modal.querySelector("#wu-note-tags")?.value || "",
+          project: modal.querySelector("#wu-note-project")?.value?.trim() || null,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      if (response?.error) {
+        showToast("Failed to save note.", true);
+        return;
+      }
+      showToast(response?.data?.sync_blocked ? "Saved locally. Sync paused due to storage cap." : "Note saved.");
+      closeNoteModal();
+    });
+  }
+
   function createCopyButton() {
-    if (copyButton) {
-      return copyButton;
-    }
+    if (copyButton) return copyButton;
     const button = document.createElement("div");
     button.className = "web-unlocker-copy-btn";
-    button.textContent = "📋 Copy + Cite";
-    button.addEventListener(
-      "pointerdown",
-      (event) => {
-        debug("Button pointerdown.");
+    [
+      { key: "copy", label: "Copy" },
+      { key: "cite", label: "Cite" },
+      { key: "note", label: "Note" },
+    ].forEach((entry) => {
+      const action = document.createElement("button");
+      action.type = "button";
+      action.className = "web-unlocker-inline-action";
+      action.textContent = entry.label;
+      action.addEventListener("pointerdown", async (event) => {
         ignoreClearUntil = Date.now() + 400;
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
-        removeCopyButton();
-        try {
-          buildPopup();
-        } catch (error) {
-          debug("Popup build failed", error);
+        if (entry.key === "copy") {
+          const copied = await copyText(state.selectionText);
+          showToast(copied ? "Copied selection." : "Copy failed.", !copied);
+          removeCopyButton();
+          return;
         }
-      },
-      true,
-    );
-
+        if (entry.key === "cite") {
+          removeCopyButton();
+          await buildPopup();
+          return;
+        }
+        await openNoteModal();
+      }, true);
+      button.appendChild(action);
+    });
     const root = document.documentElement || document.body;
-    if (!root) {
-      debug("Copy button skipped; no root element available.");
-      return null;
-    }
+    if (!root) return null;
     root.appendChild(button);
     copyButton = button;
-    debug("Copy button injected.");
     return copyButton;
   }
 
@@ -1063,14 +1165,15 @@ ${quote}`;
       return;
     }
     const target = event.target;
-    const inPopup =
-      target instanceof Element && target.closest(".web-unlocker-popup");
-    const isButton =
-      target instanceof Element &&
-      target.classList.contains("web-unlocker-copy-btn");
-    if (!inPopup && !isButton) {
-      removeCopyButton();
-    }
+    const inPopup = target instanceof Element && (
+      target.closest(".web-unlocker-popup") ||
+      target.closest(".web-unlocker-note-modal")
+    );
+    const isButton = target instanceof Element && (
+      target.classList.contains("web-unlocker-copy-btn") ||
+      target.closest(".web-unlocker-copy-btn")
+    );
+    if (!inPopup && !isButton) removeCopyButton();
   }
 
   debug("Content script init", {

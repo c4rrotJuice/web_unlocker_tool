@@ -33,8 +33,6 @@ function renderBlockedMessage(message) {
 
 function startEditor() {
   const toast = window.webUnlockerUI?.createToastManager?.();
-  const citeTokenPrefix = "〔cite:";
-  const citeTokenSuffix = "〕";
   const AUTOSAVE_DEBOUNCE_MS = 2000;
   const OUTLINE_DEBOUNCE_MS = 700;
   const CHECKPOINT_INTERVAL_MS = 4 * 60 * 1000;
@@ -77,6 +75,7 @@ function startEditor() {
   const editorWordCount = document.getElementById("editor-word-count");
   const toolWordCount = document.getElementById("tool-word-count");
   const docNotesList = document.getElementById("doc-notes-list");
+  const citationInlineStyle = document.getElementById("citation-inline-style");
 
   const quill = new Quill("#editor", {
     theme: "snow",
@@ -92,6 +91,18 @@ function startEditor() {
       clipboard: { matchVisual: false },
     },
   });
+
+  const dynamicPanels = [document.querySelector(".sidebar-left"), document.querySelector(".sidebar-right"), document.querySelector(".editor-main")].filter(Boolean);
+
+  function growPanelsToContent() {
+    const viewportCap = Math.max(420, window.innerHeight - 220);
+    dynamicPanels.forEach((panel) => {
+      const baseHeight = Number(panel.dataset.baseHeight || panel.getBoundingClientRect().height || 420);
+      panel.dataset.baseHeight = String(baseHeight);
+      const target = Math.min(viewportCap, Math.max(baseHeight, panel.scrollHeight + 8));
+      panel.style.height = `${target}px`;
+    });
+  }
 
   function isProTier() {
     const tier = (window.__editorAccess?.account_type || "").toLowerCase();
@@ -317,6 +328,7 @@ function startEditor() {
     buildAndRenderOutline();
     await loadCheckpoints();
     renderDocs(allDocs);
+    growPanelsToContent();
     return true;
   }
 
@@ -441,7 +453,7 @@ function startEditor() {
     const actions = document.createElement("div");
     actions.className = "citation-actions";
     const insertBtn = document.createElement("button");
-    insertBtn.textContent = "Insert in-text";
+    insertBtn.textContent = `Insert ${citationStyle().toUpperCase()}`;
     insertBtn.addEventListener("click", (e) => { e.stopPropagation(); insertCitationToken(citation); });
     actions.append(insertBtn);
 
@@ -453,8 +465,11 @@ function startEditor() {
     }
 
     const copyBtn = document.createElement("button");
-    copyBtn.textContent = "Copy full";
-    copyBtn.addEventListener("click", async (e) => { e.stopPropagation(); await navigator.clipboard.writeText(citation.full_text || ""); });
+    copyBtn.textContent = "Copy in-text";
+    copyBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await navigator.clipboard.writeText(buildInlineCitation(citation));
+    });
     actions.append(copyBtn);
 
     const removeBtn = document.createElement("button");
@@ -484,6 +499,7 @@ function startEditor() {
     const container = document.getElementById("citations-list");
     container.innerHTML = "";
     citations.forEach((c) => container.appendChild(buildCitationCard(c)));
+    growPanelsToContent();
   }
 
   async function refreshInDocCitations() {
@@ -515,12 +531,46 @@ function startEditor() {
     refreshInDocCitations();
   }
 
-  function buildInlineCitation(citationData) {
+  function citationStyle() {
+    const value = (citationInlineStyle?.value || "apa").toLowerCase();
+    return ["apa", "mla", "chicago", "harvard"].includes(value) ? value : "apa";
+  }
+
+  function formatAuthor(metadata = {}, fallback = "") {
+    return (metadata.author || metadata.creator || metadata.last_name || fallback || "").toString().trim();
+  }
+
+  function formatYear(metadata = {}) {
+    const value = metadata.year || metadata.published_year || metadata.date;
+    return (value || "").toString().trim().slice(0, 4);
+  }
+
+  function buildInlineCitation(citationData, style = citationStyle()) {
     const metadata = citationData.metadata || {};
-    const author = metadata.author || metadata.creator || metadata.last_name;
-    const year = metadata.year || metadata.published_year || metadata.date;
-    const title = metadata.title || citationData.title;
+    const author = formatAuthor(metadata, citationData.author || citationData.title);
+    const year = formatYear(metadata);
+    const title = (metadata.title || citationData.title || "Source").toString().trim();
     const { domain } = formatCitationPreview(citationData);
+
+    if (style === "mla") {
+      if (author) return `(${author})`;
+      if (title) return `("${title}")`;
+      return `(${domain})`;
+    }
+    if (style === "chicago") {
+      if (author && year) return `(${author} ${year})`;
+      if (author) return `(${author})`;
+      if (title) return `(${title})`;
+      return `(${domain})`;
+    }
+    if (style === "harvard") {
+      if (author && year) return `(${author}, ${year})`;
+      if (author) return `(${author})`;
+      if (title && year) return `(${title}, ${year})`;
+      if (title) return `(${title})`;
+      return `(${domain})`;
+    }
+
     if (author && year) return `(${author}, ${year})`;
     if (author) return `(${author})`;
     if (title) return `(${title})`;
@@ -528,14 +578,13 @@ function startEditor() {
   }
 
   function insertCitationToken(citation) {
-    let citationData = citation || (selectedCitationId ? citationCache.get(selectedCitationId) : null);
+    const citationData = citation || (selectedCitationId ? citationCache.get(selectedCitationId) : null);
     if (!citationData) return alert("Select a citation to insert.");
-    const token = `${citeTokenPrefix}${citationData.id}${citeTokenSuffix}`;
     const inText = buildInlineCitation(citationData);
     const range = quill.getSelection(true);
     const insertIndex = range ? range.index : quill.getLength();
-    quill.insertText(insertIndex, `${inText}${token} `, { background: "#eef4ff" }, "user");
-    quill.setSelection(insertIndex + inText.length + token.length + 1);
+    quill.insertText(insertIndex, `${inText} `, { background: "#eef4ff" }, "user");
+    quill.setSelection(insertIndex + inText.length + 1);
     attachCitation(citationData.id);
   }
 
@@ -543,29 +592,20 @@ function startEditor() {
     const citationData = selectedCitationId ? citationCache.get(selectedCitationId) : null;
     if (!citationData) return alert("Select a citation to insert a quote.");
     const quoteText = citationData.excerpt || citationData.full_text || "";
-    const token = `${citeTokenPrefix}${citationData.id}${citeTokenSuffix}`;
     const inText = buildInlineCitation(citationData);
     const range = quill.getSelection(true);
     const idx = range ? range.index : quill.getLength();
-    quill.insertText(idx, `\n${quoteText}\n${inText}${token}\n`, { blockquote: true }, "user");
-    quill.setSelection(idx + quoteText.length + inText.length + token.length + 3);
+    quill.insertText(idx, `\n${quoteText}\n${inText}\n`, { blockquote: true }, "user");
+    quill.setSelection(idx + quoteText.length + inText.length + 3);
     attachCitation(citationData.id);
   }
 
-  function removeCitationTokens(citationId) {
-    const token = `${citeTokenPrefix}${citationId}${citeTokenSuffix}`;
-    const text = quill.getText();
-    let index = text.indexOf(token);
-    while (index !== -1) {
-      quill.deleteText(index, token.length);
-      index = quill.getText().indexOf(token, index);
-    }
+  function removeCitationTokens(_citationId) {
+    return;
   }
 
-  function jumpToCitation(citationId) {
-    const token = `${citeTokenPrefix}${citationId}${citeTokenSuffix}`;
-    const index = quill.getText().indexOf(token);
-    if (index !== -1) { quill.setSelection(index, token.length); quill.focus(); }
+  function jumpToCitation(_citationId) {
+    quill.focus();
   }
 
   async function loadProjects() {
@@ -692,10 +732,12 @@ function startEditor() {
     scheduleOutlineBuild();
     createCheckpointIfNeeded();
     updateWordCount();
+    growPanelsToContent();
   });
   quill.on("selection-change", (range, oldRange) => { if (!range && oldRange && isDirty) autosaveDoc(); });
   docTitleInput.addEventListener("input", () => { isDirty = true; queueAutosave(); });
   window.addEventListener("beforeunload", () => { if (isDirty) autosaveDoc(); });
+  window.addEventListener("resize", growPanelsToContent);
 
   docSearchInput.addEventListener("input", () => renderDocs(allDocs));
   projectSearchInput.addEventListener("input", () => renderProjects());
@@ -716,8 +758,20 @@ function startEditor() {
 
   document.getElementById("outline-refresh").addEventListener("click", buildAndRenderOutline);
   document.getElementById("history-refresh").addEventListener("click", loadCheckpoints);
-  document.getElementById("tool-outline").addEventListener("click", () => outlinePanel.classList.toggle("collapsed"));
-  document.getElementById("tool-history").addEventListener("click", () => historyPanel.classList.toggle("collapsed"));
+
+  function bindPanelToggle(buttonId, panel) {
+    const button = document.getElementById(buttonId);
+    const sync = () => button.setAttribute("aria-expanded", panel.classList.contains("collapsed") ? "false" : "true");
+    button.addEventListener("click", () => {
+      panel.classList.toggle("collapsed");
+      sync();
+    });
+    sync();
+  }
+
+  bindPanelToggle("tool-outline", outlinePanel);
+  bindPanelToggle("tool-history", historyPanel);
+  bindPanelToggle("tool-doc-notes", document.getElementById("doc-notes-panel"));
   document.getElementById("tool-add-doc-note").addEventListener("click", addDocNote);
 
   document.getElementById("citation-search").addEventListener("input", (event) => {
@@ -736,6 +790,15 @@ function startEditor() {
   }));
 
   document.querySelectorAll(".content-pill").forEach((pill) => pill.addEventListener("click", () => setContentTab(pill.dataset.contentTab)));
+
+  citationInlineStyle?.addEventListener("change", () => loadCitationLibrary(document.getElementById("citation-search").value || ""));
+
+  document.querySelectorAll("button").forEach((button) => {
+    button.addEventListener("click", () => {
+      button.classList.add("is-clicked");
+      window.setTimeout(() => button.classList.remove("is-clicked"), 160);
+    });
+  });
 
   exportBtn.addEventListener("click", async () => {
     if (!currentDocId) return;
@@ -762,6 +825,7 @@ function startEditor() {
     await loadProjects();
     await loadNotes();
     await loadCitationLibrary();
+    growPanelsToContent();
     const defaultTab = localStorage.getItem("editor_left_content_tab") || "documents";
     setContentTab(defaultTab);
     const initialDocId = new URLSearchParams(window.location.search).get("doc");

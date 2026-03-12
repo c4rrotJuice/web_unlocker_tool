@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import hashlib
 import os
+from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
@@ -66,6 +67,99 @@ class ExtensionSelectionRequest(BaseModel):
     citation_text: str | None = None
     custom_format_name: str | None = None
     custom_format_template: str | None = None
+
+
+class ExtensionNotePayload(BaseModel):
+    id: str | None = None
+    title: str | None = None
+    highlight_text: str | None = None
+    note_body: str
+    source_url: str | None = None
+    project_id: str | None = None
+    tags: list[str] = []
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ExtensionNotePatchRequest(BaseModel):
+    title: str | None = None
+    highlight_text: str | None = None
+    note_body: str | None = None
+    source_url: str | None = None
+    project_id: str | None = None
+    tags: list[str] | None = None
+    updated_at: str | None = None
+
+
+def _source_domain(url: str | None) -> str | None:
+    candidate = (url or "").strip()
+    if not candidate:
+        return None
+    try:
+        parsed = urlparse(candidate)
+    except ValueError:
+        return None
+    return parsed.netloc.lower() or None
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    text = (value or "").strip()
+    if not text:
+        return None
+    normalized = text.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+
+def _coerce_note_id(raw_id: str | None) -> str:
+    note_id = (raw_id or "").strip()
+    if not note_id:
+        raise HTTPException(status_code=422, detail="id is required")
+    try:
+        return str(UUID(note_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="id must be a valid UUID") from exc
+
+
+def _clean_note_body(note_body: str | None) -> str:
+    body = (note_body or "").strip()
+    if not body:
+        raise HTTPException(status_code=422, detail="note_body is required")
+    return body
+
+
+def _clean_note_tags(tags: list[str] | None) -> list[str]:
+    cleaned = []
+    for tag_id in tags or []:
+        try:
+            cleaned.append(str(UUID(str(tag_id))))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="tags must contain UUIDs") from exc
+    return cleaned
+
+
+async def _upsert_note_tags_for_note(user_id: str, note_id: str, tag_ids: list[str]):
+    delete_existing = await supabase_repo.delete(
+        "note_note_tags",
+        params={"user_id": f"eq.{user_id}", "note_id": f"eq.{note_id}"},
+        headers=supabase_repo.headers(prefer="return=minimal", include_content_type=False),
+    )
+    if delete_existing.status_code not in (200, 204):
+        raise HTTPException(status_code=500, detail="Failed to update note tags")
+
+    if not tag_ids:
+        return
+
+    rows = [{"note_id": note_id, "tag_id": tag_id, "user_id": user_id} for tag_id in tag_ids]
+    insert_join = await supabase_repo.post(
+        "note_note_tags",
+        json=rows,
+        headers=supabase_repo.headers(prefer="resolution=merge-duplicates,return=minimal"),
+    )
+    if insert_join.status_code not in (200, 201):
+        raise HTTPException(status_code=500, detail="Failed to update note tags")
 
 
 def _get_reset_at() -> tuple[str, int]:
@@ -342,3 +436,92 @@ async def extension_usage_event(request: Request, payload: ExtensionUsageEventRe
         await request.app.state.redis_expire(rate_limit_key, 120)
 
     return {"ok": True, "deduped": save_result == "duplicate"}
+
+
+@router.post("/api/notes")
+async def create_note(request: Request, payload: ExtensionNotePayload):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    note_id = _coerce_note_id(payload.id)
+    note_body = _clean_note_body(payload.note_body)
+    tag_ids = _clean_note_tags(payload.tags)
+    created_at = _parse_iso_datetime(payload.created_at) or datetime.utcnow()
+    updated_at = _parse_iso_datetime(payload.updated_at) or datetime.utcnow()
+
+    insert_payload = {
+        "id": note_id,
+        "user_id": user_id,
+        "title": (payload.title or "").strip() or None,
+        "highlight_text": payload.highlight_text,
+        "note_body": note_body,
+        "source_url": (payload.source_url or "").strip() or None,
+        "source_domain": _source_domain(payload.source_url),
+        "project_id": payload.project_id,
+        "created_at": created_at.isoformat(),
+        "updated_at": updated_at.isoformat(),
+    }
+
+    res = await supabase_repo.post(
+        "notes",
+        json=insert_payload,
+        headers=supabase_repo.headers(prefer="resolution=merge-duplicates,return=representation"),
+    )
+    if res.status_code not in (200, 201):
+        raise HTTPException(status_code=500, detail="Failed to sync note")
+
+    await _upsert_note_tags_for_note(user_id, note_id, tag_ids)
+    return {"ok": True, "note_id": note_id}
+
+
+@router.patch("/api/notes")
+async def update_note(request: Request, payload: ExtensionNotePayload):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    note_id = _coerce_note_id(payload.id)
+    note_body = _clean_note_body(payload.note_body)
+    tag_ids = _clean_note_tags(payload.tags)
+    updated_at = _parse_iso_datetime(payload.updated_at) or datetime.utcnow()
+
+    patch_payload = {
+        "title": (payload.title or "").strip() or None,
+        "highlight_text": payload.highlight_text,
+        "note_body": note_body,
+        "source_url": (payload.source_url or "").strip() or None,
+        "source_domain": _source_domain(payload.source_url),
+        "project_id": payload.project_id,
+        "updated_at": updated_at.isoformat(),
+    }
+    res = await supabase_repo.patch(
+        "notes",
+        params={"id": f"eq.{note_id}", "user_id": f"eq.{user_id}"},
+        json=patch_payload,
+        headers=supabase_repo.headers(prefer="return=representation"),
+    )
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to sync note")
+    if not res.json():
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    await _upsert_note_tags_for_note(user_id, note_id, tag_ids)
+    return {"ok": True, "note_id": note_id}
+
+
+@router.delete("/api/notes/{note_id}")
+async def delete_note(request: Request, note_id: str):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    normalized_note_id = _coerce_note_id(note_id)
+    res = await supabase_repo.delete(
+        "notes",
+        params={"id": f"eq.{normalized_note_id}", "user_id": f"eq.{user_id}"},
+        headers=supabase_repo.headers(prefer="return=minimal", include_content_type=False),
+    )
+    if res.status_code not in (200, 204):
+        raise HTTPException(status_code=500, detail="Failed to delete note")
+    return {"ok": True, "note_id": normalized_note_id}

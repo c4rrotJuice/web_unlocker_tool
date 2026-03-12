@@ -412,6 +412,15 @@
    CITATION METADATA UTILITIES
    =========================== */
 
+  const AUTHOR_HINT_SELECTORS = [
+    ".author",
+    ".byline",
+    ".article-author",
+    ".post-author",
+    "[rel='author']",
+    "address",
+  ];
+
   function cleanUrl(rawUrl) {
     try {
       const u = new URL(rawUrl);
@@ -432,52 +441,99 @@
     }
   }
 
-  function getArticleTitle() {
-    const og = document.querySelector('meta[property="og:title"]');
-    if (og?.content) return og.content.trim();
-
-    const twitter = document.querySelector('meta[name="twitter:title"]');
-    if (twitter?.content) return twitter.content.trim();
-
-    const title = document.title;
-    return title ? title.trim() : "Untitled Page";
+  function textValue(value) {
+    return typeof value === "string" ? value.trim() : "";
   }
 
-  function getSiteName() {
-    const metaSite =
-      document.querySelector('meta[property="og:site_name"]') ||
-      document.querySelector('meta[name="application-name"]');
-
-    if (metaSite?.content) return metaSite.content.trim();
-
-    const hostname = location.hostname.replace("www.", "");
-    return hostname.split(".")[0];
-  }
-
-  function getAuthor() {
-    const metaAuthor =
-      document.querySelector('meta[name="author"]') ||
-      document.querySelector('meta[property="article:author"]');
-
-    if (metaAuthor?.content) return metaAuthor.content.trim();
-
-    const schema = document.querySelector('script[type="application/ld+json"]');
-    if (schema) {
-      try {
-        const data = JSON.parse(schema.textContent);
-
-        if (data.author) {
-          if (typeof data.author === "string") return data.author;
-
-          if (Array.isArray(data.author) && data.author[0]?.name) {
-            return data.author[0].name;
-          }
-
-          if (data.author.name) return data.author.name;
-        }
-      } catch {}
+  function deriveSiteNameFromDomain(url) {
+    try {
+      const hostname = new URL(url).hostname.replace(/^www\./i, "");
+      const [first] = hostname.split(".");
+      return (first || hostname || "Unknown source")
+        .replace(/[-_]+/g, " ")
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+    } catch {
+      return "Unknown source";
     }
+  }
 
+  function toAuthorObject(fullName) {
+    const normalized = textValue(fullName).replace(/^by\s+/i, "");
+    if (!normalized) return null;
+    if (/\b(editorial|staff|team)\b/i.test(normalized)) {
+      return { firstName: "", lastName: normalized, initials: "", fullName: normalized, isOrganization: true };
+    }
+    const parts = normalized.split(/\s+/).filter(Boolean);
+    const firstName = parts.slice(0, -1).join(" ") || parts[0] || "";
+    const lastName = parts.length > 1 ? parts[parts.length - 1] : firstName;
+    const initials = firstName
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part[0]?.toUpperCase())
+      .join(".");
+    return { firstName, lastName, initials, fullName: normalized, isOrganization: false };
+  }
+
+  function sentenceCase(text) {
+    const value = textValue(text);
+    if (!value) return "Untitled page";
+    return `${value[0].toUpperCase()}${value.slice(1).toLowerCase()}`;
+  }
+
+  function parseDateBits(value) {
+    const raw = textValue(value);
+    if (!raw) return null;
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) {
+      const yearMatch = raw.match(/\b(19|20)\d{2}\b/);
+      return yearMatch ? { raw, year: yearMatch[0] } : { raw, year: "n.d." };
+    }
+    return {
+      raw,
+      iso: parsed.toISOString(),
+      year: String(parsed.getUTCFullYear()),
+      short: parsed.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }),
+      long: parsed.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
+    };
+  }
+
+  function parseJsonLd() {
+    const blocks = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
+    for (const block of blocks) {
+      const text = textValue(block.textContent);
+      if (!text) continue;
+      try {
+        const parsed = JSON.parse(text);
+        const entries = Array.isArray(parsed)
+          ? parsed
+          : Array.isArray(parsed["@graph"])
+            ? parsed["@graph"]
+            : [parsed];
+        for (const entry of entries) {
+          if (!entry || typeof entry !== "object") continue;
+          const authorValue = entry.author;
+          const authorCandidates = Array.isArray(authorValue) ? authorValue : [authorValue];
+          const authors = authorCandidates
+            .map((candidate) => {
+              if (!candidate) return null;
+              if (typeof candidate === "string") return candidate;
+              return candidate.name || candidate.alternateName || null;
+            })
+            .filter(Boolean);
+
+          return {
+            title: textValue(entry.headline || entry.name),
+            siteName: textValue(entry.publisher?.name || entry.sourceOrganization?.name),
+            publisher: textValue(entry.publisher?.name),
+            datePublished: textValue(entry.datePublished || entry.dateCreated),
+            section: textValue(entry.articleSection),
+            authors,
+          };
+        }
+      } catch {
+        continue;
+      }
+    }
     return null;
   }
 
@@ -486,7 +542,6 @@
     if (!selection || selection.rangeCount === 0) return null;
 
     let node = selection.anchorNode;
-
     while (node && node.nodeType !== 1) {
       node = node.parentNode;
     }
@@ -496,40 +551,138 @@
 
     const paragraphs = Array.from(document.querySelectorAll("p"));
     const index = paragraphs.indexOf(paragraph);
-
     return index >= 0 ? index + 1 : null;
   }
 
-  function formatCitation(format, selectionText, title, url, accessed, siteName, author) {
-  const year = new Date().getFullYear();
-  const para = getParagraphNumber();
-  const locator = para ? `para. ${para}` : "";
-  const quote = selectionText ? `"${selectionText}"` : "";
+  function getCitationMetadata(selectionText) {
+    const url = cleanUrl(window.location.href);
+    const now = new Date();
+    const jsonLd = parseJsonLd() || {};
 
+    const ogTitle = textValue(document.querySelector('meta[property="og:title"]')?.content);
+    const ogSite = textValue(document.querySelector('meta[property="og:site_name"]')?.content);
+    const ogAuthor = textValue(document.querySelector('meta[property="article:author"]')?.content);
+    const ogPublished = textValue(document.querySelector('meta[property="article:published_time"]')?.content);
+    const metaAuthor = textValue(document.querySelector('meta[name="author"]')?.content);
+    const metaPublisher = textValue(document.querySelector('meta[name="publisher"]')?.content);
+    const metaDate = textValue(document.querySelector('meta[name="date"]')?.content) || textValue(document.querySelector('meta[name="publication_date"]')?.content);
+    const articleNode = document.querySelector("article");
+    const articleTitle = textValue(articleNode?.querySelector("h1")?.textContent);
+    const timeTag = textValue(articleNode?.querySelector("time")?.getAttribute("datetime") || document.querySelector("time")?.getAttribute("datetime"));
+    const microdataTitle = textValue(document.querySelector('[itemprop="headline"]')?.textContent);
+    const microdataAuthor = textValue(document.querySelector('[itemprop="author"]')?.textContent);
+    const microdataPublisher = textValue(document.querySelector('[itemprop="publisher"]')?.textContent);
+    const microdataDate = textValue(document.querySelector('[itemprop="datePublished"]')?.getAttribute("content") || document.querySelector('[itemprop="datePublished"]')?.textContent);
+    const heuristicAuthor = AUTHOR_HINT_SELECTORS.map((selector) => textValue(document.querySelector(selector)?.textContent)).find(Boolean);
 
-  const authorText = author || siteName || "Unknown Source";
+    const title = jsonLd.title || ogTitle || microdataTitle || articleTitle || textValue(document.querySelector('meta[name="twitter:title"]')?.content) || textValue(document.title) || "Untitled Page";
 
-  switch (format) {
-    case "apa":
-      return `${authorText}. (${year}). ${title}. ${url}
+    const authorsRaw = [
+      ...(jsonLd.authors || []),
+      ogAuthor,
+      metaAuthor,
+      microdataAuthor,
+      heuristicAuthor,
+    ]
+      .filter(Boolean)
+      .flatMap((value) => String(value).split(/,|\band\b|&/i))
+      .map((value) => value.trim())
+      .filter(Boolean);
 
-${quote} (${authorText}, ${year}${locator ? `, ${locator}` : ""})`;
+    const normalizedAuthors = Array.from(new Set(authorsRaw)).map(toAuthorObject).filter(Boolean);
+    const siteName = jsonLd.siteName || ogSite || metaPublisher || microdataPublisher || textValue(document.querySelector('meta[name="application-name"]')?.content) || deriveSiteNameFromDomain(url);
+    const parsedPublished = parseDateBits(jsonLd.datePublished || ogPublished || metaDate || timeTag || microdataDate || "");
 
-    case "chicago":
-      return `${quote}
-${authorText}. "${title}." ${siteName}. Accessed ${accessed}. ${url}${locator ? `. ${locator}` : ""}.`;
-
-    case "harvard":
-      return `${authorText} (${year}) ${title}. Available at: ${url} (Accessed: ${accessed})${locator ? `, ${locator}` : ""}.
-
-${quote}`;
-
-    case "mla":
-    default:
-      return `${quote}
-"${title}." ${siteName}, ${year}, ${url}. Accessed ${accessed}${locator ? `, ${locator}` : ""}.`;
+    return {
+      title,
+      author: normalizedAuthors[0]?.fullName || "",
+      authors: normalizedAuthors,
+      siteName,
+      publisher: jsonLd.publisher || metaPublisher || siteName,
+      datePublished: parsedPublished?.iso || parsedPublished?.raw || "",
+      dateAccessed: now.toISOString(),
+      url,
+      section: jsonLd.section || textValue(document.querySelector('[itemprop="articleSection"]')?.textContent),
+      paragraph: getParagraphNumber() || null,
+      selectionText,
+      excerpt: (selectionText || "").slice(0, 140),
+    };
   }
-}
+
+
+  function validateCitationMetadata(meta) {
+    const fallbackSite = deriveSiteNameFromDomain(meta.url || window.location.href);
+    return {
+      ...meta,
+      title: textValue(meta.title) || "Untitled Page",
+      siteName: textValue(meta.siteName) || fallbackSite,
+      author: textValue(meta.author) || textValue(meta.siteName) || fallbackSite,
+      datePublished: textValue(meta.datePublished),
+      authors: (meta.authors || []).length ? meta.authors : [toAuthorObject(textValue(meta.author) || textValue(meta.siteName) || fallbackSite)].filter(Boolean),
+    };
+  }
+
+  function leadAuthor(meta) {
+    return meta.authors?.[0] || toAuthorObject(meta.author) || toAuthorObject(meta.siteName) || {
+      fullName: meta.siteName || "Unknown source",
+      firstName: "",
+      lastName: meta.siteName || "Unknown source",
+      initials: "",
+      isOrganization: true,
+    };
+  }
+
+  function formatAuthorsForStyle(authors, style) {
+    const list = (authors || []).filter(Boolean);
+    if (!list.length) return "";
+    const mapped = list.map((author) => {
+      if (author.isOrganization) return author.fullName;
+      if (style === "apa" || style === "harvard") {
+        const initials = (author.initials || "")
+          .split(".")
+          .filter(Boolean)
+          .map((item) => `${item}.`)
+          .join(" ");
+        return `${author.lastName}, ${initials}`.trim();
+      }
+      return author.fullName;
+    });
+    if (mapped.length === 1) return mapped[0];
+    if (style === "mla") return `${mapped[0]}, et al.`;
+    if (style === "apa") return mapped.length === 2 ? `${mapped[0]} & ${mapped[1]}` : `${mapped[0]} et al.`;
+    return `${mapped.slice(0, -1).join(", ")}, and ${mapped[mapped.length - 1]}`;
+  }
+
+  function formatInTextQuote(style, meta) {
+    if (!meta.selectionText) return "";
+    const author = leadAuthor(meta);
+    const last = author.lastName || author.fullName;
+    const year = parseDateBits(meta.datePublished)?.year || "n.d.";
+    const para = meta.paragraph;
+    if (style === "mla") return `\n\n“${meta.selectionText}” (${last}${para ? `, par. ${para}` : ""})`;
+    if (style === "chicago") return para ? `\n\n“${meta.selectionText}” (${last}, para. ${para})` : `\n\n“${meta.selectionText}”`;
+    return `\n\n“${meta.selectionText}” (${last}, ${year}${para ? `, para. ${para}` : ""})`;
+  }
+
+  function formatCitation(format, meta) {
+    const published = parseDateBits(meta.datePublished);
+    const accessLong = parseDateBits(meta.dateAccessed)?.long || new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    const authorText = formatAuthorsForStyle(meta.authors, format) || meta.siteName || "Unknown source";
+    const year = published?.year || "n.d.";
+    const sectionBit = meta.section ? ` ${meta.section}.` : "";
+
+    switch (format) {
+      case "apa":
+        return `${authorText}. (${year}). ${sentenceCase(meta.title)}. ${meta.siteName}. ${meta.url}.${formatInTextQuote("apa", meta)}`;
+      case "chicago":
+        return `${authorText}. "${meta.title}." ${meta.siteName}.${sectionBit} ${published?.long ? `Published ${published.long}.` : `Accessed ${accessLong}.`} ${meta.url}.${formatInTextQuote("chicago", meta)}`;
+      case "harvard":
+        return `${authorText} (${year}) ${sentenceCase(meta.title)}. ${meta.siteName}. Available at: ${meta.url} (Accessed: ${accessLong}).${formatInTextQuote("harvard", meta)}`;
+      case "mla":
+      default:
+        return `${authorText}. "${meta.title}." *${meta.siteName}*, ${published?.short || year}, ${meta.url}. Accessed ${accessLong}.${formatInTextQuote("mla", meta)}`;
+    }
+  }
 
   function formatCustomCitation(template, selectionText, title, url, accessed) {
     if (!template) {
@@ -710,25 +863,8 @@ ${quote}`;
     closePopup();
     const selectionText = state.selectionText;
     debug("Building popup", { selectionLength: selectionText.length });
-    const url = cleanUrl(window.location.href);
-    const title = getArticleTitle();
-    const siteName = getSiteName();
-    const author = getAuthor();
-    const accessed = new Date().toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-
-    const metadata = {
-  url,
-  title,
-  selectionText,
-  excerpt: selectionText.slice(0, 140),
-  accessedAt: new Date().toISOString(),
-  author,
-  siteName,
-};
+    const metadata = validateCitationMetadata(getCitationMetadata(selectionText));
+    const url = metadata.url;
 
     const usagePeek = await sendMessage("peek-unlock", { url });
     state.accountType =
@@ -768,15 +904,7 @@ ${quote}`;
 
     formats.forEach((format) => {
       const label = format.toUpperCase();
-      const text = formatCitation(
-        format,
-        selectionText,
-        title,
-        url,
-        accessed,
-        siteName,
-        author,
-      );
+      const text = formatCitation(format, metadata);
 
       const row = document.createElement("div");
       row.className = "web-unlocker-row";
@@ -880,18 +1008,10 @@ ${quote}`;
         const citationFormat = state.lastFormat || "mla";
         const citationText =
           state.lastCitationText ||
-          formatCitation(
-            citationFormat,
-            selectionText,
-            title,
-            url,
-            accessed,
-            siteName,
-            author,
-          );
+          formatCitation(citationFormat, metadata);
         await handleWorkInEditor({
           url,
-          title,
+          title: metadata.title,
           selected_text: selectionText,
           citation_format: citationFormat,
           citation_text: citationText,
@@ -913,9 +1033,9 @@ ${quote}`;
           const text = formatCustomCitation(
             template,
             selectionText,
-            title,
+            metadata.title,
             url,
-            accessed,
+            parseDateBits(metadata.dateAccessed)?.raw || metadata.dateAccessed,
           );
           if (!text) {
             showToast("Add a custom template first.", true);
@@ -934,15 +1054,7 @@ ${quote}`;
         const citationPreview = popup.querySelector(`#cite-${format}`);
         const text =
           citationPreview?.textContent ||
-          formatCitation(
-            format,
-            selectionText,
-            title,
-            url,
-            accessed,
-            siteName,
-            author,
-          );
+          formatCitation(format, metadata);
         await handleCopy(format, text, metadata);
       }
     });
@@ -964,9 +1076,9 @@ ${quote}`;
       const text = formatCustomCitation(
         template,
         selectionText,
-        title,
+        metadata.title,
         url,
-        accessed,
+        parseDateBits(metadata.dateAccessed)?.raw || metadata.dateAccessed,
       );
       state.customFormatTemplate = template;
       customPreviewEl.textContent = text || "Custom preview";

@@ -63,7 +63,7 @@
             <div class="chart-wrap"><canvas id="usageChart"></canvas></div>
           </div>
           <div class="analytics-block">
-            <h3>Notes Created (Mock)</h3>
+            <h3>Notes Created</h3>
             <div class="chart-wrap"><canvas id="notesChart"></canvas></div>
           </div>
           <div class="analytics-block">
@@ -189,9 +189,9 @@ async function loadUserData() {
   const initials = (data.name || "U").split(" ").map(part => part[0]).join("").slice(0, 2).toUpperCase();
   document.getElementById("avatar-initials").textContent = initials;
 
-  // Existing backend doesn't collect these yet; placeholders shown intentionally.
+  // Words typed metric is still pending backend support.
   document.getElementById("words-typed").textContent = "Coming soon";
-  document.getElementById("notes-created").textContent = "Mocked";
+  document.getElementById("notes-created").textContent = "0";
 
   renderBookmarks(data.bookmarks || []);
   document.getElementById("bookmarks-count").textContent = String((data.bookmarks || []).length);
@@ -293,21 +293,43 @@ function renderUsageAnalytics(history) {
     }),
   });
 
-  renderMockNotesAnalytics(Object.keys(counts));
 }
 
-function renderMockNotesAnalytics(labels) {
-  const notesData = labels.map((_, i) => [0, 1, 2, 3, 2, 1, 4][i] || 0);
+function renderNotesAnalytics(notes) {
+  const counts = aggregateCountsByDay(notes, "created_at");
+  const values = Object.values(counts);
   const ctx = document.getElementById("notesChart").getContext("2d");
   if (notesChart) notesChart.destroy();
   notesChart = new Chart(ctx, {
     type: "bar",
     data: {
-      labels,
-      datasets: [{ label: "Notes Created", data: notesData, backgroundColor: "rgba(148, 163, 184, 0.8)", borderRadius: 5 }],
+      labels: Object.keys(counts),
+      datasets: [{
+        label: "Notes Created",
+        data: values,
+        backgroundColor: "rgba(148, 163, 184, 0.8)",
+        borderRadius: 5,
+      }],
     },
-    options: buildCompactChartOptions({ integerTicks: true }),
+    options: buildCompactChartOptions({
+      integerTicks: true,
+      suggestedMax: getSuggestedMax(values),
+    }),
   });
+}
+
+async function loadNotesAnalytics() {
+  const token = await window.webUnlockerAuth?.getAccessToken?.();
+  if (!token) return;
+
+  const res = await fetch("/api/notes?limit=500", { headers: { "Authorization": `Bearer ${token}` } });
+  if (!res.ok) throw new Error("Could not load notes");
+  const payload = await res.json();
+  const notes = payload?.notes || [];
+  const totalCount = Number.isFinite(payload?.total_count) ? payload.total_count : notes.length;
+
+  document.getElementById("notes-created").textContent = String(totalCount);
+  renderNotesAnalytics(notes);
 }
 
 function renderCitationAnalytics(citations) {
@@ -549,7 +571,7 @@ document.getElementById("bookmark-add-btn").addEventListener("click", async () =
 document.addEventListener("DOMContentLoaded", async () => {
   try {
     await loadUserData();
-    await Promise.all([loadMomentum(), loadRecentUnlocks(), loadRecentCitations()]);
+    await Promise.all([loadMomentum(), loadRecentUnlocks(), loadRecentCitations(), loadNotesAnalytics()]);
     document.getElementById("pdfDownloadBtn").addEventListener("click", downloadMonthlyReport);
   } catch (err) {
     console.error(err);

@@ -52,9 +52,10 @@ class DummyClient:
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, payload=None):
+    def __init__(self, status_code=200, payload=None, headers=None):
         self.status_code = status_code
         self._payload = payload if payload is not None else [{"id": "ok"}]
+        self.headers = headers or {}
 
     def json(self):
         return self._payload
@@ -66,6 +67,10 @@ class FakeSupabaseRepo:
 
     def headers(self, **kwargs):
         return {"x-test": "1", **({"prefer": kwargs.get("prefer")} if kwargs.get("prefer") else {})}
+
+    async def get(self, resource, **kwargs):
+        self.calls.append(("get", resource, kwargs))
+        return FakeResponse(200, [{"id": "n"}], headers={"content-range": "0-0/17"})
 
     async def post(self, resource, **kwargs):
         self.calls.append(("post", resource, kwargs))
@@ -255,3 +260,26 @@ def test_notes_update_sync_supports_partial_patch_without_note_body(monkeypatch)
     assert response.status_code == 200
     patch_call = [call for call in repo.calls if call[0] == "patch" and call[1] == "notes"][0]
     assert "note_body" not in patch_call[2]["json"]
+
+
+def test_notes_list_sync(monkeypatch):
+    main = _build_app(monkeypatch)
+    from app.routes import extension
+
+    repo = FakeSupabaseRepo()
+    extension.supabase_repo = repo
+
+    client = TestClient(main.app)
+    response = client.get("/api/notes?limit=999&offset=-4", headers={"Authorization": "Bearer token"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["total_count"] == 17
+    assert len(payload["notes"]) == 1
+
+    get_call = [call for call in repo.calls if call[0] == "get" and call[1] == "notes"][0]
+    params = get_call[2]["params"]
+    assert params["limit"] == "500"
+    assert params["offset"] == "0"
+    assert params["order"] == "created_at.desc"

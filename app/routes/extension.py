@@ -496,6 +496,34 @@ async def create_note(request: Request, payload: ExtensionNotePayload):
     return {"ok": True, "note_id": note_id}
 
 
+@router.get("/api/notes")
+async def list_notes(request: Request, limit: int = 200, offset: int = 0):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    bounded_limit = max(1, min(limit, 500))
+    bounded_offset = max(0, offset)
+
+    res = await supabase_repo.get(
+        "notes",
+        params={
+            "user_id": f"eq.{user_id}",
+            "select": "id,title,highlight_text,note_body,source_url,source_domain,project_id,created_at,updated_at",
+            "order": "created_at.desc",
+            "limit": str(bounded_limit),
+            "offset": str(bounded_offset),
+        },
+        headers=supabase_repo.headers(prefer="count=exact"),
+    )
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to fetch notes")
+
+    content_range = res.headers.get("content-range", "0-0/0")
+    total_count = int(content_range.split("/")[-1])
+    return {"ok": True, "notes": res.json(), "total_count": total_count}
+
+
 @router.patch("/api/notes")
 async def update_note(request: Request, payload: ExtensionNotePatchRequest):
     user_id = request.state.user_id

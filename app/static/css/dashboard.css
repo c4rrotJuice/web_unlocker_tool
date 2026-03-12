@@ -270,7 +270,9 @@ body {
   padding: 10px;
 }
 
-button {
+.dashboard-shell button,
+.topbar-card button,
+.dashboard-card button {
   background-color: var(--wu-accent);
   color: var(--wu-accent-contrast);
   border: none;

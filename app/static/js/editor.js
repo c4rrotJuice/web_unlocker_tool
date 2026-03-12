@@ -86,6 +86,26 @@ function startEditor() {
   const quickNoteTags = document.getElementById("quick-note-tags");
   const quickNoteProject = document.getElementById("quick-note-project");
 
+  function attachButtonClickMotion() {
+    document.addEventListener("pointerdown", (event) => {
+      const btn = event.target.closest("button");
+      if (!btn) return;
+      btn.classList.add("is-clicked");
+    });
+
+    const clearClickState = (event) => {
+      const btn = event.target.closest("button");
+      if (!btn) return;
+      btn.classList.remove("is-clicked");
+    };
+
+    document.addEventListener("pointerup", clearClickState);
+    document.addEventListener("pointercancel", clearClickState);
+    document.addEventListener("pointerleave", clearClickState, true);
+  }
+
+  attachButtonClickMotion();
+
   const quill = new Quill("#editor", {
     theme: "snow",
     modules: {

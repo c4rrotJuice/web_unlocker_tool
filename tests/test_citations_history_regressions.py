@@ -63,8 +63,10 @@ class DummyResp:
 class DummyHTTPClient:
     def __init__(self, templates_payload=None):
         self.templates_payload = templates_payload if templates_payload is not None else []
+        self.last_url = None
 
     async def get(self, url, params=None, headers=None):
+        self.last_url = url
         if "citation_templates" in url:
             return DummyResp(200, self.templates_payload)
 
@@ -112,10 +114,11 @@ def _build_app(monkeypatch, account_type="pro", http_client=None):
     main.app.state.redis_expire = redis_expire
 
     if http_client is not None:
-        from app.routes import citations, search
+        from app.routes import citations, search, history
 
         citations.http_client = http_client
         search.http_client = http_client
+        history.http_client = http_client
 
     return main.app
 
@@ -204,3 +207,25 @@ def test_history_free_tier_remains_strictly_gated(monkeypatch):
 
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "HISTORY_SEARCH_TIER_LOCKED"
+
+
+def test_unlocks_free_tier_is_capped_to_five(monkeypatch):
+    http = DummyHTTPClient()
+    app = _build_app(monkeypatch, account_type="free", http_client=http)
+    client = TestClient(app)
+
+    response = client.get("/api/unlocks?limit=100", headers={"Authorization": "Bearer valid"})
+
+    assert response.status_code == 200
+    assert "limit=5" in (http.last_url or "")
+
+
+def test_unlocks_paid_tier_can_request_longer_history(monkeypatch):
+    http = DummyHTTPClient()
+    app = _build_app(monkeypatch, account_type="pro", http_client=http)
+    client = TestClient(app)
+
+    response = client.get("/api/unlocks?limit=100", headers={"Authorization": "Bearer valid"})
+
+    assert response.status_code == 200
+    assert "limit=100" in (http.last_url or "")

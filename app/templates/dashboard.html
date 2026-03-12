@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <link rel="stylesheet" href="/static/css/dashboard.css">
   <link rel="stylesheet" href="/static/css/style.css">
-  <link rel="stylesheet" href="/static/css/navStyle.css">
   <title>Writior Dashboard</title>
   <link rel="stylesheet" href="/static/css/theme.css">
   <script>
@@ -23,293 +22,161 @@
     })();
   </script>
 </head>
-<body class="has-navbar">
-
-  <header class="navbar">
-    <div class="navbar-container">
-      <div class="logo">
-        <a href="/"><img src="/static/images/logo_transparent.png" alt="Logo" /></a>
+<body>
+  <div class="dashboard-shell">
+    <header class="topbar-card">
+      <div class="welcome-block">
+        <div class="avatar-pill" aria-hidden="true"><span id="avatar-initials">U</span></div>
+        <div>
+          <h1>Welcome, <span id="user-name">Loading...</span>!</h1>
+          <p><span id="account-type">Loading...</span> plan · <span id="usage">--</span>/<span id="limit">--</span> unlocks <span id="usage-period">today</span></p>
+        </div>
       </div>
-
-      <nav>
-        <ul class="nav-links">
-          <li><a href="/">Home</a></li>
-          <li><a href="/dashboard" class="active" id="dashboardLink">Dashboard</a></li>
-          <li><a href="/editor" id="editorLink">Editor</a></li>
-          <li id="metrics-nav-item" style="display:none;"><a href="/dashboard/metrics" id="metricsLink">Metrics</a></li>
-          <li><a href="/static/pricing.html">Pricing</a></li>
-          <li><a href="https://writior.com/blog/">Blog</a></li>
-          <li><a href="https://writior.com/terms-conditions/">Terms & Policies</a></li>
-          <li><a href="/auth" id="authButton">Sign in/Up</a></li>
-        </ul>
+      <nav class="top-nav" aria-label="Dashboard Navigation">
+        <a href="/dashboard" class="active">Dashboard</a>
+        <a href="/editor">Editor</a>
+        <a href="/static/pricing.html">Pricing</a>
+        <a href="https://writior.com/blog/">Blog</a>
+        <a href="https://writior.com/terms-conditions/">Terms</a>
+        <a href="/" class="top-nav-btn">Unlock a Page</a>
       </nav>
+    </header>
 
-      <div class="nav-btn">
-        <a href="/" class="btn">Unlock a Page</a>
-      </div>
-    </div>
-  </header>
+    <section class="stats-row">
+      <article class="stat-item"><strong>Words Typed</strong><span id="words-typed">—</span></article>
+      <article class="stat-item"><strong>Notes Created</strong><span id="notes-created">—</span></article>
+      <article class="stat-item"><strong>Citations Saved</strong><span id="citations-saved">0</span></article>
+      <article class="stat-item"><strong>Bookmarks</strong><span id="bookmarks-count">0</span></article>
+    </section>
 
-  <div class="container">
+    <section class="streak-row">
+      🔥 Writing Streak: <strong><span id="momentumStreak">0</span> days in a row</strong>
+      <span id="momentumMicrocopy" class="streak-copy">Keep it alive — unlock 1 today</span>
+    </section>
 
-<div class="section profile-box">
-  <div><strong>User:</strong> <span id="user-name">Loading...</span></div>
-  <div><strong>Plan:</strong> <span id="account-type">Loading...</span> <span id="pro-unlimited-pill" style="display:none;background:#ecfdf3;color:#027a48;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;">Pro Plan – Unlimited Unlocks</span></div>
-  <div id="usage-row"><strong>Usage:</strong> <span id="usage">--</span> / 
-    <span id="limit">--</span> unlocks <span id="usage-period">today</span></div>
-</div>
+    <section class="dashboard-grid">
+      <article class="dashboard-card usage-card">
+        <h2>Usage Analytics</h2>
+        <canvas id="usageChart"></canvas>
+        <p class="placeholder-note">Notes analytics will appear here after notes tracking is implemented.</p>
+      </article>
 
-<div class="dashboard">
+      <article class="dashboard-card" id="recentlyVisitedCard">
+        <h2>Recently Visited</h2>
+        <ul class="scroll-list" id="recently-visited-list">
+          <li class="empty">Fetching...</li>
+        </ul>
+      </article>
 
-  <!-- ✅ Usage Analytics -->
-  <div class="card feature-card" data-feature="analytics">
-    <h3>Usage Analytics</h3>
-    <div class="feature-content">
-      <canvas id="usageChart"></canvas>
-    </div>
+      <article class="dashboard-card" id="bookmarksCard">
+        <h2>Bookmarked Domains</h2>
+        <div id="bookmark-add">
+          <input type="text" id="bookmark-input" placeholder="Enter URL to bookmark" disabled />
+          <button id="bookmark-add-btn">Add Bookmark</button>
+        </div>
+        <ul id="bookmark-list" class="scroll-list"></ul>
+        <p id="bookmark-locked-msg" class="locked-msg" style="display:none;">Bookmark frequently used domains for quick access — Pro/Standard feature only.</p>
+      </article>
+
+      <article class="dashboard-card" id="citationsCard">
+        <h2>Citations Library</h2>
+        <ul class="citation-list scroll-list" id="citation-history">
+          <li class="empty">Fetching...</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="dashboard-card subscription-card">
+      <h2>Subscription & Account</h2>
+      <p>Current Plan: <strong id="plan-label">Loading...</strong></p>
+      <p id="momentumMilestone" style="display:none;"></p>
+      <p class="placeholder-note">Notes system placeholders are visible until backend note collection is implemented.</p>
+      <button id="pdfDownloadBtn" class="btn">Download Monthly Report (PDF)</button>
+      <p id="pdfDownloadStatus" class="status-text" aria-live="polite"></p>
+    </section>
   </div>
 
-  <!-- ✅ Momentum -->
-  <div class="card momentum-card" id="momentumTile">
-    <h3>⚡ Momentum</h3>
-    <div class="momentum-stat">
-      <span id="momentumStreak">0</span>
-      <span class="momentum-unit">day streak</span>
-    </div>
-    <p class="momentum-subtext">
-      <span id="momentumUnlockedMtd">0</span> articles unlocked (MTD)
-      <span class="momentum-all-time">All-time: <span id="momentumUnlockedAll">0</span></span>
-    </p>
-    <p class="momentum-microcopy" id="momentumMicrocopy">Keep it alive — unlock 1 today</p>
-    <p class="momentum-milestone" id="momentumMilestone" style="display:none;"></p>
-  </div>
-
-  <!-- ✅ Monthly PDF Summary -->
-  <div class="card feature-card report-card" data-feature="pdf" id="pdfDownload">
-    <h3>📄 Research Activity Report</h3>
-    <p class="report-subtext">Download your monthly summary (PDF)</p>
-    <button id="pdfDownloadBtn" class="btn">Download PDF</button>
-    <p id="pdfDownloadStatus" class="status-text" aria-live="polite"></p>
-  </div>
-
-  <!-- ✅ Pro Feature Teaser -->
-  <div class="card pro-teaser hidden" id="proTeaser">
-    <h4>Unlock more with Pro:</h4>
-    <ul>
-      <li>Usage Analytics</li>
-      <li>PDF usage report</li>
-      <li>Priority Queue – skip the wait</li>
-      <li>Unlimited history & Bookmarks</li>
-    </ul>
-    <button class="btn-upgrade">Upgrade Now</button>
-  </div>
-
-</div>
-
-
-    <div class="section">
-      <h2>🔓 Unlock a Page</h2>
-      <form id="dashboard-unlock-form" class="input-group">
-  <input id="dashboard-url-input" type="url" placeholder="Enter the URL to unlock..." required />
-  <button type="submit">Unlock</button>
-</form>
-
-<div class="support-slot free-only" data-obscure="true" id="revenue-gen-1">
-
-</div>
-
-
-    </div>
-    
-    <div class="section dual-history">
-  <div class="history-column">
-    <h2>Recent Sources 🔓</h2>
-    <ul class="history-list" id="unlock-history">
-      <li>
-      <p>Fetching ...</p>
-      </li>
-    </ul>
-  </div>
-
-  <div class="history-column">
-    <h2>Recent Citations 📝</h2>
-    <ul class="citation-list" id="citation-history">
-      <li>
-      <p>Fetching ...</p>
-      </li>
-    </ul>
-  </div>
-</div>
-<div class="section dual-history" id="proHistories">
-<section id="url-history" class="dashboard-card">
-  <h2>Source URL History</h2>
-
-  <!-- Search bar (visible for Pro, greyed out for Freemium) -->
-  <div id="history-search-container">
-    <input 
-      type="text" 
-      id="history-search" 
-      placeholder="Search unlocked URLs..."
-      disabled
-    />
-  </div>
-
-  <!-- History list -->
-  <ul id="history-list">
-    <!-- Populated dynamically from JS -->
-  </ul>
-
-  <!-- Greyed-out notice for freemium -->
-  <p id="history-locked-msg" class="locked-msg" style="display:none;">
-    Full history search is a Pro feature. Upgrade to unlock it!
-  </p>
-</section>
-
-<!-- ===========================
-     BOOKMARKS SECTION
-     =========================== -->
-     
-<section id="bookmarks" class="dashboard-card">
-  <h2>Bookmarked Domains</h2>
-    <div id="bookmark-add">
-    <input type="text" id="bookmark-input" placeholder="Enter URL to bookmark" disabled />
-    <button id="bookmark-add-btn">Add Bookmark</button>
-  </div>
-  <ul id="bookmark-list">
-    <!-- Populated dynamically -->
-  </ul>
-
-  <!-- Greyed-out notice for freemium -->
-  <p id="bookmark-locked-msg" class="locked-msg" style="display:none;">
-    Bookmark frequently used domains for quick access — Pro feature only.
-  </p>
-</section>
-</div>
-    <div class="section upgrade-box" id="upgrade">
-      <h2>Need More Usages?</h2>
-      <p>Upgrade to Premium for more usage, PDF exports, and more!</p>
-      <button>Upgrade Now</button>
-    </div>
-    
-      <div class="support-slot free-only" data-obscure="true" id="revenue-gen-2">
-  <div class="funding-message">
-    <p class="fallback">Using the free plan? These quiet ads help keep this tool running – thank you! 🧠</p>
-  </div>
-</div>
-
-  </div>
-  
   <footer>
     &copy; 2026 Writior Research Workflow · All rights reserved
   </footer>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/static/js/ui_feedback.js"></script>
 <script src="/static/js/auth.js"></script>
 <script src="/static/js/theme.js"></script>
 <script>
-
-
 const toast = window.webUnlockerUI?.createToastManager?.();
+let usageChart = null;
+let currentUser = { isPaid: false, canBookmark: false };
+
+function escapeHtml(value = "") {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function timeSince(date) {
+  const seconds = Math.floor((new Date() - date) / 1000);
+  const r = (val, label) => `${val} ${label}${val > 1 ? 's' : ''}`;
+  if (seconds < 60) return r(seconds, "second");
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return r(minutes, "minute");
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return r(hours, "hour");
+  const days = Math.floor(hours / 24);
+  return r(days, "day");
+}
 
 async function loadUserData() {
   const token = await window.webUnlockerAuth?.getAccessToken?.();
-
   if (!token) {
-    toast?.show({ type: "warning", message: window.webUnlockerUI?.COPY?.errors?.AUTH_REQUIRED || "Please sign in to continue." });
     window.location.href = "/auth?next=/dashboard";
     return;
   }
 
-  try {
-    const res = await fetch("/api/me", {
-      headers: {
-        "Authorization": `Bearer ${token}`
-      }
-    });
+  const res = await fetch("/api/me", { headers: { "Authorization": `Bearer ${token}` } });
+  if (res.status === 401) {
+    window.location.href = "/auth?next=/dashboard&reason=session";
+    return;
+  }
+  if (!res.ok) throw new Error("Failed to load user metadata");
 
-    if (res.status === 401) {
-      toast?.show({ type: "warning", message: window.webUnlockerUI?.COPY?.errors?.TOKEN_EXPIRED || "Session expired. Please sign in again." });
-      window.webUnlockerAuth?.writeLegacyToken?.(null);
-      window.location.href = "/auth?next=/dashboard&reason=session";
-      return;
-    }
+  const data = await res.json();
+  const accountType = (data.account_type || "").toLowerCase();
+  const isPaid = ["standard", "pro", "dev"].includes(accountType);
 
-    if (!res.ok) throw new Error("Failed to load user metadata");
+  currentUser = {
+    accountType,
+    isPaid,
+    canBookmark: isPaid,
+  };
 
-    const data = await res.json();
+  document.getElementById("user-name").textContent = data.name || "User";
+  document.getElementById("plan-label").textContent = accountType.charAt(0).toUpperCase() + accountType.slice(1);
+  document.getElementById("account-type").textContent = accountType.charAt(0).toUpperCase() + accountType.slice(1);
+  document.getElementById("usage").textContent = data.usage_count ?? "--";
+  document.getElementById("limit").textContent = data.usage_limit ?? "--";
+  document.getElementById("usage-period").textContent = data.usage_period === "week" ? "this week" : "today";
 
-    // ✅ Show metadata
-    document.getElementById("user-name").textContent = data.name;
-    document.getElementById("account-type").textContent =
-      data.account_type?.charAt(0).toUpperCase() + data.account_type?.slice(1);
-    document.getElementById("usage").textContent =
-      data.usage_count ?? "--";
-    document.getElementById("limit").textContent =
-      data.usage_limit ?? "--";
-    document.getElementById("usage-period").textContent =
-      data.usage_period === "week" ? "this week" : "today";
+  const initials = (data.name || "U").split(" ").map(part => part[0]).join("").slice(0, 2).toUpperCase();
+  document.getElementById("avatar-initials").textContent = initials;
 
-    const accountType = (data.account_type || "").toLowerCase();
-    const isPro = accountType === "pro";
-    const isDev = accountType === "dev";
-    const isStandard = accountType === "standard";
-    const isFree = accountType === "free";
-    const proPill = document.getElementById("pro-unlimited-pill");
-    const usageRow = document.getElementById("usage-row");
-    if (proPill) proPill.style.display = (isPro || isDev) ? "inline-block" : "none";
-    if (usageRow) usageRow.style.display = (isPro || isDev) ? "none" : "block";
-    const canBookmark = isPro || isStandard || isDev;
-    const canUseHistorySearch = isPro || isStandard || isDev;
-    const metricsNavItem = document.getElementById("metrics-nav-item");
-    if (metricsNavItem) metricsNavItem.style.display = isDev ? "list-item" : "none";
+  // Existing backend doesn't collect these yet; placeholders shown intentionally.
+  document.getElementById("words-typed").textContent = "Coming soon";
+  document.getElementById("notes-created").textContent = "Coming soon";
 
-    // After fetching `data` from /api/me:
-    renderBookmarks(data.bookmarks);
+  renderBookmarks(data.bookmarks || []);
+  document.getElementById("bookmarks-count").textContent = String((data.bookmarks || []).length);
 
-    if (canUseHistorySearch) {
-      document.getElementById("history-search").disabled = false;
-      document.getElementById("history-locked-msg").style.display = "none";
-
-      loadFullHistory();
-      document.getElementById("history-search").addEventListener("input", e => {
-        loadFullHistory(e.target.value);
-      });
-    } else {
-      document.getElementById("history-search").disabled = true;
-      document.getElementById("history-locked-msg").style.display = "block";
-    }
-   
-    if (canBookmark) {
-      document.getElementById("bookmark-input").disabled = false;
-      document.getElementById("bookmark-locked-msg").style.display = "none";
-    } else {
-      document.getElementById("bookmark-locked-msg").style.display = "block";
-    }
-
-     
-     
-    // ✅ If freemium, show ads
-    if (isFree) {
-      document.querySelectorAll(".free-only").forEach(el => {
-        el.style.display = "block";
-      });
-
-      injectAdSenseAds();
-      detectAdblock();
-      document.getElementById("upgrade").style.display = "block";
-      document.getElementById("proTeaser").style.display = "block";
-    } else {
-      document.querySelectorAll(".free-only").forEach(el => {
-        el.style.display = "none";
-      });
-      document.getElementById("upgrade").style.display = "none";
-      document.getElementById("proTeaser").style.display = "none";
-    }
-
-  } catch (err) {
-    console.error("🔥 Error loading user metadata:", err);
-    toast?.show({ type: "error", message: "Failed to load user info. Please try again." });
+  if (currentUser.canBookmark) {
+    document.getElementById("bookmark-input").disabled = false;
+    document.getElementById("bookmark-locked-msg").style.display = "none";
+  } else {
+    document.getElementById("bookmark-locked-msg").style.display = "block";
   }
 }
 
@@ -318,21 +185,14 @@ async function loadMomentum() {
   if (!token) return;
 
   try {
-    const res = await fetch("/api/dashboard/momentum", {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
-
+    const res = await fetch("/api/dashboard/momentum", { headers: { "Authorization": `Bearer ${token}` } });
     if (!res.ok) throw new Error("Failed to load momentum data");
     const data = await res.json();
 
     document.getElementById("momentumStreak").textContent = data.current_streak_days;
-    document.getElementById("momentumUnlockedMtd").textContent = data.articles_unlocked_mtd;
-    document.getElementById("momentumUnlockedAll").textContent = data.articles_unlocked_all_time;
-
-    const microcopy = data.has_unlock_today
+    document.getElementById("momentumMicrocopy").textContent = data.has_unlock_today
       ? "Nice — you’re active today"
       : "Keep it alive — unlock 1 today";
-    document.getElementById("momentumMicrocopy").textContent = microcopy;
 
     const milestoneEl = document.getElementById("momentumMilestone");
     if (data.milestone) {
@@ -346,6 +206,178 @@ async function loadMomentum() {
   }
 }
 
+async function loadRecentUnlocks() {
+  const token = await window.webUnlockerAuth?.getAccessToken?.();
+  if (!token) return;
+
+  const endpoint = currentUser.isPaid ? "/api/unlocks?limit=100" : "/api/unlocks";
+  const res = await fetch(endpoint, { headers: { "Authorization": `Bearer ${token}` } });
+  if (!res.ok) throw new Error("Could not load unlock history");
+
+  const history = await res.json();
+  const list = document.getElementById("recently-visited-list");
+  list.innerHTML = "";
+
+  if (!history.length) {
+    list.innerHTML = '<li class="empty">No recent visits yet.</li>';
+    renderUsageAnalytics([]);
+    return;
+  }
+
+  history.forEach((item, index) => {
+    const li = document.createElement("li");
+    const safeUrl = escapeHtml(item.url || "");
+    const timeAgo = timeSince(new Date(item.unlocked_at));
+    li.innerHTML = `
+      <div class="list-main">
+        <span class="item-index">${index + 1}.</span>
+        <a class="item-link" href="/?url=${encodeURIComponent(item.url)}&unlock=true">${safeUrl}</a>
+      </div>
+      <div class="list-actions">
+        <span class="badge">${timeAgo} ago</span>
+        <a class="revisit-btn" href="/?url=${encodeURIComponent(item.url)}&unlock=true">Revisit</a>
+      </div>
+    `;
+    list.appendChild(li);
+  });
+
+  renderUsageAnalytics(history);
+}
+
+function renderUsageAnalytics(history) {
+  const counts = {};
+  const now = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const day = new Date(now);
+    day.setDate(day.getDate() - i);
+    counts[day.toISOString().split("T")[0]] = 0;
+  }
+
+  history.forEach(item => {
+    const dateStr = new Date(item.unlocked_at).toISOString().split("T")[0];
+    if (counts[dateStr] !== undefined) counts[dateStr] += 1;
+  });
+
+  const ctx = document.getElementById("usageChart").getContext("2d");
+  if (usageChart) usageChart.destroy();
+  usageChart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: Object.keys(counts),
+      datasets: [{ label: "Unlocks per Day", data: Object.values(counts), backgroundColor: "rgba(54, 162, 235, 0.6)", borderRadius: 6 }],
+    },
+    options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } },
+  });
+}
+
+async function loadRecentCitations() {
+  const token = await window.webUnlockerAuth?.getAccessToken?.();
+  if (!token) return;
+
+  const endpoint = currentUser.isPaid ? "/api/citations?limit=100" : "/api/citations?limit=5";
+  const res = await fetch(endpoint, { headers: { "Authorization": `Bearer ${token}` } });
+  if (!res.ok) throw new Error("Could not load citation history");
+
+  const citations = await res.json();
+  const list = document.getElementById("citation-history");
+  list.innerHTML = "";
+  document.getElementById("citations-saved").textContent = String(citations.length);
+
+  if (!citations.length) {
+    list.innerHTML = '<li class="empty">No saved citations yet.</li>';
+    return;
+  }
+
+  citations.forEach(citation => {
+    const li = document.createElement("li");
+    li.classList.add("citation-item");
+
+    const excerptDiv = document.createElement("div");
+    excerptDiv.classList.add("citation-excerpt");
+    excerptDiv.innerHTML = `
+      <span>${escapeHtml(citation.excerpt || "")}</span>
+      <span class="badge">${timeSince(new Date(citation.cited_at))} ago</span>
+    `;
+
+    const modalDiv = document.createElement("div");
+    modalDiv.classList.add("citation-modal");
+
+    const fullTextP = document.createElement("p");
+    fullTextP.textContent = citation.full_text;
+
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "copy-button";
+    copyBtn.textContent = "Copy Again";
+    copyBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(citation.full_text)
+        .then(() => toast?.show({ type: "success", message: "Full citation copied!" }))
+        .catch(err => console.error("Failed to copy full citation: ", err));
+    });
+
+    modalDiv.appendChild(fullTextP);
+    modalDiv.appendChild(copyBtn);
+    li.appendChild(excerptDiv);
+    li.appendChild(modalDiv);
+    list.appendChild(li);
+  });
+}
+
+async function loadBookmarks() {
+  const token = await window.webUnlockerAuth?.getAccessToken?.();
+  if (!token) return;
+
+  const res = await fetch("/api/bookmarks", { headers: { "Authorization": `Bearer ${token}` } });
+  if (!res.ok) throw new Error("Failed to load bookmarks");
+  const bookmarks = await res.json();
+  renderBookmarks(bookmarks);
+  document.getElementById("bookmarks-count").textContent = String(bookmarks.length);
+}
+
+function renderBookmarks(bookmarks) {
+  const list = document.getElementById("bookmark-list");
+  list.innerHTML = "";
+
+  if (!bookmarks || !bookmarks.length) {
+    list.innerHTML = "<li class='empty'>No bookmarks yet.</li>";
+    return;
+  }
+
+  bookmarks.forEach((bm) => {
+    const li = document.createElement("li");
+    li.dataset.id = bm.id;
+    li.innerHTML = `
+      <a class="bookmark-link" href="/?url=${encodeURIComponent(bm.url)}&unlock=true">${escapeHtml(bm.domain || bm.url)}</a>
+      <button data-id="${bm.id}" class="remove-bookmark">❌</button>
+    `;
+
+    li.querySelector(".remove-bookmark").addEventListener("click", async (e) => {
+      e.preventDefault();
+      await deleteBookmark(bm.id);
+      li.remove();
+    });
+
+    list.appendChild(li);
+  });
+}
+
+async function addBookmark(url) {
+  const token = await window.webUnlockerAuth?.getAccessToken?.();
+  const res = await fetch("/api/bookmarks", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) throw new Error("Failed to add bookmark");
+  await loadBookmarks();
+}
+
+async function deleteBookmark(id) {
+  const token = await window.webUnlockerAuth?.getAccessToken?.();
+  const res = await fetch(`/api/bookmarks/${id}`, { method: "DELETE", headers: { "Authorization": `Bearer ${token}` } });
+  if (!res.ok) throw new Error("Failed to delete bookmark");
+}
+
 async function downloadMonthlyReport() {
   const token = await window.webUnlockerAuth?.getAccessToken?.();
   if (!token) return;
@@ -357,14 +389,10 @@ async function downloadMonthlyReport() {
   status.textContent = "Generating your report...";
 
   try {
-    const res = await fetch("/api/reports/monthly", {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
-
+    const res = await fetch("/api/reports/monthly", { headers: { "Authorization": `Bearer ${token}` } });
     if (!res.ok) throw new Error("Report download failed");
     const blob = await res.blob();
     const url = window.URL.createObjectURL(blob);
-
     const link = document.createElement("a");
     const contentDisposition = res.headers.get("Content-Disposition") || "";
     const filenameMatch = contentDisposition.match(/filename=([^;]+)/i);
@@ -374,417 +402,35 @@ async function downloadMonthlyReport() {
     link.click();
     link.remove();
     window.URL.revokeObjectURL(url);
-
     status.textContent = "Download started.";
   } catch (err) {
     console.error("PDF download error:", err);
     status.textContent = "Unable to download report. Please try again.";
   } finally {
     button.disabled = false;
-    button.textContent = "Download PDF";
+    button.textContent = "Download Monthly Report (PDF)";
   }
 }
 
-async function loadFullHistory(query = "") {
-  const token = await window.webUnlockerAuth?.getAccessToken?.();
-  if (!token) return;
-
-  try {
-    const res = await fetch(`/api/history?q=${encodeURIComponent(query)}`, {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
-
-    if (!res.ok) throw new Error("Could not load full history");
-
-    const history = await res.json();
-    const list = document.getElementById("history-list");
-    list.innerHTML = "";
-
-    if (history.length === 0) {
-      list.innerHTML = "<li>No history found.</li>";
-      return;
-    }
-
-    history.forEach(item => {
-      const li = document.createElement("li");
-      li.innerHTML = `
-        <span>${item.url}</span>
-        <span class="badge">${timeSince(new Date(item.unlocked_at))} ago</span>
-      `;
-      list.appendChild(li);
-    });
-
-    // 🔹 Render analytics chart using the same data
-    renderUsageAnalytics(history);
-
-  } catch (err) {
-    console.error("Failed to load history:", err);
-  }
-}
-
-
-function renderUsageAnalytics(history) {
-  // 1️⃣ Count unlocks per day (last 7 days)
-  const counts = {};
-  const now = new Date();
-  for (let i = 6; i >= 0; i--) {
-    const day = new Date(now);
-    day.setDate(day.getDate() - i);
-    const dayStr = day.toISOString().split('T')[0]; // YYYY-MM-DD
-    counts[dayStr] = 0;
-  }
-
-  history.forEach(item => {
-    const dateStr = new Date(item.unlocked_at).toISOString().split('T')[0];
-    if (counts[dateStr] !== undefined) {
-      counts[dateStr]++;
-    }
-  });
-
-  const labels = Object.keys(counts);
-  const data = Object.values(counts);
-
-  // 2️⃣ Render chart
-  const ctx = document.getElementById('usageChart').getContext('2d');
-  new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [{
-        label: 'Unlocks per Day',
-        data,
-        backgroundColor: 'rgba(54, 162, 235, 0.6)',
-        borderRadius: 6
-      }]
-    },
-    options: {
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: {
-        y: { beginAtZero: true, ticks: { stepSize: 1 } }
-      }
-    }
-  });
-}
-
-// === Initial fetch and render of bookmarks ===
-async function loadBookmarks() {
-  const token = await window.webUnlockerAuth?.getAccessToken?.();
-  if (!token) return;
-
-  try {
-    const res = await fetch("/api/bookmarks", {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
-    if (!res.ok) throw new Error("Failed to load bookmarks");
-    const bookmarks = await res.json();
-    renderBookmarks(bookmarks);
-  } catch (err) {
-    console.error("Error loading bookmarks:", err);
-  }
-}
-
-// === Render Bookmarks ===
-function renderBookmarks(bookmarks) {
-  const list = document.getElementById("bookmark-list");
-  list.innerHTML = "";
-
-  if (!bookmarks || bookmarks.length === 0) {
-    list.innerHTML = "<li>No bookmarks yet.</li>";
-    return;
-  }
-
-  bookmarks.forEach(bm => {
-    const li = document.createElement("li");
-    li.dataset.id = bm.id;
-    li.dataset.url = bm.url;
-
-    li.innerHTML = `
-      <span class="bookmark-link" style="cursor:pointer; color:blue; text-decoration:underline;">
-        ${bm.domain || bm.url}
-      </span>
-      <button data-id="${bm.id}" class="remove-bookmark">❌</button>
-    `;
-
-    // Make bookmark clickable -> send to main app
-    li.querySelector(".bookmark-link").addEventListener("click", () => {
-      const encoded = encodeURIComponent(bm.url);
-      window.location.href = `/?url=${encoded}&unlock=true`;
-    });
-
-    // Delete bookmark handler
-    li.querySelector(".remove-bookmark").addEventListener("click", async (e) => {
-      e.stopPropagation(); // prevent click triggering link
-      await deleteBookmark(bm.id);
-      li.remove();
-    });
-
-    list.appendChild(li);
-  });
-}
-
-// === Add Bookmark ===
-async function addBookmark(url) {
-  const token = await window.webUnlockerAuth?.getAccessToken?.();
-    // Show status text
-  let statusEl = document.getElementById("bookmark-status");
-  if (!statusEl) {
-    statusEl = document.createElement("p");
-    statusEl.id = "bookmark-status";
-    document.getElementById("bookmarks").appendChild(statusEl);
-  }
-  statusEl.textContent = "Adding bookmark...";
-
-  try {
-    const res = await fetch("/api/bookmarks", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json"
-        
-      },
-      body: JSON.stringify({ url })
-    });
-    if (!res.ok) throw new Error("Failed to add bookmark");
-
-    // Refresh list after adding
-    await loadBookmarks();
-    statusEl.textContent = "Bookmark added!";
-    setTimeout(() => statusEl.textContent = "", 1500);
-  } catch (err) {
-    console.error(err);
-    statusEl.textContent = "Failed to add bookmark";
-    setTimeout(() => statusEl.textContent = "", 2000);
-  }
-}
-
-// Add bookmark button listener
-document.getElementById("bookmark-add-btn").addEventListener("click", () => {
+document.getElementById("bookmark-add-btn").addEventListener("click", async () => {
+  if (!currentUser.canBookmark) return;
   const input = document.getElementById("bookmark-input");
   const url = input.value.trim();
   if (!url) return;
-  addBookmark(url);
+  await addBookmark(url);
   input.value = "";
 });
 
-// === Delete Bookmark ===
-async function deleteBookmark(id) {
-  const token = await window.webUnlockerAuth?.getAccessToken?.();
+document.addEventListener("DOMContentLoaded", async () => {
   try {
-    const res = await fetch(`/api/bookmarks/${id}`, {
-      method: "DELETE",
-      headers: { "Authorization": `Bearer ${token}` }
-    });
-    if (!res.ok) throw new Error("Failed to delete bookmark");
-  } catch (err) {
-    console.error("Failed to delete bookmark:", err);
-  }
-}
-
-// Load on page ready
-document.addEventListener("DOMContentLoaded", loadBookmarks);
-
-
-function injectAdSenseAds() {
-  const revenue1 = document.getElementById("revenue-gen-1");
-  const revenue2 = document.getElementById("revenue-gen-2");
-
-  // Inject AdSense slot #1
-  revenue1.innerHTML = `
-    <ins class="adsbygoogle"
-      style="display:block"
-      data-ad-client="ca-pub-XXXXXXXXXXXXXX"
-      data-ad-slot="1111111111"
-      data-ad-format="auto"
-      data-full-width-responsive="true"></ins>
-  `;
-
-  // Inject AdSense slot #2
-  revenue2.innerHTML = `
-    <ins class="adsbygoogle"
-      style="display:block"
-      data-ad-client="ca-pub-XXXXXXXXXXXXXX"
-      data-ad-slot="2222222222"
-      data-ad-format="auto"
-      data-full-width-responsive="true"></ins>
-  `;
-
-  // Trigger AdSense rendering
-  try {
-    (adsbygoogle = window.adsbygoogle || []).push({});
-    (adsbygoogle = window.adsbygoogle || []).push({});
-  } catch (e) {
-    console.warn("Adsense rendering error:", e);
-  }
-}
-
-function detectAdblock() {
-  const slots = [document.getElementById("revenue-gen-1"), document.getElementById("revenue-gen-2")];
-
-  slots.forEach(slot => {
-    setTimeout(() => {
-      if (slot && slot.offsetHeight === 0) {
-        slot.innerHTML = `
-          <div class="funding-message">
-            <p class="fallback">You're using an ad blocker — no worries. Our unobtrusive ads help fund this tool so we can keep it free. 💙</p>
-          </div>
-        `;
-      }
-    }, 1500); // Allow time for ad to attempt render
-  });
-}
-
-  window.addEventListener("DOMContentLoaded", async () => {
-    const token = await window.webUnlockerAuth?.getAccessToken?.();
-    if (!token) {
-      window.location.href = "/auth";
-      return;
-    }
-
-    loadUserData();
-    loadMomentum();
-    loadRecentUnlocks();
-    loadRecentCitations();
+    await loadUserData();
+    await Promise.all([loadMomentum(), loadRecentUnlocks(), loadRecentCitations()]);
     document.getElementById("pdfDownloadBtn").addEventListener("click", downloadMonthlyReport);
-  });
-  
-  
-  
-  //load citations
-  async function loadRecentCitations() {
-  const token = await window.webUnlockerAuth?.getAccessToken?.();
-  if (!token) return;
-
-  try {
-    const res = await fetch("/api/citations", {
-      headers: {
-        "Authorization": `Bearer ${token}`
-      }
-    });
-
-    if (!res.ok) throw new Error("Could not load citation history");
-
-    const citations = await res.json();
-    const list = document.querySelector(".citation-list");
-    list.innerHTML = "";
-    
-    
-    citations.forEach(citation => {
-  const li = document.createElement("li");
-  const timeAgo = timeSince(new Date(citation.cited_at));
-  li.classList.add("citation-item");
-
-  const excerptDiv = document.createElement("div");
-  excerptDiv.classList.add("citation-excerpt");
-  excerptDiv.innerHTML = `
-    <span>${citation.excerpt}</span>
-    <span class="badge">${timeAgo} ago</span>
-  `;
-
-  const modalDiv = document.createElement("div");
-  modalDiv.classList.add("citation-modal");
-
-  const fullTextP = document.createElement("p");
-  fullTextP.textContent = citation.full_text;
-
-  const copyBtn = document.createElement("button");
-  copyBtn.className = "copy-button";
-  copyBtn.textContent = "Copy Again";
-
-  // ✅ SAFELY attach click handler
-  copyBtn.addEventListener("click", (e) => {
-    e.stopPropagation(); // prevent hover-out from interfering
-    navigator.clipboard.writeText(citation.full_text)
-      .then(() => alert("Full citation copied!"))
-      .catch(err => console.error("Failed to copy full citation: ", err));
-  });
-
-  modalDiv.appendChild(fullTextP);
-  modalDiv.appendChild(copyBtn);
-
-  li.appendChild(excerptDiv);
-  li.appendChild(modalDiv);
-
-  list.appendChild(li);
+  } catch (err) {
+    console.error(err);
+    toast?.show({ type: "error", message: "Failed to load dashboard data." });
+  }
 });
-
-  } catch (err) {
-    console.error("Failed to load recent citations:", err);
-  }
-}
-
-
-
-function copyCitationFull(fullText) {
-  navigator.clipboard.writeText(fullText)
-    .then(() => alert("Full citation copied!"))
-    .catch(err => console.error("Failed to copy full citation: ", err));
-}
-
-  
-  // Handle unlock form submission
-  document.getElementById('dashboard-unlock-form').addEventListener('submit', function (e) {
-    e.preventDefault();
-    const input = document.getElementById('dashboard-url-input');
-    const url = input.value.trim();
-
-    if (!url) {
-      alert("Please enter a URL");
-      return;
-    }
-
-    // Redirect to main tool with query string
-    const encoded = encodeURIComponent(url);
-    window.location.href = `/?url=${encoded}&unlock=true`;
-  });
-   //load urls  
-async function loadRecentUnlocks() {
-  const token = await window.webUnlockerAuth?.getAccessToken?.();
-  if (!token) return;
-
-  try {
-    const res = await fetch("/api/unlocks", {
-      headers: {
-        "Authorization": `Bearer ${token}`
-      }
-    });
-
-    if (!res.ok) throw new Error("Could not load unlock history");
-
-    const history = await res.json();
-    const list = document.querySelector(".history-list");
-    list.innerHTML = "";
-
-    history.forEach(item => {
-      const li = document.createElement("li");
-      const timeAgo = timeSince(new Date(item.unlocked_at));
-
-      li.innerHTML = `
-        <span>${item.url}</span>
-        <span class="badge">${timeAgo} ago</span>
-      `;
-
-      list.appendChild(li);
-    });
-
-  } catch (err) {
-    console.error("Failed to load recent unlocks:", err);
-  }
-}
-
-function timeSince(date) {
-  const seconds = Math.floor((new Date() - date) / 1000);
-  const r = (val, label) => `${val} ${label}${val > 1 ? 's' : ''}`;
-
-  if (seconds < 60) return r(seconds, "second");
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return r(minutes, "minute");
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return r(hours, "hour");
-  const days = Math.floor(hours / 24);
-  return r(days, "day");
-}
-
 </script>
 <script src="/static/js/nav.js"></script>
 </body>

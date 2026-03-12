@@ -147,10 +147,10 @@
         <div class="editor-word-count" id="editor-word-count">Words: 0</div>
 
         <div class="doc-tools-row">
-          <button class="text" id="tool-outline" aria-expanded="false">Doc Structure</button>
-          <button class="text" id="tool-history" aria-expanded="false">History</button>
-          <button class="text" id="tool-doc-notes" aria-expanded="false">Doc Notes</button>
+          <button class="text" id="tool-outline">Doc Structure</button>
+          <button class="text" id="tool-history">History</button>
           <span id="tool-word-count">Word Count: 0</span>
+          <button class="text" id="tool-add-doc-note">+ Doc-Note</button>
         </div>
 
         <section class="editor-secondary-panel collapsed" id="outline-panel">
@@ -173,11 +173,8 @@
           </div>
         </section>
 
-        <section class="editor-secondary-panel collapsed" id="doc-notes-panel">
-          <div class="panel-header">
-            <h3>Doc Notes</h3>
-            <button class="text" id="tool-add-doc-note">+ Add Note</button>
-          </div>
+        <section class="editor-secondary-panel" id="doc-notes-panel">
+          <div class="panel-header"><h3>Doc Notes</h3></div>
           <ul id="doc-notes-list" class="notes-list"></ul>
         </section>
       </main>
@@ -190,13 +187,6 @@
         <div class="tab-panel active" id="tab-library">
           <div class="sidebar-section">
             <input type="search" id="citation-search" placeholder="Search citations" autocomplete="off" />
-            <label class="citation-style-label" for="citation-inline-style">In-text citation style</label>
-            <select id="citation-inline-style">
-              <option value="apa">APA</option>
-              <option value="mla">MLA</option>
-              <option value="chicago">Chicago</option>
-              <option value="harvard">Harvard</option>
-            </select>
           </div>
           <div id="citations-list" class="citations-list"></div>
         </div>

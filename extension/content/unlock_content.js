@@ -95,23 +95,84 @@
         left: 50%;
         transform: translate(-50%, -50%);
         width: min(460px, 92vw);
-        background: #fff;
+        background: linear-gradient(145deg, #0f172a, #111827);
         border-radius: 14px;
-        border: 1px solid #e5e7eb;
+        border: 1px solid #334155;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
         z-index: 2147483647;
-        padding: 14px;
+        padding: 16px;
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 10px;
+        color: #e5e7eb;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      }
+
+      .web-unlocker-note-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 24px;
+        font-weight: 300;
+        line-height: 1;
+      }
+
+      .web-unlocker-note-heading {
+        color: #f8fafc;
+        font-size: 20px;
+        font-weight: 600;
+      }
+
+      .web-unlocker-note-highlight {
+        border: 1px solid #334155;
+        border-radius: 10px;
+        background: rgba(15, 23, 42, 0.6);
+        color: #e2e8f0;
+        font-size: 14px;
+        line-height: 1.45;
+        padding: 10px;
+        max-height: 120px;
+        overflow: auto;
       }
 
       .web-unlocker-note-modal textarea,
       .web-unlocker-note-modal input,
       .web-unlocker-note-modal select {
         width: 100%;
-        border: 1px solid #d1d5db;
+        background: rgba(30, 41, 59, 0.9);
+        color: #f8fafc;
+        border: 1px solid #475569;
         border-radius: 10px;
-        padding: 8px;
+        padding: 9px;
+        font-size: 14px;
+      }
+
+      .web-unlocker-note-modal textarea::placeholder,
+      .web-unlocker-note-modal input::placeholder {
+        color: #94a3b8;
+      }
+
+      .web-unlocker-note-modal textarea {
+        min-height: 88px;
+        resize: vertical;
+      }
+
+      .web-unlocker-note-modal button {
+        border: 1px solid #475569;
+        border-radius: 8px;
+        padding: 8px 14px;
+        cursor: pointer;
+      }
+
+      .web-unlocker-note-modal button.secondary {
+        background: transparent;
+        color: #e2e8f0;
+      }
+
+      .web-unlocker-note-modal button:not(.secondary) {
+        background: linear-gradient(180deg, #2563eb, #1d4ed8);
+        border-color: #2563eb;
+        color: #fff;
       }
 
       .web-unlocker-backdrop {
@@ -944,10 +1005,12 @@ ${quote}`;
     const modal = document.createElement("div");
     modal.className = "web-unlocker-note-modal";
     modal.innerHTML = `
-      <strong>Save Highlight Note</strong>
-      <div>${sanitizeText(state.selectionText.slice(0, 220))}</div>
-      <input id="wu-note-title" type="text" placeholder="Title (optional)" />
-      <textarea id="wu-note-body" rows="4" placeholder="Add a note..."></textarea>
+      <div class="web-unlocker-note-header">
+        <strong class="web-unlocker-note-heading">Highlighted Text</strong>
+        <button class="secondary" id="wu-note-close" type="button" aria-label="Close note modal">✕</button>
+      </div>
+      <div class="web-unlocker-note-highlight">${sanitizeText(state.selectionText.slice(0, 600))}</div>
+      <textarea id="wu-note-body" rows="4" placeholder="Add a note (optional)..."></textarea>
       <input id="wu-note-tags" type="text" placeholder="Tags (comma separated)" />
       <input id="wu-note-project" type="text" placeholder="Project (optional)" />
       <div style="display:flex;gap:8px;justify-content:flex-end;">
@@ -959,18 +1022,15 @@ ${quote}`;
     root.appendChild(modal);
     lockPageScroll();
 
+    modal.querySelector("#wu-note-close")?.addEventListener("click", closeNoteModal);
     modal.querySelector("#wu-note-cancel")?.addEventListener("click", closeNoteModal);
     modal.querySelector("#wu-note-save")?.addEventListener("click", async () => {
       const noteBody = modal.querySelector("#wu-note-body")?.value?.trim();
-      if (!noteBody) {
-        showToast("Note body is required.", true);
-        return;
-      }
       const response = await sendMessage("NOTE_SAVE", {
         note: {
-          title: modal.querySelector("#wu-note-title")?.value?.trim() || "",
+          title: "",
           highlight_text: state.selectionText,
-          note_body: noteBody,
+          note_body: noteBody || state.selectionText,
           source_url: cleanUrl(window.location.href),
           tags: modal.querySelector("#wu-note-tags")?.value || "",
           project: modal.querySelector("#wu-note-project")?.value?.trim() || null,

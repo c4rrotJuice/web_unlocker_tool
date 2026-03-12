@@ -40,6 +40,9 @@ const cancelQuickNoteButton = document.getElementById("cancel-quick-note");
 
 let signupExpanded = false;
 let activeTab = "citations";
+let editingNoteId = null;
+let editingNoteFocusField = "title";
+let editingNoteDraft = null;
 
 const feedback = createToastStatusManager({ toastEl, statusEl });
 const setStatus = (message, isError = false) => feedback.setStatus(message, isError ? "error" : "info");
@@ -148,6 +151,20 @@ function appendTextElement(parent, tagName, text, className = "") {
   return el;
 }
 
+function placeCursorAtEnd(el) {
+  const selection = window.getSelection();
+  if (!selection) return;
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function getEditableText(el) {
+  return (el.textContent || "").replace(/\u00a0/g, " ").trim();
+}
+
 async function loadNotes() {
   const response = await sendMessage("NOTES_LIST", {
     filters: {
@@ -171,13 +188,98 @@ async function loadNotes() {
     li.className = "pill-card";
     const tagNames = (note.tags || []).map((id) => tags.find((t) => t.id === id)?.name || id).filter(Boolean);
     const projectName = projects.find((p) => p.id === note.project_id)?.name || "—";
+    const isEditing = editingNoteId === note.id;
+    if (isEditing) {
+      li.classList.add("note-editing");
+      editingNoteDraft ||= {
+        title: note.title || "",
+        highlight_text: note.highlight_text || "",
+        note_body: note.note_body || "",
+        project: projectName === "—" ? "" : projectName,
+      };
+    }
 
-    const titleEl = document.createElement("strong");
-    titleEl.textContent = note.title || "Untitled note";
-    li.appendChild(titleEl);
+    if (isEditing) {
+      const editControls = document.createElement("div");
+      editControls.className = "note-edit-controls";
 
-    appendTextElement(li, "div", note.highlight_text ? `“${note.highlight_text.slice(0, 130)}”` : "");
-    appendTextElement(li, "div", note.note_body?.slice(0, 180) || "");
+      const saveBtn = document.createElement("button");
+      saveBtn.type = "button";
+      saveBtn.className = "pill mini pill-primary";
+      saveBtn.textContent = "✓ Save";
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "pill mini";
+      cancelBtn.textContent = "✕ Cancel";
+
+      editControls.append(saveBtn, cancelBtn);
+      li.appendChild(editControls);
+
+      const titleEl = document.createElement("strong");
+      titleEl.className = "note-title note-editable";
+      titleEl.contentEditable = "true";
+      titleEl.textContent = editingNoteDraft.title || "Untitled note";
+      li.appendChild(titleEl);
+
+      const highlightEl = appendTextElement(li, "div", editingNoteDraft.highlight_text, "note-highlight note-editable");
+      highlightEl.contentEditable = "true";
+
+      const bodyEl = appendTextElement(li, "div", editingNoteDraft.note_body, "note-body note-editable");
+      bodyEl.contentEditable = "true";
+
+      const projectWrap = document.createElement("label");
+      projectWrap.className = "note-project-input";
+      projectWrap.textContent = "Project";
+      const projectInput = document.createElement("input");
+      projectInput.type = "text";
+      projectInput.value = editingNoteDraft.project || "";
+      projectInput.placeholder = "No project";
+      projectWrap.appendChild(projectInput);
+      li.appendChild(projectWrap);
+
+      titleEl.addEventListener("input", () => { editingNoteDraft.title = getEditableText(titleEl); });
+      highlightEl.addEventListener("input", () => { editingNoteDraft.highlight_text = getEditableText(highlightEl); });
+      bodyEl.addEventListener("input", () => { editingNoteDraft.note_body = getEditableText(bodyEl); });
+      projectInput.addEventListener("input", () => { editingNoteDraft.project = projectInput.value.trim(); });
+
+      saveBtn.addEventListener("click", async () => {
+        await sendMessage("NOTE_UPDATE", {
+          id: note.id,
+          patch: {
+            title: (editingNoteDraft.title || "").trim() || null,
+            highlight_text: (editingNoteDraft.highlight_text || "").trim() || null,
+            note_body: (editingNoteDraft.note_body || "").trim() || null,
+            project: (editingNoteDraft.project || "").trim() || null,
+          },
+        });
+        editingNoteId = null;
+        editingNoteDraft = null;
+        await loadNotes();
+      });
+
+      cancelBtn.addEventListener("click", async () => {
+        editingNoteId = null;
+        editingNoteDraft = null;
+        await loadNotes();
+      });
+
+      const focusTarget = editingNoteFocusField === "project" ? projectInput : titleEl;
+      queueMicrotask(() => {
+        focusTarget.focus();
+        if (focusTarget instanceof HTMLElement && focusTarget.isContentEditable) {
+          placeCursorAtEnd(focusTarget);
+        }
+      });
+    } else {
+      const titleEl = document.createElement("strong");
+      titleEl.className = "note-title";
+      titleEl.textContent = note.title || "Untitled note";
+      li.appendChild(titleEl);
+
+      appendTextElement(li, "div", note.highlight_text ? `“${note.highlight_text.slice(0, 130)}”` : "", "note-highlight");
+      appendTextElement(li, "div", note.note_body?.slice(0, 180) || "", "note-body");
+    }
 
     const badgesRow = document.createElement("div");
     badgesRow.className = "meta-row";
@@ -191,44 +293,44 @@ async function loadNotes() {
     appendTextElement(metaRow, "span", new Date(note.updated_at || note.created_at).toLocaleString());
     li.appendChild(metaRow);
 
-    const actions = document.createElement("div");
-    actions.className = "note-actions";
-    [
-      { action: "edit", label: "Edit" },
-      { action: "assign", label: "Assign Project" },
-      { action: "delete", label: "Delete" },
-    ].forEach(({ action, label }) => {
-      const button = document.createElement("button");
-      button.className = "pill mini";
-      button.dataset.action = action;
-      button.type = "button";
-      button.textContent = label;
-      actions.appendChild(button);
-    });
-    li.appendChild(actions);
+    if (!isEditing) {
+      const actions = document.createElement("div");
+      actions.className = "note-actions";
+      [
+        { action: "edit", label: "Edit" },
+        { action: "assign", label: "Assign Project" },
+        { action: "delete", label: "Delete" },
+      ].forEach(({ action, label }) => {
+        const button = document.createElement("button");
+        button.className = "pill mini";
+        button.dataset.action = action;
+        button.type = "button";
+        button.textContent = label;
+        actions.appendChild(button);
+      });
+      li.appendChild(actions);
 
-    li.addEventListener("click", async (event) => {
-      const btn = event.target;
-      if (!(btn instanceof HTMLElement) || !btn.dataset.action) return;
-      if (btn.dataset.action === "delete") {
-        await sendMessage("NOTE_DELETE", { id: note.id });
-        await loadNotes();
-        return;
-      }
-      if (btn.dataset.action === "assign") {
-        const name = window.prompt("Assign project", projectName === "—" ? "" : projectName);
-        if (name === null) return;
-        await sendMessage("NOTE_UPDATE", { id: note.id, patch: { project: name.trim() } });
-        await loadNotes();
-        return;
-      }
-      if (btn.dataset.action === "edit") {
-        const updated = window.prompt("Edit note", note.note_body || "");
-        if (updated === null) return;
-        await sendMessage("NOTE_UPDATE", { id: note.id, patch: { note_body: updated } });
-        await loadNotes();
-      }
-    });
+      li.addEventListener("click", async (event) => {
+        const btn = event.target;
+        if (!(btn instanceof HTMLElement) || !btn.dataset.action) return;
+        if (btn.dataset.action === "delete") {
+          await sendMessage("NOTE_DELETE", { id: note.id });
+          await loadNotes();
+          return;
+        }
+        if (btn.dataset.action === "edit" || btn.dataset.action === "assign") {
+          editingNoteId = note.id;
+          editingNoteFocusField = btn.dataset.action === "assign" ? "project" : "title";
+          editingNoteDraft = {
+            title: note.title || "",
+            highlight_text: note.highlight_text || "",
+            note_body: note.note_body || "",
+            project: projectName === "—" ? "" : projectName,
+          };
+          await loadNotes();
+        }
+      });
+    }
     notesListEl.appendChild(li);
   });
 }

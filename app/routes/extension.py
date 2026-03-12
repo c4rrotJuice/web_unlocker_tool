@@ -75,7 +75,11 @@ class ExtensionNotePayload(BaseModel):
     highlight_text: str | None = None
     note_body: str | None = None
     source_url: str | None = None
+    source_title: str | None = None
+    source_author: str | None = None
+    source_published_at: str | None = None
     project_id: str | None = None
+    citation_id: str | None = None
     tags: list[str] = []
     created_at: str | None = None
     updated_at: str | None = None
@@ -107,7 +111,11 @@ class ExtensionNotePatchRequest(BaseModel):
     highlight_text: str | None = None
     note_body: str | None = None
     source_url: str | None = None
+    source_title: str | None = None
+    source_author: str | None = None
+    source_published_at: str | None = None
     project_id: str | None = None
+    citation_id: str | None = None
     tags: list[str] | None = None
     updated_at: str | None = None
 
@@ -475,6 +483,8 @@ async def create_note(request: Request, payload: ExtensionNotePayload):
     tag_ids = _clean_note_tags(payload.tags)
     created_at = _parse_iso_datetime(payload.created_at) or datetime.utcnow()
     updated_at = _parse_iso_datetime(payload.updated_at) or datetime.utcnow()
+    source_published_at = _parse_iso_datetime(payload.source_published_at)
+    citation_id = _coerce_note_id(payload.citation_id) if payload.citation_id else None
 
     insert_payload = {
         "id": note_id,
@@ -483,8 +493,12 @@ async def create_note(request: Request, payload: ExtensionNotePayload):
         "highlight_text": payload.highlight_text,
         "note_body": note_body,
         "source_url": (payload.source_url or "").strip() or None,
+        "source_title": (payload.source_title or "").strip() or None,
+        "source_author": (payload.source_author or "").strip() or None,
+        "source_published_at": source_published_at.isoformat() if source_published_at else None,
         "source_domain": _source_domain(payload.source_url),
         "project_id": payload.project_id,
+        "citation_id": citation_id,
         "created_at": created_at.isoformat(),
         "updated_at": updated_at.isoformat(),
     }
@@ -507,6 +521,10 @@ async def list_notes(
     tag: str | None = None,
     project: str | None = None,
     source: str | None = None,
+    search: str | None = None,
+    citation_id: str | None = None,
+    archived: bool = False,
+    include_archived: bool = False,
     sort: str = "desc",
     limit: int = 100,
     offset: int = 0,
@@ -523,8 +541,22 @@ async def list_notes(
         "order": order,
         "limit": str(normalized_limit),
         "offset": str(normalized_offset),
-        "select": "id,title,highlight_text,note_body,source_url,source_domain,project_id,created_at,updated_at",
+        "select": "id,title,highlight_text,note_body,source_url,source_domain,source_title,source_author,source_published_at,project_id,citation_id,archived_at,created_at,updated_at",
     }
+
+    if include_archived:
+        pass
+    elif archived:
+        params["archived_at"] = "not.is.null"
+    else:
+        params["archived_at"] = "is.null"
+
+    if citation_id:
+        params["citation_id"] = f"eq.{_coerce_note_id(citation_id)}"
+
+    if search and search.strip():
+        term = search.strip().replace(",", " ")
+        params["search_vector"] = f"plfts.{term}"
 
     if source:
         params["source_domain"] = f"ilike.*{source.strip().lower()}*"
@@ -666,6 +698,7 @@ async def update_note(request: Request, payload: ExtensionNotePatchRequest):
     note_id = _coerce_note_id(payload.id)
     tag_ids = _clean_note_tags(payload.tags)
     updated_at = _parse_iso_datetime(payload.updated_at) or datetime.utcnow()
+    source_published_at = _parse_iso_datetime(payload.source_published_at) if payload.source_published_at is not None else None
 
     patch_payload = {"updated_at": updated_at.isoformat()}
     if payload.title is not None:
@@ -677,8 +710,16 @@ async def update_note(request: Request, payload: ExtensionNotePatchRequest):
     if payload.source_url is not None:
         patch_payload["source_url"] = (payload.source_url or "").strip() or None
         patch_payload["source_domain"] = _source_domain(payload.source_url)
+    if payload.source_title is not None:
+        patch_payload["source_title"] = (payload.source_title or "").strip() or None
+    if payload.source_author is not None:
+        patch_payload["source_author"] = (payload.source_author or "").strip() or None
+    if payload.source_published_at is not None:
+        patch_payload["source_published_at"] = source_published_at.isoformat() if source_published_at else None
     if payload.project_id is not None:
         patch_payload["project_id"] = payload.project_id
+    if payload.citation_id is not None:
+        patch_payload["citation_id"] = _coerce_note_id(payload.citation_id) if payload.citation_id else None
     res = await supabase_repo.patch(
         "notes",
         params={"id": f"eq.{note_id}", "user_id": f"eq.{user_id}"},
@@ -709,3 +750,98 @@ async def delete_note(request: Request, note_id: str):
     if res.status_code not in (200, 204):
         raise HTTPException(status_code=500, detail="Failed to delete note")
     return {"ok": True, "note_id": normalized_note_id}
+
+
+@router.post("/api/notes/{note_id}/archive")
+async def archive_note(request: Request, note_id: str):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    normalized_note_id = _coerce_note_id(note_id)
+    res = await supabase_repo.patch(
+        "notes",
+        params={"id": f"eq.{normalized_note_id}", "user_id": f"eq.{user_id}"},
+        json={"archived_at": datetime.utcnow().isoformat(), "updated_at": datetime.utcnow().isoformat()},
+        headers=supabase_repo.headers(prefer="return=representation"),
+    )
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to archive note")
+    rows = res.json() or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return {"ok": True, "note_id": normalized_note_id, "archived": True}
+
+
+@router.post("/api/notes/{note_id}/restore")
+async def restore_note(request: Request, note_id: str):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    normalized_note_id = _coerce_note_id(note_id)
+    now_iso = datetime.utcnow().isoformat()
+    res = await supabase_repo.patch(
+        "notes",
+        params={"id": f"eq.{normalized_note_id}", "user_id": f"eq.{user_id}"},
+        json={"archived_at": None, "updated_at": now_iso},
+        headers=supabase_repo.headers(prefer="return=representation"),
+    )
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to restore note")
+    rows = res.json() or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return {"ok": True, "note_id": normalized_note_id, "archived": False}
+
+
+@router.post("/api/notes/{note_id}/citation")
+async def create_citation_from_note(request: Request, note_id: str, format: str = "mla"):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    normalized_note_id = _coerce_note_id(note_id)
+    note_res = await supabase_repo.get(
+        "notes",
+        params={
+            "id": f"eq.{normalized_note_id}",
+            "user_id": f"eq.{user_id}",
+            "limit": 1,
+            "select": "id,title,highlight_text,note_body,source_url,source_title,citation_id",
+        },
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+    if note_res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to load note")
+    rows = note_res.json() or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    note = rows[0]
+    if note.get("citation_id"):
+        return {"ok": True, "note_id": normalized_note_id, "citation_id": note.get("citation_id"), "created": False}
+
+    account_type = await _get_account_type(request, user_id)
+    source_url = (note.get("source_url") or "https://writior.local/notes").strip()
+    full_text = (note.get("highlight_text") or note.get("note_body") or "").strip() or (note.get("title") or "Research note")
+    excerpt = (note.get("source_title") or note.get("title") or full_text[:140]).strip()[:240]
+
+    citation_input = CitationInput(
+        url=source_url,
+        excerpt=excerpt,
+        full_text=full_text,
+        format=format,
+        metadata={"source": "note", "note_id": normalized_note_id, "source_title": note.get("source_title")},
+    )
+    citation_id = await create_citation(user_id, account_type, citation_input)
+
+    patch_res = await supabase_repo.patch(
+        "notes",
+        params={"id": f"eq.{normalized_note_id}", "user_id": f"eq.{user_id}"},
+        json={"citation_id": citation_id, "updated_at": datetime.utcnow().isoformat()},
+        headers=supabase_repo.headers(prefer="return=minimal"),
+    )
+    if patch_res.status_code not in (200, 204):
+        raise HTTPException(status_code=500, detail="Failed to link citation to note")
+    return {"ok": True, "note_id": normalized_note_id, "citation_id": citation_id, "created": True}

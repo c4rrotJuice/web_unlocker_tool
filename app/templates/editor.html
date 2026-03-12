@@ -81,6 +81,7 @@
             <input id="notes-filter-tag" type="text" placeholder="Filter by tag" />
             <input id="notes-filter-project" type="text" placeholder="Filter by project" />
             <input id="notes-filter-source" type="text" placeholder="Filter by source" />
+            <input id="notes-filter-search" type="text" placeholder="Search note text" />
             <select id="notes-sort">
               <option value="desc">Newest first</option>
               <option value="asc">Oldest first</option>
@@ -183,6 +184,7 @@
         <div class="tabs">
           <button class="tab active" data-tab="library">Citation Library</button>
           <button class="tab" data-tab="in-doc">In This Doc</button>
+          <button class="tab" data-tab="research">Research Notes</button>
         </div>
         <div class="tab-panel active" id="tab-library">
           <div class="sidebar-section">
@@ -192,6 +194,12 @@
         </div>
         <div class="tab-panel" id="tab-in-doc">
           <div id="doc-citations-list" class="citations-list"></div>
+        </div>
+        <div class="tab-panel" id="tab-research">
+          <div class="sidebar-section">
+            <input type="search" id="research-notes-search" placeholder="Search project notes" autocomplete="off" />
+          </div>
+          <div id="research-notes-list" class="notes-list"></div>
         </div>
       </aside>
     </div>

@@ -70,6 +70,16 @@ class FakeSupabaseRepo:
 
     async def get(self, resource, **kwargs):
         self.calls.append(("get", resource, kwargs))
+        if resource == "notes" and kwargs.get("params", {}).get("id", "").startswith("eq."):
+            return FakeResponse(200, [{
+                "id": kwargs["params"]["id"].replace("eq.", ""),
+                "title": "Research note",
+                "highlight_text": "Highlighted sentence",
+                "note_body": "Body",
+                "source_url": "https://example.com/paper",
+                "source_title": "Paper Title",
+                "citation_id": None,
+            }])
         return FakeResponse(200, [{"id": "n"}], headers={"content-range": "0-0/17"})
 
     async def post(self, resource, **kwargs):
@@ -283,3 +293,46 @@ def test_notes_list_sync(monkeypatch):
     assert params["limit"] == "500"
     assert params["offset"] == "0"
     assert params["order"] == "created_at.desc"
+
+
+def test_notes_archive_and_restore(monkeypatch):
+    main = _build_app(monkeypatch)
+    from app.routes import extension
+
+    repo = FakeSupabaseRepo()
+    extension.supabase_repo = repo
+
+    client = TestClient(main.app)
+    note_id = "2f3f2367-64f3-422d-b14d-cf70650fc4ca"
+
+    archive_res = client.post(f"/api/notes/{note_id}/archive", headers={"Authorization": "Bearer token"})
+    restore_res = client.post(f"/api/notes/{note_id}/restore", headers={"Authorization": "Bearer token"})
+
+    assert archive_res.status_code == 200
+    assert restore_res.status_code == 200
+    assert any(call[0] == "patch" and call[1] == "notes" for call in repo.calls)
+
+
+def test_create_citation_from_note_links_note(monkeypatch):
+    main = _build_app(monkeypatch)
+    from app.routes import extension
+
+    repo = FakeSupabaseRepo()
+    extension.supabase_repo = repo
+
+    async def fake_account_type(_request, _user_id):
+        return "standard"
+
+    async def fake_create_citation(_user_id, _account_type, _citation_input):
+        return "c2b7ff8e-50bb-4fb8-a377-c62f84fbcc88"
+
+    extension._get_account_type = fake_account_type
+    extension.create_citation = fake_create_citation
+
+    client = TestClient(main.app)
+    note_id = "2f3f2367-64f3-422d-b14d-cf70650fc4ca"
+    response = client.post(f"/api/notes/{note_id}/citation", headers={"Authorization": "Bearer token"})
+
+    assert response.status_code == 200
+    assert response.json()["citation_id"] == "c2b7ff8e-50bb-4fb8-a377-c62f84fbcc88"
+    assert any(call[0] == "patch" and call[1] == "notes" for call in repo.calls)

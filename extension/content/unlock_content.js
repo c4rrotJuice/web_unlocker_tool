@@ -779,6 +779,18 @@
 “${meta.selectionText}” (${last}, ${year}${para ? `, para. ${para}` : ""})`;
   }
 
+
+  function formatInlineCitation(style, metadata) {
+    const meta = validateCitationMetadata(metadata);
+    const author = leadAuthor(meta);
+    const last = author.lastName || author.fullName;
+    const year = parseDateBits(meta.datePublished)?.year || "n.d.";
+    const para = meta.paragraph;
+    if (style === "mla") return `(${last}${para ? `, par. ${para}` : ""})`;
+    if (style === "chicago") return para ? `(${last}, para. ${para})` : `(${last})`;
+    return `(${last}, ${year}${para ? `, para. ${para}` : ""})`;
+  }
+
   function formatCitation(format, metadata) {
     const meta = validateCitationMetadata(metadata);
     const published = parseDateBits(meta.datePublished || meta.dateModified);
@@ -902,17 +914,16 @@
     await saveCitation({
       url: metadata.url,
       excerpt: metadata.excerpt,
+      inline_citation: formatInlineCitation(format, metadata),
+      full_citation: citationText,
       full_text: citationText,
       format,
       custom_format_name: metadata.customFormatName || null,
       custom_format_template: metadata.customFormatTemplate || null,
       metadata: {
+        ...metadata,
         source: "extension",
-        title: metadata.title,
-        author: metadata.author || null,
-        site_name: metadata.siteName || null,
         selected_text: metadata.selectionText,
-        accessed_at: metadata.accessedAt,
       },
     });
   }

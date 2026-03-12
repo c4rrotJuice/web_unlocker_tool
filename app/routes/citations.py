@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from app.routes.http import http_client
 from app.services.citation_templates import render_template, validate_template
+from app.services.citation_engine import generate_citation_outputs, normalize_metadata
 from app.services.entitlements import get_tier_capabilities, normalize_account_type
 from app.services.free_tier_gating import allowed_citation_formats
 from app.services.metrics import metrics, record_dependency_call_async
@@ -23,7 +24,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 class CitationInput(BaseModel):
     url: str
     excerpt: str
-    full_text: str
+    full_text: str | None = None
+    inline_citation: str | None = None
+    full_citation: str | None = None
     format: str | None = None
     custom_format_name: str | None = None
     custom_format_template: str | None = None
@@ -112,22 +115,29 @@ async def create_citation(
                 detail="Custom format template only allowed for custom format.",
             )
 
-    if get_tier_capabilities(normalized_account_type).can_use_custom_citation_templates and citation.url not in citation.full_text:
+    if get_tier_capabilities(normalized_account_type).can_use_custom_citation_templates and citation.url not in (citation.full_text or citation.full_citation or ""):
         raise HTTPException(
             status_code=422,
             detail="Citations must include the source URL.",
         )
 
-    metadata = citation.metadata or {}
+    metadata = normalize_metadata(citation.metadata or {}, url=citation.url, excerpt=citation.excerpt)
+    derived = generate_citation_outputs(citation_format, metadata) if citation_format != "custom" else {
+        "inline_citation": citation.inline_citation or "",
+        "full_citation": citation.full_citation or citation.full_text or "",
+    }
     if citation_format == "custom":
         rendered = render_template(citation.custom_format_template or "", {
-            "citation_text": citation.full_text,
+            "citation_text": citation.full_text or citation.full_citation or "",
             "url": citation.url,
             **metadata,
         })
-        full_text = rendered
+        full_citation = rendered
     else:
-        full_text = citation.full_text
+        full_citation = citation.full_citation or derived["full_citation"]
+
+    inline_citation = citation.inline_citation or derived["inline_citation"]
+    full_text = citation.full_text or full_citation
 
     cited_at = datetime.utcnow()
     expires_at = cited_at + timedelta(days=30)
@@ -136,6 +146,8 @@ async def create_citation(
         "user_id": user_id,
         "url": citation.url,
         "excerpt": citation.excerpt,
+        "inline_citation": inline_citation,
+        "full_citation": full_citation,
         "full_text": full_text,
         "format": citation_format,
         "custom_format_name": citation.custom_format_name,
@@ -298,7 +310,7 @@ async def get_user_citations(
         "expires_at": f"gt.{now_iso}",
         "order": "cited_at.desc",
         "limit": limit,
-        "select": "id,url,excerpt,full_text,cited_at,format,metadata,custom_format_template,custom_format_name",
+        "select": "id,url,excerpt,inline_citation,full_citation,full_text,cited_at,format,metadata,custom_format_template,custom_format_name",
     }
 
     if search:
@@ -308,6 +320,8 @@ async def get_user_citations(
                 f"(url.ilike.*{search_term}*,"
                 f"excerpt.ilike.*{search_term}*,"
                 f"full_text.ilike.*{search_term}*,"
+                f"inline_citation.ilike.*{search_term}*,"
+                f"full_citation.ilike.*{search_term}*,"
                 f"metadata.ilike.*{search_term}*)"
             )
 
@@ -354,7 +368,7 @@ async def get_citations_by_ids(request: Request, ids: str = Query("")):
                 params={
                     "id": f"in.({id_filter})",
                     "user_id": f"eq.{user_id}",
-                    "select": "id,url,excerpt,full_text,cited_at,format,metadata,custom_format_template,custom_format_name",
+                    "select": "id,url,excerpt,inline_citation,full_citation,full_text,cited_at,format,metadata,custom_format_template,custom_format_name",
                 },
                 headers={
                     "apikey": SUPABASE_KEY,
@@ -390,7 +404,16 @@ async def add_citation(request: Request, citation: CitationInput):
 
     account_type = normalize_account_type(request.state.account_type)
     citation_id = await create_citation(user_id, account_type, citation)
-    return {"status": "success", "citation_id": citation_id}
+    citation_outputs = generate_citation_outputs(citation.format or "mla", normalize_metadata(citation.metadata or {}, url=citation.url, excerpt=citation.excerpt))
+    return {
+        "status": "success",
+        "citation_id": citation_id,
+        "excerpt": citation.excerpt,
+        "inline_citation": citation.inline_citation or citation_outputs["inline_citation"],
+        "full_citation": citation.full_citation or citation_outputs["full_citation"],
+        "metadata": normalize_metadata(citation.metadata or {}, url=citation.url, excerpt=citation.excerpt),
+        "style": (citation.format or "mla").lower(),
+    }
 
 
 @router.delete("/api/citations/{citation_id}")

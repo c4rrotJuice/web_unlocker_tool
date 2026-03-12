@@ -130,10 +130,10 @@ async function loadCitationHistory() {
     li.className = "pill-card";
     const citedAt = citation.cited_at ? new Date(citation.cited_at) : null;
     const timeAgo = citedAt && !Number.isNaN(citedAt.getTime()) ? timeSince(citedAt) : "Recently";
-    li.innerHTML = `<div>${citation.excerpt || "No excerpt available"}</div><div class="meta-row"><span class="badge">${timeAgo}</span></div><div class="citation-modal"><p>${citation.full_text || ""}</p><button class="copy-button" type="button">Copy Again</button></div>`;
+    li.innerHTML = `<div>${citation.excerpt || "No excerpt available"}</div><div class="meta-row"><span class="badge">${timeAgo}</span></div><div class="citation-modal"><p>${citation.full_citation || citation.full_text || ""}</p><button class="copy-button" type="button">Copy Again</button></div>`;
     li.querySelector(".copy-button")?.addEventListener("click", async (event) => {
       event.stopPropagation();
-      try { await navigator.clipboard.writeText(citation.full_text || ""); showToast("Full citation copied!"); } catch { showToast("Failed to copy full citation.", true); }
+      try { await navigator.clipboard.writeText(citation.full_citation || citation.full_text || ""); showToast("Full citation copied!"); } catch { showToast("Failed to copy full citation.", true); }
     });
     citationHistoryEl.appendChild(li);
   });

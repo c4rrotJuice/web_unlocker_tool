@@ -30,6 +30,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   debugEnabled = Boolean(changes.webUnlockerDebug.newValue);
 });
 
+void migrateLegacyNotesStateIfNeeded();
+
 function getNowSeconds() {
   return Math.floor(Date.now() / 1000);
 }
@@ -51,6 +53,21 @@ function createId(prefix = "id") {
     return `${prefix}_${crypto.randomUUID()}`;
   }
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function createUuid() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = char === "x" ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
 }
 
 function normalizeTier(accountType) {
@@ -79,6 +96,46 @@ async function getNotesState() {
   return notesState || { notes: [], tags: [], projects: [] };
 }
 
+function normalizeNotesStateIds(state) {
+  const nextTags = [];
+  const nextProjects = [];
+  const tagIdMap = new Map();
+  const projectIdMap = new Map();
+
+  for (const tag of state.tags || []) {
+    const normalizedId = isUuid(tag.id) ? tag.id : createUuid();
+    tagIdMap.set(tag.id, normalizedId);
+    nextTags.push({ ...tag, id: normalizedId });
+  }
+
+  for (const project of state.projects || []) {
+    const normalizedId = isUuid(project.id) ? project.id : createUuid();
+    projectIdMap.set(project.id, normalizedId);
+    nextProjects.push({ ...project, id: normalizedId });
+  }
+
+  const nextNotes = (state.notes || []).map((note) => ({
+    ...note,
+    id: isUuid(note.id) ? note.id : createUuid(),
+    project_id: note.project_id ? (projectIdMap.get(note.project_id) || (isUuid(note.project_id) ? note.project_id : null)) : null,
+    tags: Array.isArray(note.tags)
+      ? note.tags
+          .map((tagId) => tagIdMap.get(tagId) || (isUuid(tagId) ? tagId : null))
+          .filter(Boolean)
+      : [],
+  }));
+
+  return { notes: nextNotes, tags: nextTags, projects: nextProjects };
+}
+
+async function migrateLegacyNotesStateIfNeeded() {
+  const state = await getNotesState();
+  const normalized = normalizeNotesStateIds(state);
+  if (JSON.stringify(normalized) !== JSON.stringify(state)) {
+    await setNotesState(normalized);
+  }
+}
+
 async function setNotesState(state) {
   await writeStorage({ [NOTES_KEY]: state });
 }
@@ -97,7 +154,7 @@ function upsertNamedEntity(list, name) {
   if (!cleaned) return { list, entity: null };
   const existing = list.find((item) => item.name.toLowerCase() === cleaned.toLowerCase());
   if (existing) return { list, entity: existing };
-  const entity = { id: createId("n"), name: cleaned, created_at: new Date().toISOString() };
+  const entity = { id: createUuid(), name: cleaned, created_at: new Date().toISOString() };
   return { list: [...list, entity], entity };
 }
 
@@ -125,7 +182,7 @@ async function upsertNote(notePayload = {}) {
   }
 
   const note = {
-    id: notePayload.id || createId("note"),
+    id: isUuid(notePayload.id) ? notePayload.id : createUuid(),
     title: (notePayload.title || "").trim(),
     highlight_text: notePayload.highlight_text || null,
     note_body: notePayload.note_body || "",

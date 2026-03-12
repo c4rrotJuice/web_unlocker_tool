@@ -391,3 +391,29 @@ async def add_citation(request: Request, citation: CitationInput):
     account_type = normalize_account_type(request.state.account_type)
     citation_id = await create_citation(user_id, account_type, citation)
     return {"status": "success", "citation_id": citation_id}
+
+
+@router.delete("/api/citations/{citation_id}")
+async def delete_citation(request: Request, citation_id: str):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    res = await http_client.delete(
+        f"{SUPABASE_URL}/rest/v1/citations",
+        params={"id": f"eq.{citation_id}", "user_id": f"eq.{user_id}"},
+        headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Prefer": "return=representation",
+        },
+    )
+
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to delete citation")
+
+    rows = res.json() or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Citation not found")
+
+    return {"ok": True, "id": citation_id}

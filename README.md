@@ -6,7 +6,7 @@ Web Unlocker Tool is a FastAPI-based web application (plus companion browser ext
 
 - **Web app** (`app/`): unlock + clean remote pages, account-aware limits, dashboard/reporting, citations, bookmarks, rich-text editor, subscription-aware feature gating.
 - **Browser extension** (`extension/`): invokes unlock actions from the browser, sends selection/usage events, and supports secure auth handoff into the web editor.
-- **SQL migrations** (`sql/`): schema updates for editor checkpoints, auth handoff codes, payment/subscription tracking, and extension usage events.
+- **SQL migrations** (`sql/`): schema updates for editor checkpoints, auth handoff codes, payment/subscription tracking, extension usage events, and notes/projects/tags sync data.
 - **Tests** (`tests/`): API and service tests for auth handoff, editor auth flow, extension permits/events, payments webhooks, reports, and entitlements.
 
 ## Core features

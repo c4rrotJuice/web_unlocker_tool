@@ -140,6 +140,14 @@ function parseTags(value) {
   return String(value || "").split(",").map((v) => v.trim()).filter(Boolean);
 }
 
+function appendTextElement(parent, tagName, text, className = "") {
+  const el = document.createElement(tagName);
+  if (className) el.className = className;
+  el.textContent = text;
+  parent.appendChild(el);
+  return el;
+}
+
 async function loadNotes() {
   const response = await sendMessage("NOTES_LIST", {
     filters: {
@@ -163,13 +171,42 @@ async function loadNotes() {
     li.className = "pill-card";
     const tagNames = (note.tags || []).map((id) => tags.find((t) => t.id === id)?.name || id).filter(Boolean);
     const projectName = projects.find((p) => p.id === note.project_id)?.name || "—";
-    li.innerHTML = `
-      <strong>${note.title || "Untitled note"}</strong>
-      <div>${note.highlight_text ? `“${note.highlight_text.slice(0, 130)}”` : ""}</div>
-      <div>${note.note_body?.slice(0, 180) || ""}</div>
-      <div class="meta-row"><span class="badge">${tagNames.join(", ") || "No tags"}</span><span class="badge">${projectName}</span></div>
-      <div class="meta-row"><span>${note.source_url || "No source"}</span><span>${new Date(note.updated_at || note.created_at).toLocaleString()}</span></div>
-      <div class="note-actions"><button class="pill mini" data-action="edit">Edit</button><button class="pill mini" data-action="assign">Assign Project</button><button class="pill mini" data-action="delete">Delete</button></div>`;
+
+    const titleEl = document.createElement("strong");
+    titleEl.textContent = note.title || "Untitled note";
+    li.appendChild(titleEl);
+
+    appendTextElement(li, "div", note.highlight_text ? `“${note.highlight_text.slice(0, 130)}”` : "");
+    appendTextElement(li, "div", note.note_body?.slice(0, 180) || "");
+
+    const badgesRow = document.createElement("div");
+    badgesRow.className = "meta-row";
+    appendTextElement(badgesRow, "span", tagNames.join(", ") || "No tags", "badge");
+    appendTextElement(badgesRow, "span", projectName, "badge");
+    li.appendChild(badgesRow);
+
+    const metaRow = document.createElement("div");
+    metaRow.className = "meta-row";
+    appendTextElement(metaRow, "span", note.source_url || "No source");
+    appendTextElement(metaRow, "span", new Date(note.updated_at || note.created_at).toLocaleString());
+    li.appendChild(metaRow);
+
+    const actions = document.createElement("div");
+    actions.className = "note-actions";
+    [
+      { action: "edit", label: "Edit" },
+      { action: "assign", label: "Assign Project" },
+      { action: "delete", label: "Delete" },
+    ].forEach(({ action, label }) => {
+      const button = document.createElement("button");
+      button.className = "pill mini";
+      button.dataset.action = action;
+      button.type = "button";
+      button.textContent = label;
+      actions.appendChild(button);
+    });
+    li.appendChild(actions);
+
     li.addEventListener("click", async (event) => {
       const btn = event.target;
       if (!(btn instanceof HTMLElement) || !btn.dataset.action) return;

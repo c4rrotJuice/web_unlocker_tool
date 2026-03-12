@@ -219,6 +219,31 @@
     </div>
   </div>
 
+  <div class="modal" id="note-modal" aria-hidden="true">
+    <div class="modal-content note-modal-content">
+      <div class="modal-header">
+        <h3>New Note</h3>
+        <button class="text" id="close-note-modal">Close</button>
+      </div>
+      <div class="modal-body note-modal-body">
+        <label>Title <input id="quick-note-title" type="text" placeholder="Quick note title" /></label>
+        <div class="format-toolbar">
+          <button type="button" class="pill mini" data-format="bold">B</button>
+          <button type="button" class="pill mini" data-format="italic">I</button>
+          <button type="button" class="pill mini" data-format="bullet">• List</button>
+          <button type="button" class="pill mini" data-format="link">Link</button>
+        </div>
+        <label>Note <textarea id="quick-note-body" rows="6" placeholder="Write your note..."></textarea></label>
+        <label>Tags (optional) <input id="quick-note-tags" type="text" placeholder="tag UUIDs, comma-separated" /></label>
+        <label>Project (optional) <input id="quick-note-project" type="text" placeholder="Project name" /></label>
+        <div class="actions">
+          <button id="save-quick-note" class="pill pill-primary">Save</button>
+          <button id="cancel-quick-note" class="pill">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.quilljs.com/1.3.7/quill.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="/static/js/ui_feedback.js"></script>

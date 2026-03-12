@@ -72,8 +72,42 @@ body { margin: 0; font-family: "Inter", "Segoe UI", sans-serif; color: var(--tex
 .citation-delete-btn, .tile-delete-btn, .note-delete-btn { margin-left:auto; color:#b91c1c; font-weight:700; }
 
 .notes-filter-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.note-item textarea { width:100%; min-height:72px; margin-top:8px; }
 .note-item-footer { display:flex; gap:8px; align-items:center; margin-top:8px; }
+
+.pill {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--wu-surface-inset);
+  color: var(--text);
+  font-size: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.pill-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.mini { font-size: 11px; padding: 5px 10px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.format-toolbar { display:flex; gap:6px; }
+
+.note-item { display:flex; flex-direction:column; gap:6px; background:var(--wu-surface-2); }
+.note-title { color: var(--text); }
+.note-highlight { color: var(--text); font-weight: 500; }
+.note-body { color: var(--muted); }
+.meta-row { color: var(--muted); font-size: 11px; display: flex; gap: 6px; flex-wrap: wrap; }
+.badge { background: var(--wu-surface-inset); border-radius: 999px; padding: 2px 8px; font-size: 10px; }
+.note-actions { display:flex; gap:6px; flex-wrap:wrap; }
+.note-actions button { font-size:11px; padding:5px 9px; }
+.note-editing { border-color: #6ee7b7; background: color-mix(in srgb, #10b981 8%, var(--wu-surface-2)); box-shadow: inset 0 0 0 1px #a7f3d0; }
+.note-edit-controls { display:flex; justify-content:flex-end; gap:6px; }
+.note-editable {
+  border: 1px dashed transparent;
+  border-radius: 8px;
+  padding: 4px 6px;
+  min-height: 24px;
+  background: color-mix(in srgb, #ffffff 30%, var(--wu-surface-2));
+}
+.note-editable:focus { border-color: var(--accent); background: var(--panel); outline: none; }
+.note-project-input { gap: 4px; color: var(--muted); display:flex; flex-direction:column; font-size: 12px; }
+.note-project-input input { margin-top: 4px; font-size: 11px; padding: 6px 8px; }
 
 input[type="search"], input[type="text"], select, textarea {
   padding:8px 10px; border:1px solid var(--border); border-radius:8px; font-size:14px; background:var(--wu-surface-2); color:var(--text);
@@ -87,6 +121,9 @@ button.text { border:none; background:transparent; color:var(--accent); }
 .modal[aria-hidden="false"] { display:flex; }
 .modal-content { background:var(--panel); border-radius:12px; padding:20px; width:min(780px,100%); max-height:90vh; overflow:auto; }
 .export-section pre { background:var(--wu-surface-inset); padding:12px; border-radius:8px; white-space:pre-wrap; }
+
+.note-modal-content { width:min(540px,100%); }
+.note-modal-body { display:flex; flex-direction:column; gap:10px; }
 
 @media (max-width: 1100px) {
   .editor-shell { grid-template-columns: 1fr; }

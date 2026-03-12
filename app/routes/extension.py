@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import os
 from urllib.parse import urlparse
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, field_validator
@@ -79,6 +79,15 @@ class ExtensionNotePayload(BaseModel):
     tags: list[str] = []
     created_at: str | None = None
     updated_at: str | None = None
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def normalize_tags(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        return value
 
 
 class ExtensionNotePatchRequest(BaseModel):
@@ -444,7 +453,7 @@ async def create_note(request: Request, payload: ExtensionNotePayload):
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    note_id = _coerce_note_id(payload.id)
+    note_id = _coerce_note_id(payload.id) if payload.id else str(uuid4())
     note_body = _clean_note_body(payload.note_body)
     tag_ids = _clean_note_tags(payload.tags)
     created_at = _parse_iso_datetime(payload.created_at) or datetime.utcnow()

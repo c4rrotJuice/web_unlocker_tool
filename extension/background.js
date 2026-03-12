@@ -104,17 +104,30 @@ function upsertNamedEntity(list, name) {
 async function upsertNote(notePayload = {}) {
   const state = await getNotesState();
   const now = new Date().toISOString();
+  const existingNote = (state.notes || []).find((item) => item.id === notePayload.id) || null;
   let nextProjects = state.projects || [];
   const projectResult = upsertNamedEntity(nextProjects, notePayload.project);
   nextProjects = projectResult.list;
 
   let nextTags = state.tags || [];
-  const resolvedTagIds = [];
-  for (const tagName of parseTagsInput(notePayload.tags)) {
-    const result = upsertNamedEntity(nextTags, tagName);
-    nextTags = result.list;
-    if (result.entity) {
-      resolvedTagIds.push(result.entity.id);
+  const providedTags = Object.prototype.hasOwnProperty.call(notePayload, "tags");
+  let resolvedTagIds = Array.isArray(existingNote?.tags) ? [...existingNote.tags] : [];
+  if (providedTags) {
+    resolvedTagIds = [];
+    const parsedTags = parseTagsInput(notePayload.tags);
+    const knownTagIds = new Set((state.tags || []).map((tag) => tag.id));
+    const allAreKnownIds = parsedTags.length > 0 && parsedTags.every((tag) => knownTagIds.has(tag));
+
+    if (allAreKnownIds) {
+      resolvedTagIds = parsedTags;
+    } else {
+      for (const tagName of parsedTags) {
+        const result = upsertNamedEntity(nextTags, tagName);
+        nextTags = result.list;
+        if (result.entity) {
+          resolvedTagIds.push(result.entity.id);
+        }
+      }
     }
   }
 

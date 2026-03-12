@@ -1,30 +1,23 @@
 async function authFetch(input, init) {
-  if (window.webUnlockerAuth?.authFetch) {
-    return window.webUnlockerAuth.authFetch(input, init);
-  }
+  if (window.webUnlockerAuth?.authFetch) return window.webUnlockerAuth.authFetch(input, init);
   return fetch(input, init);
 }
 
 async function verifyEditorAccess() {
   try {
     const res = await authFetch("/api/editor/access");
-
     if (!res.ok) {
       window.location.href = "/auth?next=/editor&reason=session";
       return false;
     }
-
     const data = await res.json();
-    const isPaid = Boolean(data.is_paid);
-    if (!isPaid && data.account_type === "anonymous") {
+    if (!data.is_paid && data.account_type === "anonymous") {
       renderBlockedMessage("Please sign in to use the editor.");
       return false;
     }
-
     window.__editorAccess = data;
     return true;
-  } catch (error) {
-    console.error("Failed to verify access:", error);
+  } catch (_error) {
     renderBlockedMessage("Unable to verify access. Please try again.");
     return false;
   }
@@ -32,45 +25,20 @@ async function verifyEditorAccess() {
 
 function renderBlockedMessage(message) {
   document.body.innerHTML = "";
-  const container = document.createElement("div");
-  container.className = "access-blocked";
-
-  const heading = document.createElement("h1");
-  heading.textContent = "Upgrade Required";
-
-  const body = document.createElement("p");
-  body.textContent = message;
-
-  const link = document.createElement("a");
-  link.className = "primary";
-  link.href = "/static/pricing.html";
-  link.textContent = "View plans";
-
-  container.append(heading, body, link);
-  document.body.appendChild(container);
+  const c = document.createElement("div");
+  c.className = "access-blocked";
+  c.innerHTML = `<h1>Upgrade Required</h1><p>${message}</p><a class="primary" href="/static/pricing.html">View plans</a>`;
+  document.body.appendChild(c);
 }
 
 function startEditor() {
-  const ENABLE_MARKDOWN_SHORTCUTS = true;
   const toast = window.webUnlockerUI?.createToastManager?.();
-  const ENABLE_OUTLINE = true;
-  const ENABLE_CHECKPOINTS = true;
+  const citeTokenPrefix = "〔cite:";
+  const citeTokenSuffix = "〕";
   const AUTOSAVE_DEBOUNCE_MS = 2000;
   const OUTLINE_DEBOUNCE_MS = 700;
   const CHECKPOINT_INTERVAL_MS = 4 * 60 * 1000;
   const CHECKPOINT_CHANGE_THRESHOLD = 700;
-
-  // Implementation map:
-  // - Doc CRUD uses GET/POST/PUT /api/docs and GET /api/docs/{id} with { title, content_delta, content_html?, citation_ids }.
-  // - Autosave updates happen in queueAutosave -> autosaveDoc using PUT /api/docs/{id}.
-  // - Citations flow uses /api/citations and /api/citations/by_ids, inserts as text token `〔cite:{id}〕`.
-  // - Checkpoints are additive via GET/POST /api/docs/{id}/checkpoints and POST /api/docs/{id}/restore.
-
-  const citeTokenPrefix = "〔cite:";
-  const citeTokenSuffix = "〕";
-  const markdownState = {
-    inProgress: false,
-  };
 
   let currentDocId = null;
   let currentCitationIds = [];
@@ -80,6 +48,8 @@ function startEditor() {
   let outlineTimer = null;
   let isDirty = false;
   let allDocs = [];
+  let allProjects = [];
+  let allNotes = [];
   let citationSearchTimer = null;
   let lastCheckpointAt = 0;
   let changedSinceCheckpoint = 0;
@@ -87,7 +57,10 @@ function startEditor() {
   const saveStatus = document.getElementById("save-status");
   const docTitleInput = document.getElementById("doc-title");
   const docsList = document.getElementById("docs-list");
+  const projectsList = document.getElementById("projects-list");
+  const notesList = document.getElementById("notes-list");
   const docSearchInput = document.getElementById("doc-search");
+  const projectSearchInput = document.getElementById("project-search");
   const exportBtn = document.getElementById("export-btn");
   const exportModal = document.getElementById("export-modal");
   const exportHtml = document.getElementById("export-html");
@@ -96,14 +69,29 @@ function startEditor() {
   const exportStyle = document.getElementById("export-style");
   const outlineList = document.getElementById("outline-list");
   const outlinePanel = document.getElementById("outline-panel");
-  const outlineRefreshBtn = document.getElementById("outline-refresh");
-  const outlineToggleBtn = document.getElementById("outline-toggle");
+  const historyPanel = document.getElementById("history-panel");
   const historyList = document.getElementById("history-list");
-  const historyRefreshBtn = document.getElementById("history-refresh");
   const freeQuotaBanner = document.getElementById("free-doc-quota");
   const freeQuotaText = document.getElementById("free-doc-quota-text");
   const proBadge = document.getElementById("pro-unlimited-badge");
+  const editorWordCount = document.getElementById("editor-word-count");
+  const toolWordCount = document.getElementById("tool-word-count");
+  const docNotesList = document.getElementById("doc-notes-list");
 
+  const quill = new Quill("#editor", {
+    theme: "snow",
+    modules: {
+      toolbar: {
+        container: "#editor-toolbar",
+        handlers: {
+          cite: () => insertCitationToken(),
+          insertQuote: () => insertCitationQuote(),
+        },
+      },
+      history: { delay: 1200, maxStack: 300, userOnly: true },
+      clipboard: { matchVisual: false },
+    },
+  });
 
   function isProTier() {
     const tier = (window.__editorAccess?.account_type || "").toLowerCase();
@@ -120,13 +108,102 @@ function startEditor() {
     return ["pdf"];
   }
 
-  function renderFreeQuota() {
-    if (proBadge) {
-      proBadge.classList.toggle("hidden", !isProTier());
+  function normalizeDelta(delta) {
+    if (!delta || !Array.isArray(delta.ops)) return { ops: [{ insert: "\n" }] };
+    return delta;
+  }
+
+  function estimateDeltaLength(delta) {
+    if (!delta || !Array.isArray(delta.ops)) return 0;
+    return delta.ops.reduce((acc, op) => acc + (typeof op.insert === "string" ? op.insert.length : 1), 0);
+  }
+
+  function setSaveStatus(text) { saveStatus.textContent = text; }
+
+  function getWordCount() {
+    const words = (quill.getText() || "").trim().split(/\s+/).filter(Boolean);
+    return words.length;
+  }
+
+  function updateWordCount() {
+    const count = getWordCount();
+    editorWordCount.textContent = `Words: ${count}`;
+    toolWordCount.textContent = `Word Count: ${count}`;
+  }
+
+  function getDocNotesStorageKey() {
+    return `editor_doc_notes:${currentDocId || "none"}`;
+  }
+
+  function loadDocNotes() {
+    docNotesList.innerHTML = "";
+    if (!currentDocId) return;
+    const raw = localStorage.getItem(getDocNotesStorageKey());
+    const notes = raw ? JSON.parse(raw) : [];
+    if (!notes.length) {
+      docNotesList.innerHTML = '<li class="empty-state">No doc notes yet.</li>';
+      return;
     }
+    notes.forEach((note) => {
+      const li = document.createElement("li");
+      li.className = "doc-note-item";
+      li.innerHTML = `<div>${note.text}</div><div class="note-item-footer"><span class="doc-meta">${new Date(note.created_at).toLocaleString()}</span></div>`;
+      const del = document.createElement("button");
+      del.className = "text note-delete-btn";
+      del.textContent = "✕";
+      del.addEventListener("click", () => {
+        const next = notes.filter((n) => n.id !== note.id);
+        localStorage.setItem(getDocNotesStorageKey(), JSON.stringify(next));
+        loadDocNotes();
+      });
+      li.querySelector(".note-item-footer").appendChild(del);
+      docNotesList.appendChild(li);
+    });
+  }
+
+  function addDocNote() {
+    if (!currentDocId) return;
+    const text = window.prompt("Add a quick doc note:");
+    if (!text || !text.trim()) return;
+    const raw = localStorage.getItem(getDocNotesStorageKey());
+    const notes = raw ? JSON.parse(raw) : [];
+    notes.unshift({ id: crypto.randomUUID(), text: text.trim(), created_at: new Date().toISOString() });
+    localStorage.setItem(getDocNotesStorageKey(), JSON.stringify(notes));
+    loadDocNotes();
+  }
+
+  function queueAutosave() {
+    setSaveStatus("Saving...");
+    if (autosaveTimer) clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(() => autosaveDoc(), AUTOSAVE_DEBOUNCE_MS);
+  }
+
+  async function autosaveDoc() {
+    if (!currentDocId || !isDirty) return;
+    const payload = {
+      title: docTitleInput.value.trim() || "Untitled",
+      content_delta: quill.getContents(),
+      content_html: quill.root.innerHTML,
+      citation_ids: currentCitationIds,
+    };
+    try {
+      const res = await authFetch(`/api/docs/${currentDocId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error("Failed to save");
+      const data = await res.json();
+      setSaveStatus("Saved");
+      isDirty = false;
+      updateDocInList(data);
+    } catch (_err) {
+      setSaveStatus("Save failed");
+      toast?.show({ type: "error", message: "Save failed. Please retry." });
+    }
+  }
+
+  function renderFreeQuota() {
+    if (proBadge) proBadge.classList.toggle("hidden", !isProTier());
     const quota = window.__editorAccess?.doc_quota;
     if (!freeQuotaBanner || !freeQuotaText || !quota || isProTier()) {
-      if (freeQuotaBanner) freeQuotaBanner.classList.add("hidden");
+      freeQuotaBanner?.classList.add("hidden");
       return;
     }
     freeQuotaBanner.classList.remove("hidden");
@@ -134,505 +211,165 @@ function startEditor() {
     freeQuotaText.textContent = `${quota.used} / ${quota.limit} documents used in ${quota.period_label || "current period"} · next reset ${resetAt}`;
   }
 
-  const quill = new Quill("#editor", {
-    theme: "snow",
-    modules: {
-      toolbar: {
-        container: "#editor-toolbar",
-        handlers: {
-          cite: () => insertCitationToken(),
-          insertQuote: () => insertCitationQuote(),
-        },
-      },
-      clipboard: {
-        matchVisual: false,
-      },
-    },
-  });
-
-  const Delta = Quill.import("delta");
-  quill.clipboard.addMatcher(Node.ELEMENT_NODE, (node, delta) => {
-    const allowed = new Set([
-      "bold",
-      "italic",
-      "underline",
-      "strike",
-      "link",
-      "header",
-      "list",
-      "blockquote",
-      "code",
-      "code-block",
-    ]);
-
-    const cleanedOps = delta.ops.map((op) => {
-      if (!op.attributes) return op;
-      const attributes = {};
-      for (const [key, value] of Object.entries(op.attributes)) {
-        if (allowed.has(key)) {
-          attributes[key] = value;
-        }
-      }
-      return { ...op, attributes: Object.keys(attributes).length ? attributes : undefined };
-    });
-
-    return new Delta(cleanedOps);
-  });
-
-  quill.on("text-change", (delta, old, source) => {
-    if (ENABLE_MARKDOWN_SHORTCUTS && source === "user") {
-      applyMarkdownShortcuts();
-    }
-    isDirty = true;
-    changedSinceCheckpoint += estimateDeltaLength(delta);
-    queueAutosave();
-    scheduleOutlineBuild();
-    if (ENABLE_CHECKPOINTS) {
-      createCheckpointIfNeeded();
-    }
-  });
-
-  quill.on("selection-change", (range, oldRange) => {
-    if (!range && oldRange && isDirty) {
-      autosaveDoc();
-    }
-  });
-
-  docTitleInput.addEventListener("input", () => {
-    isDirty = true;
-    queueAutosave();
-  });
-
-  window.addEventListener("beforeunload", () => {
-    if (isDirty) {
-      autosaveDoc();
-    }
-  });
-
-  function setSaveStatus(text) {
-    saveStatus.textContent = text;
-  }
-
-  function normalizeDelta(delta) {
-    if (!delta || !Array.isArray(delta.ops)) {
-      return { ops: [{ insert: "\n" }] };
-    }
-    return delta;
-  }
-
-  function estimateDeltaLength(delta) {
-    if (!delta || !Array.isArray(delta.ops)) return 0;
-    return delta.ops.reduce((acc, op) => {
-      if (typeof op.insert === "string") return acc + op.insert.length;
-      return acc + 1;
-    }, 0);
-  }
-
-  function queueAutosave() {
-    setSaveStatus("Saving...");
-    toast?.show({ id: "editor-save", type: "info", loading: true, message: window.webUnlockerUI?.COPY?.info?.SAVING_DOCUMENT || "Saving document…", duration: 0 });
-    if (autosaveTimer) {
-      clearTimeout(autosaveTimer);
-    }
-    autosaveTimer = setTimeout(() => {
-      autosaveDoc();
-    }, AUTOSAVE_DEBOUNCE_MS);
-  }
-
-  async function autosaveDoc() {
-    if (!currentDocId || !isDirty) return;
-
-    const payload = {
-      title: docTitleInput.value.trim() || "Untitled",
-      content_delta: quill.getContents(),
-      content_html: quill.root.innerHTML,
-      citation_ids: currentCitationIds,
-    };
-
-    try {
-      const res = await authFetch(`/api/docs/${currentDocId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.detail?.toast || err?.detail?.message || "Failed to save");
-      }
-
-      const data = await res.json();
-      setSaveStatus("Saved");
-      toast?.dismiss("editor-save");
-      toast?.show({ type: "success", message: window.webUnlockerUI?.COPY?.success?.DOCUMENT_SAVED || "Document saved.", duration: 1800 });
-      isDirty = false;
-      updateDocInList(data);
-    } catch (err) {
-      console.error(err);
-      setSaveStatus("Save failed");
-      toast?.dismiss("editor-save");
-      toast?.show({ type: "error", message: err?.message || "Save failed. Please retry." });
-    }
+  async function loadHeaderData() {
+    const res = await authFetch("/api/me");
+    if (!res.ok) return;
+    const data = await res.json();
+    const accountType = data.account_type || "free";
+    document.getElementById("user-name").textContent = data.name || "User";
+    document.getElementById("account-type").textContent = `${accountType[0].toUpperCase()}${accountType.slice(1)}`;
+    const quota = window.__editorAccess?.doc_quota || {};
+    document.getElementById("usage").textContent = quota.used ?? "--";
+    document.getElementById("limit").textContent = quota.limit ?? "--";
+    document.getElementById("usage-period").textContent = quota.reset_at ? new Date(quota.reset_at).toLocaleString() : "--";
+    const initials = (data.name || "U").split(" ").map((v) => v[0]).join("").slice(0, 2).toUpperCase();
+    document.getElementById("avatar-initials").textContent = initials;
   }
 
   async function loadDocsList() {
     const res = await authFetch("/api/docs");
-
     if (!res.ok) {
       docsList.innerHTML = "<p>Unable to load documents.</p>";
       return;
     }
-
     allDocs = await res.json();
-    if (window.__editorAccess?.doc_quota) {
-      window.__editorAccess.doc_quota.used = allDocs.filter((doc) => !doc.archived).length;
-    }
+    if (window.__editorAccess?.doc_quota) window.__editorAccess.doc_quota.used = allDocs.filter((d) => !d.archived).length;
     renderDocs(allDocs);
     renderFreeQuota();
   }
 
   function renderDocs(docs) {
     docsList.innerHTML = "";
-    const query = docSearchInput.value.toLowerCase();
-
-    const filtered = docs.filter((doc) => doc.title.toLowerCase().includes(query));
-
-    if (!filtered.length) {
-      docsList.innerHTML = "<p>No documents found.</p>";
-      return;
-    }
-
+    const q = (docSearchInput.value || "").toLowerCase();
+    const filtered = docs.filter((d) => d.title.toLowerCase().includes(q));
+    if (!filtered.length) { docsList.innerHTML = "<p>No documents found.</p>"; return; }
     filtered.forEach((doc) => {
       const item = document.createElement("div");
       item.className = "doc-item";
-      if (doc.id === currentDocId) {
-        item.classList.add("active");
-      }
-      const title = document.createElement("strong");
-      title.textContent = doc.title;
-
+      if (doc.id === currentDocId) item.classList.add("active");
       const meta = document.createElement("span");
       meta.className = "doc-meta";
-      const archivedLabel = doc.archived && !isProTier() ? " · Archived" : "";
-      meta.textContent = `Updated ${new Date(doc.updated_at).toLocaleString()}${archivedLabel}`;
-
+      meta.textContent = `Updated ${new Date(doc.updated_at).toLocaleString()}${doc.archived && !isProTier() ? " · Archived" : ""}`;
       const actions = document.createElement("div");
       actions.className = "doc-actions";
-
-      const formatActions = document.createElement("div");
-      formatActions.className = "doc-export-actions";
-      const unlockedFormats = new Set((doc.allowed_export_formats || allowedFormatsForTier()).map((fmt) => (fmt || "").toLowerCase()));
-      ["pdf", "docx", "txt"].forEach((format) => {
-        const exportDocBtn = document.createElement("button");
-        exportDocBtn.className = "secondary doc-export-btn";
-        exportDocBtn.textContent = format.toUpperCase();
-        const enabled = unlockedFormats.has(format);
-        exportDocBtn.disabled = !enabled;
-        exportDocBtn.classList.toggle("is-disabled", !enabled);
-        exportDocBtn.addEventListener("click", async (event) => {
-          event.stopPropagation();
-          if (!enabled) return;
-          await downloadExportFile(doc, format);
-        });
-        formatActions.appendChild(exportDocBtn);
+      const formats = new Set((doc.allowed_export_formats || allowedFormatsForTier()).map((f) => (f || "").toLowerCase()));
+      ["pdf", "docx", "txt"].forEach((fmt) => {
+        const b = document.createElement("button");
+        b.className = "secondary";
+        b.textContent = fmt.toUpperCase();
+        b.disabled = !formats.has(fmt);
+        b.addEventListener("click", async (e) => { e.stopPropagation(); if (!b.disabled) await downloadExportFile(doc, fmt); });
+        actions.appendChild(b);
       });
-      actions.appendChild(formatActions);
-
       if (isProTier()) {
-        const deleteBtn = document.createElement("button");
-        deleteBtn.className = "text doc-delete-btn";
-        deleteBtn.textContent = "✕";
-        deleteBtn.title = "Delete document";
-        deleteBtn.addEventListener("click", async (event) => {
-          event.stopPropagation();
-          await deleteDocument(doc.id);
-        });
-        actions.appendChild(deleteBtn);
+        const del = document.createElement("button");
+        del.className = "text tile-delete-btn";
+        del.textContent = "✕";
+        del.addEventListener("click", async (e) => { e.stopPropagation(); await deleteDocument(doc.id); });
+        actions.appendChild(del);
       }
-
-      item.append(title, meta, actions);
+      item.innerHTML = `<strong>${doc.title}</strong>`;
+      item.append(meta, actions);
       item.addEventListener("click", () => openDoc(doc.id));
       docsList.appendChild(item);
     });
   }
 
-  docSearchInput.addEventListener("input", () => renderDocs(allDocs));
-
   function updateDocInList(doc) {
-    if (!doc || !doc.id) return;
-    const existingIndex = allDocs.findIndex((entry) => entry.id === doc.id);
-    if (existingIndex >= 0) {
-      allDocs[existingIndex] = { ...allDocs[existingIndex], ...doc };
-    } else {
-      allDocs.unshift(doc);
-    }
+    if (!doc?.id) return;
+    const idx = allDocs.findIndex((d) => d.id === doc.id);
+    if (idx >= 0) allDocs[idx] = { ...allDocs[idx], ...doc }; else allDocs.unshift(doc);
     renderDocs(allDocs);
   }
 
-  document.getElementById("new-doc-btn").addEventListener("click", async () => {
-    try {
-      await autosaveDoc();
-      const res = await authFetch("/api/docs", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({}),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const detail = err?.detail || {};
-        toast?.show({ type: "error", message: detail.toast || detail.message || "Failed to create doc" });
-        renderFreeQuota();
-        return;
-      }
-
-      const doc = await res.json();
-      await loadDocsList();
-      openDoc(doc.id);
-    } catch (err) {
-      console.error(err);
-    }
-  });
-
-
-
   async function deleteDocument(docId) {
-    if (!docId || !isProTier()) return;
-    const confirmed = window.confirm("Permanently delete this document?");
-    if (!confirmed) return;
-    try {
-      const res = await authFetch(`/api/docs/${docId}`, { method: "DELETE" });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.detail?.toast || err?.detail?.message || "Failed to delete document");
-      }
-      if (currentDocId === docId) {
-        currentDocId = null;
-        quill.setContents(normalizeDelta({ ops: [{ insert: "\n" }] }), "silent");
-        docTitleInput.value = "";
-      }
-      await loadDocsList();
-      toast?.show({ type: "success", message: "Document deleted." });
-    } catch (error) {
-      toast?.show({ type: "error", message: error?.message || "Failed to delete document." });
+    if (!docId || !isProTier() || !window.confirm("Permanently delete this document?")) return;
+    const res = await authFetch(`/api/docs/${docId}`, { method: "DELETE" });
+    if (!res.ok) return toast?.show({ type: "error", message: "Failed to delete document." });
+    if (currentDocId === docId) {
+      currentDocId = null;
+      quill.setContents(normalizeDelta({ ops: [{ insert: "\n" }] }), "silent");
+      docTitleInput.value = "";
     }
+    await loadDocsList();
   }
 
   async function openDoc(docId) {
     await autosaveDoc();
     const res = await authFetch(`/api/docs/${docId}`);
-
-    if (!res.ok) {
-      console.error("Failed to load document");
-      return false;
-    }
-
+    if (!res.ok) return false;
     const doc = await res.json();
-    const readOnly = Boolean(doc.archived);
-    quill.enable(!readOnly);
-    docTitleInput.readOnly = readOnly;
-    if (doc.archived && !isProTier()) {
-      toast?.show({ type: "error", message: "This document is archived. Upgrade to Pro to restore editing." });
-    }
     currentDocId = doc.id;
     currentCitationIds = doc.citation_ids || [];
     docTitleInput.value = doc.title;
-
-    if (doc.content_delta && Array.isArray(doc.content_delta.ops) && doc.content_delta.ops.length) {
-      quill.setContents(normalizeDelta(doc.content_delta), "silent");
-    } else if (doc.content_html) {
-      quill.setText("", "silent");
-      quill.clipboard.dangerouslyPasteHTML(doc.content_html, "silent");
-    } else {
-      quill.setContents(normalizeDelta(doc.content_delta), "silent");
-    }
-
-    setSaveStatus("Idle");
+    const readOnly = Boolean(doc.archived);
+    quill.enable(!readOnly);
+    docTitleInput.readOnly = readOnly;
+    if (doc.content_delta?.ops?.length) quill.setContents(normalizeDelta(doc.content_delta), "silent");
+    else if (doc.content_html) quill.clipboard.dangerouslyPasteHTML(doc.content_html, "silent");
+    else quill.setContents(normalizeDelta(doc.content_delta), "silent");
     isDirty = false;
     changedSinceCheckpoint = 0;
     lastCheckpointAt = Date.now();
-
+    updateWordCount();
+    loadDocNotes();
     await refreshInDocCitations();
-    if (ENABLE_OUTLINE) {
-      buildAndRenderOutline();
-    }
-    if (ENABLE_CHECKPOINTS) {
-      await loadCheckpoints();
-    }
+    buildAndRenderOutline();
+    await loadCheckpoints();
     renderDocs(allDocs);
     return true;
   }
 
-  function applyMarkdownShortcuts() {
-    if (markdownState.inProgress) return;
-    const range = quill.getSelection(true);
-    if (!range) return;
-
-    const [line, lineOffset] = quill.getLine(range.index);
-    if (!line) return;
-    const lineStart = range.index - lineOffset;
-    const lineText = quill.getText(lineStart, line.length()).replace(/\n$/, "");
-
-    const rules = [
-      { regex: /^###\s$/, apply: () => quill.formatLine(lineStart, 1, "header", 3, "user") },
-      { regex: /^##\s$/, apply: () => quill.formatLine(lineStart, 1, "header", 2, "user") },
-      { regex: /^#\s$/, apply: () => quill.formatLine(lineStart, 1, "header", 1, "user") },
-      { regex: /^-\s$/, apply: () => quill.formatLine(lineStart, 1, "list", "bullet", "user") },
-      { regex: /^1\.\s$/, apply: () => quill.formatLine(lineStart, 1, "list", "ordered", "user") },
-    ];
-
-    const matched = rules.find((rule) => rule.regex.test(lineText));
-    if (matched) {
-      markdownState.inProgress = true;
-      quill.deleteText(lineStart, lineText.length, "user");
-      matched.apply();
-      quill.setSelection(lineStart, 0, "silent");
-      markdownState.inProgress = false;
-      return;
-    }
-
-    if (range.length > 0) return;
-    applyInlineMarkdown(range.index);
-  }
-
-  function applyInlineMarkdown(cursorIndex) {
-    const start = Math.max(0, cursorIndex - 120);
-    const chunk = quill.getText(start, cursorIndex - start);
-    const patterns = [
-      { regex: /\*\*([^*\n]+)\*\*$/, format: { bold: true } },
-      { regex: /\*([^*\n]+)\*$/, format: { italic: true } },
-      { regex: /~~([^~\n]+)~~$/, format: { strike: true } },
-      { regex: /`([^`\n]+)`$/, format: { code: true } },
-    ];
-
-    for (const pattern of patterns) {
-      const match = chunk.match(pattern.regex);
-      if (!match) continue;
-      const full = match[0];
-      const inner = match[1];
-      const fullStart = cursorIndex - full.length;
-
-      markdownState.inProgress = true;
-      quill.deleteText(fullStart, full.length, "user");
-      quill.insertText(fullStart, inner, pattern.format, "user");
-      quill.setSelection(fullStart + inner.length, 0, "silent");
-      markdownState.inProgress = false;
-      break;
-    }
-  }
-
-  function buildOutlineFromDelta(delta) {
-    const ops = (delta && Array.isArray(delta.ops) && delta.ops) || [];
+  function buildAndRenderOutline() {
+    const lines = quill.getLines();
     const outline = [];
-    let textBuffer = "";
-    let lineStartIndex = 0;
     let index = 0;
-
-    const pushLine = (attributes = {}) => {
-      const level = attributes && attributes.header;
-      if (level && level >= 1 && level <= 3) {
-        outline.push({
-          level,
-          text: textBuffer.trim() || `Heading ${outline.length + 1}`,
-          index: lineStartIndex,
-        });
-      }
-      textBuffer = "";
-      lineStartIndex = index;
-    };
-
-    ops.forEach((op) => {
-      if (typeof op.insert !== "string") {
-        index += 1;
-        return;
-      }
-
-      for (let i = 0; i < op.insert.length; i += 1) {
-        const ch = op.insert[i];
-        if (ch === "\n") {
-          pushLine(op.attributes || {});
-          index += 1;
-        } else {
-          textBuffer += ch;
-          index += 1;
-        }
-      }
+    lines.forEach((line) => {
+      const text = (line.domNode?.textContent || "").trim();
+      const formats = line.formats?.() || {};
+      const level = formats.header;
+      if (level && text) outline.push({ level, text, index });
+      index += (line.length?.() || text.length || 0);
     });
-
-    return outline;
-  }
-
-  function renderOutline(outlineItems) {
     outlineList.innerHTML = "";
-    if (!outlineItems.length) {
+    if (!outline.length) {
       outlineList.innerHTML = '<p class="empty-state">No headings yet. Add H1/H2/H3 to build the outline.</p>';
       return;
     }
-
-    outlineItems.forEach((item) => {
+    outline.forEach((item) => {
       const btn = document.createElement("button");
       btn.className = `outline-item level-${item.level}`;
       btn.textContent = item.text;
-      btn.addEventListener("click", () => {
-        quill.setSelection(item.index, 0, "user");
-        quill.focus();
-      });
+      btn.addEventListener("click", () => { quill.setSelection(item.index, 0, "user"); quill.focus(); });
       outlineList.appendChild(btn);
     });
   }
 
-  function buildAndRenderOutline() {
-    const outline = buildOutlineFromDelta(quill.getContents());
-    renderOutline(outline);
-  }
-
   function scheduleOutlineBuild() {
-    if (!ENABLE_OUTLINE) return;
-    if (outlineTimer) {
-      clearTimeout(outlineTimer);
-    }
-    outlineTimer = setTimeout(() => {
-      buildAndRenderOutline();
-    }, OUTLINE_DEBOUNCE_MS);
+    if (outlineTimer) clearTimeout(outlineTimer);
+    outlineTimer = setTimeout(() => buildAndRenderOutline(), OUTLINE_DEBOUNCE_MS);
   }
 
   async function loadCheckpoints() {
-    if (!ENABLE_CHECKPOINTS || !currentDocId) return;
+    if (!currentDocId) return;
     const res = await authFetch(`/api/docs/${currentDocId}/checkpoints?limit=15`);
-    if (!res.ok) {
-      historyList.innerHTML = '<p class="empty-state">History unavailable.</p>';
-      return;
-    }
-    const checkpoints = await res.json();
-    renderCheckpoints(checkpoints);
+    if (!res.ok) return (historyList.innerHTML = '<p class="empty-state">History unavailable.</p>');
+    renderCheckpoints(await res.json());
   }
 
   function renderCheckpoints(checkpoints = []) {
     historyList.innerHTML = "";
-    if (!checkpoints.length) {
-      historyList.innerHTML = '<p class="empty-state">No checkpoints yet.</p>';
-      return;
-    }
-
+    if (!checkpoints.length) return (historyList.innerHTML = '<p class="empty-state">No checkpoints yet.</p>');
     checkpoints.forEach((checkpoint) => {
       const row = document.createElement("div");
       row.className = "history-row";
-
       const label = document.createElement("span");
       label.className = "doc-meta";
       label.textContent = new Date(checkpoint.created_at).toLocaleString();
-
       const restoreBtn = document.createElement("button");
       restoreBtn.className = "secondary";
       restoreBtn.textContent = "Restore";
-      restoreBtn.addEventListener("click", async () => {
-        await restoreCheckpoint(checkpoint.id);
-      });
-
+      restoreBtn.addEventListener("click", async () => restoreCheckpoint(checkpoint.id));
       row.append(label, restoreBtn);
       historyList.appendChild(row);
     });
@@ -640,125 +377,55 @@ function startEditor() {
 
   async function createCheckpointIfNeeded(force = false) {
     if (!currentDocId) return;
-
     const now = Date.now();
-    const byTime = now - lastCheckpointAt >= CHECKPOINT_INTERVAL_MS;
-    const byChange = changedSinceCheckpoint >= CHECKPOINT_CHANGE_THRESHOLD;
-
-    if (!force && !byTime && !byChange) return;
-
-    const payload = {
-      content_delta: quill.getContents(),
-      content_html: quill.root.innerHTML,
-    };
-
-    try {
-      const res = await authFetch(`/api/docs/${currentDocId}/checkpoints`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        changedSinceCheckpoint = 0;
-        lastCheckpointAt = now;
-        await loadCheckpoints();
-      }
-    } catch (error) {
-      console.warn("checkpoint failed", error);
-    }
+    if (!force && now - lastCheckpointAt < CHECKPOINT_INTERVAL_MS && changedSinceCheckpoint < CHECKPOINT_CHANGE_THRESHOLD) return;
+    const res = await authFetch(`/api/docs/${currentDocId}/checkpoints`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content_delta: quill.getContents(), content_html: quill.root.innerHTML }),
+    });
+    if (res.ok) { changedSinceCheckpoint = 0; lastCheckpointAt = now; await loadCheckpoints(); }
   }
 
   async function restoreCheckpoint(checkpointId) {
-    if (!currentDocId || !checkpointId) return;
-    const confirmed = window.confirm("Restore this checkpoint? Current editor content will be replaced.");
-    if (!confirmed) return;
-
+    if (!currentDocId || !window.confirm("Restore this checkpoint? Current editor content will be replaced.")) return;
     await createCheckpointIfNeeded(true);
-
-    const res = await authFetch(`/api/docs/${currentDocId}/restore`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ checkpoint_id: checkpointId }),
-    });
-
-    if (!res.ok) {
-      alert("Failed to restore checkpoint.");
-      return;
-    }
-
+    const res = await authFetch(`/api/docs/${currentDocId}/restore`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ checkpoint_id: checkpointId }) });
+    if (!res.ok) return;
     const doc = await res.json();
     quill.setContents(normalizeDelta(doc.content_delta), "silent");
     isDirty = false;
     setSaveStatus("Restored");
+    updateWordCount();
     buildAndRenderOutline();
     await loadCheckpoints();
   }
 
-  outlineRefreshBtn.addEventListener("click", () => buildAndRenderOutline());
-  outlineToggleBtn.addEventListener("click", () => {
-    outlinePanel.classList.toggle("collapsed");
-    outlineToggleBtn.textContent = outlinePanel.classList.contains("collapsed")
-      ? "Expand"
-      : "Collapse";
-  });
-  historyRefreshBtn.addEventListener("click", () => loadCheckpoints());
-
   async function fetchCitations({ search = "", limit = 50 } = {}) {
-    const params = new URLSearchParams();
-    params.set("limit", limit);
-    if (search) {
-      params.set("search", search);
-    }
-
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (search) params.set("search", search);
     const res = await authFetch(`/api/citations?${params.toString()}`);
-
-    if (!res.ok) {
-      throw new Error("Failed to load citations");
-    }
-
+    if (!res.ok) throw new Error("Failed to load citations");
     const citations = await res.json();
-    citations.forEach((citation) => {
-      citationCache.set(citation.id, citation);
-    });
+    citations.forEach((c) => citationCache.set(c.id, c));
     return citations;
   }
 
   async function fetchCitationsByIds(ids = []) {
     if (!ids.length) return [];
-    const params = new URLSearchParams();
-    params.set("ids", ids.join(","));
-
-    const res = await authFetch(`/api/citations/by_ids?${params.toString()}`);
-
-    if (!res.ok) {
-      throw new Error("Failed to load citations");
-    }
-
+    const res = await authFetch(`/api/citations/by_ids?ids=${encodeURIComponent(ids.join(","))}`);
+    if (!res.ok) throw new Error("Failed to load citations");
     const citations = await res.json();
-    citations.forEach((citation) => {
-      citationCache.set(citation.id, citation);
-    });
+    citations.forEach((c) => citationCache.set(c.id, c));
     return citations;
   }
 
   function formatCitationPreview(citation) {
     let domain = "source";
-    if (citation.url) {
-      try {
-        domain = new URL(citation.url).hostname;
-      } catch (error) {
-        domain = citation.url;
-      }
-    }
-    const excerpt = citation.excerpt || "No excerpt available";
-    const citedAt = citation.cited_at ? new Date(citation.cited_at).toLocaleDateString() : "";
-    return { domain, excerpt, citedAt };
+    try { if (citation.url) domain = new URL(citation.url).hostname; } catch (_e) { domain = citation.url || "source"; }
+    return { domain, excerpt: citation.excerpt || "No excerpt available", citedAt: citation.cited_at ? new Date(citation.cited_at).toLocaleDateString() : "" };
   }
 
   function selectCitationCard(card, citationId) {
-    document.querySelectorAll(".citation-card").forEach((node) => {
-      node.classList.remove("selected");
-    });
+    document.querySelectorAll(".citation-card").forEach((n) => n.classList.remove("selected"));
     selectedCitationId = citationId;
     card.classList.add("selected");
   }
@@ -767,118 +434,71 @@ function startEditor() {
     const { domain, excerpt, citedAt } = formatCitationPreview(citation);
     const card = document.createElement("div");
     card.className = "citation-card";
-    card.dataset.citationId = citation.id;
-    const title = document.createElement("strong");
-    title.textContent = domain;
-
-    const body = document.createElement("p");
-    body.textContent = excerpt;
-
-    const meta = document.createElement("span");
-    meta.className = "doc-meta";
-    const formatLabel = citation.format ? citation.format.toUpperCase() : "";
-    const metaParts = [];
-    if (formatLabel) {
-      metaParts.push(formatLabel);
-    }
-    if (citedAt) {
-      metaParts.push(citedAt);
-    }
-    meta.textContent = metaParts.join(" · ");
-
-    card.append(title, body, meta);
-
-    card.addEventListener("click", () => {
-      selectCitationCard(card, citation.id);
-      if (showRemove) {
-        jumpToCitation(citation.id);
-      }
-    });
+    const meta = citation.format ? `${citation.format.toUpperCase()}${citedAt ? ` · ${citedAt}` : ""}` : citedAt;
+    card.innerHTML = `<strong>${domain}</strong><p>${excerpt}</p><span class="doc-meta">${meta || ""}</span>`;
+    card.addEventListener("click", () => { selectCitationCard(card, citation.id); if (showRemove) jumpToCitation(citation.id); });
 
     const actions = document.createElement("div");
     actions.className = "citation-actions";
-
     const insertBtn = document.createElement("button");
     insertBtn.textContent = "Insert in-text";
-    insertBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      insertCitationToken(citation);
-    });
+    insertBtn.addEventListener("click", (e) => { e.stopPropagation(); insertCitationToken(citation); });
+    actions.append(insertBtn);
 
-    const attachBtn = document.createElement("button");
-    attachBtn.textContent = "Attach to doc";
-    attachBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      attachCitation(citation.id);
-    });
+    if (showAttach) {
+      const attachBtn = document.createElement("button");
+      attachBtn.textContent = "Attach to doc";
+      attachBtn.addEventListener("click", (e) => { e.stopPropagation(); attachCitation(citation.id); });
+      actions.append(attachBtn);
+    }
 
     const copyBtn = document.createElement("button");
     copyBtn.textContent = "Copy full";
-    copyBtn.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      await navigator.clipboard.writeText(citation.full_text || "");
-    });
-
-    actions.append(insertBtn);
-    if (showAttach) {
-      actions.append(attachBtn);
-    }
+    copyBtn.addEventListener("click", async (e) => { e.stopPropagation(); await navigator.clipboard.writeText(citation.full_text || ""); });
     actions.append(copyBtn);
 
-    if (showRemove) {
-      const removeBtn = document.createElement("button");
-      removeBtn.textContent = "Remove";
-      removeBtn.addEventListener("click", (event) => {
-        event.stopPropagation();
-        removeCitationFromDoc(citation.id);
-      });
-      actions.append(removeBtn);
-    }
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "text citation-delete-btn";
+    removeBtn.textContent = "✕";
+    removeBtn.title = showRemove ? "Remove from doc" : "Delete citation";
+    removeBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (showRemove) removeCitationFromDoc(citation.id);
+      else await deleteCitation(citation.id);
+    });
+    actions.append(removeBtn);
 
     card.appendChild(actions);
     return card;
+  }
+
+  async function deleteCitation(citationId) {
+    const res = await authFetch(`/api/citations/${citationId}`, { method: "DELETE" });
+    if (!res.ok) return toast?.show({ type: "error", message: "Failed to delete citation." });
+    citationCache.delete(citationId);
+    await loadCitationLibrary(document.getElementById("citation-search").value || "");
   }
 
   async function loadCitationLibrary(search = "") {
     const citations = await fetchCitations({ search, limit: 50 });
     const container = document.getElementById("citations-list");
     container.innerHTML = "";
-
-    citations.forEach((citation) => {
-      const card = buildCitationCard(citation);
-      container.appendChild(card);
-    });
+    citations.forEach((c) => container.appendChild(buildCitationCard(c)));
   }
 
   async function refreshInDocCitations() {
     if (!currentDocId) return;
-
-    const missingIds = currentCitationIds.filter((id) => !citationCache.has(id));
-    if (missingIds.length) {
-      await fetchCitationsByIds(missingIds);
-    }
-    const citations = Array.from(citationCache.values());
+    const missing = currentCitationIds.filter((id) => !citationCache.has(id));
+    if (missing.length) await fetchCitationsByIds(missing);
     const container = document.getElementById("doc-citations-list");
     container.innerHTML = "";
-
-    const docCitations = citations.filter((citation) => currentCitationIds.includes(citation.id));
-
-    if (!docCitations.length) {
-      container.innerHTML = "<p>No citations attached yet.</p>";
-      return;
-    }
-
-    docCitations.forEach((citation) => {
-      const card = buildCitationCard(citation, { showRemove: true, showAttach: false });
-      container.appendChild(card);
-    });
+    const docCitations = Array.from(citationCache.values()).filter((c) => currentCitationIds.includes(c.id));
+    if (!docCitations.length) return (container.innerHTML = "<p>No citations attached yet.</p>");
+    docCitations.forEach((c) => container.appendChild(buildCitationCard(c, { showRemove: true, showAttach: false })));
   }
 
   function attachCitation(citationId) {
-    if (!currentDocId) {
-      alert("Open a document before attaching citations.");
-      return;
-    }
+    if (!currentDocId) return alert("Open a document before attaching citations.");
     if (!currentCitationIds.includes(citationId)) {
       currentCitationIds.push(citationId);
       isDirty = true;
@@ -895,190 +515,232 @@ function startEditor() {
     refreshInDocCitations();
   }
 
-  function insertCitationToken(citation) {
-    let citationData = citation;
-    if (!citationData && selectedCitationId) {
-      citationData = citationCache.get(selectedCitationId);
-    }
-
-    if (!citationData) {
-      alert("Select a citation to insert.");
-      return;
-    }
-
-    const token = `${citeTokenPrefix}${citationData.id}${citeTokenSuffix}`;
+  function buildInlineCitation(citationData) {
     const metadata = citationData.metadata || {};
-    const author = metadata.author || metadata.creator;
-    const year = metadata.year || metadata.published_year;
-    const fallback = citationData.url ? formatCitationPreview(citationData).domain : "source";
-    const inText = author && year ? `(${author}, ${year})` : `(${fallback})`;
+    const author = metadata.author || metadata.creator || metadata.last_name;
+    const year = metadata.year || metadata.published_year || metadata.date;
+    const title = metadata.title || citationData.title;
+    const { domain } = formatCitationPreview(citationData);
+    if (author && year) return `(${author}, ${year})`;
+    if (author) return `(${author})`;
+    if (title) return `(${title})`;
+    return `(${domain})`;
+  }
 
+  function insertCitationToken(citation) {
+    let citationData = citation || (selectedCitationId ? citationCache.get(selectedCitationId) : null);
+    if (!citationData) return alert("Select a citation to insert.");
+    const token = `${citeTokenPrefix}${citationData.id}${citeTokenSuffix}`;
+    const inText = buildInlineCitation(citationData);
     const range = quill.getSelection(true);
     const insertIndex = range ? range.index : quill.getLength();
-    quill.insertText(insertIndex, `${inText} ${token} `, {
-      background: "#eef4ff",
-    }, "user");
-    quill.setSelection(insertIndex + inText.length + token.length + 2);
-
+    quill.insertText(insertIndex, `${inText}${token} `, { background: "#eef4ff" }, "user");
+    quill.setSelection(insertIndex + inText.length + token.length + 1);
     attachCitation(citationData.id);
   }
 
   function insertCitationQuote() {
-    let citationData = null;
-    if (selectedCitationId) {
-      citationData = citationCache.get(selectedCitationId);
-    }
-
-    if (!citationData) {
-      alert("Select a citation to insert a quote.");
-      return;
-    }
-
+    const citationData = selectedCitationId ? citationCache.get(selectedCitationId) : null;
+    if (!citationData) return alert("Select a citation to insert a quote.");
     const quoteText = citationData.excerpt || citationData.full_text || "";
     const token = `${citeTokenPrefix}${citationData.id}${citeTokenSuffix}`;
+    const inText = buildInlineCitation(citationData);
     const range = quill.getSelection(true);
-    const insertIndex = range ? range.index : quill.getLength();
-
-    quill.insertText(insertIndex, `\n${quoteText}\n${token}\n`, { blockquote: true });
-    quill.setSelection(insertIndex + quoteText.length + token.length + 3);
-
+    const idx = range ? range.index : quill.getLength();
+    quill.insertText(idx, `\n${quoteText}\n${inText}${token}\n`, { blockquote: true }, "user");
+    quill.setSelection(idx + quoteText.length + inText.length + token.length + 3);
     attachCitation(citationData.id);
   }
 
   function removeCitationTokens(citationId) {
     const token = `${citeTokenPrefix}${citationId}${citeTokenSuffix}`;
     const text = quill.getText();
-    const indices = [];
     let index = text.indexOf(token);
     while (index !== -1) {
-      indices.push(index);
-      index = text.indexOf(token, index + token.length);
-    }
-    for (let i = indices.length - 1; i >= 0; i -= 1) {
-      quill.deleteText(indices[i], token.length);
+      quill.deleteText(index, token.length);
+      index = quill.getText().indexOf(token, index);
     }
   }
 
   function jumpToCitation(citationId) {
     const token = `${citeTokenPrefix}${citationId}${citeTokenSuffix}`;
     const index = quill.getText().indexOf(token);
-    if (index !== -1) {
-      quill.setSelection(index, token.length);
-      quill.focus();
-      setSaveStatus("Jumped to citation");
-    } else {
-      setSaveStatus("Citation token not found");
-    }
+    if (index !== -1) { quill.setSelection(index, token.length); quill.focus(); }
   }
 
-  document.getElementById("citation-search").addEventListener("input", (event) => {
-    if (citationSearchTimer) {
-      clearTimeout(citationSearchTimer);
-    }
-    const query = event.target.value;
-    citationSearchTimer = setTimeout(async () => {
-      await loadCitationLibrary(query);
-    }, 250);
-  });
+  async function loadProjects() {
+    const res = await authFetch("/api/note-projects");
+    if (!res.ok) { projectsList.innerHTML = "<p>Unable to load projects.</p>"; return; }
+    allProjects = await res.json();
+    renderProjects();
+  }
 
-  const tabs = document.querySelectorAll(".tab");
-  const panels = {
-    library: document.getElementById("tab-library"),
-    "in-doc": document.getElementById("tab-in-doc"),
-  };
-
-  tabs.forEach((tab) => {
-    tab.addEventListener("click", () => {
-      tabs.forEach((btn) => btn.classList.remove("active"));
-      tab.classList.add("active");
-      Object.values(panels).forEach((panel) => panel.classList.remove("active"));
-      panels[tab.dataset.tab].classList.add("active");
+  function renderProjects() {
+    projectsList.innerHTML = "";
+    const q = (projectSearchInput.value || "").toLowerCase();
+    const filtered = allProjects.filter((p) => (p.name || "").toLowerCase().includes(q));
+    if (!filtered.length) return (projectsList.innerHTML = "<p>No projects found.</p>");
+    filtered.forEach((project) => {
+      const row = document.createElement("div");
+      row.className = "project-item";
+      row.innerHTML = `<strong>${project.name}</strong><span class="doc-meta">Updated ${new Date(project.updated_at).toLocaleString()}</span>`;
+      const del = document.createElement("button");
+      del.className = "text tile-delete-btn";
+      del.textContent = "✕";
+      del.addEventListener("click", async () => {
+        const res = await authFetch(`/api/note-projects/${project.id}`, { method: "DELETE" });
+        if (res.ok) await loadProjects();
+      });
+      row.appendChild(del);
+      projectsList.appendChild(row);
     });
-  });
+  }
 
-  async function exportDocumentById(docId, format = "pdf") {
-    const res = await authFetch(`/api/docs/${docId}/export`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ style: exportStyle.value, format }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      toast?.show({ type: "error", message: err?.detail?.toast || err?.detail?.message || "Export failed." });
-      return null;
-    }
-    const data = await res.json();
-    exportHtml.textContent = data.html || "";
-    exportText.textContent = data.text || "";
-    exportBibliography.innerHTML = "";
-    (data.bibliography || []).forEach((entry) => {
+  async function createProject() {
+    const name = window.prompt("Project name");
+    if (!name || !name.trim()) return;
+    const res = await authFetch("/api/note-projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim() }) });
+    if (res.ok) await loadProjects();
+  }
+
+  async function loadNotes() {
+    const params = new URLSearchParams();
+    const t = document.getElementById("notes-filter-tag").value.trim();
+    const p = document.getElementById("notes-filter-project").value.trim();
+    const s = document.getElementById("notes-filter-source").value.trim();
+    const sort = document.getElementById("notes-sort").value;
+    if (t) params.set("tag", t);
+    if (p) params.set("project", p);
+    if (s) params.set("source", s);
+    params.set("sort", sort);
+    const res = await authFetch(`/api/notes?${params.toString()}`);
+    if (!res.ok) { notesList.innerHTML = '<li class="empty-state">Unable to load notes.</li>'; return; }
+    allNotes = (await res.json()) || [];
+    renderNotes();
+  }
+
+  function renderNotes() {
+    notesList.innerHTML = "";
+    if (!allNotes.length) return (notesList.innerHTML = '<li class="empty-state">No notes yet.</li>');
+    allNotes.forEach((note) => {
       const li = document.createElement("li");
-      li.textContent = entry;
-      exportBibliography.appendChild(li);
+      li.className = "note-item";
+      const title = note.title || note.highlight_text || "Untitled note";
+      li.innerHTML = `<strong>${title}</strong><div class="doc-meta">${note.source_domain || "manual"} · ${new Date(note.updated_at).toLocaleString()}</div>`;
+      const textarea = document.createElement("textarea");
+      textarea.value = note.note_body || "";
+      li.appendChild(textarea);
+      const footer = document.createElement("div");
+      footer.className = "note-item-footer";
+      const save = document.createElement("button");
+      save.className = "secondary";
+      save.textContent = "Save";
+      save.addEventListener("click", async () => {
+        await authFetch("/api/notes", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: note.id, note_body: textarea.value, title: note.title, updated_at: new Date().toISOString() }) });
+        await loadNotes();
+      });
+      const del = document.createElement("button");
+      del.className = "text note-delete-btn";
+      del.textContent = "✕";
+      del.addEventListener("click", async () => { await authFetch(`/api/notes/${note.id}`, { method: "DELETE" }); await loadNotes(); });
+      footer.append(save, del);
+      li.appendChild(footer);
+      notesList.appendChild(li);
     });
-    exportModal.classList.add("open");
-    return data;
   }
 
-  function buildExportText(data) {
-    const bibliography = (data.bibliography || []).map((entry) => `- ${entry}`).join("\n");
-    return [data.text || "", bibliography ? `\n\nBibliography\n${bibliography}` : ""].join("");
+  async function createNote() {
+    const noteBody = window.prompt("Write note");
+    if (!noteBody || !noteBody.trim()) return;
+    const payload = { note_body: noteBody.trim(), title: "Editor Note", updated_at: new Date().toISOString(), created_at: new Date().toISOString() };
+    const res = await authFetch("/api/notes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    if (res.ok) await loadNotes();
+  }
+
+  function setContentTab(tab) {
+    localStorage.setItem("editor_left_content_tab", tab);
+    document.querySelectorAll(".content-pill").forEach((b) => {
+      const active = b.dataset.contentTab === tab;
+      b.classList.toggle("active", active);
+      b.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    document.getElementById("left-tab-documents").classList.toggle("active", tab === "documents");
+    document.getElementById("left-tab-projects").classList.toggle("active", tab === "projects");
+    document.getElementById("left-tab-notes").classList.toggle("active", tab === "notes");
   }
 
   async function downloadExportFile(doc, format) {
-    const res = await authFetch(
-      `/api/docs/${doc.id}/export/file?format=${encodeURIComponent(format)}&style=${encodeURIComponent(exportStyle.value)}`,
-      { method: "GET" }
-    );
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      toast?.show({ type: "error", message: err?.detail?.toast || err?.detail?.message || "Export failed." });
-      return;
-    }
-
+    const res = await authFetch(`/api/docs/${doc.id}/export/file?format=${encodeURIComponent(format)}&style=${encodeURIComponent(exportStyle.value)}`);
+    if (!res.ok) return;
     const blob = await res.blob();
-    const contentDisposition = res.headers.get("content-disposition") || "";
-    const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
-    const safeTitle = (doc?.title || "document")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "") || "document";
-
-    const filename = filenameMatch?.[1] || `${safeTitle}.${format}`;
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = filename;
+    link.download = `${(doc?.title || "document").toLowerCase().replace(/[^a-z0-9]+/g, "-")}.${format}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   }
 
+  quill.on("text-change", (delta, _old, source) => {
+    if (source !== "user") return;
+    isDirty = true;
+    changedSinceCheckpoint += estimateDeltaLength(delta);
+    queueAutosave();
+    scheduleOutlineBuild();
+    createCheckpointIfNeeded();
+    updateWordCount();
+  });
+  quill.on("selection-change", (range, oldRange) => { if (!range && oldRange && isDirty) autosaveDoc(); });
+  docTitleInput.addEventListener("input", () => { isDirty = true; queueAutosave(); });
+  window.addEventListener("beforeunload", () => { if (isDirty) autosaveDoc(); });
+
+  docSearchInput.addEventListener("input", () => renderDocs(allDocs));
+  projectSearchInput.addEventListener("input", () => renderProjects());
+  document.getElementById("new-doc-btn").addEventListener("click", async () => {
+    await autosaveDoc();
+    const res = await authFetch("/api/docs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+    if (!res.ok) return;
+    const doc = await res.json();
+    await loadDocsList();
+    await openDoc(doc.id);
+  });
+  document.getElementById("new-project-btn").addEventListener("click", createProject);
+  document.getElementById("new-note-btn").addEventListener("click", createNote);
+
+  ["notes-filter-tag", "notes-filter-project", "notes-filter-source", "notes-sort"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("input", () => loadNotes());
+  });
+
+  document.getElementById("outline-refresh").addEventListener("click", buildAndRenderOutline);
+  document.getElementById("history-refresh").addEventListener("click", loadCheckpoints);
+  document.getElementById("tool-outline").addEventListener("click", () => outlinePanel.classList.toggle("collapsed"));
+  document.getElementById("tool-history").addEventListener("click", () => historyPanel.classList.toggle("collapsed"));
+  document.getElementById("tool-add-doc-note").addEventListener("click", addDocNote);
+
+  document.getElementById("citation-search").addEventListener("input", (event) => {
+    if (citationSearchTimer) clearTimeout(citationSearchTimer);
+    const query = event.target.value;
+    citationSearchTimer = setTimeout(async () => loadCitationLibrary(query), 250);
+  });
+
+  const tabs = document.querySelectorAll(".tab");
+  const panels = { library: document.getElementById("tab-library"), "in-doc": document.getElementById("tab-in-doc") };
+  tabs.forEach((tab) => tab.addEventListener("click", () => {
+    tabs.forEach((b) => b.classList.remove("active"));
+    tab.classList.add("active");
+    Object.values(panels).forEach((p) => p.classList.remove("active"));
+    panels[tab.dataset.tab].classList.add("active");
+  }));
+
+  document.querySelectorAll(".content-pill").forEach((pill) => pill.addEventListener("click", () => setContentTab(pill.dataset.contentTab)));
+
   exportBtn.addEventListener("click", async () => {
     if (!currentDocId) return;
     exportModal.setAttribute("aria-hidden", "false");
-
-    const res = await authFetch(`/api/docs/${currentDocId}/export`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        style: exportStyle.value,
-        html: quill.root.innerHTML,
-        text: quill.getText(),
-      }),
-    });
-
-    if (!res.ok) {
-      exportHtml.textContent = "Export failed";
-      exportText.textContent = "";
-      exportBibliography.innerHTML = "";
-      return;
-    }
-
+    const res = await authFetch(`/api/docs/${currentDocId}/export`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ style: exportStyle.value, html: quill.root.innerHTML, text: quill.getText() }) });
+    if (!res.ok) return;
     const data = await res.json();
     exportHtml.textContent = data.html || "";
     exportText.textContent = data.text || "";
@@ -1089,44 +751,28 @@ function startEditor() {
       exportBibliography.appendChild(li);
     });
   });
-
-  exportStyle.addEventListener("change", () => {
-    if (exportModal.getAttribute("aria-hidden") === "false") {
-      exportBtn.click();
-    }
-  });
-
-  document.getElementById("close-export").addEventListener("click", () => {
-    exportModal.setAttribute("aria-hidden", "true");
-  });
-
-  window.addEventListener("click", (event) => {
-    if (event.target === exportModal) {
-      exportModal.setAttribute("aria-hidden", "true");
-    }
-  });
+  exportStyle.addEventListener("change", () => exportModal.getAttribute("aria-hidden") === "false" && exportBtn.click());
+  document.getElementById("close-export").addEventListener("click", () => exportModal.setAttribute("aria-hidden", "true"));
+  window.addEventListener("click", (event) => { if (event.target === exportModal) exportModal.setAttribute("aria-hidden", "true"); });
 
   (async () => {
+    await loadHeaderData();
     await loadDocsList();
+    await loadProjects();
+    await loadNotes();
     await loadCitationLibrary();
-    const urlParams = new URLSearchParams(window.location.search);
-    const initialDocId = urlParams.get("doc");
+    const defaultTab = localStorage.getItem("editor_left_content_tab") || "documents";
+    setContentTab(defaultTab);
+    const initialDocId = new URLSearchParams(window.location.search).get("doc");
     let opened = false;
-    if (initialDocId) {
-      opened = await openDoc(initialDocId);
-    }
+    if (initialDocId) opened = await openDoc(initialDocId);
     if (!opened) {
-      if (allDocs.length) {
-        await openDoc(allDocs[0].id);
-      } else {
-        document.getElementById("new-doc-btn").click();
-      }
+      if (allDocs.length) await openDoc(allDocs[0].id);
+      else document.getElementById("new-doc-btn").click();
     }
   })();
 }
 
 (async () => {
-  if (await verifyEditorAccess()) {
-    startEditor();
-  }
+  if (await verifyEditorAccess()) startEditor();
 })();

@@ -112,6 +112,11 @@ class ExtensionNotePatchRequest(BaseModel):
     updated_at: str | None = None
 
 
+class NoteProjectPayload(BaseModel):
+    name: str
+    color: str | None = None
+
+
 def _source_domain(url: str | None) -> str | None:
     candidate = (url or "").strip()
     if not candidate:
@@ -497,31 +502,147 @@ async def create_note(request: Request, payload: ExtensionNotePayload):
 
 
 @router.get("/api/notes")
-async def list_notes(request: Request, limit: int = 200, offset: int = 0):
+async def list_notes(
+    request: Request,
+    tag: str | None = None,
+    project: str | None = None,
+    source: str | None = None,
+    sort: str = "desc",
+    limit: int = 100,
+):
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    bounded_limit = max(1, min(limit, 500))
-    bounded_offset = max(0, offset)
+    order = "updated_at.asc" if sort == "asc" else "updated_at.desc"
+    params = {
+        "user_id": f"eq.{user_id}",
+        "order": order,
+        "limit": min(max(limit, 1), 200),
+        "select": "id,title,highlight_text,note_body,source_url,source_domain,project_id,created_at,updated_at",
+    }
+
+    if source:
+        params["source_domain"] = f"ilike.*{source.strip().lower()}*"
+
+    if project:
+        project_res = await supabase_repo.get(
+            "note_projects",
+            params={
+                "user_id": f"eq.{user_id}",
+                "name": f"ilike.*{project.strip()}*",
+                "select": "id",
+            },
+            headers=supabase_repo.headers(include_content_type=False),
+        )
+        project_rows = project_res.json() if project_res.status_code == 200 else []
+        if not project_rows:
+            return []
+        project_ids = ",".join([row.get("id") for row in project_rows if row.get("id")])
+        params["project_id"] = f"in.({project_ids})"
 
     res = await supabase_repo.get(
         "notes",
-        params={
-            "user_id": f"eq.{user_id}",
-            "select": "id,title,highlight_text,note_body,source_url,source_domain,project_id,created_at,updated_at",
-            "order": "created_at.desc",
-            "limit": str(bounded_limit),
-            "offset": str(bounded_offset),
-        },
-        headers=supabase_repo.headers(prefer="count=exact"),
+        params=params,
+        headers=supabase_repo.headers(include_content_type=False),
     )
     if res.status_code != 200:
-        raise HTTPException(status_code=500, detail="Failed to fetch notes")
+        raise HTTPException(status_code=500, detail="Failed to load notes")
 
-    content_range = res.headers.get("content-range", "0-0/0")
-    total_count = int(content_range.split("/")[-1])
-    return {"ok": True, "notes": res.json(), "total_count": total_count}
+    notes = res.json() or []
+
+    if tag:
+        tag_res = await supabase_repo.get(
+            "note_tags",
+            params={
+                "user_id": f"eq.{user_id}",
+                "name": f"ilike.*{tag.strip()}*",
+                "select": "id",
+            },
+            headers=supabase_repo.headers(include_content_type=False),
+        )
+        tag_rows = tag_res.json() if tag_res.status_code == 200 else []
+        tag_ids = [row.get("id") for row in tag_rows if row.get("id")]
+        if not tag_ids:
+            return []
+        tag_join = await supabase_repo.get(
+            "note_note_tags",
+            params={
+                "user_id": f"eq.{user_id}",
+                "tag_id": f"in.({','.join(tag_ids)})",
+                "select": "note_id",
+            },
+            headers=supabase_repo.headers(include_content_type=False),
+        )
+        if tag_join.status_code != 200:
+            raise HTTPException(status_code=500, detail="Failed to load notes")
+        allowed_ids = {row.get("note_id") for row in (tag_join.json() or []) if row.get("note_id")}
+        notes = [note for note in notes if note.get("id") in allowed_ids]
+
+    return notes
+
+
+@router.get("/api/note-projects")
+async def list_note_projects(request: Request):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    res = await supabase_repo.get(
+        "note_projects",
+        params={
+            "user_id": f"eq.{user_id}",
+            "order": "updated_at.desc",
+            "limit": 200,
+            "select": "id,name,color,created_at,updated_at",
+        },
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to load note projects")
+    return res.json() or []
+
+
+@router.post("/api/note-projects")
+async def create_note_project(request: Request, payload: NoteProjectPayload):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="name is required")
+
+    res = await supabase_repo.post(
+        "note_projects",
+        json={"user_id": user_id, "name": name[:120], "color": (payload.color or "").strip() or None},
+        headers=supabase_repo.headers(prefer="return=representation"),
+    )
+    if res.status_code not in (200, 201):
+        raise HTTPException(status_code=500, detail="Failed to create note project")
+    rows = res.json() or []
+    return rows[0] if rows else {"ok": True}
+
+
+@router.delete("/api/note-projects/{project_id}")
+async def delete_note_project(request: Request, project_id: str):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        normalized_id = str(UUID(project_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="project_id must be a valid UUID") from exc
+
+    res = await supabase_repo.delete(
+        "note_projects",
+        params={"id": f"eq.{normalized_id}", "user_id": f"eq.{user_id}"},
+        headers=supabase_repo.headers(prefer="return=minimal", include_content_type=False),
+    )
+    if res.status_code not in (200, 204):
+        raise HTTPException(status_code=500, detail="Failed to delete note project")
+    return {"ok": True, "id": normalized_id}
 
 
 @router.patch("/api/notes")

@@ -50,6 +50,9 @@ function startEditor() {
   let allDocs = [];
   let allProjects = [];
   let allNotes = [];
+  let editingNoteId = null;
+  let editingNoteFocusField = "title";
+  let editingNoteDraft = null;
   let citationSearchTimer = null;
   let lastCheckpointAt = 0;
   let changedSinceCheckpoint = 0;
@@ -77,6 +80,11 @@ function startEditor() {
   const editorWordCount = document.getElementById("editor-word-count");
   const toolWordCount = document.getElementById("tool-word-count");
   const docNotesList = document.getElementById("doc-notes-list");
+  const noteModal = document.getElementById("note-modal");
+  const quickNoteTitle = document.getElementById("quick-note-title");
+  const quickNoteBody = document.getElementById("quick-note-body");
+  const quickNoteTags = document.getElementById("quick-note-tags");
+  const quickNoteProject = document.getElementById("quick-note-project");
 
   const quill = new Quill("#editor", {
     theme: "snow",
@@ -119,6 +127,33 @@ function startEditor() {
   }
 
   function setSaveStatus(text) { saveStatus.textContent = text; }
+
+  function parseQuickNoteTags(value) {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    return String(value || "").split(",").map((v) => v.trim()).filter((v) => uuidRegex.test(v));
+  }
+
+  function appendTextElement(parent, tagName, text, className = "") {
+    const el = document.createElement(tagName);
+    if (className) el.className = className;
+    el.textContent = text;
+    parent.appendChild(el);
+    return el;
+  }
+
+  function placeCursorAtEnd(el) {
+    const selection = window.getSelection();
+    if (!selection) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function getEditableText(el) {
+    return (el.textContent || "").replace(/\u00a0/g, " ").trim();
+  }
 
   function getWordCount() {
     const words = (quill.getText() || "").trim().split(/\s+/).filter(Boolean);
@@ -620,42 +655,235 @@ function startEditor() {
     renderNotes();
   }
 
+  async function ensureProjectId(projectName) {
+    const normalized = (projectName || "").trim();
+    if (!normalized) return null;
+    if (!allProjects.length) await loadProjects();
+    const existing = allProjects.find((project) => (project.name || "").trim().toLowerCase() === normalized.toLowerCase());
+    if (existing?.id) return existing.id;
+    const res = await authFetch("/api/note-projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: normalized }),
+    });
+    if (!res.ok) return null;
+    const created = await res.json();
+    await loadProjects();
+    return created?.id || null;
+  }
+
   function renderNotes() {
     notesList.innerHTML = "";
     if (!allNotes.length) return (notesList.innerHTML = '<li class="empty-state">No notes yet.</li>');
     allNotes.forEach((note) => {
       const li = document.createElement("li");
       li.className = "note-item";
-      const title = note.title || note.highlight_text || "Untitled note";
-      li.innerHTML = `<strong>${title}</strong><div class="doc-meta">${note.source_domain || "manual"} · ${new Date(note.updated_at).toLocaleString()}</div>`;
-      const textarea = document.createElement("textarea");
-      textarea.value = note.note_body || "";
-      li.appendChild(textarea);
-      const footer = document.createElement("div");
-      footer.className = "note-item-footer";
-      const save = document.createElement("button");
-      save.className = "secondary";
-      save.textContent = "Save";
-      save.addEventListener("click", async () => {
-        await authFetch("/api/notes", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: note.id, note_body: textarea.value, title: note.title, updated_at: new Date().toISOString() }) });
-        await loadNotes();
-      });
-      const del = document.createElement("button");
-      del.className = "text note-delete-btn";
-      del.textContent = "✕";
-      del.addEventListener("click", async () => { await authFetch(`/api/notes/${note.id}`, { method: "DELETE" }); await loadNotes(); });
-      footer.append(save, del);
-      li.appendChild(footer);
+      const projectName = allProjects.find((project) => project.id === note.project_id)?.name || "—";
+      const isEditing = editingNoteId === note.id;
+      if (isEditing) {
+        li.classList.add("note-editing");
+        editingNoteDraft ||= {
+          title: note.title || "",
+          highlight_text: note.highlight_text || "",
+          note_body: note.note_body || "",
+          project: projectName === "—" ? "" : projectName,
+        };
+      }
+
+      if (isEditing) {
+        const editControls = document.createElement("div");
+        editControls.className = "note-edit-controls";
+
+        const saveBtn = document.createElement("button");
+        saveBtn.type = "button";
+        saveBtn.className = "pill mini pill-primary";
+        saveBtn.textContent = "✓ Save";
+
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "pill mini";
+        cancelBtn.textContent = "✕ Cancel";
+
+        editControls.append(saveBtn, cancelBtn);
+        li.appendChild(editControls);
+
+        const titleEl = document.createElement("strong");
+        titleEl.className = "note-title note-editable";
+        titleEl.contentEditable = "true";
+        titleEl.textContent = editingNoteDraft.title || "Untitled note";
+        li.appendChild(titleEl);
+
+        const highlightEl = appendTextElement(li, "div", editingNoteDraft.highlight_text, "note-highlight note-editable");
+        highlightEl.contentEditable = "true";
+
+        const bodyEl = appendTextElement(li, "div", editingNoteDraft.note_body, "note-body note-editable");
+        bodyEl.contentEditable = "true";
+
+        const projectWrap = document.createElement("label");
+        projectWrap.className = "note-project-input";
+        projectWrap.textContent = "Project";
+        const projectInput = document.createElement("input");
+        projectInput.type = "text";
+        projectInput.value = editingNoteDraft.project || "";
+        projectInput.placeholder = "No project";
+        projectWrap.appendChild(projectInput);
+        li.appendChild(projectWrap);
+
+        titleEl.addEventListener("input", () => { editingNoteDraft.title = getEditableText(titleEl); });
+        highlightEl.addEventListener("input", () => { editingNoteDraft.highlight_text = getEditableText(highlightEl); });
+        bodyEl.addEventListener("input", () => { editingNoteDraft.note_body = getEditableText(bodyEl); });
+        projectInput.addEventListener("input", () => { editingNoteDraft.project = projectInput.value.trim(); });
+
+        saveBtn.addEventListener("click", async () => {
+          const projectId = await ensureProjectId(editingNoteDraft.project);
+          await authFetch("/api/notes", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: note.id,
+              title: (editingNoteDraft.title || "").trim() || null,
+              highlight_text: (editingNoteDraft.highlight_text || "").trim() || null,
+              note_body: (editingNoteDraft.note_body || "").trim() || null,
+              project_id: projectId,
+              updated_at: new Date().toISOString(),
+            }),
+          });
+          editingNoteId = null;
+          editingNoteDraft = null;
+          await loadNotes();
+        });
+
+        cancelBtn.addEventListener("click", async () => {
+          editingNoteId = null;
+          editingNoteDraft = null;
+          await loadNotes();
+        });
+
+        const focusTarget = editingNoteFocusField === "project" ? projectInput : titleEl;
+        queueMicrotask(() => {
+          focusTarget.focus();
+          if (focusTarget instanceof HTMLElement && focusTarget.isContentEditable) placeCursorAtEnd(focusTarget);
+        });
+      } else {
+        const titleEl = document.createElement("strong");
+        titleEl.className = "note-title";
+        titleEl.textContent = note.title || "Untitled note";
+        li.appendChild(titleEl);
+        appendTextElement(li, "div", note.highlight_text ? `“${note.highlight_text.slice(0, 130)}”` : "", "note-highlight");
+        appendTextElement(li, "div", note.note_body?.slice(0, 180) || "", "note-body");
+      }
+
+      const badgesRow = document.createElement("div");
+      badgesRow.className = "meta-row";
+      appendTextElement(badgesRow, "span", projectName, "badge");
+      li.appendChild(badgesRow);
+
+      const metaRow = document.createElement("div");
+      metaRow.className = "meta-row";
+      appendTextElement(metaRow, "span", note.source_url || "No source");
+      appendTextElement(metaRow, "span", new Date(note.updated_at || note.created_at).toLocaleString());
+      li.appendChild(metaRow);
+
+      if (!isEditing) {
+        const actions = document.createElement("div");
+        actions.className = "note-actions";
+        [
+          { action: "edit", label: "Edit" },
+          { action: "assign", label: "Assign Project" },
+          { action: "delete", label: "Delete" },
+        ].forEach(({ action, label }) => {
+          const button = document.createElement("button");
+          button.className = "pill mini";
+          button.dataset.action = action;
+          button.type = "button";
+          button.textContent = label;
+          actions.appendChild(button);
+        });
+        li.appendChild(actions);
+
+        li.addEventListener("click", async (event) => {
+          const btn = event.target;
+          if (!(btn instanceof HTMLElement) || !btn.dataset.action) return;
+          if (btn.dataset.action === "delete") {
+            await authFetch(`/api/notes/${note.id}`, { method: "DELETE" });
+            await loadNotes();
+            return;
+          }
+          if (btn.dataset.action === "edit" || btn.dataset.action === "assign") {
+            editingNoteId = note.id;
+            editingNoteFocusField = btn.dataset.action === "assign" ? "project" : "title";
+            editingNoteDraft = {
+              title: note.title || "",
+              highlight_text: note.highlight_text || "",
+              note_body: note.note_body || "",
+              project: projectName === "—" ? "" : projectName,
+            };
+            await loadNotes();
+          }
+        });
+      }
       notesList.appendChild(li);
     });
   }
 
-  async function createNote() {
-    const noteBody = window.prompt("Write note");
-    if (!noteBody || !noteBody.trim()) return;
-    const payload = { note_body: noteBody.trim(), title: "Editor Note", updated_at: new Date().toISOString(), created_at: new Date().toISOString() };
+  function clearQuickNoteForm() {
+    quickNoteTitle.value = "";
+    quickNoteBody.value = "";
+    quickNoteTags.value = "";
+    quickNoteProject.value = "";
+  }
+
+  function formatQuickNote(format) {
+    const start = quickNoteBody.selectionStart;
+    const end = quickNoteBody.selectionEnd;
+    const selected = quickNoteBody.value.slice(start, end) || "text";
+    const wrappers = {
+      bold: [`**${selected}**`, 2],
+      italic: [`*${selected}*`, 1],
+      bullet: [`- ${selected}`, 2],
+      link: [`[${selected}](https://)`, selected.length + 3],
+    };
+    const [replacement, cursor] = wrappers[format] || [selected, 0];
+    quickNoteBody.setRangeText(replacement, start, end, "end");
+    quickNoteBody.focus();
+    quickNoteBody.selectionStart = quickNoteBody.selectionEnd = start + cursor;
+  }
+
+  function openNewNoteModal() {
+    noteModal?.setAttribute("aria-hidden", "false");
+    queueMicrotask(() => quickNoteTitle?.focus());
+  }
+
+  function closeNewNoteModal() {
+    noteModal?.setAttribute("aria-hidden", "true");
+  }
+
+  async function saveQuickNote() {
+    const projectId = await ensureProjectId(quickNoteProject.value.trim());
+    const payload = {
+      note_body: quickNoteBody.value.trim(),
+      title: quickNoteTitle.value.trim() || null,
+      tags: parseQuickNoteTags(quickNoteTags.value),
+      project_id: projectId,
+      updated_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+    if (!payload.note_body) {
+      toast?.show({ type: "error", message: "Note body is required." });
+      return;
+    }
     const res = await authFetch("/api/notes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    if (res.ok) await loadNotes();
+    if (!res.ok) {
+      toast?.show({ type: "error", message: "Failed to save note." });
+      return;
+    }
+    clearQuickNoteForm();
+    closeNewNoteModal();
+    await loadNotes();
+  }
+
+  async function createNote() {
+    openNewNoteModal();
   }
 
   function setContentTab(tab) {
@@ -668,6 +896,7 @@ function startEditor() {
     document.getElementById("left-tab-documents").classList.toggle("active", tab === "documents");
     document.getElementById("left-tab-projects").classList.toggle("active", tab === "projects");
     document.getElementById("left-tab-notes").classList.toggle("active", tab === "notes");
+    if (tab === "notes") loadNotes();
   }
 
   async function downloadExportFile(doc, format) {
@@ -709,6 +938,14 @@ function startEditor() {
   });
   document.getElementById("new-project-btn").addEventListener("click", createProject);
   document.getElementById("new-note-btn").addEventListener("click", createNote);
+  document.getElementById("save-quick-note")?.addEventListener("click", saveQuickNote);
+  document.getElementById("cancel-quick-note")?.addEventListener("click", () => {
+    clearQuickNoteForm();
+    closeNewNoteModal();
+  });
+  document.getElementById("close-note-modal")?.addEventListener("click", closeNewNoteModal);
+  document.querySelectorAll("#note-modal .format-toolbar [data-format]").forEach((btn) => btn.addEventListener("click", () => formatQuickNote(btn.dataset.format)));
+  window.addEventListener("click", (event) => { if (event.target === noteModal) closeNewNoteModal(); });
 
   ["notes-filter-tag", "notes-filter-project", "notes-filter-source", "notes-sort"].forEach((id) => {
     document.getElementById(id)?.addEventListener("input", () => loadNotes());

@@ -213,3 +213,45 @@ def test_notes_create_sync_accepts_comma_separated_tags(monkeypatch):
     assert len(join_posts) == 1
     rows = join_posts[0][2]["json"]
     assert len(rows) == 2
+
+
+def test_notes_create_sync_accepts_legacy_body_field(monkeypatch):
+    main = _build_app(monkeypatch)
+    from app.routes import extension
+
+    repo = FakeSupabaseRepo()
+    extension.supabase_repo = repo
+
+    client = TestClient(main.app)
+    payload = {
+        "id": "2f3f2367-64f3-422d-b14d-cf70650fc4ca",
+        "title": "Legacy",
+        "body": "Body from legacy field",
+        "tags": [],
+    }
+
+    response = client.post("/api/notes", headers={"Authorization": "Bearer token"}, json=payload)
+
+    assert response.status_code == 200
+    note_post = [call for call in repo.calls if call[0] == "post" and call[1] == "notes"][0]
+    assert note_post[2]["json"]["note_body"] == "Body from legacy field"
+
+
+def test_notes_update_sync_supports_partial_patch_without_note_body(monkeypatch):
+    main = _build_app(monkeypatch)
+    from app.routes import extension
+
+    repo = FakeSupabaseRepo()
+    extension.supabase_repo = repo
+
+    client = TestClient(main.app)
+    payload = {
+        "id": "2f3f2367-64f3-422d-b14d-cf70650fc4ca",
+        "title": "Title only",
+    }
+
+    response = client.patch("/api/notes", headers={"Authorization": "Bearer token"}, json=payload)
+
+    assert response.status_code == 200
+    patch_call = [call for call in repo.calls if call[0] == "patch" and call[1] == "notes"][0]
+    assert "note_body" not in patch_call[2]["json"]

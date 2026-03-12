@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from app.services.entitlements import get_tier_capabilities, normalize_account_type
 from app.services.supabase_rest import SupabaseRestRepository
@@ -73,7 +73,7 @@ class ExtensionNotePayload(BaseModel):
     id: str | None = None
     title: str | None = None
     highlight_text: str | None = None
-    note_body: str
+    note_body: str | None = None
     source_url: str | None = None
     project_id: str | None = None
     tags: list[str] = []
@@ -89,8 +89,20 @@ class ExtensionNotePayload(BaseModel):
             return [part.strip() for part in value.split(",") if part.strip()]
         return value
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value):
+        if not isinstance(value, dict):
+            return value
+        if value.get("note_body") in (None, ""):
+            legacy_body = value.get("body") or value.get("text")
+            if isinstance(legacy_body, str):
+                value["note_body"] = legacy_body
+        return value
+
 
 class ExtensionNotePatchRequest(BaseModel):
+    id: str | None = None
     title: str | None = None
     highlight_text: str | None = None
     note_body: str | None = None
@@ -132,10 +144,10 @@ def _coerce_note_id(raw_id: str | None) -> str:
         raise HTTPException(status_code=422, detail="id must be a valid UUID") from exc
 
 
-def _clean_note_body(note_body: str | None) -> str:
-    body = (note_body or "").strip()
+def _clean_note_body(note_body: str | None, highlight_text: str | None = None) -> str:
+    body = (note_body or "").strip() or (highlight_text or "").strip()
     if not body:
-        raise HTTPException(status_code=422, detail="note_body is required")
+        raise HTTPException(status_code=422, detail="note_body is required (or provide highlight_text)")
     return body
 
 
@@ -454,7 +466,7 @@ async def create_note(request: Request, payload: ExtensionNotePayload):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     note_id = _coerce_note_id(payload.id) if payload.id else str(uuid4())
-    note_body = _clean_note_body(payload.note_body)
+    note_body = _clean_note_body(payload.note_body, payload.highlight_text)
     tag_ids = _clean_note_tags(payload.tags)
     created_at = _parse_iso_datetime(payload.created_at) or datetime.utcnow()
     updated_at = _parse_iso_datetime(payload.updated_at) or datetime.utcnow()
@@ -485,25 +497,27 @@ async def create_note(request: Request, payload: ExtensionNotePayload):
 
 
 @router.patch("/api/notes")
-async def update_note(request: Request, payload: ExtensionNotePayload):
+async def update_note(request: Request, payload: ExtensionNotePatchRequest):
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     note_id = _coerce_note_id(payload.id)
-    note_body = _clean_note_body(payload.note_body)
     tag_ids = _clean_note_tags(payload.tags)
     updated_at = _parse_iso_datetime(payload.updated_at) or datetime.utcnow()
 
-    patch_payload = {
-        "title": (payload.title or "").strip() or None,
-        "highlight_text": payload.highlight_text,
-        "note_body": note_body,
-        "source_url": (payload.source_url or "").strip() or None,
-        "source_domain": _source_domain(payload.source_url),
-        "project_id": payload.project_id,
-        "updated_at": updated_at.isoformat(),
-    }
+    patch_payload = {"updated_at": updated_at.isoformat()}
+    if payload.title is not None:
+        patch_payload["title"] = (payload.title or "").strip() or None
+    if payload.highlight_text is not None:
+        patch_payload["highlight_text"] = payload.highlight_text
+    if payload.note_body is not None:
+        patch_payload["note_body"] = _clean_note_body(payload.note_body, payload.highlight_text)
+    if payload.source_url is not None:
+        patch_payload["source_url"] = (payload.source_url or "").strip() or None
+        patch_payload["source_domain"] = _source_domain(payload.source_url)
+    if payload.project_id is not None:
+        patch_payload["project_id"] = payload.project_id
     res = await supabase_repo.patch(
         "notes",
         params={"id": f"eq.{note_id}", "user_id": f"eq.{user_id}"},

@@ -109,6 +109,24 @@ async def _fetch_milestones(user_id: str) -> list[dict]:
 def _milestone_title_map() -> dict[str, str]:
     return {milestone.key: milestone.title for milestone in MILESTONE_CONFIG}
 
+
+def _has_active_subscription(account_type: str, paid_until_raw: str | None) -> bool:
+    if account_type in {"standard", "pro", "dev"}:
+        return True
+
+    if not paid_until_raw:
+        return False
+
+    try:
+        paid_until = datetime.fromisoformat(paid_until_raw.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+
+    if paid_until.tzinfo is None:
+        paid_until = paid_until.replace(tzinfo=timezone.utc)
+
+    return paid_until >= datetime.now(timezone.utc)
+
 @router.get("/api/me")
 async def get_user_metadata(request: Request):
     """
@@ -171,6 +189,7 @@ async def get_user_metadata(request: Request):
             degraded_reasons.append("BOOKMARKS_UNAVAILABLE")
 
         account_type = normalize_account_type(meta.get("account_type"))
+        has_active_subscription = _has_active_subscription(account_type, meta.get("paid_until"))
         if account_type in {"standard", "pro", "dev"}:
             usage_key = f"user_usage_week:{user_id}:{get_week_start_gmt3()}"
             usage_limit = MAX_WEEKLY_USES
@@ -203,7 +222,7 @@ async def get_user_metadata(request: Request):
             "paid_until": meta.get("paid_until"),
             "auto_renew": meta.get("auto_renew"),
             "has_billing_profile": bool(meta.get("paddle_customer_id")),
-            "has_subscription": bool(meta.get("paddle_subscription_id")),
+            "has_subscription": has_active_subscription,
             "bookmarks": bookmarks,
             "usage_count": usage_count,
             "usage_limit": usage_limit,

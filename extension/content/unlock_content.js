@@ -1231,6 +1231,7 @@
     closeNoteModal();
     const root = document.body || document.documentElement;
     if (!root) return;
+    const noteMetadata = validateCitationMetadata(getCitationMetadata(state.selectionText || ""));
 
     const backdrop = document.createElement("div");
     backdrop.className = "web-unlocker-backdrop";
@@ -1266,6 +1267,9 @@
           highlight_text: state.selectionText,
           note_body: noteBody || state.selectionText,
           source_url: cleanUrl(window.location.href),
+          source_title: noteMetadata.title || document.title || null,
+          source_author: noteMetadata.author || null,
+          source_published_at: noteMetadata.datePublished || null,
           tags: modal.querySelector("#wu-note-tags")?.value || "",
           project: modal.querySelector("#wu-note-project")?.value?.trim() || null,
           timestamp: new Date().toISOString(),

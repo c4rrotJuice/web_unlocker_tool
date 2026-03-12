@@ -85,6 +85,8 @@ function startEditor() {
   const quickNoteBody = document.getElementById("quick-note-body");
   const quickNoteTags = document.getElementById("quick-note-tags");
   const quickNoteProject = document.getElementById("quick-note-project");
+  const researchNotesList = document.getElementById("research-notes-list");
+  const researchNotesSearch = document.getElementById("research-notes-search");
 
   function attachButtonClickMotion() {
     document.addEventListener("pointerdown", (event) => {
@@ -663,16 +665,19 @@ function startEditor() {
     const t = document.getElementById("notes-filter-tag").value.trim();
     const p = document.getElementById("notes-filter-project").value.trim();
     const s = document.getElementById("notes-filter-source").value.trim();
+    const textSearch = document.getElementById("notes-filter-search")?.value?.trim() || "";
     const sort = document.getElementById("notes-sort").value;
     if (t) params.set("tag", t);
     if (p) params.set("project", p);
     if (s) params.set("source", s);
+    if (textSearch) params.set("search", textSearch);
     params.set("sort", sort);
     const res = await authFetch(`/api/notes?${params.toString()}`);
     if (!res.ok) { notesList.innerHTML = '<li class="empty-state">Unable to load notes.</li>'; return; }
     const payload = await res.json();
     allNotes = Array.isArray(payload) ? payload : (payload?.notes || []);
     renderNotes();
+    renderResearchNotes();
   }
 
   async function ensureProjectId(projectName) {
@@ -810,6 +815,9 @@ function startEditor() {
         [
           { action: "edit", label: "Edit" },
           { action: "assign", label: "Assign Project" },
+          { action: "insert", label: "Insert" },
+          { action: "cite", label: "Convert to Citation" },
+          { action: note.archived_at ? "restore" : "archive", label: note.archived_at ? "Restore" : "Archive" },
           { action: "delete", label: "Delete" },
         ].forEach(({ action, label }) => {
           const button = document.createElement("button");
@@ -829,6 +837,39 @@ function startEditor() {
             await loadNotes();
             return;
           }
+          if (btn.dataset.action === "insert") {
+            const text = (note.highlight_text || note.note_body || "").trim();
+            if (!text) return;
+            const selection = quill.getSelection(true);
+            const idx = selection ? selection.index : quill.getLength();
+            quill.insertText(idx, `${text}
+`, "user");
+            quill.setSelection(idx + text.length + 1);
+            return;
+          }
+          if (btn.dataset.action === "cite") {
+            const res = await authFetch(`/api/notes/${note.id}/citation`, { method: "POST" });
+            if (!res.ok) {
+              toast?.show({ type: "error", message: "Failed to convert note to citation." });
+              return;
+            }
+            const data = await res.json();
+            if (data?.citation_id) {
+              attachCitation(data.citation_id);
+              await fetchCitationsByIds([data.citation_id]);
+              await loadCitationLibrary(document.getElementById("citation-search").value || "");
+              await loadNotes();
+              toast?.show({ type: "success", message: data.created ? "Citation created from note." : "Existing citation linked." });
+            }
+            return;
+          }
+          if (btn.dataset.action === "archive" || btn.dataset.action === "restore") {
+            const endpoint = btn.dataset.action === "archive" ? "archive" : "restore";
+            const res = await authFetch(`/api/notes/${note.id}/${endpoint}`, { method: "POST" });
+            if (!res.ok) return toast?.show({ type: "error", message: `Failed to ${endpoint} note.` });
+            await loadNotes();
+            return;
+          }
           if (btn.dataset.action === "edit" || btn.dataset.action === "assign") {
             editingNoteId = note.id;
             editingNoteFocusField = btn.dataset.action === "assign" ? "project" : "title";
@@ -843,6 +884,47 @@ function startEditor() {
         });
       }
       notesList.appendChild(li);
+    });
+  }
+
+
+  function renderResearchNotes() {
+    if (!researchNotesList) return;
+    researchNotesList.innerHTML = "";
+    const q = (researchNotesSearch?.value || "").trim().toLowerCase();
+    const docProjectIds = new Set(allNotes.filter((n) => n.project_id).map((n) => n.project_id));
+    const rows = allNotes.filter((note) => {
+      if (note.archived_at) return false;
+      const text = `${note.title || ""} ${note.highlight_text || ""} ${note.note_body || ""} ${note.source_title || ""}`.toLowerCase();
+      const match = !q || text.includes(q);
+      const projectMatch = !currentDocId || !docProjectIds.size || docProjectIds.has(note.project_id);
+      return match && projectMatch;
+    }).slice(0, 80);
+    if (!rows.length) {
+      researchNotesList.innerHTML = '<li class="empty-state">No research notes found.</li>';
+      return;
+    }
+    rows.forEach((note) => {
+      const li = document.createElement("li");
+      li.className = "note-item";
+      appendTextElement(li, "strong", note.title || "Untitled note", "note-title");
+      appendTextElement(li, "div", note.highlight_text ? `“${note.highlight_text.slice(0, 120)}”` : (note.note_body || "").slice(0, 120), "note-body");
+      const actions = document.createElement("div");
+      actions.className = "note-actions";
+      const insertBtn = document.createElement("button");
+      insertBtn.className = "pill mini";
+      insertBtn.textContent = "Insert";
+      insertBtn.addEventListener("click", () => {
+        const text = (note.highlight_text || note.note_body || "").trim();
+        if (!text) return;
+        const selection = quill.getSelection(true);
+        const idx = selection ? selection.index : quill.getLength();
+        quill.insertText(idx, `${text}
+`, "user");
+      });
+      actions.appendChild(insertBtn);
+      li.appendChild(actions);
+      researchNotesList.appendChild(li);
     });
   }
 
@@ -967,7 +1049,7 @@ function startEditor() {
   document.querySelectorAll("#note-modal .format-toolbar [data-format]").forEach((btn) => btn.addEventListener("click", () => formatQuickNote(btn.dataset.format)));
   window.addEventListener("click", (event) => { if (event.target === noteModal) closeNewNoteModal(); });
 
-  ["notes-filter-tag", "notes-filter-project", "notes-filter-source", "notes-sort"].forEach((id) => {
+  ["notes-filter-tag", "notes-filter-project", "notes-filter-source", "notes-filter-search", "notes-sort"].forEach((id) => {
     document.getElementById(id)?.addEventListener("input", () => loadNotes());
   });
 
@@ -983,8 +1065,10 @@ function startEditor() {
     citationSearchTimer = setTimeout(async () => loadCitationLibrary(query), 250);
   });
 
+  researchNotesSearch?.addEventListener("input", () => renderResearchNotes());
+
   const tabs = document.querySelectorAll(".tab");
-  const panels = { library: document.getElementById("tab-library"), "in-doc": document.getElementById("tab-in-doc") };
+  const panels = { library: document.getElementById("tab-library"), "in-doc": document.getElementById("tab-in-doc"), research: document.getElementById("tab-research") };
   tabs.forEach((tab) => tab.addEventListener("click", () => {
     tabs.forEach((b) => b.classList.remove("active"));
     tab.classList.add("active");

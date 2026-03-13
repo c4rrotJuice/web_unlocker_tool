@@ -1,6 +1,6 @@
-# Web Unlocker Tool
+# Writior Research Workflow
 
-Web Unlocker Tool is a FastAPI-based web application (plus companion browser extension) for opening paywall/anti-bot protected pages in a cleaned reader view, collecting citations, and managing a research workflow (history, bookmarks, and an integrated editor).
+Writior Research Workflow is a FastAPI-based web application (plus companion browser extension) for opening paywall/anti-bot protected pages in a cleaned reader view, collecting citations, and managing a research workflow (history, bookmarks, and an integrated editor).
 
 ## What this project includes
 

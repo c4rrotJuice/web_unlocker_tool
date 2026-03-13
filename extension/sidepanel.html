@@ -3,13 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Web Unlocker</title>
+    <title>Writior Side Panel</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main class="container">
+    <main class="container writior-sidepanel">
       <header>
-        <h1>Writior Capture</h1>
+        <div class="sidepanel-header-row">
+          <h1>Writior Capture</h1>
+          <button id="panel-collapse" class="pill mini" type="button" title="Collapse panel">Collapse</button>
+        </div>
         <p id="status" class="status">Checking session…</p>
         <div id="toast" class="toast hidden" role="status" aria-live="polite" tabindex="0"></div>
       </header>
@@ -101,6 +104,6 @@
       </section>
     </main>
 
-    <script type="module" src="popup.js"></script>
+    <script type="module" src="sidepanel.js"></script>
   </body>
 </html>

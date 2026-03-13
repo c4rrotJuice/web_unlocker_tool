@@ -37,6 +37,7 @@ const quickNoteTags = document.getElementById("quick-note-tags");
 const quickNoteProject = document.getElementById("quick-note-project");
 const saveQuickNoteButton = document.getElementById("save-quick-note");
 const cancelQuickNoteButton = document.getElementById("cancel-quick-note");
+const panelCollapseButton = document.getElementById("panel-collapse");
 
 let signupExpanded = false;
 let activeTab = "citations";
@@ -482,6 +483,11 @@ document.querySelectorAll(".format-toolbar [data-format]").forEach((btn) => btn.
 saveQuickNoteButton.addEventListener("click", saveQuickNote);
 cancelQuickNoteButton.addEventListener("click", clearQuickNoteForm);
 tabButtons.forEach((btn) => btn.addEventListener("click", () => setActiveTab(btn.dataset.tab)));
+
+panelCollapseButton?.addEventListener("click", async () => {
+  await sendMessage("COLLAPSE_SIDEPANEL");
+  setStatus("Panel collapsed. Use the floating Writior icon to reopen.");
+});
 
 (async () => {
   await loadSession();

@@ -5,7 +5,19 @@ import { BACKEND_BASE_URL } from "./config.js";
 const USAGE_KEY = "usage_snapshot";
 const NOTES_KEY = "notes_state";
 const NOTES_SYNC_QUEUE_KEY = "notes_sync_queue";
+const BACKGROUND_SYNC_QUEUE_KEY = "background_sync_queue";
 const REFRESH_WINDOW_SECONDS = 120;
+const SIDEPANEL_COLLAPSED_KEY = "sidepanel_collapsed";
+const RESEARCH_LAST_SELECTION_KEY = "research_last_selection";
+const RESEARCH_DB_NAME = "writior_research_state";
+const RESEARCH_DB_VERSION = 1;
+const TIER_CACHE_KEY = "tier_cache";
+
+const researchState = {
+  notes: [],
+  citations: [],
+  lastSelection: "",
+};
 const supabaseClient = createSupabaseAuthClient();
 let debugEnabled = false;
 const debug = (...args) => {
@@ -31,6 +43,307 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 void migrateLegacyNotesStateIfNeeded();
+void hydrateResearchState();
+
+function openResearchDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(RESEARCH_DB_NAME, RESEARCH_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains("notes")) {
+        db.createObjectStore("notes", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("citations")) {
+        db.createObjectStore("citations", { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("indexeddb_open_failed"));
+  });
+}
+
+async function withResearchStore(storeName, mode, callback) {
+  const db = await openResearchDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, mode);
+    const store = tx.objectStore(storeName);
+    let callbackResult;
+    try {
+      callbackResult = callback(store);
+    } catch (error) {
+      tx.abort();
+      reject(error);
+      return;
+    }
+    tx.oncomplete = () => {
+      db.close();
+      resolve(callbackResult);
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error || new Error("indexeddb_tx_failed"));
+    };
+    tx.onabort = () => {
+      db.close();
+      reject(tx.error || new Error("indexeddb_tx_aborted"));
+    };
+  });
+}
+
+async function readAllFromStore(storeName) {
+  const db = await openResearchDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, "readonly");
+    const store = tx.objectStore(storeName);
+    const request = store.getAll();
+    request.onsuccess = () => resolve(Array.isArray(request.result) ? request.result : []);
+    request.onerror = () => reject(request.error || new Error("indexeddb_read_failed"));
+    tx.oncomplete = () => db.close();
+    tx.onerror = () => db.close();
+    tx.onabort = () => db.close();
+  });
+}
+
+async function hydrateResearchState() {
+  try {
+    const [notes, citations, selectionPayload] = await Promise.all([
+      readAllFromStore("notes"),
+      readAllFromStore("citations"),
+      readStorage({ [RESEARCH_LAST_SELECTION_KEY]: "" }),
+    ]);
+    researchState.notes = notes;
+    researchState.citations = citations;
+    researchState.lastSelection = String(selectionPayload?.[RESEARCH_LAST_SELECTION_KEY] || "");
+  } catch (error) {
+    debug("hydrateResearchState failed", error);
+  }
+}
+
+async function setResearchLastSelection(text) {
+  const lastSelection = String(text || "");
+  researchState.lastSelection = lastSelection;
+  await writeStorage({ [RESEARCH_LAST_SELECTION_KEY]: lastSelection });
+}
+
+async function upsertResearchNote(note) {
+  if (!note?.id) return;
+  const next = { ...note };
+  await withResearchStore("notes", "readwrite", (store) => {
+    store.put(next);
+  });
+  const index = researchState.notes.findIndex((item) => item.id === next.id);
+  if (index >= 0) {
+    researchState.notes[index] = next;
+  } else {
+    researchState.notes.unshift(next);
+  }
+}
+
+async function deleteResearchNote(noteId) {
+  if (!noteId) return;
+  await withResearchStore("notes", "readwrite", (store) => {
+    store.delete(noteId);
+  });
+  researchState.notes = researchState.notes.filter((item) => item.id !== noteId);
+}
+
+function normalizeCitationRecord(payload = {}, responseData = {}) {
+  const id = responseData.id || payload.id || `citation_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  return {
+    id,
+    url: payload.url || responseData.url || null,
+    excerpt: payload.excerpt || responseData.excerpt || null,
+    format: payload.format || responseData.format || null,
+    inline_citation: payload.inline_citation || responseData.inline_citation || null,
+    full_citation: payload.full_citation || responseData.full_citation || payload.full_text || null,
+    cited_at: responseData.cited_at || new Date().toISOString(),
+  };
+}
+
+async function upsertResearchCitation(record) {
+  if (!record?.id) return;
+  await withResearchStore("citations", "readwrite", (store) => {
+    store.put(record);
+  });
+  const index = researchState.citations.findIndex((item) => item.id === record.id);
+  if (index >= 0) {
+    researchState.citations[index] = record;
+  } else {
+    researchState.citations.unshift(record);
+  }
+}
+
+function getTierPolicy(tier = "free", isAuthenticated = false) {
+  const normalizedTier = String(tier || "free").toLowerCase();
+  if (normalizedTier === "pro") {
+    return { tier: "pro", citations: -1, documents: -1, periodMs: 24 * 60 * 60 * 1000, sync_enabled: true };
+  }
+  if (normalizedTier === "standard") {
+    return { tier: "standard", citations: 15, documents: 14, periodMs: 14 * 24 * 60 * 60 * 1000, sync_enabled: true };
+  }
+  if (isAuthenticated) {
+    return { tier: "free", citations: 10, documents: 3, periodMs: 24 * 60 * 60 * 1000, sync_enabled: true };
+  }
+  return { tier: "free", citations: 5, documents: 0, periodMs: 7 * 24 * 60 * 60 * 1000, sync_enabled: false };
+}
+
+function parseResetTimestamp(value) {
+  if (!value) return null;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function getTierCache() {
+  const { [TIER_CACHE_KEY]: tierCache } = await readStorage({ [TIER_CACHE_KEY]: null });
+  if (tierCache && typeof tierCache === "object") {
+    return tierCache;
+  }
+  const base = getTierPolicy("free", false);
+  const created = {
+    tier: base.tier,
+    is_authenticated: false,
+    citations_remaining: base.citations,
+    documents_remaining: base.documents,
+    reset_timestamp: Date.now() + base.periodMs,
+    sync_enabled: base.sync_enabled,
+  };
+  await writeStorage({ [TIER_CACHE_KEY]: created });
+  return created;
+}
+
+async function setTierCache(cache) {
+  await writeStorage({ [TIER_CACHE_KEY]: cache });
+}
+
+function normalizeTierFromUsage(usage, session) {
+  const accountType = String(usage?.account_type || (session ? "free" : "anonymous")).toLowerCase();
+  if (accountType === "pro") return { tier: "pro", isAuthenticated: true };
+  if (accountType === "standard") return { tier: "standard", isAuthenticated: true };
+  if (accountType === "free" || accountType === "freemium") return { tier: "free", isAuthenticated: Boolean(session) };
+  return { tier: "free", isAuthenticated: false };
+}
+
+async function hydrateTierCacheFromUsage(usage, session) {
+  const current = await getTierCache();
+  const normalized = normalizeTierFromUsage(usage, session);
+  const policy = getTierPolicy(normalized.tier, normalized.isAuthenticated);
+  const usageResetTs = parseResetTimestamp(usage?.reset_at);
+  const now = Date.now();
+  const hasSameTier = current.tier === policy.tier && Boolean(current.is_authenticated) === normalized.isAuthenticated;
+  const notExpired = Number(current.reset_timestamp) > now;
+
+  const next = hasSameTier && notExpired
+    ? {
+        ...current,
+        tier: policy.tier,
+        is_authenticated: normalized.isAuthenticated,
+        sync_enabled: policy.sync_enabled,
+      }
+    : {
+        tier: policy.tier,
+        is_authenticated: normalized.isAuthenticated,
+        citations_remaining: policy.citations,
+        documents_remaining: policy.documents,
+        reset_timestamp: usageResetTs || now + policy.periodMs,
+        sync_enabled: policy.sync_enabled,
+      };
+
+  await setTierCache(next);
+  return next;
+}
+
+async function getTierCacheWithAutoReset() {
+  const cache = await getTierCache();
+  const now = Date.now();
+  if (!cache?.reset_timestamp || Number(cache.reset_timestamp) > now) {
+    return cache;
+  }
+  const policy = getTierPolicy(cache.tier, Boolean(cache.is_authenticated));
+  const reset = {
+    ...cache,
+    citations_remaining: policy.citations,
+    documents_remaining: policy.documents,
+    reset_timestamp: now + policy.periodMs,
+    sync_enabled: policy.sync_enabled,
+  };
+  await setTierCache(reset);
+  return reset;
+}
+
+async function consumeTierCredit(kind) {
+  const cache = await getTierCacheWithAutoReset();
+  const field = kind === "documents" ? "documents_remaining" : "citations_remaining";
+  const current = Number(cache[field]);
+  if (!Number.isFinite(current) || current < 0) {
+    return { allowed: true, cache };
+  }
+  if (current <= 0) {
+    return { allowed: false, cache };
+  }
+  const next = { ...cache, [field]: current - 1 };
+  await setTierCache(next);
+  return { allowed: true, cache: next };
+}
+
+
+async function isSidePanelCollapsed() {
+  const payload = await readStorage({ [SIDEPANEL_COLLAPSED_KEY]: false });
+  return Boolean(payload?.[SIDEPANEL_COLLAPSED_KEY]);
+}
+
+async function setSidePanelCollapsed(collapsed) {
+  await writeStorage({ [SIDEPANEL_COLLAPSED_KEY]: Boolean(collapsed) });
+}
+
+async function applySidePanelState() {
+  if (!chrome.sidePanel?.setOptions) return;
+  const collapsed = await isSidePanelCollapsed();
+  await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: !collapsed });
+}
+
+async function openSidePanel(tabId) {
+  if (!chrome.sidePanel?.open || !chrome.sidePanel?.setOptions) {
+    return { error: "sidepanel_unavailable" };
+  }
+  await setSidePanelCollapsed(false);
+  await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: true });
+  if (Number.isInteger(tabId)) {
+    await chrome.sidePanel.open({ tabId });
+  } else {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) {
+      await chrome.sidePanel.open({ tabId: tab.id });
+    }
+  }
+  return { ok: true };
+}
+
+async function collapseSidePanel() {
+  if (!chrome.sidePanel?.setOptions) {
+    return { error: "sidepanel_unavailable" };
+  }
+  await setSidePanelCollapsed(true);
+  await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: false });
+  return { ok: true };
+}
+
+void applySidePanelState();
+
+chrome.runtime.onInstalled?.addListener(() => {
+  void applySidePanelState();
+  void flushBackgroundSyncQueue();
+  void flushSyncQueue();
+});
+
+chrome.runtime.onStartup?.addListener(() => {
+  void applySidePanelState();
+  void flushBackgroundSyncQueue();
+  void flushSyncQueue();
+});
+
+chrome.action.onClicked?.addListener((tab) => {
+  void openSidePanel(tab?.id);
+});
 
 function getNowSeconds() {
   return Math.floor(Date.now() / 1000);
@@ -147,6 +460,78 @@ async function getSyncQueue() {
 
 async function setSyncQueue(queue) {
   await writeStorage({ [NOTES_SYNC_QUEUE_KEY]: queue });
+}
+
+async function getBackgroundSyncQueue() {
+  const { [BACKGROUND_SYNC_QUEUE_KEY]: queue } = await readStorage([BACKGROUND_SYNC_QUEUE_KEY]);
+  return Array.isArray(queue) ? queue : [];
+}
+
+async function setBackgroundSyncQueue(queue) {
+  await writeStorage({ [BACKGROUND_SYNC_QUEUE_KEY]: queue });
+}
+
+async function enqueueBackgroundSyncOperation(operation) {
+  const queue = await getBackgroundSyncQueue();
+  queue.push({ ...operation, queued_at: new Date().toISOString() });
+  await setBackgroundSyncQueue(queue);
+}
+
+let backgroundSyncInFlight = false;
+async function flushBackgroundSyncQueue() {
+  if (backgroundSyncInFlight) return;
+  backgroundSyncInFlight = true;
+  try {
+    const session = await ensureValidSession();
+    if (!session) return;
+    const queue = await getBackgroundSyncQueue();
+    if (!queue.length) return;
+
+    const remaining = [];
+    for (const item of queue) {
+      try {
+        if (item.type === "citation") {
+          const response = await apiFetch(
+            "/api/citations",
+            { method: "POST", body: JSON.stringify(item.payload || {}) },
+            session.access_token,
+          );
+          if (!response.ok) {
+            if (response.status === 401) {
+              await clearSession();
+              remaining.push(item);
+              break;
+            }
+            remaining.push(item);
+          }
+          continue;
+        }
+
+        if (item.type === "usage_event") {
+          const response = await apiFetch(
+            "/api/extension/usage-event",
+            { method: "POST", body: JSON.stringify(item.payload || {}) },
+            session.access_token,
+          );
+          if (!response.ok) {
+            if (response.status === 401) {
+              await clearSession();
+              remaining.push(item);
+              break;
+            }
+            remaining.push(item);
+          }
+          continue;
+        }
+      } catch (error) {
+        remaining.push(item);
+      }
+    }
+
+    await setBackgroundSyncQueue(remaining);
+  } finally {
+    backgroundSyncInFlight = false;
+  }
 }
 
 function upsertNamedEntity(list, name) {
@@ -272,6 +657,8 @@ async function flushSyncQueue() {
 
 async function setUsageSnapshot(snapshot) {
   await writeStorage({ [USAGE_KEY]: snapshot });
+  const session = await ensureValidSession();
+  await hydrateTierCacheFromUsage(snapshot || {}, session);
 }
 
 async function getUsageSnapshot() {
@@ -337,7 +724,7 @@ async function ensureValidSession() {
   }
 }
 
-async function fetchUnlockPermit(payload) {
+async function fetchUnlockPermitRemote(payload) {
   const session = await ensureValidSession();
   const response = await apiFetch(
     "/api/extension/unlock-permit",
@@ -367,65 +754,36 @@ async function fetchUnlockPermit(payload) {
   return { status: response.status, data };
 }
 
+async function fetchUnlockPermit(payload) {
+  const requestPayload = payload || {};
+  const isDryRun = Boolean(requestPayload.dry_run);
 
-async function logUsageEvent(payload) {
-  const session = await ensureValidSession();
-  if (!session) {
-    return { error: "unauthenticated", status: 401 };
+  if (isDryRun) {
+    const snapshot = await getUsageSnapshot();
+    if (snapshot) {
+      void fetchUnlockPermitRemote(requestPayload).catch((error) => {
+        debug("fetchUnlockPermit background refresh failed", error);
+      });
+      return { status: 200, data: snapshot, local_first: true };
+    }
   }
 
-  const response = await apiFetch(
-    "/api/extension/usage-event",
-    {
-      method: "POST",
-      body: JSON.stringify(payload),
-    },
-    session.access_token,
-  );
-
-  if (response.status === 401) {
-    await clearSession();
-    await clearStorage([USAGE_KEY]);
-  }
-
-  let data = null;
-  try {
-    data = await response.json();
-  } catch (error) {
-    // ignore
-  }
-
-  return { status: response.status, data };
+  return fetchUnlockPermitRemote(requestPayload);
 }
 
-async function saveCitation(payload) {
-  const session = await ensureValidSession();
-  if (!session) {
-    return { error: "unauthenticated", status: 401 };
-  }
 
-  const response = await apiFetch(
-    "/api/citations",
-    {
-      method: "POST",
-      body: JSON.stringify(payload),
-    },
-    session.access_token,
-  );
+async function logUsageEvent(payload) {
+  await enqueueBackgroundSyncOperation({ type: "usage_event", payload: payload || {} });
+  void flushBackgroundSyncQueue();
+  return { status: 202, data: { enqueued: true } };
+}
 
-  if (response.status === 401) {
-    await clearSession();
-    await clearStorage([USAGE_KEY]);
-  }
-
-  let data = null;
-  try {
-    data = await response.json();
-  } catch (error) {
-    // ignore
-  }
-
-  return { status: response.status, data };
+function startCitationSync(payload) {
+  void enqueueBackgroundSyncOperation({ type: "citation", payload: payload || {} })
+    .then(() => flushBackgroundSyncQueue())
+    .catch((error) => {
+      debug("SAVE_CITATION remote sync enqueue failed", error);
+    });
 }
 
 
@@ -624,7 +982,7 @@ async function workInEditor(payload) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message?.type) {
+  if (!message?.type && !message?.action) {
     return false;
   }
 
@@ -635,6 +993,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         tabId: sender.tab?.id,
         frameId: sender.frameId,
       });
+      if (message.action === "open_panel") {
+        const result = await openSidePanel(sender.tab?.id || null);
+        sendResponse(result);
+        return;
+      }
+
       switch (message.type) {
         case "login": {
           const { data } = await supabaseClient.auth.signInWithPassword({
@@ -702,14 +1066,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         case "logout": {
           await clearSession();
-          await clearStorage([USAGE_KEY]);
+          await clearStorage([USAGE_KEY, TIER_CACHE_KEY]);
           sendResponse({ success: true });
           break;
         }
         case "get-session": {
           const session = await ensureValidSession();
           const usage = await getUsageSnapshotForSession(session);
-          sendResponse({ session, usage });
+          if (usage) {
+            await hydrateTierCacheFromUsage(usage, session);
+          }
+          const tierCache = await getTierCacheWithAutoReset();
+          sendResponse({ session, usage, tier_cache: tierCache });
           break;
         }
         case "check-unlock": {
@@ -728,9 +1096,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           break;
         }
         case "SAVE_CITATION": {
-          const result = await saveCitation(message.payload || {});
-          debug("SAVE_CITATION result", result);
-          sendResponse(result);
+          const gate = await consumeTierCredit("citations");
+          if (!gate.allowed) {
+            sendResponse({
+              status: 403,
+              data: {
+                detail: {
+                  message: "Citation limit reached for current period.",
+                  toast: "Citation limit reached. Upgrade your tier or wait for reset.",
+                },
+                tier_cache: gate.cache,
+                local_gate: true,
+              },
+            });
+            break;
+          }
+
+          const citationPayload = message.payload || {};
+          try {
+            const record = normalizeCitationRecord(citationPayload, {});
+            await upsertResearchCitation(record);
+          } catch (error) {
+            debug("upsertResearchCitation failed", error);
+          }
+          startCitationSync(citationPayload);
+          const localResult = { status: 200, data: { local_saved: true, sync_started: true, tier_cache: gate.cache } };
+          debug("SAVE_CITATION result", localResult);
+          sendResponse(localResult);
           break;
         }
         case "RENDER_CITATION": {
@@ -748,6 +1140,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           break;
         }
         case "WORK_IN_EDITOR": {
+          const gate = await consumeTierCredit("documents");
+          if (!gate.allowed) {
+            sendResponse({
+              status: 403,
+              error: "upgrade_required",
+              data: {
+                allowed: false,
+                toast: "Document limit reached for your current tier.",
+                tier_cache: gate.cache,
+                local_gate: true,
+              },
+            });
+            break;
+          }
           const result = await workInEditor(message.payload || {});
           debug("WORK_IN_EDITOR result", result);
           sendResponse(result);
@@ -784,6 +1190,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             await enqueueSyncOperation({ type: "create", note });
             void flushSyncQueue();
           }
+          try {
+            await upsertResearchNote(note);
+          } catch (error) {
+            debug("upsertResearchNote failed", error);
+          }
           sendResponse({ status: 200, data: { note, sync_blocked: syncBlocked, storage_bytes: localSize, sync_limit_bytes: Number.isFinite(syncLimit) ? syncLimit : null } });
           break;
         }
@@ -808,6 +1219,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             await enqueueSyncOperation({ type: "update", note: result.note });
             void flushSyncQueue();
           }
+          try {
+            await upsertResearchNote(result.note);
+          } catch (error) {
+            debug("upsertResearchNote failed", error);
+          }
           sendResponse({ status: 200, data: { note: result.note } });
           break;
         }
@@ -824,7 +1240,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             await enqueueSyncOperation({ type: "delete", note: { id: message.id } });
             void flushSyncQueue();
           }
+          try {
+            await deleteResearchNote(message.id);
+          } catch (error) {
+            debug("deleteResearchNote failed", error);
+          }
           sendResponse({ status: 200, data: { deleted: true } });
+          break;
+        }
+
+        case "OPEN_SIDEPANEL": {
+          const result = await openSidePanel(sender.tab?.id || null);
+          sendResponse(result);
+          break;
+        }
+        case "COLLAPSE_SIDEPANEL": {
+          const result = await collapseSidePanel();
+          sendResponse(result);
+          break;
+        }
+
+        case "SET_LAST_SELECTION": {
+          await setResearchLastSelection(message.text || "");
+          sendResponse({ status: 200, data: { ok: true } });
+          break;
+        }
+        case "GET_RESEARCH_STATE": {
+          sendResponse({ status: 200, data: getResearchStateSnapshot() });
           break;
         }
         default:

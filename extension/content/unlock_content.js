@@ -9,13 +9,31 @@
     }
   };
 
-  if (window.__webUnlockerContentScriptInjected) {
+  const EXT_KEY = "WRITIOR_EXTENSION";
+  const existingExtension = window[EXT_KEY];
+  if (existingExtension?.mounted) {
     if (document.documentElement) {
       document.documentElement.dataset.webUnlocker = "1";
     }
     return;
   }
-  window.__webUnlockerContentScriptInjected = true;
+  if (existingExtension?.cleanup) {
+    try {
+      existingExtension.cleanup();
+    } catch (error) {
+      debug("Previous extension cleanup failed", error);
+    }
+  }
+
+  const lifecycle = {
+    mounted: false,
+    observers: [],
+    listeners: [],
+    cleanupHandlers: [],
+    root: null,
+    cleanup: null,
+  };
+  window[EXT_KEY] = lifecycle;
 
   const state = {
     selectionText: "",
@@ -26,9 +44,42 @@
     accountType: "anonymous",
   };
 
+  let currentUrl = window.location.href;
+  let spaMutationDebounce = null;
+
   const STYLE_ID = "web-unlocker-extension-style";
+  const ROOT_ID = "writior-root";
   // Guard flag prevents repeated enable toasts on reinjection.
   const ENABLE_TOAST_FLAG = "__WEB_UNLOCKER_ENABLED__";
+
+  function getWritiorRoot() {
+    if (lifecycle.root?.isConnected) {
+      return lifecycle.root;
+    }
+    const host = document.documentElement || document.body;
+    if (!host) return null;
+    let root = document.getElementById(ROOT_ID);
+    if (!root) {
+      root = document.createElement("div");
+      root.id = ROOT_ID;
+      host.appendChild(root);
+    }
+    lifecycle.root = root;
+    return root;
+  }
+
+  function appendToWritiorRoot(node) {
+    const root = getWritiorRoot();
+    if (!root || !node) return false;
+    root.appendChild(node);
+    return true;
+  }
+
+  function addManagedEventListener(target, type, handler, options) {
+    if (!target?.addEventListener) return;
+    target.addEventListener(type, handler, options);
+    lifecycle.listeners.push({ target, type, handler, options });
+  }
 
   let styleInjectQueued = false;
   function injectStyles() {
@@ -58,6 +109,17 @@
         -moz-user-select: text !important;
         -ms-user-select: text !important;
         user-select: text !important;
+      }
+
+      #writior-root {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 2147483645;
+      }
+
+      #writior-root > * {
+        pointer-events: auto;
       }
 
       .web-unlocker-copy-btn {
@@ -336,6 +398,49 @@
         opacity: 1;
         transform: translate(-50%, -6px);
       }
+
+      #writior-floating-icon {
+        position: fixed;
+        right: 20px;
+        bottom: 20px;
+        width: 48px;
+        height: 48px;
+        border-radius: 999px;
+        border: 1px solid rgba(148,163,184,0.45);
+        background: #111827;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 2147483647;
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+        cursor: pointer;
+        overflow: hidden;
+      }
+
+      #writior-floating-icon img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      #writior-floating-icon:hover {
+        transform: translateY(-1px);
+      }
+      #writior-floating-icon.writior-icon.highlight-active {
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.45), 0 0 18px rgba(56, 189, 248, 0.55), 0 12px 28px rgba(0, 0, 0, 0.35);
+      }
+
+      #writior-floating-icon.writior-icon.capture-confirmed {
+        animation: writior-capture-pulse 420ms ease-out;
+      }
+
+      @keyframes writior-capture-pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.08); }
+        100% { transform: scale(1); }
+      }
+
     `;
     document.head.appendChild(style);
   }
@@ -363,7 +468,7 @@
   }
 
   function showToast(message, isError = false) {
-    const root = document.body || document.documentElement;
+    const root = getWritiorRoot() || document.body || document.documentElement;
     if (!root) {
       debug("Toast skipped; no root element available.");
       return;
@@ -383,8 +488,9 @@
   }
 
   function closePopup() {
-    document.querySelector(".web-unlocker-popup")?.remove();
-    document.querySelector(".web-unlocker-backdrop")?.remove();
+    getWritiorRoot()?.querySelector(".web-unlocker-popup")?.remove();
+    getWritiorRoot()?.querySelector(".web-unlocker-backdrop")?.remove();
+    setIconHighlightActive(false);
     document.removeEventListener("keydown", handleKeydown);
     unlockPageScroll();
   }
@@ -901,7 +1007,7 @@
     const response = await sendMessage("SAVE_CITATION", payload);
     if (response?.status === 401 || response?.error === "unauthenticated") {
       showToast("Sign in to save citations.", true);
-      return;
+      return false;
     }
     if (response?.status === 403) {
       const message =
@@ -909,12 +1015,14 @@
         response?.data?.detail?.message ||
         "Upgrade to unlock this citation format.";
       showToast(message, true);
-      return;
+      return false;
     }
     if (response?.error) {
       showToast("Failed to save citation.", true);
-      return;
+      return false;
     }
+    triggerCaptureConfirmed();
+    return true;
   }
 
   async function handleCopy(format, citationText, metadata) {
@@ -944,7 +1052,7 @@
     state.lastFormat = format;
     state.lastCitationText = resolvedText;
 
-    await saveCitation({
+    void saveCitation({
       url: metadata.url,
       excerpt: metadata.excerpt,
       inline_citation: resolvedInline,
@@ -1224,13 +1332,10 @@
       }
     });
 
-    const root = document.body || document.documentElement;
-    if (!root) {
+    if (!appendToWritiorRoot(backdrop) || !appendToWritiorRoot(popup)) {
       debug("Popup aborted; no root element available.");
       return;
     }
-    root.appendChild(backdrop);
-    root.appendChild(popup);
     debug("Popup injected.");
 
     for (const format of formats) {
@@ -1248,7 +1353,7 @@
         });
     }
 
-    document.addEventListener("keydown", handleKeydown);
+    addManagedEventListener(document, "keydown", handleKeydown);
     lockPageScroll();
     popup.focus();
 
@@ -1273,22 +1378,101 @@
     updateCustomPreview();
   }
 
+
+
+  let floatingIcon = null;
+
+  function ensureFloatingIcon() {
+    if (floatingIcon?.isConnected) {
+      return floatingIcon;
+    }
+    const root = getWritiorRoot() || document.body || document.documentElement;
+    if (!root) return null;
+    const existing = document.getElementById("writior-floating-icon");
+    if (existing) {
+      floatingIcon = existing;
+      return floatingIcon;
+    }
+
+    const icon = document.createElement("div");
+    icon.id = "writior-floating-icon";
+    icon.className = "writior-icon";
+    icon.setAttribute("role", "button");
+    icon.setAttribute("tabindex", "0");
+    icon.setAttribute("aria-label", "Open Writior side panel");
+
+    const image = document.createElement("img");
+    image.src = chrome.runtime.getURL("images/writior_logo_48.jpg");
+    image.alt = "Writior";
+    icon.appendChild(image);
+
+    const openPanel = async () => {
+      const response = await new Promise((resolve) => {
+        try {
+          chrome.runtime.sendMessage({ action: "open_panel" }, resolve);
+        } catch {
+          resolve({ error: "Extension context invalidated." });
+        }
+      });
+      if (response?.error) {
+        showToast("Unable to open side panel.", true);
+      }
+    };
+
+    icon.addEventListener("click", openPanel);
+    icon.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      void openPanel();
+    });
+
+    appendToWritiorRoot(icon);
+    floatingIcon = icon;
+    return floatingIcon;
+  }
+
+  let capturePulseTimeout = null;
+
+  function setIconHighlightActive(isActive) {
+    if (!floatingIcon) return;
+    floatingIcon.classList.toggle("highlight-active", Boolean(isActive));
+  }
+
+  function triggerCaptureConfirmed() {
+    if (!floatingIcon) return;
+    floatingIcon.classList.remove("capture-confirmed");
+    // Force reflow so quick repeated captures retrigger animation.
+    void floatingIcon.offsetWidth;
+    floatingIcon.classList.add("capture-confirmed");
+    if (capturePulseTimeout) {
+      clearTimeout(capturePulseTimeout);
+    }
+    capturePulseTimeout = setTimeout(() => {
+      floatingIcon?.classList.remove("capture-confirmed");
+      capturePulseTimeout = null;
+    }, 480);
+  }
+
   let copyButton = null;
   let lastSelectionRect = null;
   let lastSelectionRange = null;
   let ignoreClearUntil = 0;
   let repositionListenersActive = false;
+  let repositionHandler = null;
 
   function closeNoteModal() {
-    document.querySelector(".web-unlocker-note-modal")?.remove();
-    document.querySelector(".web-unlocker-backdrop")?.remove();
+    getWritiorRoot()?.querySelector(".web-unlocker-note-modal")?.remove();
+    getWritiorRoot()?.querySelector(".web-unlocker-backdrop")?.remove();
+    setIconHighlightActive(false);
     unlockPageScroll();
   }
 
   async function openNoteModal() {
     removeCopyButton();
     closeNoteModal();
-    const root = document.body || document.documentElement;
+    const root = getWritiorRoot() || document.body || document.documentElement;
     if (!root) return;
     const noteMetadata = validateCitationMetadata(getCitationMetadata(state.selectionText || ""));
 
@@ -1339,6 +1523,7 @@
         return;
       }
       showToast(response?.data?.sync_blocked ? "Saved locally. Sync paused due to storage cap." : "Note saved.");
+      triggerCaptureConfirmed();
       closeNoteModal();
     });
   }
@@ -1364,21 +1549,22 @@
         if (entry.key === "copy") {
           const copied = await copyText(state.selectionText);
           showToast(copied ? "Copied selection." : "Copy failed.", !copied);
+          setIconHighlightActive(false);
           removeCopyButton();
           return;
         }
         if (entry.key === "cite") {
+          setIconHighlightActive(false);
           removeCopyButton();
           await buildPopup();
           return;
         }
+        setIconHighlightActive(false);
         await openNoteModal();
       }, true);
       button.appendChild(action);
     });
-    const root = document.documentElement || document.body;
-    if (!root) return null;
-    root.appendChild(button);
+    if (!appendToWritiorRoot(button)) return null;
     copyButton = button;
     return copyButton;
   }
@@ -1478,9 +1664,9 @@
       return;
     }
     repositionListenersActive = true;
-    const handler = () => updateCopyButtonPosition();
-    window.addEventListener("scroll", handler, true);
-    window.addEventListener("resize", handler, true);
+    repositionHandler = () => updateCopyButtonPosition();
+    addManagedEventListener(window, "scroll", repositionHandler, true);
+    addManagedEventListener(window, "resize", repositionHandler, true);
   }
 
   function showCopyButton(rect) {
@@ -1494,19 +1680,26 @@
       return;
     }
     const target = event.target;
-    if (target instanceof Element && target.closest(".web-unlocker-popup")) {
+    if (
+      target instanceof Element &&
+      (target.closest(".web-unlocker-popup") || target.closest(".web-unlocker-note-modal"))
+    ) {
       return;
     }
     const selection = window.getSelection();
     const text = selection ? selection.toString().trim() : "";
     debug("Mouseup selection", { length: text.length });
     if (!text) {
+      setIconHighlightActive(false);
+      void sendMessage("SET_LAST_SELECTION", { text: "" });
       removeCopyButton();
       return;
     }
 
     state.selectionText = text;
     state.lastCitationText = "";
+    setIconHighlightActive(true);
+    void sendMessage("SET_LAST_SELECTION", { text });
 
     const rect = getSelectionRect(selection, event);
     if (!rect) {
@@ -1530,48 +1723,179 @@
       target.classList.contains("web-unlocker-copy-btn") ||
       target.closest(".web-unlocker-copy-btn")
     );
-    if (!inPopup && !isButton) removeCopyButton();
-  }
-
-  debug("Content script init", {
-    url: window.location.href,
-    top: window.top === window,
-    readyState: document.readyState,
-    hasBody: Boolean(document.body),
-    hasHead: Boolean(document.head),
-  });
-
-  injectStyles();
-  enableSelection();
-
-  if (document.documentElement) {
-    // Marker lets page-context DevTools confirm the script is active.
-    document.documentElement.dataset.webUnlocker = "1";
-  }
-
-  if (!window[ENABLE_TOAST_FLAG]) {
-    window[ENABLE_TOAST_FLAG] = true;
-    if (document.body) {
-      showToast("Web Unlocker enabled ✓");
-    } else {
-      debug("Enable toast skipped; body not available yet.");
+    if (!inPopup && !isButton) {
+      setIconHighlightActive(false);
+      removeCopyButton();
     }
   }
 
-  document.addEventListener("mouseup", handleMouseUp);
-  document.addEventListener("mousedown", handleMouseDown);
+  function onRouteChange(nextUrl, previousUrl) {
+    debug("Route change detected", { previousUrl, nextUrl });
+    currentUrl = nextUrl;
+    state.selectionText = "";
+    state.lastCitationText = "";
+    setIconHighlightActive(false);
+    void sendMessage("SET_LAST_SELECTION", { text: "" });
+    removeCopyButton();
+    closePopup();
+    closeNoteModal();
+    ensureFloatingIcon();
 
-  if (DEBUG) {
-    document.addEventListener(
-      "pointerdown",
-      (event) => {
-        const elements = document.elementsFromPoint(
-          event.clientX,
-          event.clientY,
-        );
-        debug("Pointerdown elementsFromPoint", elements);
-      },
-      true,
-    );
+    if (document.documentElement) {
+      document.documentElement.dataset.webUnlockerUrl = nextUrl;
+    }
   }
+
+  function checkRouteChange() {
+    const nextUrl = window.location.href;
+    if (nextUrl === currentUrl) return;
+    onRouteChange(nextUrl, currentUrl);
+  }
+
+  function observeSpaNavigation() {
+    const notifyRouteEvent = () => {
+      window.dispatchEvent(new Event("writior:route-change"));
+    };
+
+    const originalPushState = history.pushState;
+    const originalReplaceState = history.replaceState;
+
+    history.pushState = function (...args) {
+      const result = originalPushState.apply(this, args);
+      notifyRouteEvent();
+      return result;
+    };
+
+    history.replaceState = function (...args) {
+      const result = originalReplaceState.apply(this, args);
+      notifyRouteEvent();
+      return result;
+    };
+
+    lifecycle.cleanupHandlers.push(() => {
+      history.pushState = originalPushState;
+      history.replaceState = originalReplaceState;
+    });
+
+    addManagedEventListener(window, "popstate", checkRouteChange, true);
+    addManagedEventListener(window, "hashchange", checkRouteChange, true);
+    addManagedEventListener(window, "writior:route-change", checkRouteChange, true);
+
+    const mutationObserver = new MutationObserver(() => {
+      if (spaMutationDebounce) {
+        clearTimeout(spaMutationDebounce);
+      }
+      spaMutationDebounce = setTimeout(() => {
+        spaMutationDebounce = null;
+        checkRouteChange();
+      }, 120);
+    });
+
+    const observeRoot = document.body || document.documentElement;
+    if (observeRoot) {
+      mutationObserver.observe(observeRoot, { childList: true, subtree: true });
+      lifecycle.observers.push(mutationObserver);
+    }
+
+    const pollId = window.setInterval(checkRouteChange, 1000);
+    lifecycle.cleanupHandlers.push(() => {
+      window.clearInterval(pollId);
+      if (spaMutationDebounce) {
+        clearTimeout(spaMutationDebounce);
+        spaMutationDebounce = null;
+      }
+    });
+  }
+
+  function cleanup() {
+    for (const entry of lifecycle.listeners.splice(0)) {
+      try {
+        entry.target?.removeEventListener?.(entry.type, entry.handler, entry.options);
+      } catch (error) {
+        debug("Listener cleanup failed", error);
+      }
+    }
+    for (const observer of lifecycle.observers.splice(0)) {
+      try {
+        observer.disconnect();
+      } catch (error) {
+        debug("Observer cleanup failed", error);
+      }
+    }
+    for (const handler of lifecycle.cleanupHandlers.splice(0)) {
+      try {
+        handler();
+      } catch (error) {
+        debug("Cleanup handler failed", error);
+      }
+    }
+    lifecycle.root?.remove();
+    lifecycle.root = null;
+    copyButton = null;
+    floatingIcon = null;
+    repositionListenersActive = false;
+    repositionHandler = null;
+    lifecycle.mounted = false;
+  }
+
+  function bootstrap() {
+    if (lifecycle.mounted) {
+      return;
+    }
+
+    debug("Content script init", {
+      url: window.location.href,
+      top: window.top === window,
+      readyState: document.readyState,
+      hasBody: Boolean(document.body),
+      hasHead: Boolean(document.head),
+    });
+
+    getWritiorRoot();
+    injectStyles();
+    enableSelection();
+
+    if (document.documentElement) {
+      // Marker lets page-context DevTools confirm the script is active.
+      document.documentElement.dataset.webUnlocker = "1";
+    }
+
+    if (!window[ENABLE_TOAST_FLAG]) {
+      window[ENABLE_TOAST_FLAG] = true;
+      if (document.body) {
+        showToast("Web Unlocker enabled ✓");
+      } else {
+        debug("Enable toast skipped; body not available yet.");
+      }
+    }
+
+    addManagedEventListener(document, "mouseup", handleMouseUp);
+    addManagedEventListener(document, "mousedown", handleMouseDown);
+    observeSpaNavigation();
+    ensureFloatingIcon();
+
+    if (document.documentElement) {
+      document.documentElement.dataset.webUnlockerUrl = currentUrl;
+    }
+
+    if (DEBUG) {
+      addManagedEventListener(
+        document,
+        "pointerdown",
+        (event) => {
+          const elements = document.elementsFromPoint(
+            event.clientX,
+            event.clientY,
+          );
+          debug("Pointerdown elementsFromPoint", elements);
+        },
+        true,
+      );
+    }
+
+    lifecycle.mounted = true;
+  }
+
+  lifecycle.cleanup = cleanup;
+  bootstrap();
 })();

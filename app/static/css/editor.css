@@ -45,6 +45,27 @@ body { margin: 0; font-family: "Inter", "Segoe UI", sans-serif; color: var(--tex
 .editor-canvas { min-height: 360px; max-height: 560px; overflow-y: auto; border:1px solid var(--border); border-radius:8px; background:var(--wu-surface-2); }
 .ql-container.ql-snow { border: none; }
 .ql-editor { min-height: 360px; max-height: 560px; font-size:16px; line-height:1.6; overflow-y:auto; }
+
+.ql-editor { font-family: "Times New Roman", Times, serif; font-size: 12px; line-height: 1.15; }
+.ql-snow .ql-picker.ql-font .ql-picker-item[data-value="times-new-roman"]::before,
+.ql-snow .ql-picker.ql-font .ql-picker-label[data-value="times-new-roman"]::before { content: "Times New Roman"; font-family: "Times New Roman", Times, serif; }
+.ql-snow .ql-picker.ql-font .ql-picker-item[data-value="georgia"]::before,
+.ql-snow .ql-picker.ql-font .ql-picker-label[data-value="georgia"]::before { content: "Georgia"; font-family: Georgia, serif; }
+.ql-snow .ql-picker.ql-font .ql-picker-item[data-value="garamond"]::before,
+.ql-snow .ql-picker.ql-font .ql-picker-label[data-value="garamond"]::before { content: "Garamond"; font-family: Garamond, serif; }
+.ql-snow .ql-picker.ql-font .ql-picker-item[data-value="cambria"]::before,
+.ql-snow .ql-picker.ql-font .ql-picker-label[data-value="cambria"]::before { content: "Cambria"; font-family: Cambria, serif; }
+.ql-snow .ql-picker.ql-font .ql-picker-item[data-value="arial"]::before,
+.ql-snow .ql-picker.ql-font .ql-picker-label[data-value="arial"]::before { content: "Arial"; font-family: Arial, sans-serif; }
+.ql-font-times-new-roman { font-family: "Times New Roman", Times, serif; }
+.ql-font-georgia { font-family: Georgia, serif; }
+.ql-font-garamond { font-family: Garamond, serif; }
+.ql-font-cambria { font-family: Cambria, serif; }
+.ql-font-arial { font-family: Arial, sans-serif; }
+.ql-editor .ql-lineheight-1 { line-height: 1; }
+.ql-editor .ql-lineheight-115 { line-height: 1.15; }
+.ql-editor .ql-lineheight-15 { line-height: 1.5; }
+.ql-editor .ql-lineheight-2 { line-height: 2; }
 .editor-word-count { text-align:right; color:var(--muted); font-size:13px; }
 
 .doc-tools-row { display:flex; gap:12px; align-items:center; border-top:1px solid var(--border); padding-top:8px; }
@@ -59,6 +80,7 @@ body { margin: 0; font-family: "Inter", "Segoe UI", sans-serif; color: var(--tex
 .outline-item { text-align:left; width:100%; }
 .outline-item.level-2 { margin-left: 14px; width: calc(100% - 14px); }
 .outline-item.level-3 { margin-left: 28px; width: calc(100% - 28px); }
+.outline-item.level-4 { margin-left: 42px; width: calc(100% - 42px); }
 .history-row { display:flex; justify-content:space-between; align-items:center; gap:8px; }
 .empty-state { color:var(--muted); font-size:13px; margin:0; }
 
@@ -124,6 +146,31 @@ button.is-clicked { transform: translateY(1px) scale(0.98); box-shadow: inset 0 
 button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
 button.secondary { background:var(--wu-surface-inset); }
 button.text { border:none; background:transparent; color:var(--accent); }
+
+
+.editor-status-bar {
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px;
+  border-top:1px solid var(--border);
+  padding-top:8px;
+  color:var(--muted);
+  font-size:12px;
+}
+
+#editor-toolbar.toolbar-hidden { display:none; }
+body.editor-focus-mode .sidebar { display:none; }
+body.editor-focus-mode .editor-shell { grid-template-columns: 1fr; }
+body.editor-focus-mode .editor-main { max-width: 900px; margin: 0 auto; }
+body.editor-typewriter-mode .ql-editor {
+  padding-top: 35vh;
+  padding-bottom: 35vh;
+}
+.ql-editor .is-active-paragraph { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.doc-tools-row .text.active {
+  color: var(--accent);
+  font-weight: 600;
+}
 
 .modal { position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; padding:24px; }
 .modal[aria-hidden="false"] { display:flex; }

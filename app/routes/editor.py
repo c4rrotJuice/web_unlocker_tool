@@ -87,6 +87,7 @@ def _sanitize_html(html: str) -> str:
             "h1",
             "h2",
             "h3",
+            "h4",
             "ul",
             "ol",
             "li",
@@ -189,7 +190,7 @@ def _iter_export_blocks(content_html: str, bibliography: list[str]) -> list[dict
     soup = BeautifulSoup(content_html or "", "html.parser")
     blocks: list[dict] = []
 
-    for node in soup.find_all(["h1", "h2", "h3", "p", "li", "ul", "ol", "blockquote", "pre"], recursive=True):
+    for node in soup.find_all(["h1", "h2", "h3", "h4", "p", "li", "ul", "ol", "blockquote", "pre"], recursive=True):
         tag_name = node.name or "p"
         if node.find_parent(["ul", "ol"]) and tag_name == "li":
             list_type = "ol" if node.find_parent("ol") else "ul"
@@ -204,6 +205,31 @@ def _iter_export_blocks(content_html: str, bibliography: list[str]) -> list[dict
         for entry in bibliography:
             blocks.append({"type": "list_item", "list_type": "ul", "text": entry})
     return blocks
+
+
+def _build_markdown_text(content_html: str, bibliography: list[str]) -> str:
+    lines: list[str] = []
+    for block in _iter_export_blocks(content_html, bibliography):
+        if block.get("type") == "list_item":
+            prefix = "1. " if block.get("list_type") == "ol" else "- "
+            text = (block.get("text") or "").strip()
+            if text:
+                lines.append(f"{prefix}{text}")
+            continue
+
+        tag = block.get("tag") or "p"
+        text = (block.get("text") or "").strip()
+        if not text:
+            continue
+        if tag.startswith("h") and len(tag) == 2 and tag[1].isdigit():
+            level = max(int(tag[1]), 1)
+            lines.append(f"{'#' * level} {text}")
+        elif tag == "blockquote":
+            lines.append("\n".join(f"> {part}" for part in text.split("\n") if part.strip()))
+        else:
+            lines.append(text)
+
+    return "\n\n".join(lines).strip() + "\n"
 
 
 def _build_docx_bytes(content_html: str, bibliography: list[str]) -> bytes:
@@ -925,12 +951,21 @@ async def export_doc_file(request: Request, doc_id: str, format: str = "pdf", st
             text_content += "\n\nBibliography\n" + "\n".join(f"- {entry}" for entry in bibliography)
         media_type = "text/plain; charset=utf-8"
         body = text_content.encode("utf-8")
+    elif export_format == "md":
+        markdown_text = _build_markdown_text(content_html, bibliography)
+        media_type = "text/markdown; charset=utf-8"
+        body = markdown_text.encode("utf-8")
+    elif export_format == "html":
+        html_doc = f"<!doctype html><html><head><meta charset=\"utf-8\"><title>{html.escape(title)}</title></head><body>{content_html}</body></html>"
+        media_type = "text/html; charset=utf-8"
+        body = html_doc.encode("utf-8")
     elif export_format == "docx":
         media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         body = _build_docx_bytes(content_html, bibliography)
     else:
         media_type = "application/pdf"
         body = _build_pdf_bytes(content_html, bibliography, title=title)
+
 
     return StreamingResponse(
         BytesIO(body),

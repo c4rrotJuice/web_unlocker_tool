@@ -101,13 +101,35 @@
         </div>
         <div id="editor-toolbar">
           <span class="ql-formats">
-            <select class="ql-font"></select>
-            <select class="ql-size"></select>
+            <select class="ql-font">
+              <option selected value="times-new-roman">Times New Roman</option>
+              <option value="georgia">Georgia</option>
+              <option value="garamond">Garamond</option>
+              <option value="cambria">Cambria</option>
+              <option value="arial">Arial</option>
+            </select>
+            <select class="ql-size">
+              <option value="10px">10</option>
+              <option value="11px">11</option>
+              <option selected value="12px">12</option>
+              <option value="14px">14</option>
+              <option value="16px">16</option>
+              <option value="18px">18</option>
+              <option value="24px">24</option>
+            </select>
             <select class="ql-header">
-              <option selected></option>
-              <option value="1"></option>
-              <option value="2"></option>
-              <option value="3"></option>
+              <option selected value="">Paragraph</option>
+              <option value="1">Title</option>
+              <option value="2">Heading 1</option>
+              <option value="3">Heading 2</option>
+              <option value="4">Heading 3</option>
+              <option value="5">Heading 4</option>
+            </select>
+            <select class="ql-lineheight">
+              <option value="1">1.0</option>
+              <option selected value="1.15">1.15</option>
+              <option value="1.5">1.5</option>
+              <option value="2">2.0</option>
             </select>
           </span>
           <span class="ql-formats">
@@ -137,10 +159,13 @@
             <button class="ql-align" value=""></button>
             <button class="ql-align" value="center"></button>
             <button class="ql-align" value="right"></button>
+            <button class="ql-align" value="justify"></button>
             <button class="ql-clean"></button>
           </span>
           <span class="ql-formats">
             <button class="ql-cite">Cite</button>
+            <button class="ql-insertQuickCite">Quick Cite</button>
+            <button class="ql-insertBibliography">Bibliography</button>
             <button class="ql-insertQuote">Insert Quote</button>
           </span>
         </div>
@@ -150,8 +175,18 @@
         <div class="doc-tools-row">
           <button class="text" id="tool-outline">Doc Structure</button>
           <button class="text" id="tool-history">History</button>
+          <button class="text" id="tool-focus-mode">Focus Mode</button>
+          <button class="text" id="tool-typewriter">Typewriter</button>
+          <button class="text" id="tool-toggle-toolbar">Hide Toolbar</button>
           <span id="tool-word-count">Word Count: 0</span>
           <button class="text" id="tool-add-doc-note">+ Doc-Note</button>
+        </div>
+
+        <div class="editor-status-bar" id="editor-status-bar">
+          <span id="status-word-count">Words: 0</span>
+          <span id="status-char-count">Characters: 0</span>
+          <span id="status-reading-time">Reading time: 0 min</span>
+          <span id="status-page-estimate">Pages: 0.0</span>
         </div>
 
         <section class="editor-secondary-panel collapsed" id="outline-panel">
@@ -160,7 +195,7 @@
             <button class="text" id="outline-refresh">Refresh</button>
           </div>
           <div id="outline-list" class="outline-list">
-            <p class="empty-state">No headings yet. Add H1/H2/H3 to build the outline.</p>
+            <p class="empty-state">No headings yet. Add Title/H1-H4 to build the outline.</p>
           </div>
         </section>
 

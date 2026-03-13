@@ -115,12 +115,6 @@ async def create_citation(
                 detail="Custom format template only allowed for custom format.",
             )
 
-    if get_tier_capabilities(normalized_account_type).can_use_custom_citation_templates and citation.url not in (citation.full_text or citation.full_citation or ""):
-        raise HTTPException(
-            status_code=422,
-            detail="Citations must include the source URL.",
-        )
-
     metadata = normalize_metadata(citation.metadata or {}, url=citation.url, excerpt=citation.excerpt)
     render_bundle = generate_render_bundle(metadata)
     render_cache = [

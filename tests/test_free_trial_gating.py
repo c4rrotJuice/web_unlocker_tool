@@ -1,6 +1,7 @@
 import asyncio
 import importlib
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 import supabase
@@ -111,6 +112,38 @@ def test_standard_custom_citation_locked_structured():
 
     assert exc.value.status_code == 403
     assert exc.value.detail["code"] == "CITATION_FORMAT_LOCKED"
+
+
+def test_pro_citation_does_not_require_url_inside_full_text(monkeypatch):
+    from app.routes import citations
+
+    class FakeResponse:
+        def __init__(self, status_code, json_data=None):
+            self.status_code = status_code
+            self._json_data = json_data or []
+
+        def json(self):
+            return self._json_data
+
+    async def fake_post(url, headers=None, json=None):
+        if url.endswith("/citations"):
+            return FakeResponse(201, [{"id": "citation-1"}])
+        return FakeResponse(200, [])
+
+    async def fake_delete(url, headers=None):
+        return FakeResponse(204, [])
+
+    monkeypatch.setattr(citations, "http_client", SimpleNamespace(post=fake_post, delete=fake_delete))
+
+    citation = CitationInput(
+        url="https://example.com/source",
+        excerpt="excerpt",
+        full_text="Quoted passage without the URL inlined.",
+        format="mla",
+    )
+    citation_id = asyncio.run(create_citation("u1", "pro", citation))
+
+    assert citation_id == "citation-1"
 
 
 def test_week_window_helpers_archive_behavior():

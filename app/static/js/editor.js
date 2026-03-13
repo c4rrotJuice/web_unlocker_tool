@@ -744,7 +744,9 @@ function startEditor() {
     let text = "\nBibliography\n";
     entries.forEach((entry, i) => { text += `${i + 1}. ${entry}\n`; });
     quill.insertText(index, text, "user");
-    quill.setSelection(index + text.length, 0, "silent");
+    const nextIndex = index + text.length;
+    quill.setSelection(nextIndex, 0, "silent");
+    lastKnownRange = { index: nextIndex, length: 0 };
   }
 
   async function insertCitationToken(citation, style) {
@@ -872,7 +874,9 @@ ${inText}${token}
     const idx = getInsertionIndex();
     quill.insertText(idx, `${text}
 `, "user");
-    quill.setSelection(idx + text.length + 1, 0, "silent");
+    const nextIndex = idx + text.length + 1;
+    quill.setSelection(nextIndex, 0, "silent");
+    lastKnownRange = { index: nextIndex, length: 0 };
   }
 
   function setAttachNoteModalView(view) {

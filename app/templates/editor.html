@@ -287,6 +287,30 @@
     </div>
   </div>
 
+  <div class="modal" id="attach-note-modal" aria-hidden="true">
+    <div class="modal-content attach-note-modal-content">
+      <div class="modal-header">
+        <h3>Attach research note</h3>
+        <button class="text" id="close-attach-note-modal">Close</button>
+      </div>
+      <div class="modal-body attach-note-modal-body" id="attach-note-library-view">
+        <input id="attach-note-search" type="search" placeholder="Search notes by title, excerpt, or source" autocomplete="off" />
+        <div id="attach-note-list" class="notes-list"></div>
+        <div class="actions">
+          <button id="attach-note-open-create" class="pill">+ New Note</button>
+        </div>
+      </div>
+      <div class="modal-body attach-note-modal-body" id="attach-note-create-view" hidden>
+        <label>Title <input id="attach-note-title" type="text" placeholder="Research note title" /></label>
+        <label>Note <textarea id="attach-note-body" rows="6" placeholder="Capture your finding..."></textarea></label>
+        <div class="actions">
+          <button id="attach-note-save" class="pill pill-primary">Create & Attach</button>
+          <button id="attach-note-cancel-create" class="pill">Back to notes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.quilljs.com/1.3.7/quill.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="/static/js/ui_feedback.js"></script>

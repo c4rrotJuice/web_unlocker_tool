@@ -61,6 +61,10 @@ class DocumentUpdate(BaseModel):
     citation_ids: list[str] = []
 
 
+class DocumentNoteCreate(BaseModel):
+    note_id: str
+
+
 class ExportRequest(BaseModel):
     style: str = "mla"
     format: str = "pdf"
@@ -567,6 +571,66 @@ async def _patch_doc_with_fallback(user_id: str, doc_id: str, payload: dict) -> 
     return data[0]
 
 
+async def _validate_note_id(user_id: str, note_id: str) -> str:
+    res = await supabase_repo.get(
+        "notes",
+        params={"id": f"eq.{note_id}", "user_id": f"eq.{user_id}", "select": "id", "limit": 1},
+        headers=supabase_repo.headers(),
+    )
+    if res.status_code != 200:
+        logger.error("editor.validate_note_failed", extra={"status": res.status_code, "upstream": "supabase"})
+        raise HTTPException(status_code=500, detail="Failed to validate note")
+    rows = res.json() or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return rows[0].get("id")
+
+
+async def _list_doc_note_links(user_id: str, doc_id: str) -> list[dict]:
+    link_res = await supabase_repo.get(
+        "document_notes",
+        params={
+            "doc_id": f"eq.{doc_id}",
+            "user_id": f"eq.{user_id}",
+            "select": "doc_id,note_id,attached_at",
+            "order": "attached_at.desc",
+        },
+        headers=supabase_repo.headers(),
+    )
+    if link_res.status_code == 404:
+        return []
+    if link_res.status_code != 200:
+        logger.error("editor.list_doc_notes_failed", extra={"status": link_res.status_code, "upstream": "supabase"})
+        raise HTTPException(status_code=500, detail="Failed to load document notes")
+
+    links = link_res.json() or []
+    note_ids = [item.get("note_id") for item in links if item.get("note_id")]
+    if not note_ids:
+        return []
+
+    notes_res = await supabase_repo.get(
+        "notes",
+        params={
+            "id": f"in.({','.join(note_ids)})",
+            "user_id": f"eq.{user_id}",
+            "select": "id,title,note_body,highlight_text,source_url,source_title,updated_at",
+        },
+        headers=supabase_repo.headers(),
+    )
+    if notes_res.status_code != 200:
+        logger.error("editor.list_doc_notes_note_fetch_failed", extra={"status": notes_res.status_code, "upstream": "supabase"})
+        raise HTTPException(status_code=500, detail="Failed to load attached notes")
+
+    by_id = {note.get("id"): note for note in (notes_res.json() or []) if note.get("id")}
+    hydrated = []
+    for link in links:
+        note = by_id.get(link.get("note_id"))
+        if not note:
+            continue
+        hydrated.append({**link, "note": note})
+    return hydrated
+
+
 @router.get("/editor", response_class=HTMLResponse)
 async def editor_page(request: Request):
     user_id = request.state.user_id
@@ -742,6 +806,55 @@ async def update_doc(request: Request, doc_id: str, payload: DocumentUpdate):
     }
 
     return await _patch_doc_with_fallback(user_id, doc_id, update_payload)
+
+
+@router.get("/api/docs/{doc_id}/notes")
+async def list_doc_notes(request: Request, doc_id: str):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    await _fetch_doc_core(user_id, doc_id)
+    return await _list_doc_note_links(user_id, doc_id)
+
+
+@router.post("/api/docs/{doc_id}/notes")
+async def attach_note_to_doc(request: Request, doc_id: str, payload: DocumentNoteCreate):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    await _fetch_doc_core(user_id, doc_id)
+    note_id = await _validate_note_id(user_id, payload.note_id)
+    now_iso = datetime.utcnow().isoformat()
+    res = await supabase_repo.post(
+        "document_notes",
+        headers={**supabase_repo.headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
+        json={"doc_id": doc_id, "note_id": note_id, "user_id": user_id, "attached_at": now_iso},
+    )
+    if res.status_code not in (200, 201):
+        logger.error("editor.attach_note_failed", extra={"status": res.status_code, "upstream": "supabase"})
+        raise HTTPException(status_code=500, detail="Failed to attach note")
+    rows = res.json() or []
+    return rows[0] if rows else {"doc_id": doc_id, "note_id": note_id, "attached_at": now_iso}
+
+
+@router.delete("/api/docs/{doc_id}/notes/{note_id}")
+async def detach_note_from_doc(request: Request, doc_id: str, note_id: str):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    await _fetch_doc_core(user_id, doc_id)
+    res = await supabase_repo.delete(
+        "document_notes",
+        params={"doc_id": f"eq.{doc_id}", "note_id": f"eq.{note_id}", "user_id": f"eq.{user_id}"},
+        headers=supabase_repo.headers(prefer="return=minimal", include_content_type=False),
+    )
+    if res.status_code not in (200, 204):
+        logger.error("editor.detach_note_failed", extra={"status": res.status_code, "upstream": "supabase"})
+        raise HTTPException(status_code=500, detail="Failed to detach note")
+    return {"ok": True, "doc_id": doc_id, "note_id": note_id}
 
 
 @router.get("/api/docs/{doc_id}/checkpoints")

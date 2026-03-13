@@ -30,6 +30,10 @@
         <div class="avatar-pill" aria-hidden="true"><span id="avatar-initials">U</span></div>
         <div>
           <h1><span id="user-name">Loading...</span></h1>
+          <div class="header-pill-actions">
+            <button id="themeToggle" class="pill" type="button" aria-live="polite">Theme: System</button>
+            <button id="signout-btn" class="pill" type="button">Sign out</button>
+          </div>
           <p><span id="account-type">Loading...</span> plan · <span id="usage">--</span>/<span id="limit">--</span> editor docs · resets <span id="usage-period">--</span></p>
         </div>
       </div>
@@ -189,30 +193,34 @@
           <span id="status-page-estimate">Pages: 0.0</span>
         </div>
 
-        <section class="editor-secondary-panel collapsed" id="outline-panel">
-          <div class="panel-header">
-            <h3>Outline</h3>
-            <button class="text" id="outline-refresh">Refresh</button>
-          </div>
-          <div id="outline-list" class="outline-list">
-            <p class="empty-state">No headings yet. Add Title/H1-H4 to build the outline.</p>
-          </div>
-        </section>
+        <button id="sidecar-toggle" class="sidecar-toggle" type="button" aria-label="Show document tools" aria-expanded="false">&gt;</button>
 
-        <section class="editor-secondary-panel collapsed" id="history-panel">
-          <div class="panel-header">
-            <h3>History</h3>
-            <button class="text" id="history-refresh">Refresh</button>
-          </div>
-          <div id="history-list" class="history-list">
-            <p class="empty-state">No checkpoints yet.</p>
-          </div>
-        </section>
+        <aside class="editor-sidecar" id="editor-sidecar" aria-hidden="true">
+          <section class="editor-secondary-panel collapsed" id="outline-panel">
+            <div class="panel-header">
+              <h3>Outline</h3>
+              <button class="text" id="outline-refresh">Refresh</button>
+            </div>
+            <div id="outline-list" class="outline-list">
+              <p class="empty-state">No headings yet. Add Title/H1-H4 to build the outline.</p>
+            </div>
+          </section>
 
-        <section class="editor-secondary-panel" id="doc-notes-panel">
-          <div class="panel-header"><h3>Doc Notes</h3></div>
-          <ul id="doc-notes-list" class="notes-list"></ul>
-        </section>
+          <section class="editor-secondary-panel collapsed" id="history-panel">
+            <div class="panel-header">
+              <h3>History</h3>
+              <button class="text" id="history-refresh">Refresh</button>
+            </div>
+            <div id="history-list" class="history-list">
+              <p class="empty-state">No checkpoints yet.</p>
+            </div>
+          </section>
+
+          <section class="editor-secondary-panel" id="doc-notes-panel">
+            <div class="panel-header"><h3>Doc Notes</h3></div>
+            <ul id="doc-notes-list" class="notes-list"></ul>
+          </section>
+        </aside>
       </main>
 
       <aside class="sidebar sidebar-right">
@@ -282,6 +290,30 @@
         <div class="actions">
           <button id="save-quick-note" class="pill pill-primary">Save</button>
           <button id="cancel-quick-note" class="pill">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="attach-note-modal" aria-hidden="true">
+    <div class="modal-content attach-note-modal-content">
+      <div class="modal-header">
+        <h3>Attach research note</h3>
+        <button class="text" id="close-attach-note-modal">Close</button>
+      </div>
+      <div class="modal-body attach-note-modal-body" id="attach-note-library-view">
+        <input id="attach-note-search" type="search" placeholder="Search notes by title, excerpt, or source" autocomplete="off" />
+        <div id="attach-note-list" class="notes-list"></div>
+        <div class="actions">
+          <button id="attach-note-open-create" class="pill">+ New Note</button>
+        </div>
+      </div>
+      <div class="modal-body attach-note-modal-body" id="attach-note-create-view" hidden>
+        <label>Title <input id="attach-note-title" type="text" placeholder="Research note title" /></label>
+        <label>Note <textarea id="attach-note-body" rows="6" placeholder="Capture your finding..."></textarea></label>
+        <div class="actions">
+          <button id="attach-note-save" class="pill pill-primary">Create & Attach</button>
+          <button id="attach-note-cancel-create" class="pill">Back to notes</button>
         </div>
       </div>
     </div>

@@ -71,31 +71,33 @@
             <div class="chart-wrap"><canvas id="citationsChart"></canvas></div>
           </div>
         </div>
+
+        <article class="embedded-card" id="bookmarksCard">
+          <h3>Bookmarked Domains</h3>
+          <div id="bookmark-add">
+            <input type="text" id="bookmark-input" placeholder="Enter URL to bookmark" disabled />
+            <button id="bookmark-add-btn">Add Bookmark</button>
+          </div>
+          <ul id="bookmark-list" class="scroll-list"></ul>
+          <p id="bookmark-locked-msg" class="locked-msg" style="display:none;">Bookmark frequently used domains for quick access — Pro/Standard feature only.</p>
+        </article>
       </article>
 
-      <article class="dashboard-card" id="recentlyVisitedCard">
-        <h2>Recently Visited</h2>
-        <ul class="scroll-list" id="recently-visited-list">
-          <li class="empty">Fetching...</li>
-        </ul>
-      </article>
+      <div class="dashboard-side-grid">
+        <article class="dashboard-card" id="recentlyVisitedCard">
+          <h2>Recently Visited</h2>
+          <ul class="scroll-list" id="recently-visited-list">
+            <li class="empty">Fetching...</li>
+          </ul>
+        </article>
 
-      <article class="dashboard-card" id="bookmarksCard">
-        <h2>Bookmarked Domains</h2>
-        <div id="bookmark-add">
-          <input type="text" id="bookmark-input" placeholder="Enter URL to bookmark" disabled />
-          <button id="bookmark-add-btn">Add Bookmark</button>
-        </div>
-        <ul id="bookmark-list" class="scroll-list"></ul>
-        <p id="bookmark-locked-msg" class="locked-msg" style="display:none;">Bookmark frequently used domains for quick access — Pro/Standard feature only.</p>
-      </article>
-
-      <article class="dashboard-card" id="citationsCard">
-        <h2>Citations Library</h2>
-        <ul class="citation-list scroll-list" id="citation-history">
-          <li class="empty">Fetching...</li>
-        </ul>
-      </article>
+        <article class="dashboard-card" id="citationsCard">
+          <h2>Citations Library</h2>
+          <ul class="citation-list scroll-list" id="citation-history">
+            <li class="empty">Fetching...</li>
+          </ul>
+        </article>
+      </div>
     </section>
 
     <section class="dashboard-card subscription-card">

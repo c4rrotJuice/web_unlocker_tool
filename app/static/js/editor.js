@@ -32,6 +32,12 @@ function renderBlockedMessage(message) {
 }
 
 function startEditor() {
+  if (window.__webUnlockerEditorStarted) {
+    console.warn("[editor] startEditor called more than once; ignoring duplicate init.");
+    return;
+  }
+  window.__webUnlockerEditorStarted = true;
+
   const toast = window.webUnlockerUI?.createToastManager?.();
   const citeTokenPrefix = "〔cite:";
   const citeTokenSuffix = "〕";
@@ -57,11 +63,35 @@ function startEditor() {
   let editingNoteFocusField = "title";
   let editingNoteDraft = null;
   let citationSearchTimer = null;
+  let notesFilterTimer = null;
   let lastCheckpointAt = 0;
   let changedSinceCheckpoint = 0;
   let lastKnownRange = null;
   let noteAttachContext = null;
   const citationRenderCache = new Map();
+  let autosaveInFlight = null;
+  let autosaveQueued = false;
+  let autosaveRequestSeq = 0;
+  let latestAppliedSaveSeq = 0;
+  let openDocRequestSeq = 0;
+  let citationLoadRequestSeq = 0;
+  let notesLoadRequestSeq = 0;
+
+  const diagnosticsEnabled = window.localStorage?.getItem("editor_debug") === "1";
+
+  function debugLog(event, data = undefined) {
+    if (!diagnosticsEnabled) return;
+    if (data === undefined) console.debug(`[editor] ${event}`);
+    else console.debug(`[editor] ${event}`, data);
+  }
+
+  function warnIfSlow(label, startedAt, thresholdMs = 32) {
+    if (!diagnosticsEnabled) return;
+    const elapsed = performance.now() - startedAt;
+    if (elapsed > thresholdMs) {
+      console.warn(`[editor] slow handler: ${label} (${elapsed.toFixed(1)}ms)`);
+    }
+  }
 
   const saveStatus = document.getElementById("save-status");
   const docTitleInput = document.getElementById("doc-title");
@@ -113,16 +143,41 @@ function startEditor() {
   const signoutBtn = document.getElementById("signout-btn");
 
   function attachButtonClickMotion() {
+    const pressedButtons = new Set();
+
+    const resolveEventElement = (event) => {
+      const target = event?.target;
+      if (target instanceof Element) return target;
+      if (target instanceof Node) return target.parentElement;
+      if (typeof event?.composedPath === "function") {
+        const pathElement = event.composedPath().find((node) => node instanceof Element);
+        if (pathElement) return pathElement;
+      }
+      return null;
+    };
+
+    const findButtonFromEvent = (event) => {
+      const el = resolveEventElement(event);
+      return el?.closest?.("button") || null;
+    };
+
     document.addEventListener("pointerdown", (event) => {
-      const btn = event.target.closest("button");
+      const btn = findButtonFromEvent(event);
       if (!btn) return;
       btn.classList.add("is-clicked");
+      pressedButtons.add(btn);
     });
 
     const clearClickState = (event) => {
-      const btn = event.target.closest("button");
-      if (!btn) return;
-      btn.classList.remove("is-clicked");
+      const btn = findButtonFromEvent(event);
+      if (btn) {
+        btn.classList.remove("is-clicked");
+        pressedButtons.delete(btn);
+      }
+      if (!btn || event.type === "pointercancel" || event.type === "pointerleave") {
+        pressedButtons.forEach((pressed) => pressed.classList.remove("is-clicked"));
+        pressedButtons.clear();
+      }
     };
 
     document.addEventListener("pointerup", clearClickState);
@@ -285,28 +340,54 @@ function startEditor() {
   function queueAutosave() {
     setSaveStatus("Saving...");
     if (autosaveTimer) clearTimeout(autosaveTimer);
+    debugLog("autosave.queued", { currentDocId });
     autosaveTimer = setTimeout(() => autosaveDoc(), AUTOSAVE_DEBOUNCE_MS);
   }
 
   async function autosaveDoc() {
     if (!currentDocId || !isDirty) return;
+    if (autosaveInFlight) {
+      autosaveQueued = true;
+      debugLog("autosave.coalesced", { currentDocId });
+      return autosaveInFlight;
+    }
+    const saveSeq = ++autosaveRequestSeq;
     const payload = {
       title: docTitleInput.value.trim() || "Untitled",
       content_delta: quill.getContents(),
       content_html: quill.root.innerHTML,
       citation_ids: currentCitationIds,
     };
+    const startedAt = performance.now();
+    debugLog("autosave.start", { saveSeq, currentDocId });
+    autosaveInFlight = (async () => {
     try {
       const res = await authFetch(`/api/docs/${currentDocId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error("Failed to save");
       const data = await res.json();
+      if (saveSeq < latestAppliedSaveSeq) {
+        debugLog("autosave.stale_ignored", { saveSeq, latestAppliedSaveSeq });
+        return;
+      }
+      latestAppliedSaveSeq = saveSeq;
       setSaveStatus("Saved");
       isDirty = false;
       updateDocInList(data);
+      debugLog("autosave.success", { saveSeq, currentDocId });
     } catch (_err) {
       setSaveStatus("Save failed");
       toast?.show({ type: "error", message: "Save failed. Please retry." });
+      debugLog("autosave.failed", { saveSeq, currentDocId });
+    } finally {
+      warnIfSlow("autosaveDoc", startedAt, 120);
+      autosaveInFlight = null;
+      if (autosaveQueued && isDirty) {
+        autosaveQueued = false;
+        queueAutosave();
+      }
     }
+    })();
+    return autosaveInFlight;
   }
 
   function renderFreeQuota() {
@@ -406,9 +487,16 @@ function startEditor() {
 
   async function openDoc(docId) {
     await autosaveDoc();
+    const reqId = ++openDocRequestSeq;
+    const startedAt = performance.now();
+    debugLog("openDoc.start", { reqId, docId });
     const res = await authFetch(`/api/docs/${docId}`);
     if (!res.ok) return false;
     const doc = await res.json();
+    if (reqId !== openDocRequestSeq) {
+      debugLog("openDoc.stale_ignored", { reqId, latest: openDocRequestSeq, docId: doc.id });
+      return false;
+    }
     currentDocId = doc.id;
     currentCitationIds = doc.citation_ids || [];
     docTitleInput.value = doc.title;
@@ -427,6 +515,8 @@ function startEditor() {
     buildAndRenderOutline();
     await loadCheckpoints();
     renderDocs(allDocs);
+    warnIfSlow("openDoc", startedAt, 150);
+    debugLog("openDoc.success", { reqId, docId: doc.id });
     return true;
   }
 
@@ -683,10 +773,17 @@ function startEditor() {
   }
 
   async function loadCitationLibrary(search = "") {
+    const reqId = ++citationLoadRequestSeq;
+    const startedAt = performance.now();
     const citations = await fetchCitations({ search, limit: 50 });
+    if (reqId !== citationLoadRequestSeq) {
+      debugLog("citations.stale_ignored", { reqId, latest: citationLoadRequestSeq, search });
+      return;
+    }
     const container = document.getElementById("citations-list");
     container.innerHTML = "";
     citations.forEach((c) => container.appendChild(buildCitationCard(c)));
+    warnIfSlow("loadCitationLibrary", startedAt, 60);
   }
 
   async function refreshInDocCitations() {
@@ -849,6 +946,8 @@ ${inText}${token}
   }
 
   async function loadNotes() {
+    const reqId = ++notesLoadRequestSeq;
+    const startedAt = performance.now();
     const params = new URLSearchParams();
     const t = document.getElementById("notes-filter-tag").value.trim();
     const p = document.getElementById("notes-filter-project").value.trim();
@@ -863,9 +962,19 @@ ${inText}${token}
     const res = await authFetch(`/api/notes?${params.toString()}`);
     if (!res.ok) { notesList.innerHTML = '<li class="empty-state">Unable to load notes.</li>'; return; }
     const payload = await res.json();
+    if (reqId !== notesLoadRequestSeq) {
+      debugLog("notes.stale_ignored", { reqId, latest: notesLoadRequestSeq });
+      return;
+    }
     allNotes = Array.isArray(payload) ? payload : (payload?.notes || []);
     renderNotes();
     renderResearchNotes();
+    warnIfSlow("loadNotes", startedAt, 100);
+  }
+
+  function scheduleNotesReload() {
+    if (notesFilterTimer) clearTimeout(notesFilterTimer);
+    notesFilterTimer = setTimeout(() => loadNotes(), 220);
   }
 
   function insertNoteIntoEditor(note) {
@@ -1417,7 +1526,7 @@ ${inText}${token}
   });
 
   ["notes-filter-tag", "notes-filter-project", "notes-filter-source", "notes-filter-search", "notes-sort"].forEach((id) => {
-    document.getElementById(id)?.addEventListener("input", () => loadNotes());
+    document.getElementById(id)?.addEventListener("input", scheduleNotesReload);
   });
 
   document.getElementById("outline-refresh").addEventListener("click", buildAndRenderOutline);

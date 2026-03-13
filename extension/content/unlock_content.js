@@ -877,6 +877,26 @@
     });
   }
 
+
+  async function requestRenderedCitation(format, metadata) {
+    if (format === "custom") {
+      return null;
+    }
+    const response = await sendMessage("RENDER_CITATION", {
+      url: metadata.url,
+      excerpt: metadata.excerpt,
+      format,
+      metadata: {
+        ...metadata,
+        selected_text: metadata.selectionText,
+      },
+    });
+    if (response?.status !== 200 || response?.error || !response?.data) {
+      return null;
+    }
+    return response.data;
+  }
+
   async function saveCitation(payload) {
     const response = await sendMessage("SAVE_CITATION", payload);
     if (response?.status === 401 || response?.error === "unauthenticated") {
@@ -898,7 +918,20 @@
   }
 
   async function handleCopy(format, citationText, metadata) {
-    const copied = await copyText(citationText);
+    let resolvedText = citationText;
+    let resolvedInline = formatInlineCitation(format, metadata);
+
+    if (format !== "custom") {
+      const rendered = await requestRenderedCitation(format, metadata);
+      if (rendered?.full_citation) {
+        resolvedText = rendered.full_citation;
+      }
+      if (rendered?.inline_citation) {
+        resolvedInline = rendered.inline_citation;
+      }
+    }
+
+    const copied = await copyText(resolvedText);
     if (copied) {
       const label = format === "custom" ? "Custom" : format.toUpperCase();
       showToast(`Citation copied (${label}).`);
@@ -909,14 +942,14 @@
     }
 
     state.lastFormat = format;
-    state.lastCitationText = citationText;
+    state.lastCitationText = resolvedText;
 
     await saveCitation({
       url: metadata.url,
       excerpt: metadata.excerpt,
-      inline_citation: formatInlineCitation(format, metadata),
-      full_citation: citationText,
-      full_text: citationText,
+      inline_citation: resolvedInline,
+      full_citation: resolvedText,
+      full_text: resolvedText,
       format,
       custom_format_name: metadata.customFormatName || null,
       custom_format_template: metadata.customFormatTemplate || null,
@@ -1037,7 +1070,7 @@
 
     formats.forEach((format) => {
       const label = format.toUpperCase();
-      const text = formatCitation(format, metadata);
+      const text = "Loading citation…";
 
       const row = document.createElement("div");
       row.className = "web-unlocker-row";
@@ -1127,6 +1160,14 @@
         closePopup();
       }
     });
+
+
+    for (const format of formats) {
+      const pre = popup.querySelector(`#cite-${format}`);
+      if (!pre) continue;
+      const rendered = await requestRenderedCitation(format, metadata);
+      pre.textContent = rendered?.full_citation || formatCitation(format, metadata);
+    }
 
     popup.addEventListener("click", async (event) => {
       const target = event.target;

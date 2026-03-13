@@ -279,13 +279,35 @@ document.addEventListener("DOMContentLoaded", function () {
       return `(${last}, ${year}${para ? `, para. ${para}` : ""})`;
     }
 
+
+    async function fetchRenderedCitation(format, metadata) {
+        if (format === "custom") return null;
+        try {
+            const res = await fetch('/api/citations/render', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    url: metadata.url,
+                    excerpt: metadata.excerpt || selectedText || '',
+                    format,
+                    metadata: { ...metadata, selected_text: metadata.selectionText || selectedText || '' },
+                }),
+            });
+            if (!res.ok) return null;
+            return await res.json();
+        } catch (_e) {
+            return null;
+        }
+    }
+
     function showCitationPopup(text) {
         const metadata = validateCitationMetadata(getCitationMetadata(text, realSourceUrl || window.location.href));
 
-        const mlaCitation = formatCitation("mla", metadata);
-        const apaCitation = formatCitation("apa", metadata);
-        const chicagoCitation = formatCitation("chicago", metadata);
-        const harvardCitation = formatCitation("harvard", metadata);
+        const mlaCitation = "Loading citation…";
+        const apaCitation = "Loading citation…";
+        const chicagoCitation = "Loading citation…";
+        const harvardCitation = "Loading citation…";
 
         const blur = document.createElement("div");
         blur.className = "blurred-bg";
@@ -308,6 +330,13 @@ document.addEventListener("DOMContentLoaded", function () {
 
         document.body.appendChild(blur);
         document.body.appendChild(popup);
+
+        ["mla", "apa", "chicago", "harvard"].forEach(async (style) => {
+            const rendered = await fetchRenderedCitation(style, metadata);
+            const target = document.getElementById(`${style}-cite`);
+            if (!target) return;
+            target.textContent = rendered?.full_citation || formatCitation(style, metadata);
+        });
     }
 
     // -----------------------
@@ -319,8 +348,13 @@ document.addEventListener("DOMContentLoaded", function () {
         const normalizedMeta = validateCitationMetadata(metadata || getCitationMetadata(selectedText, realSourceUrl || window.location.href));
 
         let citationText = "";
+        let inlineCitation = formatInlineCitation(format || "mla", normalizedMeta);
         if (format === "custom") citationText = target?.value || "";
-        else citationText = formatCitation(format, normalizedMeta);
+        else {
+            const rendered = await fetchRenderedCitation(format, normalizedMeta);
+            citationText = rendered?.full_citation || formatCitation(format, normalizedMeta);
+            inlineCitation = rendered?.inline_citation || inlineCitation;
+        }
 
         try { await navigator.clipboard.writeText(citationText); showToast("Citation copied!"); }
         catch { alert("Copy failed. Please allow clipboard access or try again."); }
@@ -328,7 +362,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const citationPayload = {
             url: normalizedMeta.url,
             excerpt: normalizedMeta.excerpt || selectedText || "",
-            inline_citation: formatInlineCitation(format || "mla", normalizedMeta),
+            inline_citation: inlineCitation,
             full_citation: citationText,
             full_text: citationText,
             format: format || "mla",

@@ -39,3 +39,12 @@
   - `full_citation` (bibliography/reference entry)
 - `full_text` is retained for backward compatibility and mirrors `full_citation` when missing.
 - The extension/web injector now submit structured metadata plus explicit inline/full outputs so the editor can insert in-text citations separately from bibliography entries.
+
+
+## Metadata-first hardening update (this change)
+
+- Backend now computes a stable `source_fingerprint` (DOI -> canonical URL -> metadata hash) and `source_version` from normalized metadata.
+- Citation metadata now includes explicit `source` and `quote` objects so source identity and quote instances are separated without breaking existing API contracts.
+- Backend precomputes a lightweight `render_cache` map (style + output + source version) while treating metadata as canonical.
+- New `POST /api/citations/render` endpoint supports deterministic citation regeneration from stored metadata for style switching.
+- Extension and web app now request server-rendered citations for standard styles, reducing formatter divergence across clients.

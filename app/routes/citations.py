@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from app.routes.http import http_client
 from app.services.citation_templates import render_template, validate_template
-from app.services.citation_engine import generate_citation_outputs, normalize_metadata
+from app.services.citation_engine import generate_citation_outputs, generate_render_bundle, normalize_metadata, SUPPORTED_STYLES
 from app.services.entitlements import get_tier_capabilities, normalize_account_type
 from app.services.free_tier_gating import allowed_citation_formats
 from app.services.metrics import metrics, record_dependency_call_async
@@ -122,6 +122,18 @@ async def create_citation(
         )
 
     metadata = normalize_metadata(citation.metadata or {}, url=citation.url, excerpt=citation.excerpt)
+    render_bundle = generate_render_bundle(metadata)
+    render_cache = [
+        {
+            "style": style,
+            "inline_citation": outputs["inline_citation"],
+            "full_citation": outputs["full_citation"],
+            "source_version": render_bundle["source_version"],
+            "rendered_at": datetime.utcnow().isoformat(),
+        }
+        for style, outputs in render_bundle["renders"].items()
+    ]
+
     derived = generate_citation_outputs(citation_format, metadata) if citation_format != "custom" else {
         "inline_citation": citation.inline_citation or "",
         "full_citation": citation.full_citation or citation.full_text or "",
@@ -133,10 +145,12 @@ async def create_citation(
             **metadata,
         })
         full_citation = rendered
+        inline_citation = citation.inline_citation or ""
     else:
-        full_citation = citation.full_citation or derived["full_citation"]
+        # Server-side canonical rendering; client-provided formatted strings are ignored for standard styles.
+        full_citation = derived["full_citation"]
+        inline_citation = derived["inline_citation"]
 
-    inline_citation = citation.inline_citation or derived["inline_citation"]
     full_text = citation.full_text or full_citation
 
     cited_at = datetime.utcnow()
@@ -153,6 +167,9 @@ async def create_citation(
         "custom_format_name": citation.custom_format_name,
         "custom_format_template": citation.custom_format_template,
         "metadata": metadata,
+        "source_fingerprint": metadata.get("source_fingerprint"),
+        "source_version": metadata.get("source_version"),
+        "render_cache": render_cache,
         "cited_at": cited_at.isoformat(),
         "expires_at": expires_at.isoformat(),
     }
@@ -413,6 +430,27 @@ async def add_citation(request: Request, citation: CitationInput):
         "full_citation": citation.full_citation or citation_outputs["full_citation"],
         "metadata": normalize_metadata(citation.metadata or {}, url=citation.url, excerpt=citation.excerpt),
         "style": (citation.format or "mla").lower(),
+    }
+
+
+@router.post("/api/citations/render")
+async def render_citation_payload(request: Request, citation: CitationInput):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    style = (citation.format or "mla").strip().lower()
+    if style not in SUPPORTED_STYLES:
+        raise HTTPException(status_code=422, detail={"code": "CITATION_STYLE_UNSUPPORTED", "message": "Unsupported citation style."})
+
+    metadata = normalize_metadata(citation.metadata or {}, url=citation.url, excerpt=citation.excerpt)
+    outputs = generate_citation_outputs(style, metadata)
+    return {
+        "style": style,
+        "source_fingerprint": metadata.get("source_fingerprint"),
+        "source_version": metadata.get("source_version"),
+        "metadata": metadata,
+        **outputs,
     }
 
 

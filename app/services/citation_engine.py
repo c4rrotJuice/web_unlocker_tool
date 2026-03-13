@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 from typing import Any
 from urllib.parse import urlparse
 import re
 
 SUPPORTED_STYLES = {"mla", "apa", "chicago", "harvard"}
+METADATA_SCHEMA_VERSION = 2
 
 INSTITUTION_EQUIVALENTS = {
     "who": "World Health Organization",
     "world health organization": "World Health Organization",
+    "w.h.o.": "World Health Organization",
+}
+
+PUBLISHER_EQUIVALENTS = {
+    "who": "World Health Organization",
+    "world health organisation": "World Health Organization",
     "w.h.o.": "World Health Organization",
 }
 
@@ -82,10 +90,72 @@ def _parse_author_object(raw: Any) -> dict[str, Any] | None:
     }
 
 
+def _normalize_org_name(value: str) -> str:
+    cleaned = _clean(value)
+    if not cleaned:
+        return ""
+    return PUBLISHER_EQUIVALENTS.get(cleaned.lower(), cleaned)
+
+
+def _canonical_url(url: str) -> str:
+    cleaned = _clean(url)
+    if not cleaned:
+        return ""
+    parsed = urlparse(cleaned)
+    if not parsed.scheme or not parsed.netloc:
+        return cleaned
+    fragmentless = parsed._replace(fragment="")
+    return fragmentless.geturl().rstrip("/")
+
+
+def build_source_fingerprint(metadata: dict[str, Any]) -> str:
+    doi = _clean(metadata.get("doi") or metadata.get("DOI"))
+    if doi:
+        return f"doi:{doi.lower().replace('https://doi.org/', '').replace('http://doi.org/', '')}"
+
+    canonical_url = _canonical_url(metadata.get("url") or "")
+    if canonical_url:
+        return f"url:{canonical_url.lower()}"
+
+    title = _clean(metadata.get("title") or "").lower()
+    author = _clean(metadata.get("author") or "").lower()
+    year = _parse_year(_clean(metadata.get("datePublished") or ""))
+    digest = hashlib.sha1(f"{title}|{author}|{year}".encode("utf-8")).hexdigest()  # noqa: S324
+    return f"meta:{digest}"
+
+
+def compute_source_version(metadata: dict[str, Any]) -> str:
+    canonical = {
+        "title": _clean(metadata.get("title")),
+        "authors": [
+            _clean((item or {}).get("fullName"))
+            for item in (metadata.get("authors") or [])
+            if _clean((item or {}).get("fullName"))
+        ],
+        "publisher": _normalize_org_name(_clean(metadata.get("publisher") or metadata.get("siteName"))),
+        "siteName": _normalize_org_name(_clean(metadata.get("siteName"))),
+        "datePublished": _clean(metadata.get("datePublished")),
+        "url": _canonical_url(_clean(metadata.get("url"))),
+        "doi": _clean(metadata.get("doi") or metadata.get("DOI")).lower(),
+    }
+    payload = "|".join(
+        [
+            canonical["title"],
+            ",".join(canonical["authors"]),
+            canonical["publisher"],
+            canonical["siteName"],
+            canonical["datePublished"],
+            canonical["url"],
+            canonical["doi"],
+        ],
+    )
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()  # noqa: S324
+
+
 def normalize_metadata(metadata: dict[str, Any] | None, *, url: str = "", excerpt: str = "") -> dict[str, Any]:
     meta = dict(metadata or {})
     title = _clean(meta.get("title") or meta.get("headline")) or "Untitled Page"
-    site_name = _clean(meta.get("siteName") or meta.get("site_name") or meta.get("publisher")) or _domain(url)
+    site_name = _normalize_org_name(_clean(meta.get("siteName") or meta.get("site_name") or meta.get("publisher")) or _domain(url))
 
     raw_authors = meta.get("authors") if isinstance(meta.get("authors"), list) else []
     if not raw_authors:
@@ -112,18 +182,40 @@ def normalize_metadata(metadata: dict[str, Any] | None, *, url: str = "", excerp
 
     normalized = {
         **meta,
-        "url": _clean(meta.get("url") or url),
+        "url": _canonical_url(_clean(meta.get("url") or url)),
         "title": title,
         "title_case": _title_case(title),
         "sentence_case": _sentence_case(title),
         "siteName": site_name,
-        "publisher": _clean(meta.get("publisher") or site_name),
+        "publisher": _normalize_org_name(_clean(meta.get("publisher") or site_name)),
         "authors": authors,
         "author": lead["fullName"] if lead else site_name,
         "datePublished": _clean(meta.get("datePublished") or meta.get("date_published") or meta.get("date") or meta.get("year")),
         "dateAccessed": _clean(meta.get("dateAccessed") or meta.get("accessed_at")) or datetime.now(timezone.utc).isoformat(),
         "paragraph": paragraph,
         "excerpt": _clean(meta.get("excerpt") or excerpt),
+    }
+    normalized["source_fingerprint"] = build_source_fingerprint(normalized)
+    normalized["source_version"] = compute_source_version(normalized)
+    normalized["metadata_schema_version"] = METADATA_SCHEMA_VERSION
+    normalized["source"] = {
+        "fingerprint": normalized["source_fingerprint"],
+        "version": normalized["source_version"],
+        "metadata": {
+            "title": normalized["title"],
+            "authors": normalized["authors"],
+            "publisher": normalized["publisher"],
+            "siteName": normalized["siteName"],
+            "datePublished": normalized["datePublished"],
+            "dateAccessed": normalized["dateAccessed"],
+            "url": normalized["url"],
+            "doi": _clean(meta.get("doi") or meta.get("DOI")),
+        },
+    }
+    normalized["quote"] = {
+        "selected_text": normalized["excerpt"],
+        "short_excerpt": normalized["excerpt"][:280],
+        "locator": {"paragraph": paragraph} if paragraph else {},
     }
     return normalized
 
@@ -172,3 +264,19 @@ def generate_citation_outputs(style: str, metadata: dict[str, Any]) -> dict[str,
         full = f"{_authors_for_style(meta['authors'], 'apa') or meta['author']}. ({year}). {meta['sentence_case']}. {meta['siteName']}. {meta['url']}"
 
     return {"inline_citation": inline, "full_citation": full}
+
+
+def generate_render_bundle(metadata: dict[str, Any], styles: list[str] | None = None) -> dict[str, Any]:
+    selected_styles = styles or sorted(SUPPORTED_STYLES)
+    normalized = normalize_metadata(metadata, url=metadata.get("url", ""), excerpt=metadata.get("excerpt", ""))
+    renders: dict[str, dict[str, str]] = {}
+    for style in selected_styles:
+        if style not in SUPPORTED_STYLES:
+            continue
+        renders[style] = generate_citation_outputs(style, normalized)
+    return {
+        "source_fingerprint": normalized["source_fingerprint"],
+        "source_version": normalized["source_version"],
+        "metadata": normalized,
+        "renders": renders,
+    }

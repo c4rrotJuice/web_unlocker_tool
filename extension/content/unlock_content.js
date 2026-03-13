@@ -1160,15 +1160,6 @@
         closePopup();
       }
     });
-
-
-    for (const format of formats) {
-      const pre = popup.querySelector(`#cite-${format}`);
-      if (!pre) continue;
-      const rendered = await requestRenderedCitation(format, metadata);
-      pre.textContent = rendered?.full_citation || formatCitation(format, metadata);
-    }
-
     popup.addEventListener("click", async (event) => {
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
@@ -1241,6 +1232,22 @@
     root.appendChild(backdrop);
     root.appendChild(popup);
     debug("Popup injected.");
+
+    for (const format of formats) {
+      const pre = popup.querySelector(`#cite-${format}`);
+      if (!pre) continue;
+      pre.textContent = formatCitation(format, metadata);
+      requestRenderedCitation(format, metadata)
+        .then((rendered) => {
+          if (rendered?.full_citation) {
+            pre.textContent = rendered.full_citation;
+          }
+        })
+        .catch(() => {
+          // Keep client-rendered fallback text when server rendering is unavailable.
+        });
+    }
+
     document.addEventListener("keydown", handleKeydown);
     lockPageScroll();
     popup.focus();

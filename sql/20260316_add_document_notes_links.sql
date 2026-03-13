@@ -30,11 +30,11 @@ with check (
   (select auth.uid()) = user_id
   and exists (
     select 1 from public.documents d
-    where d.id = doc_id and d.user_id = user_id
+    where d.id = document_notes.doc_id and d.user_id = document_notes.user_id
   )
   and exists (
     select 1 from public.notes n
-    where n.id = note_id and n.user_id = user_id
+    where n.id = document_notes.note_id and n.user_id = document_notes.user_id
   )
 );
 

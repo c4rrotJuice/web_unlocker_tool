@@ -123,12 +123,11 @@ body {
 
 .dashboard-side-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 14px;
 }
 
 #recentlyVisitedCard,
-#bookmarksCard,
 #citationsCard {
   min-height: 290px;
   display: flex;
@@ -136,7 +135,10 @@ body {
 }
 
 #recentlyVisitedCard {
-  grid-column: 1 / -1;
+  min-height: 260px;
+}
+
+#citationsCard {
   min-height: 260px;
 }
 
@@ -197,6 +199,21 @@ body {
   min-height: 100%;
 }
 
+.embedded-card {
+  margin-top: 12px;
+  border: 1px solid var(--wu-border);
+  border-radius: 12px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--wu-surface-1) 88%, transparent);
+}
+
+.embedded-card h3 {
+  margin: 0 0 10px;
+  font-size: 1.1rem;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--wu-border);
+}
+
 .scroll-list {
   list-style: none;
   margin: 0;
@@ -207,8 +224,12 @@ body {
 }
 
 #bookmark-list {
-  max-height: 236px;
-  min-height: 236px;
+  max-height: 220px;
+  min-height: 180px;
+}
+
+#citation-history {
+  max-height: 545px;
 }
 
 .scroll-list::-webkit-scrollbar {

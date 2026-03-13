@@ -12,6 +12,7 @@ const RESEARCH_LAST_SELECTION_KEY = "research_last_selection";
 const RESEARCH_DB_NAME = "writior_research_state";
 const RESEARCH_DB_VERSION = 1;
 const TIER_CACHE_KEY = "tier_cache";
+let sidePanelRuntimeOpen = false;
 
 const researchState = {
   notes: [],
@@ -299,6 +300,7 @@ async function applySidePanelState() {
   if (!chrome.sidePanel?.setOptions) return;
   const collapsed = await isSidePanelCollapsed();
   await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: !collapsed });
+  sidePanelRuntimeOpen = false;
 }
 
 async function resolveActiveTab(tabId) {
@@ -320,15 +322,9 @@ async function openSidePanel(tabId) {
 
   await setSidePanelCollapsed(false);
   await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: true });
-  const activeTab = Number.isInteger(tabId)
-    ? await chrome.tabs.get(tabId).catch(() => null)
-    : (await chrome.tabs.query({ active: true, currentWindow: true }))[0] || null;
-  if (Number.isInteger(activeTab?.windowId)) {
-    await chrome.sidePanel.open({ windowId: activeTab.windowId });
-  } else {
-    return { error: "sidepanel_window_unavailable" };
-  }
-  return { ok: true };
+  await chrome.sidePanel.open({ windowId: activeTab.windowId });
+  sidePanelRuntimeOpen = true;
+  return { ok: true, collapsed: false };
 }
 
 async function collapseSidePanel() {
@@ -337,15 +333,15 @@ async function collapseSidePanel() {
   }
   await setSidePanelCollapsed(true);
   await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: false });
+  sidePanelRuntimeOpen = false;
   return { ok: true, collapsed: true };
 }
 
 async function toggleSidePanel(tabId) {
-  const collapsed = await isSidePanelCollapsed();
-  if (collapsed) {
-    return openSidePanel(tabId);
+  if (sidePanelRuntimeOpen) {
+    return collapseSidePanel();
   }
-  return collapseSidePanel();
+  return openSidePanel(tabId);
 }
 
 void applySidePanelState();

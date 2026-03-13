@@ -90,6 +90,8 @@ body { margin: 0; font-family: "Inter", "Segoe UI", sans-serif; color: var(--tex
 .tab-panel.active { display:flex; }
 
 .citation-card { display:flex; flex-direction:column; gap:8px; }
+.citation-controls { display:flex; justify-content:flex-end; }
+.citation-controls select { max-width: 140px; font-size: 12px; padding: 4px 8px; }
 .citation-card.selected { border-color:var(--accent); background:var(--accent-light); }
 .citation-actions, .doc-actions { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
 .doc-actions button,
@@ -194,3 +196,6 @@ body.editor-typewriter-mode .ql-editor {
   .sidebar, .editor-main { min-height:auto; max-height:none; }
   .editor-canvas, .ql-editor { max-height:none; }
 }
+
+.attach-note-modal-content { width:min(680px,100%); }
+.attach-note-modal-body { display:flex; flex-direction:column; gap:10px; }

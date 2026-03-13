@@ -320,8 +320,15 @@ async function openSidePanel(tabId) {
 
   await setSidePanelCollapsed(false);
   await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: true });
-  await chrome.sidePanel.open({ windowId: activeTab.windowId });
-  return { ok: true, collapsed: false };
+  const activeTab = Number.isInteger(tabId)
+    ? await chrome.tabs.get(tabId).catch(() => null)
+    : (await chrome.tabs.query({ active: true, currentWindow: true }))[0] || null;
+  if (Number.isInteger(activeTab?.windowId)) {
+    await chrome.sidePanel.open({ windowId: activeTab.windowId });
+  } else {
+    return { error: "sidepanel_window_unavailable" };
+  }
+  return { ok: true };
 }
 
 async function collapseSidePanel() {

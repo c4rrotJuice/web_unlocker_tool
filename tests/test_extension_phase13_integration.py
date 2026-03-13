@@ -48,3 +48,17 @@ def test_background_contains_shared_state_sync_and_tier_gating_markers():
     assert 'consumeTierCredit' in source
     assert 'SAVE_CITATION' in source
     assert 'WORK_IN_EDITOR' in source
+
+
+def test_background_side_panel_toggle_uses_window_id_and_runtime_listeners():
+    source = Path('extension/background.js').read_text()
+
+    assert 'async function openSidePanel(tabId, windowId)' in source
+    assert 'targetWindowId = Number.isInteger(activeTab?.windowId) ? activeTab.windowId : null;' in source
+    assert 'const enablePromise = chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: true });' in source
+    assert 'const openPromise = chrome.sidePanel.open({ windowId: targetWindowId });' in source
+    assert 'await Promise.all([enablePromise, openPromise]);' in source
+
+    assert 'chrome.sidePanel?.onPanelOpened?.addListener(() => {' in source
+    assert 'chrome.sidePanel?.onPanelClosed?.addListener(() => {' in source
+    assert 'const result = await toggleSidePanel(sender.tab?.id || null, sender.tab?.windowId || null);' in source

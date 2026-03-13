@@ -311,18 +311,26 @@ async function resolveActiveTab(tabId) {
   return tab || null;
 }
 
-async function openSidePanel(tabId) {
+async function openSidePanel(tabId, windowId) {
   if (!chrome.sidePanel?.open || !chrome.sidePanel?.setOptions) {
     return { error: "sidepanel_unavailable" };
   }
-  const activeTab = await resolveActiveTab(tabId);
-  if (!Number.isInteger(activeTab?.windowId)) {
+  let targetWindowId = Number.isInteger(windowId) ? windowId : null;
+  if (!Number.isInteger(targetWindowId)) {
+    const activeTab = await resolveActiveTab(tabId);
+    targetWindowId = Number.isInteger(activeTab?.windowId) ? activeTab.windowId : null;
+  }
+  if (!Number.isInteger(targetWindowId)) {
     return { error: "sidepanel_window_unavailable" };
   }
 
+  // Keep setOptions/open invocation in the same event tick to preserve
+  // user-gesture eligibility when triggered from a page click.
+  const enablePromise = chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: true });
+  const openPromise = chrome.sidePanel.open({ windowId: targetWindowId });
+  await Promise.all([enablePromise, openPromise]);
+
   await setSidePanelCollapsed(false);
-  await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: true });
-  await chrome.sidePanel.open({ windowId: activeTab.windowId });
   sidePanelRuntimeOpen = true;
   return { ok: true, collapsed: false };
 }
@@ -337,11 +345,11 @@ async function collapseSidePanel() {
   return { ok: true, collapsed: true };
 }
 
-async function toggleSidePanel(tabId) {
+async function toggleSidePanel(tabId, windowId) {
   if (sidePanelRuntimeOpen) {
     return collapseSidePanel();
   }
-  return openSidePanel(tabId);
+  return openSidePanel(tabId, windowId);
 }
 
 void applySidePanelState();
@@ -359,7 +367,15 @@ chrome.runtime.onStartup?.addListener(() => {
 });
 
 chrome.action.onClicked?.addListener((tab) => {
-  void toggleSidePanel(tab?.id);
+  void toggleSidePanel(tab?.id, tab?.windowId);
+});
+
+chrome.sidePanel?.onPanelOpened?.addListener(() => {
+  sidePanelRuntimeOpen = true;
+});
+
+chrome.sidePanel?.onPanelClosed?.addListener(() => {
+  sidePanelRuntimeOpen = false;
 });
 
 function getNowSeconds() {
@@ -1011,7 +1027,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         frameId: sender.frameId,
       });
       if (message.action === "open_panel") {
-        const result = await toggleSidePanel(sender.tab?.id || null);
+        const result = await toggleSidePanel(sender.tab?.id || null, sender.tab?.windowId || null);
         sendResponse(result);
         return;
       }

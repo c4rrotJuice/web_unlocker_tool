@@ -39,6 +39,9 @@ function startEditor() {
   const OUTLINE_DEBOUNCE_MS = 700;
   const CHECKPOINT_INTERVAL_MS = 4 * 60 * 1000;
   const CHECKPOINT_CHANGE_THRESHOLD = 700;
+  const DEFAULT_FONT = "times-new-roman";
+  const DEFAULT_SIZE = "12px";
+  const DEFAULT_LINE_HEIGHT = "1.15";
 
   let currentDocId = null;
   let currentCitationIds = [];
@@ -87,6 +90,14 @@ function startEditor() {
   const quickNoteProject = document.getElementById("quick-note-project");
   const researchNotesList = document.getElementById("research-notes-list");
   const researchNotesSearch = document.getElementById("research-notes-search");
+  const statusWordCount = document.getElementById("status-word-count");
+  const statusCharCount = document.getElementById("status-char-count");
+  const statusReadingTime = document.getElementById("status-reading-time");
+  const statusPageEstimate = document.getElementById("status-page-estimate");
+  const editorToolbar = document.getElementById("editor-toolbar");
+  const focusModeBtn = document.getElementById("tool-focus-mode");
+  const typewriterBtn = document.getElementById("tool-typewriter");
+  const toggleToolbarBtn = document.getElementById("tool-toggle-toolbar");
 
   function attachButtonClickMotion() {
     document.addEventListener("pointerdown", (event) => {
@@ -108,6 +119,21 @@ function startEditor() {
 
   attachButtonClickMotion();
 
+  const Font = Quill.import("formats/font");
+  Font.whitelist = ["times-new-roman", "georgia", "garamond", "cambria", "arial"];
+  Quill.register(Font, true);
+
+  const Size = Quill.import("attributors/style/size");
+  Size.whitelist = ["10px", "11px", "12px", "14px", "16px", "18px", "24px"];
+  Quill.register(Size, true);
+
+  const Parchment = Quill.import("parchment");
+  const LineHeightStyle = new Parchment.Attributor.Style("lineheight", "line-height", {
+    scope: Parchment.Scope.BLOCK,
+    whitelist: ["1", "1.15", "1.5", "2"],
+  });
+  Quill.register(LineHeightStyle, true);
+
   const quill = new Quill("#editor", {
     theme: "snow",
     modules: {
@@ -115,6 +141,8 @@ function startEditor() {
         container: "#editor-toolbar",
         handlers: {
           cite: () => insertCitationToken(),
+          insertQuickCite: () => insertCitationToken(),
+          insertBibliography: () => insertBibliographySection(),
           insertQuote: () => insertCitationQuote(),
         },
       },
@@ -122,6 +150,10 @@ function startEditor() {
       clipboard: { matchVisual: false },
     },
   });
+
+  quill.format("font", DEFAULT_FONT, "silent");
+  quill.format("size", DEFAULT_SIZE, "silent");
+  quill.format("lineheight", DEFAULT_LINE_HEIGHT, "silent");
 
   function isProTier() {
     const tier = (window.__editorAccess?.account_type || "").toLowerCase();
@@ -133,9 +165,9 @@ function startEditor() {
   }
 
   function allowedFormatsForTier(tier = accountTier()) {
-    if (tier === "pro" || tier === "dev") return ["pdf", "docx", "txt"];
-    if (tier === "standard") return ["pdf", "docx"];
-    return ["pdf"];
+    if (tier === "pro" || tier === "dev") return ["pdf", "docx", "txt", "md", "html"];
+    if (tier === "standard") return ["pdf", "docx", "txt", "md", "html"];
+    return ["pdf", "html"];
   }
 
   function normalizeDelta(delta) {
@@ -177,15 +209,24 @@ function startEditor() {
     return (el.textContent || "").replace(/\u00a0/g, " ").trim();
   }
 
-  function getWordCount() {
-    const words = (quill.getText() || "").trim().split(/\s+/).filter(Boolean);
-    return words.length;
+  function getTextMetrics() {
+    const text = (quill.getText() || "").replace(/\s+/g, " ").trim();
+    const words = text ? text.split(" ").filter(Boolean) : [];
+    const wordCount = words.length;
+    const charCount = text.length;
+    const readingMinutes = Math.max(0, Math.ceil(wordCount / 225));
+    const pages = wordCount / 500;
+    return { wordCount, charCount, readingMinutes, pages };
   }
 
   function updateWordCount() {
-    const count = getWordCount();
-    editorWordCount.textContent = `Words: ${count}`;
-    toolWordCount.textContent = `Word Count: ${count}`;
+    const metrics = getTextMetrics();
+    editorWordCount.textContent = `Words: ${metrics.wordCount}`;
+    toolWordCount.textContent = `Word Count: ${metrics.wordCount}`;
+    if (statusWordCount) statusWordCount.textContent = `Words: ${metrics.wordCount}`;
+    if (statusCharCount) statusCharCount.textContent = `Characters: ${metrics.charCount}`;
+    if (statusReadingTime) statusReadingTime.textContent = `Reading time: ${metrics.readingMinutes} min`;
+    if (statusPageEstimate) statusPageEstimate.textContent = `Pages: ${metrics.pages.toFixed(1)}`;
   }
 
   function getDocNotesStorageKey() {
@@ -310,7 +351,7 @@ function startEditor() {
       const actions = document.createElement("div");
       actions.className = "doc-actions";
       const formats = new Set((doc.allowed_export_formats || allowedFormatsForTier()).map((f) => (f || "").toLowerCase()));
-      ["pdf", "docx", "txt"].forEach((fmt) => {
+      ["pdf", "docx", "txt", "md", "html"].forEach((fmt) => {
         const b = document.createElement("button");
         b.className = "secondary";
         b.textContent = fmt.toUpperCase();
@@ -390,13 +431,14 @@ function startEditor() {
     });
     outlineList.innerHTML = "";
     if (!outline.length) {
-      outlineList.innerHTML = '<p class="empty-state">No headings yet. Add H1/H2/H3 to build the outline.</p>';
+      outlineList.innerHTML = '<p class="empty-state">No headings yet. Add Title/H1-H4 to build the outline.</p>';
       return;
     }
     outline.forEach((item) => {
       const btn = document.createElement("button");
       btn.className = `outline-item level-${item.level}`;
-      btn.textContent = item.text;
+      const headingLabel = item.level === 1 ? "Title" : `H${item.level - 1}`;
+      btn.textContent = `${headingLabel}: ${item.text}`;
       btn.addEventListener("click", () => { quill.setSelection(item.index, 0, "user"); quill.focus(); });
       outlineList.appendChild(btn);
     });
@@ -583,6 +625,21 @@ function startEditor() {
     if (author) return `(${author})`;
     if (title) return `(${title})`;
     return `(${domain})`;
+  }
+
+  function insertBibliographySection() {
+    const bibliography = currentCitationIds
+      .map((id) => citationCache.get(id))
+      .filter(Boolean)
+      .map((citation) => citation.full_citation || citation.full_text || "")
+      .filter(Boolean);
+    if (!bibliography.length) return alert("Attach citations to this document to generate a bibliography.");
+    const selection = quill.getSelection(true);
+    const index = selection ? selection.index : quill.getLength();
+    let text = "\nBibliography\n";
+    bibliography.forEach((entry, i) => { text += `${i + 1}. ${entry}\n`; });
+    quill.insertText(index, text, "user");
+    quill.setSelection(index + text.length, 0, "silent");
   }
 
   function insertCitationToken(citation) {
@@ -1016,6 +1073,29 @@ function startEditor() {
     URL.revokeObjectURL(url);
   }
 
+  function toggleFocusMode() {
+    document.body.classList.toggle("editor-focus-mode");
+    focusModeBtn?.classList.toggle("active", document.body.classList.contains("editor-focus-mode"));
+  }
+
+  function toggleTypewriterMode() {
+    document.body.classList.toggle("editor-typewriter-mode");
+    typewriterBtn?.classList.toggle("active", document.body.classList.contains("editor-typewriter-mode"));
+  }
+
+  function toggleToolbarVisibility() {
+    editorToolbar?.classList.toggle("toolbar-hidden");
+    const hidden = editorToolbar?.classList.contains("toolbar-hidden");
+    if (toggleToolbarBtn) toggleToolbarBtn.textContent = hidden ? "Show Toolbar" : "Hide Toolbar";
+  }
+
+  function highlightActiveLine(range) {
+    document.querySelectorAll(".ql-editor .is-active-paragraph").forEach((node) => node.classList.remove("is-active-paragraph"));
+    if (!range) return;
+    const [line] = quill.getLine(range.index);
+    line?.domNode?.classList?.add("is-active-paragraph");
+  }
+
   quill.on("text-change", (delta, _old, source) => {
     if (source !== "user") return;
     isDirty = true;
@@ -1025,7 +1105,7 @@ function startEditor() {
     createCheckpointIfNeeded();
     updateWordCount();
   });
-  quill.on("selection-change", (range, oldRange) => { if (!range && oldRange && isDirty) autosaveDoc(); });
+  quill.on("selection-change", (range, oldRange) => { highlightActiveLine(range); if (!range && oldRange && isDirty) autosaveDoc(); });
   docTitleInput.addEventListener("input", () => { isDirty = true; queueAutosave(); });
   window.addEventListener("beforeunload", () => { if (isDirty) autosaveDoc(); });
 
@@ -1059,6 +1139,9 @@ function startEditor() {
   document.getElementById("tool-outline").addEventListener("click", () => outlinePanel.classList.toggle("collapsed"));
   document.getElementById("tool-history").addEventListener("click", () => historyPanel.classList.toggle("collapsed"));
   document.getElementById("tool-add-doc-note").addEventListener("click", addDocNote);
+  focusModeBtn?.addEventListener("click", toggleFocusMode);
+  typewriterBtn?.addEventListener("click", toggleTypewriterMode);
+  toggleToolbarBtn?.addEventListener("click", toggleToolbarVisibility);
 
   document.getElementById("citation-search").addEventListener("input", (event) => {
     if (citationSearchTimer) clearTimeout(citationSearchTimer);

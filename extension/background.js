@@ -301,10 +301,23 @@ async function applySidePanelState() {
   await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: !collapsed });
 }
 
+async function resolveActiveTab(tabId) {
+  if (Number.isInteger(tabId)) {
+    return chrome.tabs.get(tabId).catch(() => null);
+  }
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab || null;
+}
+
 async function openSidePanel(tabId) {
   if (!chrome.sidePanel?.open || !chrome.sidePanel?.setOptions) {
     return { error: "sidepanel_unavailable" };
   }
+  const activeTab = await resolveActiveTab(tabId);
+  if (!Number.isInteger(activeTab?.windowId)) {
+    return { error: "sidepanel_window_unavailable" };
+  }
+
   await setSidePanelCollapsed(false);
   await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: true });
   const activeTab = Number.isInteger(tabId)
@@ -324,7 +337,15 @@ async function collapseSidePanel() {
   }
   await setSidePanelCollapsed(true);
   await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: false });
-  return { ok: true };
+  return { ok: true, collapsed: true };
+}
+
+async function toggleSidePanel(tabId) {
+  const collapsed = await isSidePanelCollapsed();
+  if (collapsed) {
+    return openSidePanel(tabId);
+  }
+  return collapseSidePanel();
 }
 
 void applySidePanelState();
@@ -342,7 +363,7 @@ chrome.runtime.onStartup?.addListener(() => {
 });
 
 chrome.action.onClicked?.addListener((tab) => {
-  void openSidePanel(tab?.id);
+  void toggleSidePanel(tab?.id);
 });
 
 function getNowSeconds() {
@@ -994,7 +1015,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         frameId: sender.frameId,
       });
       if (message.action === "open_panel") {
-        const result = await openSidePanel(sender.tab?.id || null);
+        const result = await toggleSidePanel(sender.tab?.id || null);
         sendResponse(result);
         return;
       }

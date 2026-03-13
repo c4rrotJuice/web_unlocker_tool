@@ -863,7 +863,17 @@ function startEditor() {
 
       const metaRow = document.createElement("div");
       metaRow.className = "meta-row";
-      appendTextElement(metaRow, "span", note.source_url || "No source");
+      if (note.source_url) {
+        const sourceLink = document.createElement("a");
+        sourceLink.className = "note-source-link";
+        sourceLink.href = note.source_url;
+        sourceLink.target = "_blank";
+        sourceLink.rel = "noopener noreferrer";
+        sourceLink.textContent = note.source_url;
+        metaRow.appendChild(sourceLink);
+      } else {
+        appendTextElement(metaRow, "span", "No source");
+      }
       appendTextElement(metaRow, "span", new Date(note.updated_at || note.created_at).toLocaleString());
       li.appendChild(metaRow);
 

@@ -20,8 +20,8 @@ body { margin: 0; font-family: "Inter", "Segoe UI", sans-serif; color: var(--tex
 .content-pill { border:1px solid var(--border); background:var(--panel); border-radius:999px; padding:8px 16px; cursor:pointer; color:var(--text); transition: background-color .18s ease, border-color .18s ease, transform .12s ease, box-shadow .2s ease; }
 .content-pill.active { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
 
-.editor-shell { display:grid; grid-template-columns:280px 1fr 320px; gap:12px; min-height: calc(100vh - 180px); align-items:stretch; }
-.sidebar, .editor-main { background: var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px; min-height: clamp(560px, calc(100vh - 220px), 820px); max-height: clamp(560px, calc(100vh - 220px), 820px); }
+.editor-shell { display:grid; grid-template-columns:280px minmax(0,1fr) 320px; gap:12px; min-height: calc(100vh - 180px); align-items:stretch; }
+.sidebar, .editor-main { background: var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px; min-height: clamp(520px, calc(100vh - 220px), 780px); max-height: clamp(520px, calc(100vh - 220px), 780px); }
 .sidebar { display:flex; flex-direction:column; overflow:hidden; }
 
 .sidebar-right { display:flex; gap:10px; }
@@ -37,14 +37,14 @@ body { margin: 0; font-family: "Inter", "Segoe UI", sans-serif; color: var(--tex
 .doc-item.active { border-color:var(--accent); background:var(--accent-light); }
 .doc-meta { font-size:12px; color:var(--muted); }
 
-.editor-main { display:flex; flex-direction:column; gap:10px; overflow:hidden; }
+.editor-main { position:relative; display:flex; flex-direction:column; gap:10px; overflow:hidden; }
 .editor-header { display:flex; gap:10px; justify-content:space-between; align-items:center; }
 #doc-title { font-size:24px; border:none; outline:none; width:100%; background:transparent; color:var(--text); }
 .editor-actions { display:flex; gap:10px; align-items:center; color:var(--muted); }
 #editor-toolbar { border:1px solid var(--border); border-radius:8px; }
-.editor-canvas { min-height: 360px; max-height: 560px; overflow-y: auto; border:1px solid var(--border); border-radius:8px; background:var(--wu-surface-2); }
+.editor-canvas { min-height: 300px; max-height: 420px; overflow-y: auto; border:1px solid var(--border); border-radius:8px; background:var(--wu-surface-2); }
 .ql-container.ql-snow { border: none; }
-.ql-editor { min-height: 360px; max-height: 560px; font-size:16px; line-height:1.6; overflow-y:auto; }
+.ql-editor { min-height: 300px; max-height: 420px; font-size:16px; line-height:1.6; overflow-y:auto; }
 
 .ql-editor { font-family: "Times New Roman", Times, serif; font-size: 12px; line-height: 1.15; }
 .ql-snow .ql-picker.ql-font .ql-picker-item[data-value="times-new-roman"]::before,
@@ -169,10 +169,49 @@ button.text { border:none; background:transparent; color:var(--accent); }
   font-size:12px;
 }
 
+.sidecar-toggle {
+  position:absolute;
+  top:50%;
+  right:12px;
+  transform:translate(50%, -50%);
+  width:28px;
+  height:56px;
+  border-radius:999px;
+  border:1px solid var(--border);
+  background:var(--panel);
+  color:var(--accent);
+  font-size:18px;
+  font-weight:700;
+  z-index:4;
+}
+
+.editor-sidecar {
+  position:absolute;
+  top:12px;
+  bottom:12px;
+  right:-256px;
+  width:320px;
+  padding:10px;
+  border:1px solid var(--border);
+  border-radius:10px;
+  background:var(--panel);
+  display:none;
+  flex-direction:column;
+  gap:10px;
+  overflow:auto;
+  z-index:3;
+}
+.editor-main.sidecar-open .editor-sidecar { display:flex; }
+.editor-main.sidecar-open .sidecar-toggle { right: calc(12px + 320px - 256px); }
+
+#doc-notes-list { min-height:0; }
+
 #editor-toolbar.toolbar-hidden { display:none; }
 body.editor-focus-mode .sidebar { display:none; }
 body.editor-focus-mode .editor-shell { grid-template-columns: 1fr; }
 body.editor-focus-mode .editor-main { max-width: 900px; margin: 0 auto; }
+body.editor-focus-mode .sidecar-toggle,
+body.editor-focus-mode .editor-sidecar { display:none !important; }
 body.editor-typewriter-mode .ql-editor {
   padding-top: 35vh;
   padding-bottom: 35vh;
@@ -195,7 +234,12 @@ body.editor-typewriter-mode .ql-editor {
   .editor-shell { grid-template-columns: 1fr; }
   .sidebar, .editor-main { min-height:auto; max-height:none; }
   .editor-canvas, .ql-editor { max-height:none; }
+  .sidecar-toggle { display:none; }
+  .editor-sidecar { position:static; display:flex; width:100%; }
 }
 
 .attach-note-modal-content { width:min(680px,100%); }
 .attach-note-modal-body { display:flex; flex-direction:column; gap:10px; }
+
+.header-pill-actions { display:flex; gap:8px; margin-top:6px; }
+.header-pill-actions .pill { padding:6px 11px; font-size:12px; }

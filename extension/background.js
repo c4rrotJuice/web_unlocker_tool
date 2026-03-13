@@ -7,6 +7,93 @@ const NOTES_KEY = "notes_state";
 const NOTES_SYNC_QUEUE_KEY = "notes_sync_queue";
 const REFRESH_WINDOW_SECONDS = 120;
 const supabaseClient = createSupabaseAuthClient();
+const DB_NAME = "writior_research_state";
+const DB_VERSION = 1;
+const RESEARCH_STORE = "state";
+const RESEARCH_KEY = "global";
+const PANEL_COLLAPSED_KEY = "writior_panel_collapsed";
+
+let researchState = {
+  highlights: [],
+  notes: [],
+  citations: [],
+  lastSelection: "",
+  activeProject: null,
+  tierCache: {
+    tier: "free",
+    citations_remaining: -1,
+    documents_remaining: 0,
+    reset_timestamp: null,
+  },
+};
+
+function openResearchDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(RESEARCH_STORE)) {
+        db.createObjectStore(RESEARCH_STORE);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function loadResearchState() {
+  try {
+    const db = await openResearchDb();
+    const tx = db.transaction(RESEARCH_STORE, "readonly");
+    const store = tx.objectStore(RESEARCH_STORE);
+    const request = store.get(RESEARCH_KEY);
+    const value = await new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    if (value && typeof value === "object") {
+      researchState = { ...researchState, ...value };
+    }
+  } catch (error) {
+    debug("Research state load failed", error);
+  }
+}
+
+async function persistResearchState() {
+  try {
+    const db = await openResearchDb();
+    const tx = db.transaction(RESEARCH_STORE, "readwrite");
+    tx.objectStore(RESEARCH_STORE).put(researchState, RESEARCH_KEY);
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch (error) {
+    debug("Research state persist failed", error);
+  }
+}
+
+
+function applyAutoArchive(state) {
+  const MAX_ACTIVE_NOTES = 300;
+  if (!Array.isArray(state.notes) || state.notes.length <= MAX_ACTIVE_NOTES) {
+    return state;
+  }
+  const active = state.notes.slice(0, MAX_ACTIVE_NOTES);
+  const archived = state.notes.slice(MAX_ACTIVE_NOTES).map((note) => ({ ...note, archived_at: note.archived_at || new Date().toISOString() }));
+  return { ...state, notes: [...active, ...archived] };
+}
+
+function tierCacheFromUsage(usage) {
+  return {
+    tier: normalizeTier(usage?.account_type || "free"),
+    citations_remaining: Number.isFinite(usage?.remaining) ? usage.remaining : -1,
+    documents_remaining: Number.isFinite(usage?.documents_remaining) ? usage.documents_remaining : 0,
+    reset_timestamp: usage?.reset_at || null,
+  };
+}
 let debugEnabled = false;
 const debug = (...args) => {
   if (debugEnabled) {
@@ -31,6 +118,22 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 void migrateLegacyNotesStateIfNeeded();
+void loadResearchState();
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: true });
+});
+
+chrome.runtime.onStartup?.addListener(() => {
+  chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: true });
+});
+
+chrome.action.onClicked.addListener(async (tab) => {
+  if (!tab?.id) return;
+  await chrome.storage.local.set({ [PANEL_COLLAPSED_KEY]: false });
+  await chrome.sidePanel.open({ tabId: tab.id });
+});
+
 
 function getNowSeconds() {
   return Math.floor(Date.now() / 1000);
@@ -636,6 +739,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         frameId: sender.frameId,
       });
       switch (message.type) {
+        case "open_panel": {
+          const tabId = sender.tab?.id || message.tabId;
+          await chrome.storage.local.set({ [PANEL_COLLAPSED_KEY]: false });
+          if (tabId) {
+            await chrome.sidePanel.open({ tabId });
+          }
+          sendResponse({ status: 200, data: { opened: true } });
+          break;
+        }
+        case "panel_state": {
+          if (typeof message.collapsed === "boolean") {
+            await chrome.storage.local.set({ [PANEL_COLLAPSED_KEY]: message.collapsed });
+          }
+          const value = await chrome.storage.local.get({ [PANEL_COLLAPSED_KEY]: false });
+          sendResponse({ status: 200, data: { collapsed: Boolean(value[PANEL_COLLAPSED_KEY]) } });
+          break;
+        }
+        case "RESEARCH_STATE_GET": {
+          sendResponse({ status: 200, data: researchState });
+          break;
+        }
+        case "RESEARCH_CAPTURE": {
+          const payload = message.payload || {};
+          if (payload.type === "highlight") {
+            researchState.highlights.unshift(payload.item);
+          }
+          if (payload.type === "note") {
+            researchState.notes.unshift(payload.item);
+            researchState = applyAutoArchive(researchState);
+          }
+          if (payload.type === "citation") {
+            researchState.citations.unshift(payload.item);
+          }
+          if (typeof payload.lastSelection === "string") {
+            researchState.lastSelection = payload.lastSelection;
+          }
+          if (payload.activeProject !== undefined) {
+            researchState.activeProject = payload.activeProject;
+          }
+          await persistResearchState();
+          sendResponse({ status: 200, data: { captured: true } });
+          break;
+        }
         case "login": {
           const { data } = await supabaseClient.auth.signInWithPassword({
             email: message.email,
@@ -709,13 +855,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case "get-session": {
           const session = await ensureValidSession();
           const usage = await getUsageSnapshotForSession(session);
-          sendResponse({ session, usage });
+          researchState.tierCache = tierCacheFromUsage(usage || {});
+          await persistResearchState();
+          sendResponse({ session, usage, tierCache: researchState.tierCache });
           break;
         }
         case "check-unlock": {
           const result = await fetchUnlockPermit({
             url: message.url || null,
           });
+          if (result?.data) {
+            researchState.tierCache = tierCacheFromUsage(result.data);
+            await persistResearchState();
+          }
           sendResponse(result);
           break;
         }
@@ -724,11 +876,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             url: message.url || null,
             dry_run: true,
           });
+          if (result?.data) {
+            researchState.tierCache = tierCacheFromUsage(result.data);
+            await persistResearchState();
+          }
           sendResponse(result);
           break;
         }
         case "SAVE_CITATION": {
           const result = await saveCitation(message.payload || {});
+          if (result?.data) {
+            researchState.citations.unshift(result.data);
+            await persistResearchState();
+          }
           debug("SAVE_CITATION result", result);
           sendResponse(result);
           break;
@@ -784,6 +944,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             await enqueueSyncOperation({ type: "create", note });
             void flushSyncQueue();
           }
+          researchState.notes.unshift(note);
+          researchState = applyAutoArchive(researchState);
+          await persistResearchState();
           sendResponse({ status: 200, data: { note, sync_blocked: syncBlocked, storage_bytes: localSize, sync_limit_bytes: Number.isFinite(syncLimit) ? syncLimit : null } });
           break;
         }

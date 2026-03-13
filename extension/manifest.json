@@ -4,17 +4,32 @@
   "version": "0.1.0",
   "description": "Authenticate with Supabase and check extension unlock usage.",
   "action": {
-    "default_popup": "popup.html",
     "default_title": "Web Unlocker"
   },
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["storage", "activeTab", "scripting"],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "permissions": ["storage", "activeTab", "scripting", "tabs", "sidePanel"],
   "host_permissions": [
+    "<all_urls>",
     "https://web-unlocker-tool.onrender.com/*",
     "https://lrdpstewxrufbbgxfcgk.supabase.co/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/unlock_content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["app/static/images/writior_logo_48.jpg"],
+      "matches": ["<all_urls>"]
+    }
   ]
 }
-

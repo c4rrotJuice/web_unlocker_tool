@@ -9,7 +9,8 @@
     }
   };
 
-  if (window.__webUnlockerContentScriptInjected) {
+  if (window.WRITIOR_EXTENSION?.mounted) {
+    window.WRITIOR_EXTENSION.bootstrap?.();
     if (document.documentElement) {
       document.documentElement.dataset.webUnlocker = "1";
     }
@@ -25,6 +26,49 @@
     customFormatTemplate: "",
     accountType: "anonymous",
   };
+
+
+  function getWritiorRoot() {
+    let root = document.getElementById("writior-root");
+    if (!root) {
+      root = document.createElement("div");
+      root.id = "writior-root";
+      (document.body || document.documentElement)?.appendChild(root);
+    }
+    return root;
+  }
+
+  let floatingIcon = null;
+  function pulseFloatingIcon() {
+    if (!floatingIcon) return;
+    floatingIcon.classList.remove("capture-confirmed");
+    floatingIcon.offsetWidth;
+    floatingIcon.classList.add("capture-confirmed");
+  }
+
+  function setHighlightState(active) {
+    if (!floatingIcon) return;
+    floatingIcon.classList.toggle("highlight-active", Boolean(active));
+  }
+
+  function ensureFloatingIcon() {
+    if (floatingIcon && document.contains(floatingIcon)) return floatingIcon;
+    const root = getWritiorRoot();
+    const icon = document.createElement("button");
+    icon.id = "writior-floating-icon";
+    icon.type = "button";
+    icon.setAttribute("aria-label", "Open Writior side panel");
+    const img = document.createElement("img");
+    img.alt = "Writior";
+    img.src = chrome.runtime.getURL("app/static/images/writior_logo_48.jpg");
+    icon.appendChild(img);
+    icon.addEventListener("click", () => {
+      chrome.runtime.sendMessage({ type: "open_panel" });
+    });
+    root.appendChild(icon);
+    floatingIcon = icon;
+    return icon;
+  }
 
   const STYLE_ID = "web-unlocker-extension-style";
   // Guard flag prevents repeated enable toasts on reinjection.
@@ -336,6 +380,14 @@
         opacity: 1;
         transform: translate(-50%, -6px);
       }
+
+      #writior-root { position: fixed; inset: 0; pointer-events: none; z-index: 2147483645; }
+      #writior-floating-icon { position: fixed; right: 20px; bottom: 20px; width: 52px; height: 52px; border-radius: 999px; box-shadow: 0 8px 26px rgba(15,23,42,.35); background: #111827; display:flex; align-items:center; justify-content:center; cursor: pointer; pointer-events: auto; }
+      #writior-floating-icon img { width: 42px; height: 42px; object-fit: cover; border-radius: 999px; }
+      #writior-floating-icon.highlight-active { box-shadow: 0 0 0 8px rgba(37,99,235,.25), 0 8px 26px rgba(15,23,42,.35); }
+      #writior-floating-icon.capture-confirmed { animation: writiorPulse .6s ease-out; }
+      @keyframes writiorPulse { 0% { transform: scale(1);} 50% { transform: scale(1.08);} 100% { transform: scale(1);} }
+      
     `;
     document.head.appendChild(style);
   }
@@ -363,7 +415,7 @@
   }
 
   function showToast(message, isError = false) {
-    const root = document.body || document.documentElement;
+    const root = getWritiorRoot();
     if (!root) {
       debug("Toast skipped; no root element available.");
       return;
@@ -1224,7 +1276,7 @@
       }
     });
 
-    const root = document.body || document.documentElement;
+    const root = getWritiorRoot();
     if (!root) {
       debug("Popup aborted; no root element available.");
       return;
@@ -1288,7 +1340,7 @@
   async function openNoteModal() {
     removeCopyButton();
     closeNoteModal();
-    const root = document.body || document.documentElement;
+    const root = getWritiorRoot();
     if (!root) return;
     const noteMetadata = validateCitationMetadata(getCitationMetadata(state.selectionText || ""));
 
@@ -1339,6 +1391,7 @@
         return;
       }
       showToast(response?.data?.sync_blocked ? "Saved locally. Sync paused due to storage cap." : "Note saved.");
+      pulseFloatingIcon();
       closeNoteModal();
     });
   }
@@ -1350,7 +1403,8 @@
     [
       { key: "copy", label: "Copy" },
       { key: "cite", label: "Cite" },
-      { key: "note", label: "Note" },
+      { key: "note", label: "Quick Note" },
+      { key: "editor", label: "Send to Editor" },
     ].forEach((entry) => {
       const action = document.createElement("button");
       action.type = "button";
@@ -1364,6 +1418,7 @@
         if (entry.key === "copy") {
           const copied = await copyText(state.selectionText);
           showToast(copied ? "Copied selection." : "Copy failed.", !copied);
+          if (copied) pulseFloatingIcon();
           removeCopyButton();
           return;
         }
@@ -1372,11 +1427,18 @@
           await buildPopup();
           return;
         }
+        if (entry.key === "editor") {
+          await sendSelectionToEditor();
+          removeCopyButton();
+          pulseFloatingIcon();
+          return;
+        }
         await openNoteModal();
+        pulseFloatingIcon();
       }, true);
       button.appendChild(action);
     });
-    const root = document.documentElement || document.body;
+    const root = getWritiorRoot();
     if (!root) return null;
     root.appendChild(button);
     copyButton = button;
@@ -1501,10 +1563,12 @@
     const text = selection ? selection.toString().trim() : "";
     debug("Mouseup selection", { length: text.length });
     if (!text) {
+      setHighlightState(false);
       removeCopyButton();
       return;
     }
 
+    setHighlightState(true);
     state.selectionText = text;
     state.lastCitationText = "";
 
@@ -1530,7 +1594,7 @@
       target.classList.contains("web-unlocker-copy-btn") ||
       target.closest(".web-unlocker-copy-btn")
     );
-    if (!inPopup && !isButton) removeCopyButton();
+    if (!inPopup && !isButton) { removeCopyButton(); setHighlightState(false); }
   }
 
   debug("Content script init", {
@@ -1541,25 +1605,50 @@
     hasHead: Boolean(document.head),
   });
 
-  injectStyles();
-  enableSelection();
+  const cleanupHandlers = [];
+  function bootstrap() {
+    injectStyles();
+    enableSelection();
+    ensureFloatingIcon();
 
-  if (document.documentElement) {
-    // Marker lets page-context DevTools confirm the script is active.
-    document.documentElement.dataset.webUnlocker = "1";
-  }
-
-  if (!window[ENABLE_TOAST_FLAG]) {
-    window[ENABLE_TOAST_FLAG] = true;
-    if (document.body) {
-      showToast("Web Unlocker enabled ✓");
-    } else {
-      debug("Enable toast skipped; body not available yet.");
+    if (document.documentElement) {
+      document.documentElement.dataset.webUnlocker = "1";
     }
+
+    if (!window[ENABLE_TOAST_FLAG]) {
+      window[ENABLE_TOAST_FLAG] = true;
+      showToast("Writior always-on mode enabled ✓");
+    }
+
+    document.addEventListener("mouseup", handleMouseUp);
+    document.addEventListener("mousedown", handleMouseDown);
+    cleanupHandlers.push(() => document.removeEventListener("mouseup", handleMouseUp));
+    cleanupHandlers.push(() => document.removeEventListener("mousedown", handleMouseDown));
+
+    let lastHref = location.href;
+    const onNav = () => {
+      if (location.href !== lastHref) {
+        lastHref = location.href;
+        removeCopyButton();
+        setHighlightState(false);
+        ensureFloatingIcon();
+      }
+    };
+    const observer = new MutationObserver(onNav);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    cleanupHandlers.push(() => observer.disconnect());
+    window.addEventListener("popstate", onNav, true);
+    cleanupHandlers.push(() => window.removeEventListener("popstate", onNav, true));
   }
 
-  document.addEventListener("mouseup", handleMouseUp);
-  document.addEventListener("mousedown", handleMouseDown);
+  function cleanup() {
+    cleanupHandlers.splice(0).forEach((fn) => fn());
+    removeCopyButton();
+    document.querySelector("#writior-root")?.remove();
+  }
+
+  window.WRITIOR_EXTENSION = { mounted: true, cleanup, bootstrap };
+  bootstrap();
 
   if (DEBUG) {
     document.addEventListener(

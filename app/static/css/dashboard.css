@@ -116,17 +116,28 @@ body {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.16fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.22fr) minmax(0, 1fr);
   gap: 14px;
   align-items: start;
+}
+
+.dashboard-side-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
 }
 
 #recentlyVisitedCard,
 #bookmarksCard,
 #citationsCard {
-  min-height: 360px;
+  min-height: 290px;
   display: flex;
   flex-direction: column;
+}
+
+#recentlyVisitedCard {
+  grid-column: 1 / -1;
+  min-height: 260px;
 }
 
 .dashboard-card {
@@ -183,7 +194,7 @@ body {
 }
 
 .usage-card {
-  grid-row: span 2;
+  min-height: 100%;
 }
 
 .scroll-list {
@@ -393,8 +404,13 @@ footer {
     grid-template-columns: 1fr;
   }
 
-  .usage-card {
-    grid-row: auto;
+  .dashboard-side-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #recentlyVisitedCard {
+    grid-column: auto;
+    min-height: 290px;
   }
 
   .chart-wrap {

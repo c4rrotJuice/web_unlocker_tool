@@ -556,11 +556,13 @@ function startEditor() {
     if (lastKnownRange && Number.isFinite(lastKnownRange.index)) {
       quill.focus();
       quill.setSelection(lastKnownRange.index, lastKnownRange.length || 0, "silent");
+      lastKnownRange = { index: lastKnownRange.index, length: lastKnownRange.length || 0 };
       return lastKnownRange.index;
     }
     const end = quill.getLength();
     quill.focus();
     quill.setSelection(end, 0, "silent");
+    lastKnownRange = { index: end, length: 0 };
     return end;
   }
 
@@ -750,7 +752,9 @@ function startEditor() {
     const inText = rendered.inline_citation || buildInlineCitation(citationData);
     const insertIndex = getInsertionIndex();
     quill.insertText(insertIndex, `${inText}${token} `, { background: "#eef4ff" }, "user");
-    quill.setSelection(insertIndex + inText.length + token.length + 1, 0, "silent");
+    const nextIndex = insertIndex + inText.length + token.length + 1;
+    quill.setSelection(nextIndex, 0, "silent");
+    lastKnownRange = { index: nextIndex, length: 0 };
     attachCitation(citationData.id);
   }
 
@@ -764,7 +768,9 @@ function startEditor() {
     const needsLeadingBreak = insertIndex > 0 && !quill.getText(insertIndex - 1, 1).match(/\s/);
     const text = `${needsLeadingBreak ? "\n" : ""}${fullCitation}\n`;
     quill.insertText(insertIndex, text, "user");
-    quill.setSelection(insertIndex + text.length, 0, "silent");
+    const nextIndex = insertIndex + text.length;
+    quill.setSelection(nextIndex, 0, "silent");
+    lastKnownRange = { index: nextIndex, length: 0 };
     attachCitation(citationData.id);
   }
 
@@ -780,7 +786,9 @@ function startEditor() {
 ${quoteText}
 ${inText}${token}
 `, { blockquote: true }, "user");
-    quill.setSelection(idx + quoteText.length + inText.length + token.length + 3, 0, "silent");
+    const nextIndex = idx + quoteText.length + inText.length + token.length + 3;
+    quill.setSelection(nextIndex, 0, "silent");
+    lastKnownRange = { index: nextIndex, length: 0 };
     attachCitation(citationData.id);
   }
 

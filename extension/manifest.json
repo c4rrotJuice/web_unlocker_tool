@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Web Unlocker Tool",
+  "name": "Writior Research Workflow",
   "version": "0.1.0",
   "description": "Authenticate with Supabase and check extension unlock usage.",
   "action": {

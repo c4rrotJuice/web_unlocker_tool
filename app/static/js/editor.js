@@ -108,6 +108,9 @@ function startEditor() {
   const attachNoteCreateView = document.getElementById("attach-note-create-view");
   const attachNoteTitle = document.getElementById("attach-note-title");
   const attachNoteBody = document.getElementById("attach-note-body");
+  const sidecarToggleBtn = document.getElementById("sidecar-toggle");
+  const editorMain = document.querySelector(".editor-main");
+  const signoutBtn = document.getElementById("signout-btn");
 
   function attachButtonClickMotion() {
     document.addEventListener("pointerdown", (event) => {
@@ -1323,6 +1326,28 @@ ${inText}${token}
     if (toggleToolbarBtn) toggleToolbarBtn.textContent = hidden ? "Show Toolbar" : "Hide Toolbar";
   }
 
+  function setSidecarOpen(open) {
+    if (!editorMain || !sidecarToggleBtn) return;
+    editorMain.classList.toggle("sidecar-open", open);
+    sidecarToggleBtn.innerHTML = open ? "&lt;" : "&gt;";
+    sidecarToggleBtn.setAttribute("aria-label", open ? "Hide document tools" : "Show document tools");
+    sidecarToggleBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    document.getElementById("editor-sidecar")?.setAttribute("aria-hidden", open ? "false" : "true");
+  }
+
+  async function signOutEditorUser() {
+    try {
+      const authClient = window.webUnlockerAuth?.client;
+      if (authClient?.auth?.signOut) {
+        await authClient.auth.signOut();
+      }
+      await window.webUnlockerAuth?.writeLegacyToken?.(null);
+    } catch (_error) {
+      // ignore and redirect anyway
+    }
+    window.location.href = "/auth";
+  }
+
   function highlightActiveLine(range) {
     document.querySelectorAll(".ql-editor .is-active-paragraph").forEach((node) => node.classList.remove("is-active-paragraph"));
     if (!range) return;
@@ -1391,6 +1416,8 @@ ${inText}${token}
   focusModeBtn?.addEventListener("click", toggleFocusMode);
   typewriterBtn?.addEventListener("click", toggleTypewriterMode);
   toggleToolbarBtn?.addEventListener("click", toggleToolbarVisibility);
+  sidecarToggleBtn?.addEventListener("click", () => setSidecarOpen(!editorMain?.classList.contains("sidecar-open")));
+  signoutBtn?.addEventListener("click", signOutEditorUser);
 
   document.getElementById("citation-search").addEventListener("input", (event) => {
     if (citationSearchTimer) clearTimeout(citationSearchTimer);
@@ -1438,6 +1465,7 @@ ${inText}${token}
     await loadCitationLibrary();
     const defaultTab = localStorage.getItem("editor_left_content_tab") || "documents";
     setContentTab(defaultTab);
+    setSidecarOpen(false);
     const initialDocId = new URLSearchParams(window.location.search).get("doc");
     let opened = false;
     if (initialDocId) opened = await openDoc(initialDocId);

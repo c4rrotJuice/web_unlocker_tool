@@ -307,13 +307,13 @@ async function openSidePanel(tabId) {
   }
   await setSidePanelCollapsed(false);
   await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: true });
-  if (Number.isInteger(tabId)) {
-    await chrome.sidePanel.open({ tabId });
+  const activeTab = Number.isInteger(tabId)
+    ? await chrome.tabs.get(tabId).catch(() => null)
+    : (await chrome.tabs.query({ active: true, currentWindow: true }))[0] || null;
+  if (Number.isInteger(activeTab?.windowId)) {
+    await chrome.sidePanel.open({ windowId: activeTab.windowId });
   } else {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id) {
-      await chrome.sidePanel.open({ tabId: tab.id });
-    }
+    return { error: "sidepanel_window_unavailable" };
   }
   return { ok: true };
 }

@@ -50,6 +50,25 @@ PAID_TIERS = {"standard", "pro", "dev"}
 logger = logging.getLogger(__name__)
 
 
+def _response_error_text(response) -> str:
+    try:
+        body = response.json()
+    except Exception:
+        return ""
+    if isinstance(body, dict):
+        return str(body.get("message") or body.get("error") or "")
+    if isinstance(body, list):
+        return " ".join(str(item) for item in body)
+    return str(body)
+
+
+def _is_schema_missing_response(response) -> bool:
+    if response.status_code not in (400, 404):
+        return False
+    detail = _response_error_text(response).lower()
+    return any(token in detail for token in ("column", "relation", "table", "schema cache"))
+
+
 class DocumentCreate(BaseModel):
     title: Optional[str] = None
 
@@ -441,23 +460,7 @@ def _archived_doc_payload() -> dict:
 
 
 async def _fetch_doc_core(user_id: str, doc_id: str) -> dict:
-    res = await supabase_repo.get(
-        "documents",
-        params={
-            "id": f"eq.{doc_id}",
-            "user_id": f"eq.{user_id}",
-            "select": "id,title,content_delta,content_html,citation_ids,updated_at,created_at",
-            "limit": 1,
-        },
-        headers=supabase_repo.headers(),
-    )
-    if res.status_code != 200:
-        logger.error("editor.get_doc_failed", extra={"status": res.status_code, "upstream": "supabase"})
-        raise HTTPException(status_code=500, detail="Failed to load document")
-    rows = res.json()
-    if not rows:
-        raise HTTPException(status_code=404, detail="Document not found")
-    return rows[0]
+    return await _fetch_doc_with_fallback(user_id, doc_id)
 
 
 def _doc_expiration(account_type: str) -> Optional[str]:
@@ -535,20 +538,16 @@ async def _fetch_doc_with_fallback(user_id: str, doc_id: str) -> dict:
 
 
 async def _patch_doc_with_fallback(user_id: str, doc_id: str, payload: dict) -> dict:
-    res = await supabase_repo.patch(
-        "documents",
-        params={
-            "id": f"eq.{doc_id}",
-            "user_id": f"eq.{user_id}",
-        },
-        headers={
-            **supabase_repo.headers(),
-            "Prefer": "return=representation",
-        },
-        json=payload,
-    )
-    if res.status_code != 200 and "content_html" in payload:
-        fallback_payload = {k: v for k, v in payload.items() if k != "content_html"}
+    attempts = [payload]
+    if "content_html" in payload:
+        attempts.append({k: v for k, v in payload.items() if k != "content_html"})
+    if "expires_at" in payload:
+        attempts.append({k: v for k, v in payload.items() if k != "expires_at"})
+    if "content_html" in payload and "expires_at" in payload:
+        attempts.append({k: v for k, v in payload.items() if k not in {"content_html", "expires_at"}})
+
+    res = None
+    for candidate in attempts:
         res = await supabase_repo.patch(
             "documents",
             params={
@@ -559,8 +558,13 @@ async def _patch_doc_with_fallback(user_id: str, doc_id: str, payload: dict) -> 
                 **supabase_repo.headers(),
                 "Prefer": "return=representation",
             },
-            json=fallback_payload,
+            json=candidate,
         )
+        if res.status_code == 200:
+            break
+        if not _is_schema_missing_response(res):
+            break
+
     if res.status_code != 200:
         logger.error("editor.update_doc_failed", extra={"status": res.status_code, "upstream": "supabase"})
         raise HTTPException(status_code=500, detail="Failed to update document")
@@ -701,25 +705,25 @@ async def create_doc(request: Request, payload: DocumentCreate):
         "expires_at": _doc_expiration(account_type),
     }
 
-    res = await supabase_repo.post(
-        "documents",
-        headers={
-            **supabase_repo.headers(),
-            "Prefer": "return=representation",
-        },
-        json=insert_payload,
-    )
+    attempts = [insert_payload]
+    attempts.append({k: v for k, v in insert_payload.items() if k != "content_html"})
+    attempts.append({k: v for k, v in insert_payload.items() if k != "expires_at"})
+    attempts.append({k: v for k, v in insert_payload.items() if k not in {"content_html", "expires_at"}})
 
-    if res.status_code not in (200, 201):
-        insert_payload.pop("content_html", None)
+    res = None
+    for candidate in attempts:
         res = await supabase_repo.post(
             "documents",
             headers={
                 **supabase_repo.headers(),
                 "Prefer": "return=representation",
             },
-            json=insert_payload,
+            json=candidate,
         )
+        if res.status_code in (200, 201):
+            break
+        if not _is_schema_missing_response(res):
+            break
 
     if res.status_code not in (200, 201):
         logger.error("editor.create_doc_failed", extra={"status": res.status_code, "upstream": "supabase"})
@@ -753,6 +757,17 @@ async def list_docs(request: Request):
         },
         headers=supabase_repo.headers(),
     )
+
+    if _is_schema_missing_response(res):
+        res = await supabase_repo.get(
+            "documents",
+            params={
+                "user_id": f"eq.{user_id}",
+                "select": "id,title,updated_at,created_at",
+                "order": "updated_at.desc",
+            },
+            headers=supabase_repo.headers(),
+        )
 
     if res.status_code != 200:
         logger.error("editor.list_docs_failed", extra={"status": res.status_code, "upstream": "supabase"})
@@ -833,6 +848,16 @@ async def attach_note_to_doc(request: Request, doc_id: str, payload: DocumentNot
         json={"doc_id": doc_id, "note_id": note_id, "user_id": user_id, "attached_at": now_iso},
     )
     if res.status_code not in (200, 201):
+        if _is_schema_missing_response(res):
+            logger.warning("editor.attach_note_unavailable", extra={"status": res.status_code, "upstream": "supabase"})
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "DOC_NOTES_SCHEMA_MISSING",
+                    "message": "Document-note linking is not configured in the database yet.",
+                    "toast": "Document-note linking requires a pending database migration.",
+                },
+            )
         logger.error("editor.attach_note_failed", extra={"status": res.status_code, "upstream": "supabase"})
         raise HTTPException(status_code=500, detail="Failed to attach note")
     rows = res.json() or []

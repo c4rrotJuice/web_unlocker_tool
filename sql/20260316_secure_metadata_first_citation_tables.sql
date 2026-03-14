@@ -87,6 +87,16 @@ using (
   )
 );
 
+-- Clean stale notes.citation_id values before adding FK
+update public.notes n
+set citation_id = null
+where n.citation_id is not null
+  and not exists (
+    select 1
+    from public.citation_instances ci
+    where ci.id = n.citation_id
+  );
+
 alter table public.notes
   drop constraint if exists notes_citation_id_fkey;
 

@@ -605,6 +605,8 @@ async function upsertNote(notePayload = {}) {
     highlight_text: notePayload.highlight_text || null,
     note_body: notePayload.note_body || "",
     source_url: notePayload.source_url || null,
+    sources: Array.isArray(notePayload.sources) ? notePayload.sources : [],
+    linked_note_ids: Array.isArray(notePayload.linked_note_ids) ? notePayload.linked_note_ids : [],
     project_id: projectResult.entity?.id || notePayload.project_id || null,
     tags: resolvedTagIds,
     created_at: notePayload.created_at || now,
@@ -618,6 +620,8 @@ async function upsertNote(notePayload = {}) {
     nextNotes[existingIdx] = {
       ...nextNotes[existingIdx],
       ...note,
+      sources: Array.isArray(notePayload.sources) ? note.sources : (nextNotes[existingIdx].sources || []),
+      linked_note_ids: Array.isArray(notePayload.linked_note_ids) ? note.linked_note_ids : (nextNotes[existingIdx].linked_note_ids || []),
       created_at: nextNotes[existingIdx].created_at || note.created_at,
     };
   } else {

@@ -83,6 +83,8 @@ class ExtensionNotePayload(BaseModel):
     tags: list[str] = []
     created_at: str | None = None
     updated_at: str | None = None
+    sources: list[dict] = []
+    linked_note_ids: list[str] = []
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -118,6 +120,8 @@ class ExtensionNotePatchRequest(BaseModel):
     citation_id: str | None = None
     tags: list[str] | None = None
     updated_at: str | None = None
+    sources: list[dict] | None = None
+    linked_note_ids: list[str] | None = None
 
 
 class NoteProjectPayload(BaseModel):
@@ -174,6 +178,149 @@ def _clean_note_tags(tags: list[str] | None) -> list[str]:
     return cleaned
 
 
+def _clean_note_sources(sources: list[dict] | None) -> list[dict]:
+    cleaned: list[dict] = []
+    seen: set[str] = set()
+    for src in sources or []:
+        if not isinstance(src, dict):
+            continue
+        url = (src.get("url") or "").strip()
+        if not url.lower().startswith(("http://", "https://")):
+            continue
+        dedupe_key = url.lower()
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        parsed_title = (src.get("title") or "").strip() or None
+        host = _source_domain(url)
+        attached_at = _parse_iso_datetime(src.get("attached_at")) or datetime.utcnow()
+        cleaned.append(
+            {
+                "url": url,
+                "title": parsed_title,
+                "hostname": (src.get("hostname") or host or "").strip() or host,
+                "attached_at": attached_at.isoformat(),
+            }
+        )
+    return cleaned
+
+
+def _clean_linked_note_ids(linked_note_ids: list[str] | None, *, note_id: str | None = None) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for raw in linked_note_ids or []:
+        try:
+            normalized = str(UUID(str(raw)))
+        except ValueError:
+            continue
+        if note_id and normalized == note_id:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(normalized)
+    return unique
+
+
+async def _replace_note_sources(user_id: str, note_id: str, sources: list[dict]):
+    delete_res = await supabase_repo.delete(
+        "note_sources",
+        params={"user_id": f"eq.{user_id}", "note_id": f"eq.{note_id}"},
+        headers=supabase_repo.headers(prefer="return=minimal", include_content_type=False),
+    )
+    if delete_res.status_code not in (200, 204, 404):
+        raise HTTPException(status_code=500, detail="Failed to update note sources")
+    if not sources:
+        return
+    rows = [
+        {
+            "note_id": note_id,
+            "user_id": user_id,
+            "url": src.get("url"),
+            "title": src.get("title"),
+            "hostname": src.get("hostname"),
+            "attached_at": src.get("attached_at"),
+        }
+        for src in sources
+    ]
+    insert_res = await supabase_repo.post(
+        "note_sources",
+        json=rows,
+        headers=supabase_repo.headers(prefer="return=minimal"),
+    )
+    if insert_res.status_code not in (200, 201):
+        raise HTTPException(status_code=500, detail="Failed to update note sources")
+
+
+async def _replace_note_links(user_id: str, note_id: str, linked_note_ids: list[str]):
+    delete_res = await supabase_repo.delete(
+        "note_links",
+        params={"user_id": f"eq.{user_id}", "note_id": f"eq.{note_id}"},
+        headers=supabase_repo.headers(prefer="return=minimal", include_content_type=False),
+    )
+    if delete_res.status_code not in (200, 204, 404):
+        raise HTTPException(status_code=500, detail="Failed to update linked notes")
+    if not linked_note_ids:
+        return
+    rows = [{"note_id": note_id, "linked_note_id": linked_id, "user_id": user_id} for linked_id in linked_note_ids]
+    insert_res = await supabase_repo.post(
+        "note_links",
+        json=rows,
+        headers=supabase_repo.headers(prefer="resolution=merge-duplicates,return=minimal"),
+    )
+    if insert_res.status_code not in (200, 201):
+        raise HTTPException(status_code=500, detail="Failed to update linked notes")
+
+
+async def _enrich_notes_with_sources_and_links(user_id: str, notes: list[dict]) -> list[dict]:
+    if not notes:
+        return notes
+    note_ids = [row.get("id") for row in notes if row.get("id")]
+    if not note_ids:
+        return notes
+    id_filter = f"in.({','.join(note_ids)})"
+    sources_res = await supabase_repo.get(
+        "note_sources",
+        params={"user_id": f"eq.{user_id}", "note_id": id_filter, "select": "note_id,url,title,hostname,attached_at", "order": "attached_at.desc"},
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+    links_res = await supabase_repo.get(
+        "note_links",
+        params={"user_id": f"eq.{user_id}", "note_id": id_filter, "select": "note_id,linked_note_id,created_at", "order": "created_at.desc"},
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+
+    sources_by_note: dict[str, list[dict]] = {}
+    if sources_res.status_code == 200:
+        for row in sources_res.json() or []:
+            nid = row.get("note_id")
+            if not nid:
+                continue
+            sources_by_note.setdefault(nid, []).append(
+                {
+                    "url": row.get("url"),
+                    "title": row.get("title"),
+                    "hostname": row.get("hostname"),
+                    "attached_at": row.get("attached_at"),
+                }
+            )
+
+    links_by_note: dict[str, list[str]] = {}
+    if links_res.status_code == 200:
+        for row in links_res.json() or []:
+            nid = row.get("note_id")
+            linked = row.get("linked_note_id")
+            if not nid or not linked:
+                continue
+            links_by_note.setdefault(nid, []).append(linked)
+
+    for note in notes:
+        nid = note.get("id")
+        note["sources"] = sources_by_note.get(nid, [])
+        note["linked_note_ids"] = links_by_note.get(nid, [])
+    return notes
+
+
 async def _upsert_note_tags_for_note(user_id: str, note_id: str, tag_ids: list[str]):
     delete_existing = await supabase_repo.delete(
         "note_note_tags",
@@ -194,6 +341,18 @@ async def _upsert_note_tags_for_note(user_id: str, note_id: str, tag_ids: list[s
     )
     if insert_join.status_code not in (200, 201):
         raise HTTPException(status_code=500, detail="Failed to update note tags")
+
+
+async def _assert_note_exists(user_id: str, note_id: str) -> None:
+    res = await supabase_repo.get(
+        "notes",
+        params={"id": f"eq.{note_id}", "user_id": f"eq.{user_id}", "select": "id", "limit": 1},
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to validate note")
+    if not (res.json() or []):
+        raise HTTPException(status_code=404, detail="Note not found")
 
 
 def _get_reset_at() -> tuple[str, int]:
@@ -485,6 +644,8 @@ async def create_note(request: Request, payload: ExtensionNotePayload):
     updated_at = _parse_iso_datetime(payload.updated_at) or datetime.utcnow()
     source_published_at = _parse_iso_datetime(payload.source_published_at)
     citation_id = _coerce_note_id(payload.citation_id) if payload.citation_id else None
+    sources = _clean_note_sources(payload.sources)
+    linked_note_ids = _clean_linked_note_ids(payload.linked_note_ids, note_id=note_id)
 
     insert_payload = {
         "id": note_id,
@@ -512,6 +673,8 @@ async def create_note(request: Request, payload: ExtensionNotePayload):
         raise HTTPException(status_code=500, detail="Failed to sync note")
 
     await _upsert_note_tags_for_note(user_id, note_id, tag_ids)
+    await _replace_note_sources(user_id, note_id, sources)
+    await _replace_note_links(user_id, note_id, linked_note_ids)
     return {"ok": True, "note_id": note_id}
 
 
@@ -586,6 +749,7 @@ async def list_notes(
         raise HTTPException(status_code=500, detail="Failed to load notes")
 
     notes = res.json() or []
+    notes = await _enrich_notes_with_sources_and_links(user_id, notes)
 
     if tag:
         tag_res = await supabase_repo.get(
@@ -699,6 +863,8 @@ async def update_note(request: Request, payload: ExtensionNotePatchRequest):
     tag_ids = _clean_note_tags(payload.tags)
     updated_at = _parse_iso_datetime(payload.updated_at) or datetime.utcnow()
     source_published_at = _parse_iso_datetime(payload.source_published_at) if payload.source_published_at is not None else None
+    sources = _clean_note_sources(payload.sources) if payload.sources is not None else None
+    linked_note_ids = _clean_linked_note_ids(payload.linked_note_ids, note_id=note_id) if payload.linked_note_ids is not None else None
 
     patch_payload = {"updated_at": updated_at.isoformat()}
     if payload.title is not None:
@@ -732,6 +898,10 @@ async def update_note(request: Request, payload: ExtensionNotePatchRequest):
         raise HTTPException(status_code=404, detail="Note not found")
 
     await _upsert_note_tags_for_note(user_id, note_id, tag_ids)
+    if sources is not None:
+        await _replace_note_sources(user_id, note_id, sources)
+    if linked_note_ids is not None:
+        await _replace_note_links(user_id, note_id, linked_note_ids)
     return {"ok": True, "note_id": note_id}
 
 
@@ -845,3 +1015,54 @@ async def create_citation_from_note(request: Request, note_id: str, format: str 
     if patch_res.status_code not in (200, 204):
         raise HTTPException(status_code=500, detail="Failed to link citation to note")
     return {"ok": True, "note_id": normalized_note_id, "citation_id": citation_id, "created": True}
+
+
+@router.get("/api/notes/{note_id}/sources")
+async def get_note_sources(request: Request, note_id: str):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    normalized_note_id = _coerce_note_id(note_id)
+    await _assert_note_exists(user_id, normalized_note_id)
+    res = await supabase_repo.get(
+        "note_sources",
+        params={"user_id": f"eq.{user_id}", "note_id": f"eq.{normalized_note_id}", "select": "url,title,hostname,attached_at", "order": "attached_at.desc"},
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+    if res.status_code not in (200, 404):
+        raise HTTPException(status_code=500, detail="Failed to load note sources")
+    return {"ok": True, "note_id": normalized_note_id, "sources": res.json() if res.status_code == 200 else []}
+
+
+@router.post("/api/notes/{note_id}/sources")
+async def attach_note_source(request: Request, note_id: str, payload: dict):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    normalized_note_id = _coerce_note_id(note_id)
+    await _assert_note_exists(user_id, normalized_note_id)
+    source_list = _clean_note_sources([payload])
+    if not source_list:
+        raise HTTPException(status_code=422, detail="Valid http/https source URL is required")
+    existing = await supabase_repo.get(
+        "note_sources",
+        params={"user_id": f"eq.{user_id}", "note_id": f"eq.{normalized_note_id}", "select": "url,title,hostname,attached_at"},
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+    current_sources = existing.json() if existing.status_code == 200 else []
+    deduped = _clean_note_sources([*current_sources, *source_list])
+    await _replace_note_sources(user_id, normalized_note_id, deduped)
+    return {"ok": True, "note_id": normalized_note_id, "sources": deduped}
+
+
+@router.post("/api/notes/{note_id}/links")
+async def link_note_to_notes(request: Request, note_id: str, payload: dict):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    normalized_note_id = _coerce_note_id(note_id)
+    await _assert_note_exists(user_id, normalized_note_id)
+    raw_ids = payload.get("linked_note_ids") if isinstance(payload, dict) else None
+    linked_note_ids = _clean_linked_note_ids(raw_ids, note_id=normalized_note_id)
+    await _replace_note_links(user_id, normalized_note_id, linked_note_ids)
+    return {"ok": True, "note_id": normalized_note_id, "linked_note_ids": linked_note_ids}

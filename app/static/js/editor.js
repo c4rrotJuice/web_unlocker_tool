@@ -42,6 +42,7 @@ function startEditor() {
   const citeTokenPrefix = "〔cite:";
   const citeTokenSuffix = "〕";
   const AUTOSAVE_DEBOUNCE_MS = 2000;
+  const SYNC_INTERVAL_MS = 8000;
   const OUTLINE_DEBOUNCE_MS = 700;
   const CHECKPOINT_INTERVAL_MS = 4 * 60 * 1000;
   const CHECKPOINT_CHANGE_THRESHOLD = 700;
@@ -68,14 +69,23 @@ function startEditor() {
   let changedSinceCheckpoint = 0;
   let lastKnownRange = null;
   let noteAttachContext = null;
+  let quickNoteSourcesDraft = [];
+  let quickNoteLinkedNoteIdsDraft = [];
   const citationRenderCache = new Map();
-  let autosaveInFlight = null;
-  let autosaveQueued = false;
   let autosaveRequestSeq = 0;
   let latestAppliedSaveSeq = 0;
   let openDocRequestSeq = 0;
   let citationLoadRequestSeq = 0;
   let notesLoadRequestSeq = 0;
+  let docNotesLoadRequestSeq = 0;
+  const actionInFlight = new Map();
+  const inFlightRequestCache = new Map();
+  const REQUEST_TIMEOUT_MS = 12000;
+  const LOCAL_DOC_STATE_KEY = "editor_local_docs_v1";
+  const syncStateByDocId = new Map();
+  const syncTimersByDocId = new Map();
+  const syncInFlightByDocId = new Map();
+  let syncIntervalHandle = null;
 
   const diagnosticsEnabled = window.localStorage?.getItem("editor_debug") === "1";
 
@@ -94,6 +104,9 @@ function startEditor() {
   }
 
   const saveStatus = document.getElementById("save-status");
+  const syncStatus = document.getElementById("sync-status");
+  const lastSyncedEl = document.getElementById("last-synced");
+  const manualSyncBtn = document.getElementById("manual-sync-btn");
   const docTitleInput = document.getElementById("doc-title");
   const docsList = document.getElementById("docs-list");
   const projectsList = document.getElementById("projects-list");
@@ -121,6 +134,10 @@ function startEditor() {
   const quickNoteBody = document.getElementById("quick-note-body");
   const quickNoteTags = document.getElementById("quick-note-tags");
   const quickNoteProject = document.getElementById("quick-note-project");
+  const quickNoteAttachSourceBtn = document.getElementById("quick-note-attach-source");
+  const quickNoteSourcesList = document.getElementById("quick-note-sources");
+  const quickNoteLinkSearch = document.getElementById("quick-note-link-search");
+  const quickNoteLinkList = document.getElementById("quick-note-link-list");
   const researchNotesList = document.getElementById("research-notes-list");
   const researchNotesSearch = document.getElementById("research-notes-search");
   const statusWordCount = document.getElementById("status-word-count");
@@ -250,6 +267,191 @@ function startEditor() {
 
   function setSaveStatus(text) { saveStatus.textContent = text; }
 
+  function isOnline() {
+    return navigator.onLine !== false;
+  }
+
+  function readLocalDocState() {
+    try {
+      const raw = window.localStorage?.getItem(LOCAL_DOC_STATE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (_err) {
+      return {};
+    }
+  }
+
+  function writeLocalDocState(next) {
+    try {
+      window.localStorage?.setItem(LOCAL_DOC_STATE_KEY, JSON.stringify(next));
+    } catch (_err) {
+      // ignore quota/localStorage failures
+    }
+  }
+
+  function getLocalDocEntry(docId) {
+    const state = readLocalDocState();
+    return state?.[docId] || null;
+  }
+
+  function setLocalDocEntry(docId, entry) {
+    const state = readLocalDocState();
+    if (!entry) delete state[docId];
+    else state[docId] = entry;
+    writeLocalDocState(state);
+  }
+
+  function getDocSyncState(docId) {
+    if (!docId) return { dirty: false, status: "synced", last_synced_at: null, retry_count: 0, next_retry_at: 0 };
+    if (!syncStateByDocId.has(docId)) {
+      const local = getLocalDocEntry(docId);
+      syncStateByDocId.set(docId, {
+        dirty: Boolean(local?.dirty),
+        status: local?.dirty ? (isOnline() ? "saving_local" : "offline") : "synced",
+        last_synced_at: local?.last_synced_at || null,
+        retry_count: Number(local?.retry_count || 0),
+        next_retry_at: Number(local?.next_retry_at || 0),
+      });
+    }
+    return syncStateByDocId.get(docId);
+  }
+
+  function updateSyncStatusUI(docId = currentDocId) {
+    if (!syncStatus || !lastSyncedEl) return;
+    const state = getDocSyncState(docId);
+    syncStatus.classList.remove("sync-saving-local", "sync-syncing", "sync-failed", "sync-offline", "sync-synced");
+    if (!isOnline()) {
+      syncStatus.textContent = "Offline mode";
+      syncStatus.classList.add("sync-offline");
+    } else if (state.status === "syncing") {
+      syncStatus.textContent = "Syncing…";
+      syncStatus.classList.add("sync-syncing");
+    } else if (state.status === "failed") {
+      syncStatus.textContent = "Sync failed";
+      syncStatus.classList.add("sync-failed");
+    } else if (state.dirty) {
+      syncStatus.textContent = "Saving locally";
+      syncStatus.classList.add("sync-saving-local");
+    } else {
+      syncStatus.textContent = "Synced";
+      syncStatus.classList.add("sync-synced");
+    }
+    lastSyncedEl.textContent = `Last synced: ${state.last_synced_at ? new Date(state.last_synced_at).toLocaleTimeString() : "--"}`;
+    if (manualSyncBtn) {
+      manualSyncBtn.disabled = !isOnline() || syncInFlightByDocId.size > 0;
+    }
+  }
+
+  function stageLocalDocChange(docId, payload) {
+    if (!docId) return;
+    const prev = getDocSyncState(docId);
+    const nowIso = new Date().toISOString();
+    const entry = {
+      ...(getLocalDocEntry(docId) || {}),
+      payload,
+      dirty: true,
+      status: "saving_local",
+      updated_at: nowIso,
+      retry_count: prev.retry_count || 0,
+      next_retry_at: prev.next_retry_at || 0,
+      last_synced_at: prev.last_synced_at || null,
+    };
+    setLocalDocEntry(docId, entry);
+    syncStateByDocId.set(docId, {
+      dirty: true,
+      status: isOnline() ? "saving_local" : "offline",
+      retry_count: entry.retry_count,
+      next_retry_at: entry.next_retry_at,
+      last_synced_at: entry.last_synced_at,
+    });
+    updateSyncStatusUI(docId);
+  }
+
+  function clearLocalDirtyDoc(docId, serverDoc = null) {
+    const local = getLocalDocEntry(docId);
+    if (!local) return;
+    setLocalDocEntry(docId, {
+      ...local,
+      payload: serverDoc ? {
+        title: serverDoc.title || "Untitled",
+        content_delta: serverDoc.content_delta || normalizeDelta({ ops: [{ insert: "\n" }] }),
+        content_html: serverDoc.content_html || "",
+        citation_ids: serverDoc.citation_ids || [],
+      } : local.payload,
+      dirty: false,
+      status: "synced",
+      retry_count: 0,
+      next_retry_at: 0,
+      last_synced_at: new Date().toISOString(),
+    });
+    syncStateByDocId.set(docId, {
+      dirty: false,
+      status: "synced",
+      retry_count: 0,
+      next_retry_at: 0,
+      last_synced_at: new Date().toISOString(),
+    });
+  }
+
+  function scheduleDocSync(docId, delayMs = AUTOSAVE_DEBOUNCE_MS) {
+    if (!docId) return;
+    if (syncTimersByDocId.has(docId)) clearTimeout(syncTimersByDocId.get(docId));
+    const handle = setTimeout(() => {
+      syncTimersByDocId.delete(docId);
+      syncDocNow(docId);
+    }, Math.max(150, delayMs));
+    syncTimersByDocId.set(docId, handle);
+  }
+
+  async function authFetchWithTimeout(input, init = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(new Error("request_timeout")), timeoutMs);
+    try {
+      return await authFetch(input, { ...(init || {}), signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  async function runAction(actionKey, runner, { button, pendingLabel } = {}) {
+    if (actionInFlight.has(actionKey)) return actionInFlight.get(actionKey);
+    const previousText = button?.textContent;
+    if (button) {
+      button.disabled = true;
+      button.classList.add("is-loading");
+      button.setAttribute("aria-busy", "true");
+      if (pendingLabel) button.textContent = pendingLabel;
+    }
+    const task = (async () => {
+      try {
+        return await runner();
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.classList.remove("is-loading");
+          button.removeAttribute("aria-busy");
+          if (previousText !== undefined) button.textContent = previousText;
+        }
+        actionInFlight.delete(actionKey);
+      }
+    })();
+    actionInFlight.set(actionKey, task);
+    return task;
+  }
+
+  async function fetchJsonCached(key, loader) {
+    if (inFlightRequestCache.has(key)) return inFlightRequestCache.get(key);
+    const p = (async () => {
+      try {
+        return await loader();
+      } finally {
+        inFlightRequestCache.delete(key);
+      }
+    })();
+    inFlightRequestCache.set(key, p);
+    return p;
+  }
+
   function parseQuickNoteTags(value) {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     return String(value || "").split(",").map((v) => v.trim()).filter((v) => uuidRegex.test(v));
@@ -300,7 +502,15 @@ function startEditor() {
   async function loadDocNotes() {
     docNotesList.innerHTML = "";
     if (!currentDocId) return;
-    const res = await authFetch(`/api/docs/${currentDocId}/notes`);
+    const reqId = ++docNotesLoadRequestSeq;
+    let res;
+    try {
+      res = await authFetchWithTimeout(`/api/docs/${currentDocId}/notes`);
+    } catch (_err) {
+      docNotesList.innerHTML = '<li class="empty-state">Unable to load attached notes.</li>';
+      return;
+    }
+    if (reqId !== docNotesLoadRequestSeq) return;
     if (!res.ok) {
       docNotesList.innerHTML = '<li class="empty-state">Unable to load attached notes.</li>';
       return;
@@ -338,7 +548,7 @@ function startEditor() {
   }
 
   function queueAutosave() {
-    setSaveStatus("Saving...");
+    setSaveStatus("Saving locally...");
     if (autosaveTimer) clearTimeout(autosaveTimer);
     debugLog("autosave.queued", { currentDocId });
     autosaveTimer = setTimeout(() => autosaveDoc(), AUTOSAVE_DEBOUNCE_MS);
@@ -346,48 +556,102 @@ function startEditor() {
 
   async function autosaveDoc() {
     if (!currentDocId || !isDirty) return;
-    if (autosaveInFlight) {
-      autosaveQueued = true;
-      debugLog("autosave.coalesced", { currentDocId });
-      return autosaveInFlight;
-    }
-    const saveSeq = ++autosaveRequestSeq;
     const payload = {
       title: docTitleInput.value.trim() || "Untitled",
       content_delta: quill.getContents(),
       content_html: quill.root.innerHTML,
       citation_ids: currentCitationIds,
     };
-    const startedAt = performance.now();
-    debugLog("autosave.start", { saveSeq, currentDocId });
-    autosaveInFlight = (async () => {
-    try {
-      const res = await authFetch(`/api/docs/${currentDocId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error("Failed to save");
-      const data = await res.json();
-      if (saveSeq < latestAppliedSaveSeq) {
-        debugLog("autosave.stale_ignored", { saveSeq, latestAppliedSaveSeq });
-        return;
-      }
-      latestAppliedSaveSeq = saveSeq;
-      setSaveStatus("Saved");
-      isDirty = false;
-      updateDocInList(data);
-      debugLog("autosave.success", { saveSeq, currentDocId });
-    } catch (_err) {
-      setSaveStatus("Save failed");
-      toast?.show({ type: "error", message: "Save failed. Please retry." });
-      debugLog("autosave.failed", { saveSeq, currentDocId });
-    } finally {
-      warnIfSlow("autosaveDoc", startedAt, 120);
-      autosaveInFlight = null;
-      if (autosaveQueued && isDirty) {
-        autosaveQueued = false;
-        queueAutosave();
-      }
+    stageLocalDocChange(currentDocId, payload);
+    setSaveStatus("Saved locally");
+    isDirty = false;
+    updateDocInList({ id: currentDocId, title: payload.title, updated_at: new Date().toISOString() });
+    scheduleDocSync(currentDocId, 400);
+  }
+
+  async function syncDocNow(docId, { force = false } = {}) {
+    if (!docId) return;
+    if (!isOnline()) {
+      const state = getDocSyncState(docId);
+      state.status = "offline";
+      syncStateByDocId.set(docId, state);
+      updateSyncStatusUI(docId);
+      return;
     }
+    const local = getLocalDocEntry(docId);
+    if (!local?.dirty) {
+      updateSyncStatusUI(docId);
+      return;
+    }
+    const state = getDocSyncState(docId);
+    if (!force && state.next_retry_at && Date.now() < state.next_retry_at) return;
+    if (syncInFlightByDocId.has(docId)) return syncInFlightByDocId.get(docId);
+
+    const saveSeq = ++autosaveRequestSeq;
+    const startedAt = performance.now();
+    state.status = "syncing";
+    syncStateByDocId.set(docId, state);
+    updateSyncStatusUI(docId);
+    setSaveStatus("Syncing...");
+    const task = (async () => {
+      try {
+        const res = await authFetchWithTimeout(`/api/docs/${docId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(local.payload || {}),
+        });
+        if (!res.ok) throw new Error("sync_failed");
+        const data = await res.json();
+        if (saveSeq < latestAppliedSaveSeq) return;
+        latestAppliedSaveSeq = saveSeq;
+        clearLocalDirtyDoc(docId, data);
+        updateDocInList(data);
+        setSaveStatus("Saved");
+        debugLog("sync.success", { saveSeq, docId });
+      } catch (_err) {
+        const retryCount = (state.retry_count || 0) + 1;
+        const delayMs = Math.min(30000, 1500 * (2 ** Math.min(retryCount, 4)));
+        const nextRetryAt = Date.now() + delayMs;
+        const next = {
+          ...state,
+          dirty: true,
+          status: "failed",
+          retry_count: retryCount,
+          next_retry_at: nextRetryAt,
+        };
+        syncStateByDocId.set(docId, next);
+        setLocalDocEntry(docId, {
+          ...(local || {}),
+          dirty: true,
+          status: "failed",
+          retry_count: retryCount,
+          next_retry_at: nextRetryAt,
+          payload: local?.payload || {},
+          updated_at: new Date().toISOString(),
+          last_synced_at: local?.last_synced_at || null,
+        });
+        setSaveStatus("Sync failed");
+        toast?.show({ type: "error", message: "Sync failed. Will retry in background." });
+        scheduleDocSync(docId, delayMs);
+      } finally {
+        warnIfSlow("syncDocNow", startedAt, 120);
+        syncInFlightByDocId.delete(docId);
+        updateSyncStatusUI(docId);
+      }
     })();
-    return autosaveInFlight;
+    syncInFlightByDocId.set(docId, task);
+    return task;
+  }
+
+  async function syncAllDirtyDocs({ force = false } = {}) {
+    const local = readLocalDocState();
+    const dirtyIds = Object.keys(local || {}).filter((docId) => local?.[docId]?.dirty);
+    if (!dirtyIds.length) {
+      updateSyncStatusUI();
+      return;
+    }
+    await Promise.allSettled(dirtyIds.map((docId) => syncDocNow(docId, { force })));
+    updateSyncStatusUI();
   }
 
   function renderFreeQuota() {
@@ -486,38 +750,58 @@ function startEditor() {
   }
 
   async function openDoc(docId) {
-    await autosaveDoc();
-    const reqId = ++openDocRequestSeq;
-    const startedAt = performance.now();
-    debugLog("openDoc.start", { reqId, docId });
-    const res = await authFetch(`/api/docs/${docId}`);
-    if (!res.ok) return false;
-    const doc = await res.json();
-    if (reqId !== openDocRequestSeq) {
-      debugLog("openDoc.stale_ignored", { reqId, latest: openDocRequestSeq, docId: doc.id });
-      return false;
-    }
-    currentDocId = doc.id;
-    currentCitationIds = doc.citation_ids || [];
-    docTitleInput.value = doc.title;
-    const readOnly = Boolean(doc.archived);
-    quill.enable(!readOnly);
-    docTitleInput.readOnly = readOnly;
-    if (doc.content_delta?.ops?.length) quill.setContents(normalizeDelta(doc.content_delta), "silent");
-    else if (doc.content_html) quill.clipboard.dangerouslyPasteHTML(doc.content_html, "silent");
-    else quill.setContents(normalizeDelta(doc.content_delta), "silent");
-    isDirty = false;
-    changedSinceCheckpoint = 0;
-    lastCheckpointAt = Date.now();
-    updateWordCount();
-    await loadDocNotes();
-    await refreshInDocCitations();
-    buildAndRenderOutline();
-    await loadCheckpoints();
-    renderDocs(allDocs);
-    warnIfSlow("openDoc", startedAt, 150);
-    debugLog("openDoc.success", { reqId, docId: doc.id });
-    return true;
+    return runAction(`openDoc:${docId}`, async () => {
+      await autosaveDoc();
+      const reqId = ++openDocRequestSeq;
+      const startedAt = performance.now();
+      debugLog("openDoc.start", { reqId, docId });
+      let res;
+      try {
+        res = await authFetchWithTimeout(`/api/docs/${docId}`);
+      } catch (_err) {
+        toast?.show({ type: "error", message: "Unable to open document. Please retry." });
+        return false;
+      }
+      if (!res.ok) {
+        toast?.show({ type: "error", message: "Unable to open document. Please retry." });
+        return false;
+      }
+      const doc = await res.json();
+      if (reqId !== openDocRequestSeq) {
+        debugLog("openDoc.stale_ignored", { reqId, latest: openDocRequestSeq, docId: doc.id });
+        return false;
+      }
+      currentDocId = doc.id;
+      const localEntry = getLocalDocEntry(doc.id);
+      const effective = localEntry?.dirty && localEntry?.payload
+        ? {
+            ...doc,
+            title: localEntry.payload.title || doc.title,
+            content_delta: localEntry.payload.content_delta || doc.content_delta,
+            content_html: localEntry.payload.content_html || doc.content_html,
+            citation_ids: localEntry.payload.citation_ids || doc.citation_ids,
+          }
+        : doc;
+      currentCitationIds = effective.citation_ids || [];
+      docTitleInput.value = effective.title;
+      const readOnly = Boolean(doc.archived);
+      quill.enable(!readOnly);
+      docTitleInput.readOnly = readOnly;
+      if (effective.content_delta?.ops?.length) quill.setContents(normalizeDelta(effective.content_delta), "silent");
+      else if (effective.content_html) quill.clipboard.dangerouslyPasteHTML(effective.content_html, "silent");
+      else quill.setContents(normalizeDelta(effective.content_delta), "silent");
+      isDirty = false;
+      changedSinceCheckpoint = 0;
+      lastCheckpointAt = Date.now();
+      updateWordCount();
+      buildAndRenderOutline();
+      await Promise.allSettled([loadDocNotes(), refreshInDocCitations(), loadCheckpoints()]);
+      updateSyncStatusUI(doc.id);
+      renderDocs(allDocs);
+      warnIfSlow("openDoc", startedAt, 150);
+      debugLog("openDoc.success", { reqId, docId: doc.id });
+      return true;
+    });
   }
 
   function buildAndRenderOutline() {
@@ -553,7 +837,13 @@ function startEditor() {
 
   async function loadCheckpoints() {
     if (!currentDocId) return;
-    const res = await authFetch(`/api/docs/${currentDocId}/checkpoints?limit=15`);
+    let res;
+    try {
+      res = await authFetchWithTimeout(`/api/docs/${currentDocId}/checkpoints?limit=15`);
+    } catch (_err) {
+      historyList.innerHTML = '<p class="empty-state">History unavailable.</p>';
+      return;
+    }
     if (!res.ok) return (historyList.innerHTML = '<p class="empty-state">History unavailable.</p>');
     renderCheckpoints(await res.json());
   }
@@ -612,7 +902,8 @@ function startEditor() {
 
   async function fetchCitationsByIds(ids = []) {
     if (!ids.length) return [];
-    const res = await authFetch(`/api/citations/by_ids?ids=${encodeURIComponent(ids.join(","))}`);
+    const key = ids.slice().sort().join(",");
+    const res = await fetchJsonCached(`citations:ids:${key}`, () => authFetchWithTimeout(`/api/citations/by_ids?ids=${encodeURIComponent(ids.join(","))}`));
     if (!res.ok) throw new Error("Failed to load citations");
     const citations = await res.json();
     citations.forEach((c) => citationCache.set(c.id, c));
@@ -775,7 +1066,14 @@ function startEditor() {
   async function loadCitationLibrary(search = "") {
     const reqId = ++citationLoadRequestSeq;
     const startedAt = performance.now();
-    const citations = await fetchCitations({ search, limit: 50 });
+    let citations;
+    try {
+      citations = await fetchJsonCached(`citations:list:${(search || "").trim().toLowerCase()}`, () => fetchCitations({ search, limit: 50 }));
+    } catch (_err) {
+      const container = document.getElementById("citations-list");
+      container.innerHTML = '<p class="empty-state">Unable to load citations.</p>';
+      return;
+    }
     if (reqId !== citationLoadRequestSeq) {
       debugLog("citations.stale_ignored", { reqId, latest: citationLoadRequestSeq, search });
       return;
@@ -941,8 +1239,17 @@ ${inText}${token}
   async function createProject() {
     const name = window.prompt("Project name");
     if (!name || !name.trim()) return;
-    const res = await authFetch("/api/note-projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim() }) });
-    if (res.ok) await loadProjects();
+    await runAction("create-project", async () => {
+      let res;
+      try {
+        res = await authFetchWithTimeout("/api/note-projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim() }) });
+      } catch (_err) {
+        toast?.show({ type: "error", message: "Failed to create project." });
+        return;
+      }
+      if (!res.ok) return toast?.show({ type: "error", message: "Failed to create project." });
+      await loadProjects();
+    });
   }
 
   async function loadNotes() {
@@ -959,7 +1266,14 @@ ${inText}${token}
     if (s) params.set("source", s);
     if (textSearch) params.set("search", textSearch);
     params.set("sort", sort);
-    const res = await authFetch(`/api/notes?${params.toString()}`);
+    const query = params.toString();
+    let res;
+    try {
+      res = await fetchJsonCached(`notes:list:${query}`, () => authFetchWithTimeout(`/api/notes?${query}`));
+    } catch (_err) {
+      notesList.innerHTML = '<li class="empty-state">Unable to load notes.</li>';
+      return;
+    }
     if (!res.ok) { notesList.innerHTML = '<li class="empty-state">Unable to load notes.</li>'; return; }
     const payload = await res.json();
     if (reqId !== notesLoadRequestSeq) {
@@ -1008,11 +1322,17 @@ ${inText}${token}
       toast?.show({ type: "error", message: "Open a document before attaching notes." });
       return;
     }
-    const res = await authFetch(`/api/docs/${currentDocId}/notes`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ note_id: note.id }),
-    });
+    let res;
+    try {
+      res = await authFetchWithTimeout(`/api/docs/${currentDocId}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note_id: note.id }),
+      });
+    } catch (_err) {
+      toast?.show({ type: "error", message: "Failed to attach note to document." });
+      return;
+    }
     if (!res.ok) {
       toast?.show({ type: "error", message: "Failed to attach note to document." });
       return;
@@ -1236,6 +1556,16 @@ ${inText}${token}
       appendTextElement(metaRow, "span", new Date(note.updated_at || note.created_at).toLocaleString());
       li.appendChild(metaRow);
 
+      const sourcesCount = Array.isArray(note.sources) ? note.sources.length : 0;
+      const linksCount = Array.isArray(note.linked_note_ids) ? note.linked_note_ids.length : 0;
+      if (sourcesCount || linksCount) {
+        const relationRow = document.createElement("div");
+        relationRow.className = "meta-row";
+        appendTextElement(relationRow, "span", `${sourcesCount} source${sourcesCount === 1 ? "" : "s"}`, "badge");
+        appendTextElement(relationRow, "span", `${linksCount} linked note${linksCount === 1 ? "" : "s"}`, "badge");
+        li.appendChild(relationRow);
+      }
+
       if (!isEditing) {
         const actions = document.createElement("div");
         actions.className = "note-actions";
@@ -1349,6 +1679,74 @@ ${inText}${token}
     quickNoteBody.value = "";
     quickNoteTags.value = "";
     quickNoteProject.value = "";
+    quickNoteSourcesDraft = [];
+    quickNoteLinkedNoteIdsDraft = [];
+    if (quickNoteLinkSearch) quickNoteLinkSearch.value = "";
+    renderQuickNoteSources();
+    renderQuickNoteLinkList();
+  }
+
+  function renderQuickNoteSources() {
+    if (!quickNoteSourcesList) return;
+    quickNoteSourcesList.innerHTML = "";
+    if (!quickNoteSourcesDraft.length) {
+      quickNoteSourcesList.innerHTML = '<li class="note-item"><span class="doc-meta">No sources attached yet.</span></li>';
+      return;
+    }
+    quickNoteSourcesDraft.forEach((src) => {
+      const li = document.createElement("li");
+      li.className = "note-item";
+      const title = src.title || src.hostname || src.url;
+      li.innerHTML = `<strong>${title}</strong><div class="doc-meta">${src.url}</div>`;
+      quickNoteSourcesList.appendChild(li);
+    });
+  }
+
+  function renderQuickNoteLinkList() {
+    if (!quickNoteLinkList) return;
+    quickNoteLinkList.innerHTML = "";
+    const q = (quickNoteLinkSearch?.value || "").trim().toLowerCase();
+    const rows = allNotes.filter((n) => {
+      const text = `${n.title || ""} ${n.note_body || ""} ${n.highlight_text || ""}`.toLowerCase();
+      return !q || text.includes(q);
+    }).slice(0, 40);
+    if (!rows.length) {
+      quickNoteLinkList.innerHTML = '<li class="note-item"><span class="doc-meta">No notes available.</span></li>';
+      return;
+    }
+    rows.forEach((note) => {
+      const li = document.createElement("li");
+      li.className = "note-item";
+      const id = `quick-link-${note.id}`;
+      const checked = quickNoteLinkedNoteIdsDraft.includes(note.id) ? "checked" : "";
+      li.innerHTML = `<label for="${id}"><input id="${id}" type="checkbox" ${checked} /> ${note.title || "Untitled note"}</label>`;
+      const checkbox = li.querySelector("input");
+      checkbox?.addEventListener("change", () => {
+        if (checkbox.checked) {
+          if (!quickNoteLinkedNoteIdsDraft.includes(note.id)) quickNoteLinkedNoteIdsDraft.push(note.id);
+        } else {
+          quickNoteLinkedNoteIdsDraft = quickNoteLinkedNoteIdsDraft.filter((idValue) => idValue !== note.id);
+        }
+      });
+      quickNoteLinkList.appendChild(li);
+    });
+  }
+
+  function attachSourceToQuickNoteFromCurrentPage() {
+    const url = window.location.href;
+    if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) {
+      toast?.show({ type: "error", message: "Current page URL is not attachable." });
+      return;
+    }
+    const dedupe = url.toLowerCase();
+    if (quickNoteSourcesDraft.some((src) => (src.url || "").toLowerCase() === dedupe)) {
+      toast?.show({ type: "info", message: "Source already attached." });
+      return;
+    }
+    let hostname = "";
+    try { hostname = new URL(url).hostname; } catch (_e) { hostname = ""; }
+    quickNoteSourcesDraft.push({ url, title: document.title || null, hostname, attached_at: new Date().toISOString() });
+    renderQuickNoteSources();
   }
 
   function formatQuickNote(format) {
@@ -1369,6 +1767,8 @@ ${inText}${token}
 
   function openNewNoteModal() {
     noteModal?.setAttribute("aria-hidden", "false");
+    renderQuickNoteSources();
+    renderQuickNoteLinkList();
     queueMicrotask(() => quickNoteTitle?.focus());
   }
 
@@ -1383,6 +1783,8 @@ ${inText}${token}
       title: quickNoteTitle.value.trim() || null,
       tags: parseQuickNoteTags(quickNoteTags.value),
       project_id: projectId,
+      sources: quickNoteSourcesDraft,
+      linked_note_ids: quickNoteLinkedNoteIdsDraft,
       updated_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     };
@@ -1390,14 +1792,22 @@ ${inText}${token}
       toast?.show({ type: "error", message: "Note body is required." });
       return;
     }
-    const res = await authFetch("/api/notes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    if (!res.ok) {
-      toast?.show({ type: "error", message: "Failed to save note." });
-      return;
-    }
-    clearQuickNoteForm();
-    closeNewNoteModal();
-    await loadNotes();
+    await runAction("quick-note-save", async () => {
+      let res;
+      try {
+        res = await authFetchWithTimeout("/api/notes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      } catch (_err) {
+        toast?.show({ type: "error", message: "Failed to save note." });
+        return;
+      }
+      if (!res.ok) {
+        toast?.show({ type: "error", message: "Failed to save note." });
+        return;
+      }
+      clearQuickNoteForm();
+      closeNewNoteModal();
+      await loadNotes();
+    }, { button: document.getElementById("save-quick-note"), pendingLabel: "Saving…" });
   }
 
   async function createNote() {
@@ -1418,7 +1828,13 @@ ${inText}${token}
   }
 
   async function downloadExportFile(doc, format) {
-    const res = await authFetch(`/api/docs/${doc.id}/export/file?format=${encodeURIComponent(format)}&style=${encodeURIComponent(exportStyle.value)}`);
+    let res;
+    try {
+      res = await authFetchWithTimeout(`/api/docs/${doc.id}/export/file?format=${encodeURIComponent(format)}&style=${encodeURIComponent(exportStyle.value)}`);
+    } catch (_err) {
+      toast?.show({ type: "error", message: "Export failed. Please retry." });
+      return;
+    }
     if (!res.ok) return;
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -1495,17 +1911,31 @@ ${inText}${token}
 
   docSearchInput.addEventListener("input", () => renderDocs(allDocs));
   projectSearchInput.addEventListener("input", () => renderProjects());
-  document.getElementById("new-doc-btn").addEventListener("click", async () => {
-    await autosaveDoc();
-    const res = await authFetch("/api/docs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
-    if (!res.ok) return;
-    const doc = await res.json();
-    await loadDocsList();
-    await openDoc(doc.id);
+  document.getElementById("new-doc-btn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    await runAction("new-doc", async () => {
+      await autosaveDoc();
+      let res;
+      try {
+        res = await authFetchWithTimeout("/api/docs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      } catch (_err) {
+        toast?.show({ type: "error", message: "Failed to create document." });
+        return;
+      }
+      if (!res.ok) {
+        toast?.show({ type: "error", message: "Failed to create document." });
+        return;
+      }
+      const doc = await res.json();
+      await loadDocsList();
+      await openDoc(doc.id);
+    }, { button, pendingLabel: "Creating…" });
   });
   document.getElementById("new-project-btn").addEventListener("click", createProject);
   document.getElementById("new-note-btn").addEventListener("click", createNote);
   document.getElementById("save-quick-note")?.addEventListener("click", saveQuickNote);
+  quickNoteAttachSourceBtn?.addEventListener("click", attachSourceToQuickNoteFromCurrentPage);
+  quickNoteLinkSearch?.addEventListener("input", renderQuickNoteLinkList);
   document.getElementById("cancel-quick-note")?.addEventListener("click", () => {
     clearQuickNoteForm();
     closeNewNoteModal();
@@ -1539,6 +1969,19 @@ ${inText}${token}
   toggleToolbarBtn?.addEventListener("click", toggleToolbarVisibility);
   sidecarToggleBtn?.addEventListener("click", () => setSidecarOpen(!editorMain?.classList.contains("sidecar-open")));
   signoutBtn?.addEventListener("click", signOutEditorUser);
+  manualSyncBtn?.addEventListener("click", async () => {
+    await runAction("manual-sync", async () => {
+      setSaveStatus("Syncing...");
+      await syncAllDirtyDocs({ force: true });
+    }, { button: manualSyncBtn, pendingLabel: "Syncing…" });
+  });
+  window.addEventListener("online", () => {
+    updateSyncStatusUI();
+    syncAllDirtyDocs({ force: true });
+  });
+  window.addEventListener("offline", () => {
+    updateSyncStatusUI();
+  });
 
   document.getElementById("citation-search").addEventListener("input", (event) => {
     if (citationSearchTimer) clearTimeout(citationSearchTimer);
@@ -1594,6 +2037,13 @@ ${inText}${token}
       if (allDocs.length) await openDoc(allDocs[0].id);
       else document.getElementById("new-doc-btn").click();
     }
+    updateSyncStatusUI();
+    if (!syncIntervalHandle) {
+      syncIntervalHandle = setInterval(() => {
+        syncAllDirtyDocs();
+      }, SYNC_INTERVAL_MS);
+    }
+    await syncAllDirtyDocs();
   })();
 }
 

@@ -29,6 +29,31 @@ textarea { resize: vertical; }
 .pill {
   border: 1px solid #d1d5db; border-radius: 999px; background: #f3f4f6; color: #111827;
   font-size: 12px; padding: 8px 12px; cursor: pointer;
+  transition: transform .12s ease, box-shadow .2s ease, filter .2s ease, opacity .2s ease;
+}
+.pill:hover { filter: brightness(0.98); box-shadow: 0 1px 0 rgba(0,0,0,.08); }
+.pill:active,
+.pill.is-clicked { transform: translateY(1px) scale(0.98); box-shadow: inset 0 1px 2px rgba(0,0,0,.16); }
+.pill:disabled,
+.pill[aria-disabled="true"] { opacity: .55; cursor: not-allowed; transform: none; box-shadow: none; }
+.pill.is-loading,
+.pill[aria-busy="true"] { opacity: .82; pointer-events: none; }
+.pill.is-loading::after,
+.pill[aria-busy="true"]::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  margin-left: 8px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  display: inline-block;
+  animation: pill-spin .8s linear infinite;
+  vertical-align: -1px;
+}
+
+@keyframes pill-spin {
+  to { transform: rotate(360deg); }
 }
 .pill-primary { background: #111827; color: #fff; border-color: #111827; }
 .pill.full { width: 100%; }
@@ -40,6 +65,12 @@ textarea { resize: vertical; }
 .meta,.hint { margin: 0; font-size: 12px; color: #4b5563; }
 .usage p { margin: 0; font-size: 12px; }
 .history-title { margin: 0 0 8px; font-size: 13px; }
+.history-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.history-header .history-title { margin: 0; }
+.sync-status { font-size: 11px; color: #6b7280; }
+.sync-status.is-refreshing { color: #0057ff; }
+.sync-status.is-failed { color: #dc2626; }
+.sync-status.is-synced { color: #047857; }
 .pill-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 260px; overflow: auto; }
 .pill-card {
   border: 1px solid #e5e7eb; border-radius: 14px; padding: 9px; background: #f9fafb;
@@ -52,6 +83,7 @@ textarea { resize: vertical; }
 .copy-button { border-radius: 999px; border: 0; background: #111827; color: #fff; padding: 6px 10px; font-size: 11px; }
 .note-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
 .note-filters input, .note-filters select { font-size: 11px; padding: 7px 9px; }
+.mini-list { max-height: 120px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 12px; padding: 6px; background: #f9fafb; }
 .note-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .note-actions button { font-size: 11px; padding: 5px 9px; }
 .format-toolbar { display: flex; gap: 6px; }

@@ -25,6 +25,8 @@ const resetAtEl = document.getElementById("reset-at");
 const usageInfoEl = document.getElementById("usage-info");
 const citationHistoryEl = document.getElementById("citation-history");
 const notesListEl = document.getElementById("notes-list");
+const citationsSyncStatusEl = document.getElementById("citations-sync-status");
+const notesSyncStatusEl = document.getElementById("notes-sync-status");
 const tabButtons = Array.from(document.querySelectorAll(".tab-pill"));
 
 const notesFilterTag = document.getElementById("notes-filter-tag");
@@ -35,6 +37,10 @@ const quickNoteTitle = document.getElementById("quick-note-title");
 const quickNoteBody = document.getElementById("quick-note-body");
 const quickNoteTags = document.getElementById("quick-note-tags");
 const quickNoteProject = document.getElementById("quick-note-project");
+const quickNoteAttachSourceBtn = document.getElementById("quick-note-attach-source");
+const quickNoteSourcesEl = document.getElementById("quick-note-sources");
+const quickNoteLinkSearch = document.getElementById("quick-note-link-search");
+const quickNoteLinkList = document.getElementById("quick-note-link-list");
 const saveQuickNoteButton = document.getElementById("save-quick-note");
 const cancelQuickNoteButton = document.getElementById("cancel-quick-note");
 const panelCollapseButton = document.getElementById("panel-collapse");
@@ -44,10 +50,80 @@ let activeTab = "citations";
 let editingNoteId = null;
 let editingNoteFocusField = "title";
 let editingNoteDraft = null;
+let quickNoteSourcesDraft = [];
+let quickNoteLinkedNoteIdsDraft = [];
+window.__lastNotesForLinking = window.__lastNotesForLinking || [];
+const REFRESH_INTERVAL_MS = 90 * 1000;
+let periodicRefreshHandle = null;
+let statusTickHandle = null;
+
+const refreshState = {
+  citations: { seq: 0, inFlight: null, lastUpdatedAt: 0, lastRenderKey: "", status: "idle", error: "" },
+  notes: { seq: 0, inFlight: null, lastUpdatedAt: 0, lastRenderKey: "", status: "idle", error: "" },
+};
 
 const feedback = createToastStatusManager({ toastEl, statusEl });
 const setStatus = (message, isError = false) => feedback.setStatus(message, isError ? "error" : "info");
 const showToast = (message, isError = false) => feedback.showToast({ message, type: isError ? "error" : "success" });
+
+function setButtonLoading(button, loading, { label } = {}) {
+  if (!button) return;
+  if (loading) {
+    if (!button.dataset.defaultLabel) button.dataset.defaultLabel = button.textContent || "";
+    button.classList.add("is-loading");
+    button.setAttribute("aria-busy", "true");
+    button.disabled = true;
+    if (label) button.textContent = label;
+    return;
+  }
+  button.classList.remove("is-loading");
+  button.removeAttribute("aria-busy");
+  button.disabled = false;
+  if (button.dataset.defaultLabel) {
+    button.textContent = button.dataset.defaultLabel;
+    delete button.dataset.defaultLabel;
+  }
+}
+
+async function runWithButtonLoading(button, action, { label } = {}) {
+  setButtonLoading(button, true, { label });
+  try {
+    return await action();
+  } finally {
+    setButtonLoading(button, false);
+  }
+}
+
+function attachButtonClickMotion() {
+  const pressedButtons = new Set();
+  const resolveButton = (event) => {
+    const target = event?.target;
+    if (!(target instanceof Element)) return null;
+    return target.closest("button, .pill");
+  };
+
+  document.addEventListener("pointerdown", (event) => {
+    const btn = resolveButton(event);
+    if (!btn || btn.hasAttribute("disabled") || btn.getAttribute("aria-disabled") === "true") return;
+    btn.classList.add("is-clicked");
+    pressedButtons.add(btn);
+  });
+
+  const clearState = (event) => {
+    const btn = resolveButton(event);
+    if (btn) {
+      btn.classList.remove("is-clicked");
+      pressedButtons.delete(btn);
+    }
+    if (!btn || event.type === "pointercancel" || event.type === "pointerleave") {
+      pressedButtons.forEach((pressed) => pressed.classList.remove("is-clicked"));
+      pressedButtons.clear();
+    }
+  };
+  document.addEventListener("pointerup", clearState);
+  document.addEventListener("pointercancel", clearState);
+  document.addEventListener("pointerleave", clearState, true);
+}
 
 function sendMessage(type, payload = {}) {
   return new Promise((resolve) => {
@@ -72,6 +148,58 @@ function timeSince(date) {
     if (count >= 1) return `${count} ${label}${count > 1 ? "s" : ""} ago`;
   }
   return "just now";
+}
+
+function formatLastUpdated(ts) {
+  if (!ts) return "--";
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return "--";
+  return timeSince(date);
+}
+
+function setSyncStatus(kind, status, errorMessage = "") {
+  const el = kind === "citations" ? citationsSyncStatusEl : notesSyncStatusEl;
+  if (!el) return;
+  const state = refreshState[kind];
+  state.status = status;
+  state.error = errorMessage || "";
+  el.classList.remove("is-refreshing", "is-failed", "is-synced");
+  if (status === "refreshing") {
+    el.textContent = "Refreshing…";
+    el.classList.add("is-refreshing");
+    return;
+  }
+  if (status === "failed") {
+    el.textContent = `Sync failed${errorMessage ? ` · ${errorMessage}` : ""}`;
+    el.classList.add("is-failed");
+    return;
+  }
+  el.textContent = `Synced · Last updated ${formatLastUpdated(state.lastUpdatedAt)}`;
+  el.classList.add("is-synced");
+}
+
+function updateRelativeSyncTimestamps() {
+  ["citations", "notes"].forEach((kind) => {
+    if (refreshState[kind].status === "synced") {
+      setSyncStatus(kind, "synced");
+    }
+  });
+}
+
+function ensureRefreshTimers() {
+  if (!periodicRefreshHandle) {
+    periodicRefreshHandle = setInterval(() => {
+      if (activeTab === "citations") {
+        void loadCitationHistory({ reason: "interval" });
+      }
+      if (activeTab === "notes") {
+        void loadNotes({ reason: "interval" });
+      }
+    }, REFRESH_INTERVAL_MS);
+  }
+  if (!statusTickHandle) {
+    statusTickHandle = setInterval(updateRelativeSyncTimestamps, 1000);
+  }
 }
 
 function collapseSignupFields() { signupExpanded = false; signupExtraFields?.classList.add("hidden"); }
@@ -108,40 +236,128 @@ function isRestrictedUrl(url) {
   return !url || ["chrome://", "chrome-extension://", "edge://", "about:", "moz-extension://"].some((p) => url.startsWith(p));
 }
 
-async function loadCitationHistory() {
+async function loadCitationHistory({ reason = "manual" } = {}) {
+  const state = refreshState.citations;
+  if (state.inFlight) return state.inFlight;
+  const reqId = ++state.seq;
+  setSyncStatus("citations", "refreshing");
   const sessionState = await sendMessage("get-session");
   if (!sessionState?.session) {
     citationHistoryEl.innerHTML = '<li class="pill-card">Citation history is available for signed-in users.</li>';
+    state.lastUpdatedAt = Date.now();
+    setSyncStatus("citations", "synced");
     return;
   }
-  citationHistoryEl.innerHTML = '<li class="pill-card">Fetching ...</li>';
-  const response = await sendMessage("GET_RECENT_CITATIONS", { limit: 5 });
-  if (response?.error || !Array.isArray(response?.data)) {
-    citationHistoryEl.innerHTML = '<li class="pill-card">Could not load citations.</li>';
-    return;
+  if (!citationHistoryEl.children.length || reason === "tab_open") {
+    citationHistoryEl.innerHTML = '<li class="pill-card">Fetching ...</li>';
   }
-  const citations = response.data.slice(0, 5);
-  if (!citations.length) {
-    citationHistoryEl.innerHTML = '<li class="pill-card">No recent citations yet.</li>';
-    return;
-  }
-  citationHistoryEl.innerHTML = "";
-  citations.forEach((citation) => {
-    const li = document.createElement("li");
-    li.className = "pill-card";
-    const citedAt = citation.cited_at ? new Date(citation.cited_at) : null;
-    const timeAgo = citedAt && !Number.isNaN(citedAt.getTime()) ? timeSince(citedAt) : "Recently";
-    li.innerHTML = `<div>${citation.excerpt || "No excerpt available"}</div><div class="meta-row"><span class="badge">${timeAgo}</span></div><div class="citation-modal"><p>${citation.full_citation || citation.full_text || ""}</p><button class="copy-button" type="button">Copy Again</button></div>`;
-    li.querySelector(".copy-button")?.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      try { await navigator.clipboard.writeText(citation.full_citation || citation.full_text || ""); showToast("Full citation copied!"); } catch { showToast("Failed to copy full citation.", true); }
-    });
-    citationHistoryEl.appendChild(li);
+  const task = (async () => {
+    const response = await sendMessage("GET_RECENT_CITATIONS", { limit: 5 });
+    if (reqId !== state.seq) return;
+    if (response?.error || !Array.isArray(response?.data)) {
+      if (!citationHistoryEl.children.length) {
+        citationHistoryEl.innerHTML = '<li class="pill-card">Could not load citations.</li>';
+      }
+      setSyncStatus("citations", "failed", "Could not load citations");
+      return;
+    }
+    const citations = response.data.slice(0, 5);
+    const renderKey = JSON.stringify(citations.map((c) => [c.id, c.cited_at, c.excerpt, c.full_citation]));
+    if (renderKey !== state.lastRenderKey) {
+      citationHistoryEl.innerHTML = "";
+      if (!citations.length) {
+        citationHistoryEl.innerHTML = '<li class="pill-card">No recent citations yet.</li>';
+      } else {
+        citations.forEach((citation) => {
+          const li = document.createElement("li");
+          li.className = "pill-card";
+          const citedAt = citation.cited_at ? new Date(citation.cited_at) : null;
+          const timeAgo = citedAt && !Number.isNaN(citedAt.getTime()) ? timeSince(citedAt) : "Recently";
+          li.innerHTML = `<div>${citation.excerpt || "No excerpt available"}</div><div class="meta-row"><span class="badge">${timeAgo}</span></div><div class="citation-modal"><p>${citation.full_citation || citation.full_text || ""}</p><button class="copy-button" type="button">Copy Again</button></div>`;
+          li.querySelector(".copy-button")?.addEventListener("click", async (event) => {
+            event.stopPropagation();
+            try { await navigator.clipboard.writeText(citation.full_citation || citation.full_text || ""); showToast("Full citation copied!"); } catch { showToast("Failed to copy full citation.", true); }
+          });
+          citationHistoryEl.appendChild(li);
+        });
+      }
+      state.lastRenderKey = renderKey;
+    }
+    state.lastUpdatedAt = Date.now();
+    setSyncStatus("citations", "synced");
+  })().finally(() => {
+    if (state.inFlight === task) state.inFlight = null;
   });
+  state.inFlight = task;
+  return task;
 }
 
 function parseTags(value) {
   return String(value || "").split(",").map((v) => v.trim()).filter(Boolean);
+}
+
+function renderQuickNoteSources() {
+  if (!quickNoteSourcesEl) return;
+  quickNoteSourcesEl.innerHTML = "";
+  if (!quickNoteSourcesDraft.length) {
+    quickNoteSourcesEl.innerHTML = '<li class="pill-card">No sources attached yet.</li>';
+    return;
+  }
+  quickNoteSourcesDraft.forEach((src) => {
+    const li = document.createElement("li");
+    li.className = "pill-card";
+    li.innerHTML = `<strong>${src.title || src.hostname || src.url}</strong><div class="meta-row"><span>${src.url}</span></div>`;
+    quickNoteSourcesEl.appendChild(li);
+  });
+}
+
+function renderQuickNoteLinkList() {
+  if (!quickNoteLinkList) return;
+  quickNoteLinkList.innerHTML = "";
+  const q = (quickNoteLinkSearch?.value || "").trim().toLowerCase();
+  const stateRows = Array.from(window.__lastNotesForLinking || []);
+  const filtered = stateRows.filter((note) => {
+    const text = `${note.title || ""} ${note.note_body || ""} ${note.highlight_text || ""}`.toLowerCase();
+    return !q || text.includes(q);
+  }).slice(0, 40);
+  if (!filtered.length) {
+    quickNoteLinkList.innerHTML = '<li class="pill-card">No notes available.</li>';
+    return;
+  }
+  filtered.forEach((note) => {
+    const li = document.createElement("li");
+    li.className = "pill-card";
+    const id = `quick-link-${note.id}`;
+    const checked = quickNoteLinkedNoteIdsDraft.includes(note.id) ? "checked" : "";
+    li.innerHTML = `<label for="${id}"><input id="${id}" type="checkbox" ${checked} /> ${note.title || "Untitled note"}</label>`;
+    const checkbox = li.querySelector("input");
+    checkbox?.addEventListener("change", () => {
+      if (checkbox.checked) {
+        if (!quickNoteLinkedNoteIdsDraft.includes(note.id)) quickNoteLinkedNoteIdsDraft.push(note.id);
+      } else {
+        quickNoteLinkedNoteIdsDraft = quickNoteLinkedNoteIdsDraft.filter((value) => value !== note.id);
+      }
+    });
+    quickNoteLinkList.appendChild(li);
+  });
+}
+
+async function attachSourceFromCurrentTab() {
+  const tab = await getCurrentTab();
+  const url = tab?.url || "";
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    setStatus("Current tab URL is not attachable.", true);
+    return;
+  }
+  const dedupe = url.toLowerCase();
+  if (quickNoteSourcesDraft.some((src) => (src.url || "").toLowerCase() === dedupe)) {
+    setStatus("Source already attached.");
+    return;
+  }
+  let hostname = "";
+  try { hostname = new URL(url).hostname; } catch {}
+  quickNoteSourcesDraft.push({ url, title: tab?.title || null, hostname, attached_at: new Date().toISOString() });
+  renderQuickNoteSources();
 }
 
 function appendTextElement(parent, tagName, text, className = "") {
@@ -166,8 +382,16 @@ function getEditableText(el) {
   return (el.textContent || "").replace(/\u00a0/g, " ").trim();
 }
 
-async function loadNotes() {
-  const response = await sendMessage("NOTES_LIST", {
+async function loadNotes({ reason = "manual" } = {}) {
+  const state = refreshState.notes;
+  if (state.inFlight) return state.inFlight;
+  const reqId = ++state.seq;
+  setSyncStatus("notes", "refreshing");
+  if (!notesListEl.children.length || reason === "tab_open") {
+    notesListEl.innerHTML = '<li class="pill-card">Refreshing notes…</li>';
+  }
+  const task = (async () => {
+    const response = await sendMessage("NOTES_LIST", {
     filters: {
       tag: notesFilterTag.value.trim(),
       project: notesFilterProject.value.trim(),
@@ -176,11 +400,27 @@ async function loadNotes() {
     sort: notesSort.value,
     limit: 100,
   });
+  if (reqId !== state.seq) return;
   const notes = response?.data?.notes || [];
   const tags = response?.data?.tags || [];
   const projects = response?.data?.projects || [];
+  window.__lastNotesForLinking = notes;
+  const renderKey = JSON.stringify({
+    notes: notes.map((n) => [n.id, n.updated_at, n.title, n.note_body, n.project_id, (n.tags || []).join(",")]),
+    tags: tags.map((t) => [t.id, t.name]),
+    projects: projects.map((p) => [p.id, p.name]),
+    editingNoteId,
+  });
+  if (renderKey === state.lastRenderKey) {
+    state.lastUpdatedAt = Date.now();
+    setSyncStatus("notes", "synced");
+    return;
+  }
   if (!notes.length) {
     notesListEl.innerHTML = '<li class="pill-card">No notes yet.</li>';
+    state.lastRenderKey = renderKey;
+    state.lastUpdatedAt = Date.now();
+    setSyncStatus("notes", "synced");
     return;
   }
   notesListEl.innerHTML = "";
@@ -290,9 +530,19 @@ async function loadNotes() {
 
     const metaRow = document.createElement("div");
     metaRow.className = "meta-row";
-    appendTextElement(metaRow, "span", note.source_url || "No source");
-    appendTextElement(metaRow, "span", new Date(note.updated_at || note.created_at).toLocaleString());
-    li.appendChild(metaRow);
+      const sourceSummary = Array.isArray(note.sources) && note.sources.length
+        ? `${note.sources.length} source${note.sources.length === 1 ? "" : "s"}`
+        : (note.source_url || "No source");
+      appendTextElement(metaRow, "span", sourceSummary);
+      appendTextElement(metaRow, "span", new Date(note.updated_at || note.created_at).toLocaleString());
+      li.appendChild(metaRow);
+
+      if (Array.isArray(note.linked_note_ids) && note.linked_note_ids.length) {
+        const linkRow = document.createElement("div");
+        linkRow.className = "meta-row";
+        appendTextElement(linkRow, "span", `${note.linked_note_ids.length} linked note${note.linked_note_ids.length === 1 ? "" : "s"}`, "badge");
+        li.appendChild(linkRow);
+      }
 
     if (!isEditing) {
       const actions = document.createElement("div");
@@ -334,6 +584,20 @@ async function loadNotes() {
     }
     notesListEl.appendChild(li);
   });
+  state.lastRenderKey = renderKey;
+  state.lastUpdatedAt = Date.now();
+  setSyncStatus("notes", "synced");
+  })().catch(() => {
+    if (reqId !== state.seq) return;
+    if (!notesListEl.children.length) {
+      notesListEl.innerHTML = '<li class="pill-card">Could not load notes.</li>';
+    }
+    setSyncStatus("notes", "failed", "Could not load notes");
+  }).finally(() => {
+    if (state.inFlight === task) state.inFlight = null;
+  });
+  state.inFlight = task;
+  return task;
 }
 
 function clearQuickNoteForm() {
@@ -341,6 +605,11 @@ function clearQuickNoteForm() {
   quickNoteBody.value = "";
   quickNoteTags.value = "";
   quickNoteProject.value = "";
+  quickNoteSourcesDraft = [];
+  quickNoteLinkedNoteIdsDraft = [];
+  if (quickNoteLinkSearch) quickNoteLinkSearch.value = "";
+  renderQuickNoteSources();
+  renderQuickNoteLinkList();
 }
 
 function formatQuickNote(format) {
@@ -362,20 +631,24 @@ async function saveQuickNote() {
     project: quickNoteProject.value.trim() || null,
     source_url: null,
     highlight_text: null,
+    sources: quickNoteSourcesDraft,
+    linked_note_ids: quickNoteLinkedNoteIdsDraft,
   };
   if (!note.note_body) {
     setStatus("Note body is required.", true);
     return;
   }
-  const response = await sendMessage("NOTE_SAVE", { note });
-  if (response?.error) {
-    setStatus(response.error, true);
-    return;
-  }
-  showToast(response?.data?.sync_blocked ? "Saved locally. Sync paused due to plan storage cap." : "Note saved.");
-  clearQuickNoteForm();
-  await loadNotes();
-  await setActiveTab("notes");
+  await runWithButtonLoading(saveQuickNoteButton, async () => {
+    const response = await sendMessage("NOTE_SAVE", { note });
+    if (response?.error) {
+      setStatus(response.error, true);
+      return;
+    }
+    showToast(response?.data?.sync_blocked ? "Saved locally. Sync paused due to plan storage cap." : "Note saved.");
+    clearQuickNoteForm();
+    await loadNotes({ reason: "note_created" });
+    await setActiveTab("notes");
+  }, { label: "Saving…" });
 }
 
 async function setActiveTab(tab) {
@@ -387,8 +660,12 @@ async function setActiveTab(tab) {
     btn.setAttribute("aria-selected", String(isActive));
   });
   ["citations", "notes", "note"].forEach((name) => document.getElementById(`tab-content-${name}`)?.classList.toggle("hidden", name !== tab));
-  if (tab === "citations") await loadCitationHistory();
-  if (tab === "notes") await loadNotes();
+  if (tab === "citations") await loadCitationHistory({ reason: "tab_open" });
+  if (tab === "notes") await loadNotes({ reason: "tab_open" });
+  if (tab === "note") {
+    renderQuickNoteSources();
+    renderQuickNoteLinkList();
+  }
 }
 
 async function loadSession() {
@@ -406,15 +683,17 @@ async function loadSession() {
 loginButton.addEventListener("click", async () => {
   collapseSignupFields();
   setStatus(COPY.info.PROCESSING_REQUEST);
-  try {
-    const session = await sendMessage("login", { email: emailInput.value.trim(), password: passwordInput.value });
-    if (session?.error) throw new Error(session.error);
-    await loadSession();
-  } catch (error) {
-    const mapped = mapApiError({ message: error.message });
-    setStatus(mapped.message, true);
-    feedback.showToast({ message: mapped.message, type: mapped.type });
-  }
+  await runWithButtonLoading(loginButton, async () => {
+    try {
+      const session = await sendMessage("login", { email: emailInput.value.trim(), password: passwordInput.value });
+      if (session?.error) throw new Error(session.error);
+      await loadSession();
+    } catch (error) {
+      const mapped = mapApiError({ message: error.message });
+      setStatus(mapped.message, true);
+      feedback.showToast({ message: mapped.message, type: mapped.type });
+    }
+  }, { label: "Logging in…" });
 });
 
 signupButton.addEventListener("click", async () => {
@@ -424,21 +703,23 @@ signupButton.addEventListener("click", async () => {
     return;
   }
   setStatus(COPY.info.PROCESSING_REQUEST);
-  try {
-    const name = signupNameInput?.value?.trim() || "";
-    const useCase = signupUseCaseInput?.value || "";
-    if (!name) throw new Error("Full name is required for signup.");
-    if (!useCase) throw new Error("Please select a use case.");
-    const session = await sendMessage("signup", { name, use_case: useCase, email: emailInput.value.trim(), password: passwordInput.value });
-    if (session?.error) throw new Error(session.error);
-    await loadSession();
-    collapseSignupFields();
-    showToast("Account created. Check your email to confirm.");
-  } catch (error) {
-    const mapped = mapApiError({ message: error.message });
-    setStatus(mapped.message, true);
-    feedback.showToast({ message: mapped.message, type: mapped.type });
-  }
+  await runWithButtonLoading(signupButton, async () => {
+    try {
+      const name = signupNameInput?.value?.trim() || "";
+      const useCase = signupUseCaseInput?.value || "";
+      if (!name) throw new Error("Full name is required for signup.");
+      if (!useCase) throw new Error("Please select a use case.");
+      const session = await sendMessage("signup", { name, use_case: useCase, email: emailInput.value.trim(), password: passwordInput.value });
+      if (session?.error) throw new Error(session.error);
+      await loadSession();
+      collapseSignupFields();
+      showToast("Account created. Check your email to confirm.");
+    } catch (error) {
+      const mapped = mapApiError({ message: error.message });
+      setStatus(mapped.message, true);
+      feedback.showToast({ message: mapped.message, type: mapped.type });
+    }
+  }, { label: "Signing up…" });
 });
 
 logoutButton.addEventListener("click", async () => { setStatus(COPY.info.PROCESSING_REQUEST); await sendMessage("logout"); await loadSession(); });
@@ -478,8 +759,10 @@ openDashboardButton.addEventListener("click", async () => {
   setStatus("Opened dashboard in new tab.");
 });
 
-[notesFilterTag, notesFilterProject, notesFilterSource, notesSort].forEach((el) => el?.addEventListener("input", () => activeTab === "notes" && loadNotes()));
+[notesFilterTag, notesFilterProject, notesFilterSource, notesSort].forEach((el) => el?.addEventListener("input", () => activeTab === "notes" && loadNotes({ reason: "filter" })));
 document.querySelectorAll(".format-toolbar [data-format]").forEach((btn) => btn.addEventListener("click", () => formatQuickNote(btn.dataset.format)));
+quickNoteAttachSourceBtn?.addEventListener("click", attachSourceFromCurrentTab);
+quickNoteLinkSearch?.addEventListener("input", renderQuickNoteLinkList);
 saveQuickNoteButton.addEventListener("click", saveQuickNote);
 cancelQuickNoteButton.addEventListener("click", clearQuickNoteForm);
 tabButtons.forEach((btn) => btn.addEventListener("click", () => setActiveTab(btn.dataset.tab)));
@@ -490,6 +773,12 @@ panelCollapseButton?.addEventListener("click", async () => {
 });
 
 (async () => {
+  attachButtonClickMotion();
+  ensureRefreshTimers();
+  setSyncStatus("citations", "synced");
+  setSyncStatus("notes", "synced");
+  renderQuickNoteSources();
+  renderQuickNoteLinkList();
   await loadSession();
   const persisted = (await chrome.storage.local.get({ popup_active_tab: "citations" })).popup_active_tab;
   await setActiveTab(persisted);

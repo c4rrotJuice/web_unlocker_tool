@@ -100,6 +100,9 @@
           <input id="doc-title" type="text" placeholder="Untitled" autocomplete="off" />
           <div class="editor-actions">
             <span id="save-status">Idle</span>
+            <span id="sync-status" aria-live="polite">Synced</span>
+            <span id="last-synced">Last synced: --</span>
+            <button class="secondary" id="manual-sync-btn" type="button">Sync now</button>
             <button class="secondary" id="export-btn">Export</button>
           </div>
         </div>
@@ -285,6 +288,12 @@
           <button type="button" class="pill mini" data-format="link">Link</button>
         </div>
         <label>Note <textarea id="quick-note-body" rows="6" placeholder="Write your note..."></textarea></label>
+        <div class="actions">
+          <button id="quick-note-attach-source" class="pill mini" type="button">Attach Source (Current Page)</button>
+        </div>
+        <ul id="quick-note-sources" class="notes-list quick-note-mini-list"></ul>
+        <label>Link existing notes <input id="quick-note-link-search" type="search" placeholder="Search notes to link" /></label>
+        <ul id="quick-note-link-list" class="notes-list quick-note-mini-list"></ul>
         <label>Tags (optional) <input id="quick-note-tags" type="text" placeholder="tag UUIDs, comma-separated" /></label>
         <label>Project (optional) <input id="quick-note-project" type="text" placeholder="Project name" /></label>
         <div class="actions">

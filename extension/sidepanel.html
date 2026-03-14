@@ -67,13 +67,20 @@
       </section>
 
       <section id="tab-content-citations" class="tile content-tile">
-        <h2 class="history-title">Recent Citations</h2>
+        <div class="history-header">
+          <h2 class="history-title">Recent Citations</h2>
+          <span id="citations-sync-status" class="sync-status" aria-live="polite">Synced · Last updated --</span>
+        </div>
         <ul id="citation-history" class="pill-list">
           <li><p>Fetching ...</p></li>
         </ul>
       </section>
 
       <section id="tab-content-notes" class="tile content-tile hidden">
+        <div class="history-header">
+          <h2 class="history-title">Notes</h2>
+          <span id="notes-sync-status" class="sync-status" aria-live="polite">Synced · Last updated --</span>
+        </div>
         <div class="note-filters">
           <input id="notes-filter-tag" type="text" placeholder="Filter by tag" />
           <input id="notes-filter-project" type="text" placeholder="Filter by project" />
@@ -95,6 +102,12 @@
           <button type="button" class="pill mini" data-format="link">Link</button>
         </div>
         <label>Note <textarea id="quick-note-body" rows="6" placeholder="Write your note..."></textarea></label>
+        <div class="actions">
+          <button id="quick-note-attach-source" class="pill mini" type="button">Attach Source (Current Tab)</button>
+        </div>
+        <ul id="quick-note-sources" class="pill-list mini-list"></ul>
+        <label>Link existing notes <input id="quick-note-link-search" type="search" placeholder="Search notes to link" /></label>
+        <ul id="quick-note-link-list" class="pill-list mini-list"></ul>
         <label>Tags (optional) <input id="quick-note-tags" type="text" placeholder="tag1, tag2" /></label>
         <label>Project (optional) <input id="quick-note-project" type="text" placeholder="Project name" /></label>
         <div class="actions">

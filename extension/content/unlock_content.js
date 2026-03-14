@@ -985,9 +985,6 @@
 
 
   async function requestRenderedCitation(format, metadata) {
-    if (format === "custom") {
-      return null;
-    }
     const response = await sendMessage("RENDER_CITATION", {
       url: metadata.url,
       excerpt: metadata.excerpt,
@@ -996,6 +993,8 @@
         ...metadata,
         selected_text: metadata.selectionText,
       },
+      quote: metadata.selectionText || metadata.excerpt,
+      locator: metadata.paragraph ? { paragraph: metadata.paragraph } : {},
     });
     if (response?.status !== 200 || response?.error || !response?.data) {
       return null;
@@ -1029,19 +1028,17 @@
     let resolvedText = citationText;
     let resolvedInline = formatInlineCitation(format, metadata);
 
-    if (format !== "custom") {
-      const rendered = await requestRenderedCitation(format, metadata);
-      if (rendered?.full_citation) {
-        resolvedText = rendered.full_citation;
-      }
-      if (rendered?.inline_citation) {
-        resolvedInline = rendered.inline_citation;
-      }
+    const rendered = await requestRenderedCitation(format, metadata);
+    if (rendered?.full_citation) {
+      resolvedText = rendered.full_citation;
+    }
+    if (rendered?.inline_citation) {
+      resolvedInline = rendered.inline_citation;
     }
 
     const copied = await copyText(resolvedText);
     if (copied) {
-      const label = format === "custom" ? "Custom" : format.toUpperCase();
+      const label = format.toUpperCase();
       showToast(`Citation copied (${label}).`);
       // Close quickly after a successful copy for a smoother flow.
       closePopup();
@@ -1055,12 +1052,11 @@
     void saveCitation({
       url: metadata.url,
       excerpt: metadata.excerpt,
+      format,
+      quote: metadata.selectionText || metadata.excerpt,
+      locator: metadata.paragraph ? { paragraph: metadata.paragraph } : {},
       inline_citation: resolvedInline,
       full_citation: resolvedText,
-      full_text: resolvedText,
-      format,
-      custom_format_name: metadata.customFormatName || null,
-      custom_format_template: metadata.customFormatTemplate || null,
       metadata: {
         ...metadata,
         source: "extension",
@@ -1147,7 +1143,6 @@
     const isFreeUser = ["free", "freemium", "anonymous"].includes(
       normalizedTier,
     );
-    const isProUser = normalizedTier === "pro";
     const allowedFormats = isFreeUser
       ? new Set(["mla", "apa"])
       : new Set(["mla", "apa", "chicago", "harvard"]);
@@ -1208,41 +1203,6 @@
       body.appendChild(row);
     });
 
-    const customRow = document.createElement("div");
-    customRow.className = "web-unlocker-row web-unlocker-custom";
-
-    const customTitle = document.createElement("strong");
-    customTitle.textContent = "Custom (Pro)";
-    customRow.appendChild(customTitle);
-
-    const customNameInput = document.createElement("input");
-    customNameInput.id = "custom-name";
-    customNameInput.type = "text";
-    customNameInput.placeholder = "Format name";
-    customRow.appendChild(customNameInput);
-
-    const customTemplateInput = document.createElement("textarea");
-    customTemplateInput.id = "custom-template";
-    customTemplateInput.placeholder =
-      "Template (use {title}, {url}, {accessed}, {quote})";
-    customRow.appendChild(customTemplateInput);
-
-    const customPreviewEl = document.createElement("pre");
-    customPreviewEl.id = "cite-custom";
-    customRow.appendChild(customPreviewEl);
-
-    const customButton = document.createElement("button");
-    customButton.className = "copy-btn";
-    customButton.dataset.format = "custom";
-    customButton.textContent = "Copy Custom";
-    if (!isProUser) {
-      customRow.classList.add("is-disabled");
-      customButton.disabled = true;
-    }
-    customRow.appendChild(customButton);
-
-    body.appendChild(customRow);
-
     const footer = document.createElement("div");
     footer.className = "web-unlocker-footer";
 
@@ -1288,8 +1248,6 @@
           selected_text: selectionText,
           citation_format: citationFormat,
           citation_text: citationText,
-          custom_format_name: state.customFormatName || null,
-          custom_format_template: state.customFormatTemplate || null,
         });
         return;
       }
@@ -1300,30 +1258,6 @@
           return;
         }
         const format = target.dataset.format || "mla";
-        if (format === "custom") {
-          const template = customTemplateInput.value.trim();
-          const name = customNameInput.value.trim();
-          const text = formatCustomCitation(
-            template,
-            selectionText,
-            metadata.title,
-            url,
-            parseDateBits(metadata.dateAccessed)?.raw || metadata.dateAccessed,
-          );
-          if (!text) {
-            showToast("Add a custom template first.", true);
-            return;
-          }
-          state.customFormatName = name;
-          state.customFormatTemplate = template;
-          await handleCopy("custom", text, {
-            ...metadata,
-            customFormatName: name,
-            customFormatTemplate: template,
-          });
-          return;
-        }
-
         const citationPreview = popup.querySelector(`#cite-${format}`);
         const text =
           citationPreview?.textContent ||
@@ -1356,26 +1290,6 @@
     addManagedEventListener(document, "keydown", handleKeydown);
     lockPageScroll();
     popup.focus();
-
-    function updateCustomPreview() {
-      const template = customTemplateInput.value.trim();
-      const text = formatCustomCitation(
-        template,
-        selectionText,
-        metadata.title,
-        url,
-        parseDateBits(metadata.dateAccessed)?.raw || metadata.dateAccessed,
-      );
-      state.customFormatTemplate = template;
-      customPreviewEl.textContent = text || "Custom preview";
-    }
-
-    customTemplateInput.addEventListener("input", updateCustomPreview);
-    customNameInput.addEventListener("input", () => {
-      state.customFormatName = customNameInput.value.trim();
-    });
-
-    updateCustomPreview();
   }
 
 

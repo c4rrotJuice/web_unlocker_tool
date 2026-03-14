@@ -13,6 +13,7 @@ def test_extension_fallback_formatter_uses_normalized_metadata_object():
 
     assert "formatCitation(format, metadata);" in source
     assert "validateCitationMetadata(getCitationMetadata(selectionText))" in source
+    assert "quote: metadata.selectionText || metadata.excerpt" in source
 
 
 def test_extension_metadata_extractor_includes_layered_fallback_strategies():

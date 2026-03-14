@@ -38,6 +38,7 @@ from app.services.free_tier_gating import (
     rolling_window,
 )
 from app.services.supabase_rest import SupabaseRestRepository
+from app.routes.citations import list_citation_records
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -479,20 +480,8 @@ async def _validate_citation_ids(user_id: str, citation_ids: list[str]) -> list[
     if not unique_ids:
         return []
 
-    res = await supabase_repo.get(
-        "citations",
-        params={
-            "id": f"in.({','.join(unique_ids)})",
-            "user_id": f"eq.{user_id}",
-            "select": "id",
-        },
-        headers=supabase_repo.headers(),
-    )
-    if res.status_code != 200:
-        logger.error("editor.validate_citations_failed", extra={"status": res.status_code, "upstream": "supabase"})
-        raise HTTPException(status_code=500, detail="Failed to validate citations")
-
-    found_ids = {item.get("id") for item in res.json()}
+    records = await list_citation_records(user_id, ids=unique_ids, limit=len(unique_ids))
+    found_ids = {item.get("id") for item in records}
     missing = [cid for cid in unique_ids if cid not in found_ids]
     if missing:
         raise HTTPException(status_code=403, detail="Invalid citation references.")
@@ -1041,25 +1030,8 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
 
     bibliography: list[str] = []
     if citation_ids:
-        citation_res = await supabase_repo.get(
-            "citations",
-            params={
-                "id": f"in.({','.join(citation_ids)})",
-                "user_id": f"eq.{user_id}",
-                "expires_at": f"gt.{datetime.utcnow().isoformat()}",
-                "select": "id,format,full_text,custom_format_template",
-            },
-            headers=supabase_repo.headers(),
-        )
-        if citation_res.status_code == 200:
-            for citation in citation_res.json():
-                fmt = (citation.get("format") or "").lower()
-                full_text = citation.get("full_text") or ""
-                if fmt == "custom":
-                    template = citation.get("custom_format_template") or ""
-                    bibliography.append(template or full_text)
-                else:
-                    bibliography.append(full_text)
+        citation_records = await list_citation_records(user_id, ids=citation_ids, limit=len(citation_ids), format=payload.style)
+        bibliography = [record.get("full_citation") or "" for record in citation_records if record.get("full_citation")]
 
     return {
         "title": doc.get("title") or "Untitled",
@@ -1161,17 +1133,8 @@ async def export_docs_zip(request: Request):
             bibliography: list[str] = []
             citation_ids = doc.get("citation_ids") or []
             if citation_ids:
-                citation_res = await supabase_repo.get(
-                    "citations",
-                    params={
-                        "id": f"in.({','.join(citation_ids)})",
-                        "user_id": f"eq.{user_id}",
-                        "select": "full_text",
-                    },
-                    headers=supabase_repo.headers(),
-                )
-                if citation_res.status_code == 200:
-                    bibliography = [item.get("full_text") or "" for item in citation_res.json()]
+                citation_records = await list_citation_records(user_id, ids=citation_ids, limit=len(citation_ids), format="mla")
+                bibliography = [item.get("full_citation") or "" for item in citation_records if item.get("full_citation")]
             archive.writestr(f"{folder}/citations.txt", "\n".join(bibliography))
             manifest_rows.append({"id": doc.get("id"), "title": doc.get("title"), "includes": ["original.txt", "pdf_render.html", "citations.txt"]})
 

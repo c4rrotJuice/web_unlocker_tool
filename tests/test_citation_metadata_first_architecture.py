@@ -5,7 +5,8 @@ def test_backend_exposes_metadata_first_render_endpoint_and_render_cache_payload
     source = Path("app/routes/citations.py").read_text(encoding="utf-8")
 
     assert "@router.post(\"/api/citations/render\")" in source
-    assert "render_cache" in source
+    assert "citation_instances" in source
+    assert "citation_renders" in source
     assert "source_fingerprint" in source
     assert "source_version" in source
 
@@ -19,8 +20,8 @@ def test_clients_delegate_standard_rendering_to_backend():
 
 
 def test_sql_schema_supports_source_identity_and_render_cache():
-    migration = Path("sql/20260315_metadata_first_citation_architecture.sql").read_text(encoding="utf-8")
+    migration = Path("sql/20260315_refactor_citations_to_metadata_first.sql").read_text(encoding="utf-8")
 
-    assert "source_fingerprint" in migration
-    assert "source_version" in migration
-    assert "render_cache jsonb" in migration
+    assert "create table if not exists public.sources" in migration
+    assert "create table if not exists public.citation_instances" in migration
+    assert "create table if not exists public.citation_renders" in migration

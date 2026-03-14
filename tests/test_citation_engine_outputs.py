@@ -28,6 +28,7 @@ def test_normalize_metadata_dedupes_institutional_author_and_publisher():
     assert meta["metadata_schema_version"] == METADATA_SCHEMA_VERSION
     assert meta["source_fingerprint"].startswith("url:")
     assert meta["source"]["fingerprint"] == meta["source_fingerprint"]
+    assert meta["quote"]["locator"] == {"paragraph": 6}
 
 
 def test_generate_citation_outputs_separates_inline_and_full():
@@ -85,4 +86,5 @@ def test_generate_render_bundle_contains_multi_style_cache_ready_payload():
     )
 
     assert set(bundle["renders"].keys()) == {"apa", "chicago", "harvard", "mla"}
-    assert bundle["metadata"]["source_version"] == bundle["source_version"]
+    assert bundle["source"]["source_version"] == bundle["source_version"]
+    assert bundle["citation_version"]

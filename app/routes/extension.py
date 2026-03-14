@@ -542,10 +542,8 @@ async def extension_selection(request: Request, payload: ExtensionSelectionReque
         citation_input = CitationInput(
             url=payload.url,
             excerpt=(payload.title or selected_text[:140]).strip(),
-            full_text=(payload.citation_text or selected_text).strip(),
             format=payload.citation_format,
-            custom_format_name=payload.custom_format_name,
-            custom_format_template=payload.custom_format_template,
+            quote=(payload.citation_text or selected_text).strip(),
             metadata={
                 "source": "extension",
                 "title": payload.title,
@@ -1000,8 +998,8 @@ async def create_citation_from_note(request: Request, note_id: str, format: str 
     citation_input = CitationInput(
         url=source_url,
         excerpt=excerpt,
-        full_text=full_text,
         format=format,
+        quote=full_text,
         metadata={"source": "note", "note_id": normalized_note_id, "source_title": note.get("source_title")},
     )
     citation_id = await create_citation(user_id, account_type, citation_input)

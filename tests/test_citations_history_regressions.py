@@ -82,6 +82,58 @@ class DummyHTTPClient:
         return DummyResp(200, [])
 
 
+class DummySupabaseRepo:
+    def headers(self, **_kwargs):
+        return {"x-test": "1"}
+
+    async def get(self, resource, **kwargs):
+        params = kwargs.get("params", {})
+        if resource == "citation_instances":
+            if "bad!" in (params.get("id") or ""):
+                return DummyResp(400, {"message": "bad id"}, text="bad id")
+            rows = [{"id": "1", "source_id": "source-1", "locator": {}, "quote_text": "Excerpt", "excerpt": "Excerpt", "annotation": "", "citation_version": "cv1", "created_at": "2026-01-01T00:00:00+00:00"}]
+            if params.get("id") and "2" in params["id"]:
+                rows.append({"id": "2", "source_id": "source-2", "locator": {}, "quote_text": "Excerpt 2", "excerpt": "Excerpt 2", "annotation": "", "citation_version": "cv2", "created_at": "2026-01-02T00:00:00+00:00"})
+            if params.get("id") and "3" in params["id"]:
+                rows.append({"id": "3", "source_id": "source-3", "locator": {}, "quote_text": "Excerpt 3", "excerpt": "Excerpt 3", "annotation": "", "citation_version": "cv3", "created_at": "2026-01-03T00:00:00+00:00"})
+            return DummyResp(200, rows)
+        if resource == "sources":
+            ids = params.get("id", "")
+            rows = []
+            for source_id in ["source-1", "source-2", "source-3"]:
+                if not ids or source_id in ids:
+                    rows.append({
+                        "id": source_id,
+                        "fingerprint": f"url:https://example.com/{source_id}",
+                        "title": f"Title {source_id}",
+                        "source_type": "webpage",
+                        "authors": [{"fullName": "Author Example", "firstName": "Author", "lastName": "Example", "initials": "A", "isOrganization": False}],
+                        "container_title": "Example Site",
+                        "publisher": "Example Site",
+                        "issued_date": {"raw": "2024-01-01", "year": 2024},
+                        "identifiers": {},
+                        "canonical_url": f"https://example.com/{source_id}",
+                        "page_url": f"https://example.com/{source_id}",
+                        "metadata": {"title_case": f"Title {source_id}", "sentence_case": f"Title {source_id}", "siteName": "Example Site", "author": "Author Example"},
+                        "raw_extraction": {},
+                        "normalization_version": 1,
+                        "source_version": f"sv-{source_id}",
+                    })
+            return DummyResp(200, rows)
+        if resource == "citation_renders":
+            return DummyResp(200, [])
+        return DummyResp(200, [])
+
+    async def post(self, resource, **kwargs):
+        return DummyResp(201, [{"id": "ok", **(kwargs.get("json") or {})}])
+
+    async def patch(self, resource, **kwargs):
+        return DummyResp(200, [{"id": "ok", **(kwargs.get("json") or {})}])
+
+    async def delete(self, resource, **kwargs):
+        return DummyResp(204, [])
+
+
 def _build_app(monkeypatch, account_type="pro", http_client=None):
     monkeypatch.setenv("SUPABASE_URL", "http://example.com")
     monkeypatch.setenv("SUPABASE_KEY", "anon")
@@ -117,6 +169,7 @@ def _build_app(monkeypatch, account_type="pro", http_client=None):
         from app.routes import citations, search, history
 
         citations.http_client = http_client
+        citations.supabase_repo = DummySupabaseRepo()
         search.http_client = http_client
         history.http_client = http_client
 

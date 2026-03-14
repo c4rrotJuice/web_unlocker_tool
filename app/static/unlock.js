@@ -281,7 +281,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
     async function fetchRenderedCitation(format, metadata) {
-        if (format === "custom") return null;
         try {
             const res = await fetch('/api/citations/render', {
                 method: 'POST',
@@ -292,6 +291,8 @@ document.addEventListener("DOMContentLoaded", function () {
                     excerpt: metadata.excerpt || selectedText || '',
                     format,
                     metadata: { ...metadata, selected_text: metadata.selectionText || selectedText || '' },
+                    quote: selectedText || metadata.excerpt || '',
+                    locator: metadata.paragraph ? { paragraph: metadata.paragraph } : {},
                 }),
             });
             if (!res.ok) return null;
@@ -320,8 +321,7 @@ document.addEventListener("DOMContentLoaded", function () {
             <strong>MLA:</strong><pre id="mla-cite">${mlaCitation}</pre><button class="copy-popup-btn" data-cite-id="mla-cite" data-cite-format="mla">Copy MLA</button><br/><br/>
             <strong>APA:</strong><pre id="apa-cite">${apaCitation}</pre><button class="copy-popup-btn" data-cite-id="apa-cite" data-cite-format="apa">Copy APA</button><br/><br/>
             <strong>Chicago:</strong><pre id="chicago-cite">${chicagoCitation}</pre><button class="copy-popup-btn" data-cite-id="chicago-cite" data-cite-format="chicago">Copy Chicago</button><br/><br/>
-            <strong>Harvard:</strong><pre id="harvard-cite">${harvardCitation}</pre><button class="copy-popup-btn" data-cite-id="harvard-cite" data-cite-format="harvard">Copy Harvard</button><br/><br/>
-            <strong>Custom (Pro):</strong><input id="custom-cite-name" type="text" placeholder="Custom format name" /><textarea id="custom-cite" rows="4" placeholder="Paste/type your custom citation here"></textarea><button class="copy-popup-btn" data-cite-id="custom-cite" data-cite-format="custom">Copy Custom</button>
+            <strong>Harvard:</strong><pre id="harvard-cite">${harvardCitation}</pre><button class="copy-popup-btn" data-cite-id="harvard-cite" data-cite-format="harvard">Copy Harvard</button>
         `;
 
         popup.querySelectorAll('.copy-popup-btn').forEach(btn => {
@@ -343,18 +343,13 @@ document.addEventListener("DOMContentLoaded", function () {
     // 🔹 Copy Citation Handler
     // -----------------------
     async function copyCitation(id, format, metadata) {
-        const target = document.getElementById(id);
-        const customName = document.getElementById("custom-cite-name")?.value || null;
         const normalizedMeta = validateCitationMetadata(metadata || getCitationMetadata(selectedText, realSourceUrl || window.location.href));
 
         let citationText = "";
         let inlineCitation = formatInlineCitation(format || "mla", normalizedMeta);
-        if (format === "custom") citationText = target?.value || "";
-        else {
-            const rendered = await fetchRenderedCitation(format, normalizedMeta);
-            citationText = rendered?.full_citation || formatCitation(format, normalizedMeta);
-            inlineCitation = rendered?.inline_citation || inlineCitation;
-        }
+        const rendered = await fetchRenderedCitation(format, normalizedMeta);
+        citationText = rendered?.full_citation || formatCitation(format, normalizedMeta);
+        inlineCitation = rendered?.inline_citation || inlineCitation;
 
         try { await navigator.clipboard.writeText(citationText); showToast("Citation copied!"); }
         catch { alert("Copy failed. Please allow clipboard access or try again."); }
@@ -362,15 +357,12 @@ document.addEventListener("DOMContentLoaded", function () {
         const citationPayload = {
             url: normalizedMeta.url,
             excerpt: normalizedMeta.excerpt || selectedText || "",
-            inline_citation: inlineCitation,
-            full_citation: citationText,
-            full_text: citationText,
             format: format || "mla",
             metadata: normalizedMeta,
-            author: normalizedMeta.author || null,
-            site_name: normalizedMeta.siteName || null,
-            custom_format_name: format === "custom" ? customName : null,
-            custom_format_template: format === "custom" ? citationText : null
+            quote: selectedText || normalizedMeta.excerpt || "",
+            locator: normalizedMeta.paragraph ? { paragraph: normalizedMeta.paragraph } : {},
+            inline_citation: inlineCitation,
+            full_citation: citationText
         };
 
         window.parent.postMessage({ type: "copyCitation", citation: citationPayload }, "*");

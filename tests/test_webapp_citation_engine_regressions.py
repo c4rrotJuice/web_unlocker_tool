@@ -6,7 +6,7 @@ def test_webapp_uses_normalized_metadata_for_copy_formats():
 
     assert "validateCitationMetadata(getCitationMetadata" in source
     assert "fetch('/api/citations/render'" in source
-    assert "formatCitation(style, metadata)" in source
+    assert "quote: selectedText || metadata.excerpt || ''" in source
     assert "copyCitation(btn.dataset.citeId, btn.dataset.citeFormat, metadata)" in source
 
 

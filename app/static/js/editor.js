@@ -979,6 +979,8 @@ function startEditor() {
       excerpt: citation.excerpt,
       metadata: citation.metadata || {},
       format: normalizedStyle,
+      quote: citation.quote || citation.excerpt || "",
+      locator: citation.locator || citation.context?.locator || {},
     };
     const res = await authFetch("/api/citations/render", {
       method: "POST",
@@ -986,12 +988,12 @@ function startEditor() {
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      return { inline_citation: buildInlineCitation(citation), full_citation: citation.full_citation || citation.full_text || "" };
+      return { inline_citation: citation.inline_citation || "", full_citation: citation.full_citation || "" };
     }
     const rendered = await res.json();
     const output = {
-      inline_citation: rendered.inline_citation || buildInlineCitation(citation),
-      full_citation: rendered.full_citation || citation.full_citation || citation.full_text || "",
+      inline_citation: rendered.inline_citation || citation.inline_citation || "",
+      full_citation: rendered.full_citation || citation.full_citation || "",
     };
     citationRenderCache.set(cacheKey, output);
     return output;
@@ -1126,19 +1128,6 @@ function startEditor() {
     refreshInDocCitations();
   }
 
-  function buildInlineCitation(citationData) {
-    if (citationData.inline_citation) return citationData.inline_citation;
-    const metadata = citationData.metadata || {};
-    const author = metadata.author || metadata.creator || metadata.last_name;
-    const year = metadata.year || metadata.published_year || metadata.date;
-    const title = metadata.title || citationData.title;
-    const { domain } = formatCitationPreview(citationData);
-    if (author && year) return `(${author}, ${year})`;
-    if (author) return `(${author})`;
-    if (title) return `(${title})`;
-    return `(${domain})`;
-  }
-
   async function insertBibliographySection() {
     const entries = [];
     for (const id of currentCitationIds) {
@@ -1162,7 +1151,8 @@ function startEditor() {
     if (!citationData) return alert("Select a citation to insert.");
     const token = `${citeTokenPrefix}${citationData.id}${citeTokenSuffix}`;
     const rendered = await renderCitationForStyle(citationData, style);
-    const inText = rendered.inline_citation || buildInlineCitation(citationData);
+    const inText = rendered.inline_citation;
+    if (!inText) return;
     const insertIndex = getInsertionIndex();
     quill.insertText(insertIndex, `${inText}${token} `, { background: "#eef4ff" }, "user");
     const nextIndex = insertIndex + inText.length + token.length + 1;
@@ -1175,7 +1165,7 @@ function startEditor() {
     const citationData = citation || (selectedCitationId ? citationCache.get(selectedCitationId) : null);
     if (!citationData) return alert("Select a citation to insert.");
     const rendered = await renderCitationForStyle(citationData, style);
-    const fullCitation = (rendered.full_citation || citationData.full_citation || citationData.full_text || "").trim();
+    const fullCitation = (rendered.full_citation || citationData.full_citation || "").trim();
     if (!fullCitation) return;
     const insertIndex = getInsertionIndex();
     const needsLeadingBreak = insertIndex > 0 && !quill.getText(insertIndex - 1, 1).match(/\s/);
@@ -1190,10 +1180,11 @@ function startEditor() {
   async function insertCitationQuote() {
     const citationData = selectedCitationId ? citationCache.get(selectedCitationId) : null;
     if (!citationData) return alert("Select a citation to insert a quote.");
-    const quoteText = citationData.excerpt || citationData.full_citation || citationData.full_text || "";
+    const quoteText = citationData.quote || citationData.excerpt || "";
     const token = `${citeTokenPrefix}${citationData.id}${citeTokenSuffix}`;
     const rendered = await renderCitationForStyle(citationData, defaultCitationStyle(citationData));
-    const inText = rendered.inline_citation || buildInlineCitation(citationData);
+    const inText = rendered.inline_citation;
+    if (!inText) return;
     const idx = getInsertionIndex();
     quill.insertText(idx, `
 ${quoteText}

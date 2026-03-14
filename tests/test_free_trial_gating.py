@@ -1,8 +1,6 @@
 import asyncio
 import importlib
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
-
 import pytest
 import supabase
 from fastapi import HTTPException
@@ -88,7 +86,7 @@ def test_free_citation_format_locked():
     citation = CitationInput(
         url="https://example.com",
         excerpt="excerpt",
-        full_text="citation",
+        quote="citation",
         format="chicago",
     )
     with pytest.raises(HTTPException) as exc:
@@ -102,7 +100,7 @@ def test_standard_custom_citation_locked_structured():
     citation = CitationInput(
         url="https://example.com",
         excerpt="excerpt",
-        full_text="citation",
+        quote="citation",
         format="custom",
         custom_format_name="Custom",
         custom_format_template="{quote}",
@@ -125,20 +123,37 @@ def test_pro_citation_does_not_require_url_inside_full_text(monkeypatch):
         def json(self):
             return self._json_data
 
-    async def fake_post(url, headers=None, json=None):
-        if url.endswith("/citations"):
-            return FakeResponse(201, [{"id": "citation-1"}])
-        return FakeResponse(200, [])
+    class FakeRepo:
+        def headers(self, **_kwargs):
+            return {"x-test": "1"}
 
-    async def fake_delete(url, headers=None):
-        return FakeResponse(204, [])
+        async def get(self, resource, **kwargs):
+            if resource == "sources":
+                return FakeResponse(200, [])
+            if resource == "citation_renders":
+                return FakeResponse(200, [])
+            return FakeResponse(200, [])
 
-    monkeypatch.setattr(citations, "http_client", SimpleNamespace(post=fake_post, delete=fake_delete))
+        async def post(self, resource, **kwargs):
+            if resource == "sources":
+                payload = kwargs["json"]
+                return FakeResponse(201, [{"id": "source-1", **payload}])
+            if resource == "citation_instances":
+                payload = kwargs["json"]
+                return FakeResponse(201, [{"id": "citation-1", **payload}])
+            if resource == "citation_renders":
+                return FakeResponse(201, [])
+            return FakeResponse(201, [])
+
+        async def delete(self, resource, **kwargs):
+            return FakeResponse(204, [])
+
+    monkeypatch.setattr(citations, "supabase_repo", FakeRepo())
 
     citation = CitationInput(
         url="https://example.com/source",
         excerpt="excerpt",
-        full_text="Quoted passage without the URL inlined.",
+        quote="Quoted passage without the URL inlined.",
         format="mla",
     )
     citation_id = asyncio.run(create_citation("u1", "pro", citation))

@@ -161,11 +161,13 @@ except Exception as e:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ✅ Use the shared client you already created in app.routes.http
-    app.state.http_session = http_client
-    app.state.fetch_limiter = PriorityLimiter(
-        int(os.getenv("FETCH_CONCURRENCY", "5"))
-    )
+    # Preserve preconfigured test doubles when present.
+    if not hasattr(app.state, "http_session"):
+        app.state.http_session = http_client
+    if not hasattr(app.state, "fetch_limiter"):
+        app.state.fetch_limiter = PriorityLimiter(
+            int(os.getenv("FETCH_CONCURRENCY", "5"))
+        )
     metrics.set_gauge_callback("process.memory_rss_mb", _read_process_rss_megabytes)
     metrics.set_gauge_callback(
         "unlock_pipeline.queue_depth", lambda: float(app.state.fetch_limiter.queue_depth)
@@ -174,22 +176,26 @@ async def lifespan(app: FastAPI):
         "unlock_pipeline.in_flight", lambda: float(app.state.fetch_limiter.in_flight)
     )
 
-    # ✅ Wrap Redis so the rest of your code can keep calling redis_get(key)
-    app.state.redis_get = lambda key: r.redis_get(key, app.state.http_session)
-    app.state.redis_set = lambda key, value, ttl_seconds=None: r.redis_set(
-        key, value, app.state.http_session, ttl_seconds=ttl_seconds
-    )
-    app.state.redis_incr = lambda key: r.redis_incr(key, app.state.http_session)
-    app.state.redis_expire = lambda key, seconds: r.redis_expire(key, seconds, app.state.http_session)
+    # Wrap Redis unless tests already injected doubles.
+    if not hasattr(app.state, "redis_get"):
+        app.state.redis_get = lambda key: r.redis_get(key, app.state.http_session)
+    if not hasattr(app.state, "redis_set"):
+        app.state.redis_set = lambda key, value, ttl_seconds=None: r.redis_set(
+            key, value, app.state.http_session, ttl_seconds=ttl_seconds
+        )
+    if not hasattr(app.state, "redis_incr"):
+        app.state.redis_incr = lambda key: r.redis_incr(key, app.state.http_session)
+    if not hasattr(app.state, "redis_expire"):
+        app.state.redis_expire = lambda key, seconds: r.redis_expire(key, seconds, app.state.http_session)
 
     logger.info("app.startup_ready")
 
     try:
         yield
     finally:
-        # ✅ close the shared client (and remove the extra shutdown event below)
-        await app.state.http_session.aclose()
-        logger.info("app.shutdown_http_client_closed")
+        if app.state.http_session is http_client:
+            await app.state.http_session.aclose()
+            logger.info("app.shutdown_http_client_closed")
 
 
 # --------------------------------------------------

@@ -25,3 +25,12 @@ def test_sql_schema_supports_source_identity_and_render_cache():
     assert "create table if not exists public.sources" in migration
     assert "create table if not exists public.citation_instances" in migration
     assert "create table if not exists public.citation_renders" in migration
+
+
+def test_rls_migration_secures_metadata_first_tables_and_note_links():
+    migration = Path("sql/20260316_secure_metadata_first_citation_tables.sql").read_text(encoding="utf-8")
+
+    assert "alter table public.sources enable row level security;" in migration
+    assert "alter table public.citation_instances enable row level security;" in migration
+    assert "alter table public.citation_renders enable row level security;" in migration
+    assert "references public.citation_instances(id)" in migration

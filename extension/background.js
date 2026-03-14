@@ -154,9 +154,14 @@ function normalizeCitationRecord(payload = {}, responseData = {}) {
     id,
     url: payload.url || responseData.url || null,
     excerpt: payload.excerpt || responseData.excerpt || null,
+    quote: payload.quote || responseData.quote || responseData.context?.quote || null,
+    locator: payload.locator || responseData.locator || responseData.context?.locator || {},
     format: payload.format || responseData.format || null,
     inline_citation: payload.inline_citation || responseData.inline_citation || null,
     full_citation: payload.full_citation || responseData.full_citation || payload.full_text || null,
+    metadata: payload.metadata || responseData.metadata || null,
+    source: responseData.source || null,
+    context: responseData.context || null,
     cited_at: responseData.cited_at || new Date().toISOString(),
   };
 }

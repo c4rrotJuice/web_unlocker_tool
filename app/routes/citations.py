@@ -466,6 +466,7 @@ async def list_citation_records(
     search: str | None = None,
     format: str | None = None,
 ) -> list[dict[str, Any]]:
+    requested_ids = list(ids or [])
     params = {
         "user_id": f"eq.{user_id}",
         "order": "created_at.desc",
@@ -505,6 +506,9 @@ async def list_citation_records(
         if format:
             normalized_format = format.strip().lower()
             records = [record for record in records if record.get("format") == normalized_format]
+        if requested_ids:
+            records_by_id = {record.get("id"): record for record in records}
+            records = [records_by_id[citation_id] for citation_id in requested_ids if citation_id in records_by_id]
         return records
 
     if not _is_schema_missing_response(response):
@@ -538,6 +542,9 @@ async def list_citation_records(
     if format:
         normalized_format = format.strip().lower()
         records = [record for record in records if record.get("format") == normalized_format]
+    if requested_ids:
+        records_by_id = {record.get("id"): record for record in records}
+        records = [records_by_id[citation_id] for citation_id in requested_ids if citation_id in records_by_id]
     return records
 
 

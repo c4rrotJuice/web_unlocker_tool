@@ -451,14 +451,14 @@ async function loadRecentCitations() {
     modalDiv.classList.add("citation-modal");
 
     const fullTextP = document.createElement("p");
-    fullTextP.textContent = citation.full_text;
+    fullTextP.textContent = citation.full_citation || citation.full_text || "";
 
     const copyBtn = document.createElement("button");
     copyBtn.className = "copy-button";
     copyBtn.textContent = "Copy Again";
     copyBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      navigator.clipboard.writeText(citation.full_text)
+      navigator.clipboard.writeText(citation.full_citation || citation.full_text || "")
         .then(() => toast?.show({ type: "success", message: "Full citation copied!" }))
         .catch(err => console.error("Failed to copy full citation: ", err));
     });

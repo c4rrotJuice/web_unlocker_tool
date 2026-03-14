@@ -413,6 +413,19 @@ function startEditor() {
     }
   }
 
+  async function readErrorToastMessage(response, fallbackMessage) {
+    if (!response) return fallbackMessage;
+    try {
+      const payload = await response.clone().json();
+      if (typeof payload?.detail === "string" && payload.detail.trim()) return payload.detail;
+      if (typeof payload?.detail?.toast === "string" && payload.detail.toast.trim()) return payload.detail.toast;
+      if (typeof payload?.message === "string" && payload.message.trim()) return payload.message;
+    } catch (_err) {
+      // ignore parse issues and use fallback
+    }
+    return fallbackMessage;
+  }
+
   async function runAction(actionKey, runner, { button, pendingLabel } = {}) {
     if (actionInFlight.has(actionKey)) return actionInFlight.get(actionKey);
     const previousText = button?.textContent;
@@ -1334,7 +1347,8 @@ ${inText}${token}
       return;
     }
     if (!res.ok) {
-      toast?.show({ type: "error", message: "Failed to attach note to document." });
+      const message = await readErrorToastMessage(res, "Failed to attach note to document.");
+      toast?.show({ type: "error", message });
       return;
     }
     await loadDocNotes();
@@ -1923,7 +1937,8 @@ ${inText}${token}
         return;
       }
       if (!res.ok) {
-        toast?.show({ type: "error", message: "Failed to create document." });
+        const message = await readErrorToastMessage(res, "Failed to create document.");
+        toast?.show({ type: "error", message });
         return;
       }
       const doc = await res.json();

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import os
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 
@@ -586,28 +586,226 @@ async def list_note_tag_ids(user_id: str, note_ids: list[str]) -> dict[str, list
     return by_note
 
 
-async def list_quote_rows(user_id: str, *, citation_id: str | None = None, ids: list[str] | None = None) -> list[dict]:
+def _quote_select_fields() -> str:
+    return "id,citation_id,user_id,excerpt,locator,annotation,created_at,updated_at"
+
+
+def _paginate_rows(rows: list[dict], *, limit: int, offset: int) -> list[dict]:
+    normalized_offset = max(offset, 0)
+    normalized_limit = min(max(limit, 1), 500)
+    return rows[normalized_offset:normalized_offset + normalized_limit]
+
+
+async def _list_note_ids_by_quote(user_id: str, quote_ids: list[str]) -> dict[str, list[str]]:
+    if not quote_ids:
+        return {}
+    res = await supabase_repo.get(
+        "notes",
+        params={
+            "user_id": f"eq.{user_id}",
+            "quote_id": f"in.({','.join(quote_ids)})",
+            "select": "id,quote_id",
+            "order": "created_at.asc,id.asc",
+        },
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to load linked notes")
+    by_quote: dict[str, list[str]] = {}
+    for row in res.json() or []:
+        quote_id = row.get("quote_id")
+        note_id = row.get("id")
+        if not quote_id or not note_id:
+            continue
+        by_quote.setdefault(quote_id, []).append(note_id)
+    return by_quote
+
+
+async def _hydrate_quote_rows(user_id: str, rows: list[dict]) -> list[dict]:
+    if not rows:
+        return []
+
+    from app.routes.citations import list_citation_records
+
+    citation_ids = _normalize_uuid_list([row["citation_id"] for row in rows if row.get("citation_id")], field_name="citation_id")
+    note_ids_by_quote = await _list_note_ids_by_quote(user_id, [row["id"] for row in rows if row.get("id")])
+    citations = await list_citation_records(user_id, ids=citation_ids, limit=len(citation_ids))
+    citations_by_id = {citation.get("id"): citation for citation in citations if citation.get("id")}
+
+    hydrated: list[dict] = []
+    for row in rows:
+        note_ids = note_ids_by_quote.get(row.get("id"), [])
+        hydrated.append(
+            {
+                "id": row.get("id"),
+                "citation_id": row.get("citation_id"),
+                "excerpt": row.get("excerpt") or "",
+                "locator": row.get("locator") or {},
+                "annotation": row.get("annotation"),
+                "created_at": row.get("created_at"),
+                "updated_at": row.get("updated_at"),
+                "citation": citations_by_id.get(row.get("citation_id")),
+                "note_ids": note_ids,
+                "note_count": len(note_ids),
+                "workflow": {
+                    "has_notes": bool(note_ids),
+                },
+            }
+        )
+    return hydrated
+
+
+async def _list_quote_rows_for_ids(user_id: str, ids: list[str], *, limit: int, offset: int) -> list[dict]:
+    if not ids:
+        return []
     params = {
         "user_id": f"eq.{user_id}",
-        "order": "created_at.desc",
-        "select": "id,citation_id,excerpt,locator,annotation,created_at,updated_at",
+        "id": f"in.({','.join(ids)})",
+        "select": _quote_select_fields(),
     }
-    if citation_id:
-        params["citation_id"] = f"eq.{normalize_uuid(citation_id, field_name='citation_id')}"
-    if ids:
-        params["id"] = f"in.({','.join(normalize_uuid(raw_id, field_name='quote_id') for raw_id in ids)})"
     res = await supabase_repo.get("quotes", params=params, headers=supabase_repo.headers(include_content_type=False))
     if res.status_code != 200:
         raise HTTPException(status_code=500, detail="Failed to load quotes")
-    return res.json() or []
+    rows = res.json() or []
+    by_id = {row.get("id"): row for row in rows if row.get("id")}
+    ordered = [by_id[quote_id] for quote_id in ids if quote_id in by_id]
+    return await _hydrate_quote_rows(user_id, _paginate_rows(ordered, limit=limit, offset=offset))
+
+
+async def _list_quote_rows_default(
+    user_id: str,
+    *,
+    citation_id: str | None,
+    limit: int,
+    offset: int,
+) -> list[dict]:
+    params = {
+        "user_id": f"eq.{user_id}",
+        "order": "created_at.desc",
+        "limit": str(min(max(limit, 1), 500)),
+        "offset": str(max(offset, 0)),
+        "select": _quote_select_fields(),
+    }
+    if citation_id:
+        params["citation_id"] = f"eq.{normalize_uuid(citation_id, field_name='citation_id')}"
+    res = await supabase_repo.get("quotes", params=params, headers=supabase_repo.headers(include_content_type=False))
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to load quotes")
+    return await _hydrate_quote_rows(user_id, res.json() or [])
+
+
+async def _list_quote_rows_for_document(
+    user_id: str,
+    *,
+    document_id: str,
+    citation_id: str | None,
+    limit: int,
+    offset: int,
+) -> list[dict]:
+    normalized_document_id = normalize_uuid(document_id, field_name="document_id")
+    normalized_citation_id = normalize_uuid(citation_id, field_name="citation_id") if citation_id else None
+    link_res = await supabase_repo.get(
+        "document_citations",
+        params={
+            "user_id": f"eq.{user_id}",
+            "document_id": f"eq.{normalized_document_id}",
+            "select": "citation_id,attached_at",
+            "order": "attached_at.asc,citation_id.asc",
+        },
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+    if is_schema_missing_response(link_res):
+        raise HTTPException(status_code=503, detail="Document citations are not configured in the database yet")
+    if link_res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to load document citations")
+
+    links = link_res.json() or []
+    if normalized_citation_id:
+        links = [link for link in links if link.get("citation_id") == normalized_citation_id]
+    citation_ids_in_order: list[str] = []
+    seen: set[str] = set()
+    for link in links:
+        linked_citation_id = link.get("citation_id")
+        if not linked_citation_id or linked_citation_id in seen:
+            continue
+        seen.add(linked_citation_id)
+        citation_ids_in_order.append(linked_citation_id)
+
+    if not citation_ids_in_order:
+        return []
+
+    quote_res = await supabase_repo.get(
+        "quotes",
+        params={
+            "user_id": f"eq.{user_id}",
+            "citation_id": f"in.({','.join(citation_ids_in_order)})",
+            "select": _quote_select_fields(),
+        },
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+    if quote_res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to load quotes")
+
+    grouped: dict[str, list[dict]] = {}
+    for row in quote_res.json() or []:
+        citation_key = row.get("citation_id")
+        if not citation_key:
+            continue
+        grouped.setdefault(citation_key, []).append(row)
+
+    ordered_rows: list[dict] = []
+    for linked_citation_id in citation_ids_in_order:
+        ordered_rows.extend(sorted(grouped.get(linked_citation_id, []), key=lambda row: (row.get("created_at") or "", row.get("id") or "")))
+    return await _hydrate_quote_rows(user_id, _paginate_rows(ordered_rows, limit=limit, offset=offset))
+
+
+async def get_quote_row(user_id: str, quote_id: str) -> dict:
+    normalized_quote_id = normalize_uuid(quote_id, field_name="quote_id")
+    res = await supabase_repo.get(
+        "quotes",
+        params={"id": f"eq.{normalized_quote_id}", "select": _quote_select_fields(), "limit": "1"},
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to load quote")
+    rows = res.json() or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Quote not found")
+    row = rows[0]
+    if row.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Invalid quote reference.")
+    return row
+
+
+async def list_quote_rows(
+    user_id: str,
+    *,
+    citation_id: str | None = None,
+    document_id: str | None = None,
+    ids: list[str] | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict]:
+    if ids is not None:
+        return await _list_quote_rows_for_ids(user_id, ids, limit=limit, offset=offset)
+    if document_id:
+        return await _list_quote_rows_for_document(
+            user_id,
+            document_id=document_id,
+            citation_id=citation_id,
+            limit=limit,
+            offset=offset,
+        )
+    return await _list_quote_rows_default(user_id, citation_id=citation_id, limit=limit, offset=offset)
 
 
 async def create_quote_row(user_id: str, *, citation_id: str, excerpt: str, locator: dict | None = None, annotation: str | None = None) -> dict:
     clean_excerpt = (excerpt or "").strip()
     if len(clean_excerpt) < 12:
         raise HTTPException(status_code=422, detail="excerpt must be at least 12 characters")
+    normalized_citation_id = (await _validate_owned_citation_ids(user_id, [citation_id]))[0]
     payload = {
-        "citation_id": normalize_uuid(citation_id, field_name="citation_id"),
+        "citation_id": normalized_citation_id,
         "user_id": user_id,
         "excerpt": clean_excerpt,
         "locator": locator or {},
@@ -621,4 +819,86 @@ async def create_quote_row(user_id: str, *, citation_id: str, excerpt: str, loca
     rows = res.json() or []
     if not rows:
         raise HTTPException(status_code=500, detail="Failed to create quote")
-    return rows[0]
+    hydrated = await _hydrate_quote_rows(user_id, rows[:1])
+    if not hydrated:
+        raise HTTPException(status_code=500, detail="Failed to hydrate quote")
+    return hydrated[0]
+
+
+def _clean_note_tag_ids(tag_ids: list[str] | None) -> list[str]:
+    cleaned: list[str] = []
+    for raw_tag_id in tag_ids or []:
+        cleaned.append(normalize_uuid(raw_tag_id, field_name="tag_id"))
+    return cleaned
+
+
+def _split_note_tag_inputs(values: list[str] | None) -> tuple[list[str], list[str]]:
+    tag_ids: list[str] = []
+    tag_names: list[str] = []
+    for raw_value in values or []:
+        candidate = str(raw_value or "").strip()
+        if not candidate:
+            continue
+        try:
+            tag_ids.append(str(UUID(candidate)))
+        except ValueError:
+            tag_names.append(candidate)
+    return tag_ids, tag_names
+
+
+def _quote_note_body(excerpt: str, annotation: str | None) -> str:
+    clean_excerpt = (excerpt or "").strip()
+    clean_annotation = (annotation or "").strip()
+    if not clean_annotation:
+        return clean_excerpt
+    return f"{clean_excerpt}\n\nAnnotation: {clean_annotation}"
+
+
+async def create_note_from_quote(
+    user_id: str,
+    *,
+    quote_id: str,
+    title: str | None = None,
+    note_body: str | None = None,
+    project_id: str | None = None,
+    tag_ids: list[str] | None = None,
+    tags: list[str] | None = None,
+) -> dict:
+    quote_row = await get_quote_row(user_id, quote_id)
+    resolved_project_id = await ensure_project_exists(user_id, project_id) if project_id else None
+    legacy_tag_ids, tag_names = _split_note_tag_inputs(tags)
+    resolved_tag_ids = await ensure_tags(
+        user_id,
+        tag_ids=_clean_note_tag_ids(tag_ids) + legacy_tag_ids,
+        tag_names=tag_names,
+    )
+
+    note_id = str(uuid4())
+    now_iso = datetime.utcnow().isoformat()
+    insert_payload = {
+        "id": note_id,
+        "user_id": user_id,
+        "title": (title or "").strip() or None,
+        "highlight_text": quote_row.get("excerpt") or "",
+        "note_body": (note_body or "").strip() or _quote_note_body(quote_row.get("excerpt") or "", quote_row.get("annotation")),
+        "source_url": None,
+        "source_title": None,
+        "source_author": None,
+        "source_published_at": None,
+        "source_domain": None,
+        "project_id": resolved_project_id,
+        "citation_id": quote_row.get("citation_id"),
+        "quote_id": quote_row.get("id"),
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+    res = await supabase_repo.post(
+        "notes",
+        json=insert_payload,
+        headers=supabase_repo.headers(prefer="resolution=merge-duplicates,return=representation"),
+    )
+    if res.status_code not in (200, 201):
+        raise HTTPException(status_code=500, detail="Failed to sync note")
+
+    await replace_note_tag_links(user_id, note_id, resolved_tag_ids)
+    return {"ok": True, "note_id": note_id}

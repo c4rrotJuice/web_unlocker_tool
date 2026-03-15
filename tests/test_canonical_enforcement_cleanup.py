@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -82,6 +83,10 @@ def test_extension_selection_writes_document_citations_only(monkeypatch):
         def headers(self, **_kwargs):
             return {}
 
+        async def get(self, resource, **_kwargs):
+            assert resource == "user_meta"
+            return DummyResponse(200, [{"paid_until": "2026-04-01T00:00:00+00:00"}])
+
         async def post(self, resource, **kwargs):
             assert resource == "documents"
             document_posts.append(kwargs.get("json") or {})
@@ -126,9 +131,56 @@ def test_extension_selection_writes_document_citations_only(monkeypatch):
     assert document_posts[0]["user_id"] == "user-1"
     assert document_posts[0]["title"] == "Example"
     assert document_posts[0]["content_delta"] == {"ops": [{"insert": "Selected source text\n"}]}
-    assert document_posts[0]["expires_at"] is not None
+    assert document_posts[0]["expires_at"] == "2026-04-01T00:00:00+00:00"
     assert "citation_ids" not in document_posts[0]
     assert document_citation_writes == [("user-1", "doc-1", ["citation-1"])]
+
+
+def test_extension_selection_falls_back_to_bounded_paid_expiry(monkeypatch):
+    document_posts = []
+
+    class Repo:
+        def headers(self, **_kwargs):
+            return {}
+
+        async def get(self, resource, **_kwargs):
+            assert resource == "user_meta"
+            return DummyResponse(200, [{"paid_until": None}])
+
+        async def post(self, resource, **kwargs):
+            assert resource == "documents"
+            document_posts.append(kwargs.get("json") or {})
+            return DummyResponse(201, [{"id": "doc-1"}])
+
+    async def redis_get(_key):
+        return 0
+
+    async def redis_incr(_key):
+        return 1
+
+    async def redis_expire(_key, _seconds):
+        return True
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(user_id="user-1", account_type="pro"),
+        app=SimpleNamespace(state=SimpleNamespace(redis_get=redis_get, redis_incr=redis_incr, redis_expire=redis_expire)),
+    )
+    payload = extension.ExtensionSelectionRequest(
+        url="https://example.com/article",
+        title="Example",
+        selected_text="Selected source text",
+    )
+
+    monkeypatch.setattr(extension, "supabase_repo", Repo())
+
+    response = asyncio.run(extension.extension_selection(request, payload))
+
+    assert response["doc_id"] == "doc-1"
+    expires_at = document_posts[0]["expires_at"]
+    assert expires_at is not None
+    parsed = datetime.fromisoformat(expires_at)
+    assert parsed.tzinfo is not None
+    assert parsed > datetime.now(timezone.utc)
 
 
 def test_note_project_alias_routes_delegate_to_canonical_wrappers(monkeypatch):

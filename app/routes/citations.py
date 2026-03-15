@@ -21,7 +21,7 @@ from app.services.citation_domain import (
     legacy_metadata_to_payload,
     normalize_citation_payload,
 )
-from app.services.research_entities import create_quote_row, list_quote_rows, normalize_uuid
+from app.services.research_entities import create_note_from_quote, create_quote_row, list_quote_rows, normalize_uuid
 from app.services.citation_templates import render_template, validate_template
 from app.services.entitlements import get_tier_capabilities, normalize_account_type
 from app.services.free_tier_gating import allowed_citation_formats
@@ -64,6 +64,14 @@ class QuoteInput(BaseModel):
     annotation: str | None = None
 
 
+class QuoteNoteInput(BaseModel):
+    title: str | None = None
+    note_body: str | None = None
+    project_id: str | None = None
+    tag_ids: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+
+
 _SAFE_CITATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
@@ -80,6 +88,24 @@ def _quote_id_for_supabase(raw_id: str) -> str:
     if raw_id.isdigit():
         return raw_id
     return f'"{raw_id}"'
+
+
+def _parse_quote_ids_query(raw_ids: str) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_id in raw_ids.split(","):
+        candidate = raw_id.strip()
+        if not candidate:
+            continue
+        try:
+            normalized_id = str(normalize_uuid(candidate, field_name="quote_id"))
+        except HTTPException as exc:
+            raise HTTPException(status_code=400, detail="ids must contain valid UUIDs") from exc
+        if normalized_id in seen:
+            continue
+        seen.add(normalized_id)
+        normalized.append(normalized_id)
+    return normalized
 
 
 def _response_error_text(response) -> str:
@@ -703,22 +729,28 @@ async def render_citation_payload(request: Request, citation: CitationInput):
 
 
 @router.get("/api/quotes")
-async def list_quotes(request: Request, citation_id: str | None = None):
+async def list_quotes(
+    request: Request,
+    citation_id: str | None = None,
+    document_id: str | None = None,
+    ids: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+):
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    return await list_quote_rows(user_id, citation_id=citation_id)
-
-
-@router.get("/api/quotes/by_ids")
-async def get_quotes_by_ids(request: Request, ids: str = Query("")):
-    user_id = request.state.user_id
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    raw_ids = [item.strip() for item in ids.split(",") if item.strip()]
-    if not raw_ids:
-        return []
-    return await list_quote_rows(user_id, ids=raw_ids)
+    parsed_ids = _parse_quote_ids_query(ids or "") if ids is not None else None
+    if parsed_ids is not None and (citation_id or document_id):
+        raise HTTPException(status_code=400, detail="ids cannot be combined with citation_id or document_id")
+    return await list_quote_rows(
+        user_id,
+        citation_id=citation_id,
+        document_id=document_id,
+        ids=parsed_ids,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post("/api/quotes")
@@ -732,6 +764,22 @@ async def create_quote(request: Request, payload: QuoteInput):
         excerpt=payload.excerpt,
         locator=payload.locator,
         annotation=payload.annotation,
+    )
+
+
+@router.post("/api/quotes/{quote_id}/notes")
+async def create_quote_note(request: Request, quote_id: str, payload: QuoteNoteInput):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return await create_note_from_quote(
+        user_id,
+        quote_id=quote_id,
+        title=payload.title,
+        note_body=payload.note_body,
+        project_id=payload.project_id,
+        tag_ids=payload.tag_ids,
+        tags=payload.tags,
     )
 
 

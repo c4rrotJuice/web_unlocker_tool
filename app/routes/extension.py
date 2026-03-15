@@ -34,6 +34,7 @@ router = APIRouter()
 EXTENSION_WEEKLY_LIMIT = 5
 EXTENSION_EDITOR_WEEKLY_LIMIT = 500
 PAID_TIERS = {"standard", "pro", "dev"}
+PAID_EXTENSION_FALLBACK_EXPIRY_HOURS = 24
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase_repo = SupabaseRestRepository(base_url=SUPABASE_URL, service_role_key=SUPABASE_KEY)
@@ -170,6 +171,53 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
         return datetime.fromisoformat(normalized)
     except ValueError:
         return None
+
+
+def _normalize_future_expiry(value: str | None, *, now: datetime | None = None) -> str | None:
+    parsed = _parse_iso_datetime(value)
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    candidate = parsed.astimezone(timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    if candidate <= current:
+        return None
+    return candidate.isoformat()
+
+
+async def _extension_selection_expiry(request: Request, user_id: str, account_type: str) -> str | None:
+    existing_expiry = _normalize_future_expiry(_doc_expiration(account_type))
+    if existing_expiry is not None:
+        return existing_expiry
+
+    normalized = normalize_account_type(account_type)
+    if normalized not in PAID_TIERS:
+        return None
+
+    state_paid_until = _normalize_future_expiry(getattr(request.state, "paid_until", None))
+    if state_paid_until is not None:
+        return state_paid_until
+
+    try:
+        res = await supabase_repo.get(
+            "user_meta",
+            params={
+                "user_id": f"eq.{user_id}",
+                "select": "paid_until",
+            },
+            headers=supabase_repo.headers(include_content_type=False),
+        )
+        if res.status_code == 200:
+            data = res.json() or []
+            if data:
+                paid_until = _normalize_future_expiry(data[0].get("paid_until"))
+                if paid_until is not None:
+                    return paid_until
+    except Exception:
+        pass
+
+    return (datetime.now(timezone.utc) + timedelta(hours=PAID_EXTENSION_FALLBACK_EXPIRY_HOURS)).isoformat()
 
 
 def _coerce_note_id(raw_id: str | None) -> str:
@@ -533,7 +581,7 @@ async def extension_selection(request: Request, payload: ExtensionSelectionReque
         "content_delta": {"ops": [{"insert": f"{selected_text}\n"}]},
         "created_at": now_iso,
         "updated_at": now_iso,
-        "expires_at": _doc_expiration(account_type),
+        "expires_at": await _extension_selection_expiry(request, user_id, account_type),
     }
 
     res = await supabase_repo.post(

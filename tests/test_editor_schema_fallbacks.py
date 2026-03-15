@@ -91,6 +91,8 @@ class SchemaFallbackRepo:
             }])
         if resource == "document_citations":
             return FakeResponse(404, {"message": "relation \"document_citations\" does not exist"})
+        if resource == "document_tags":
+            return FakeResponse(200, [])
         if resource == "citations":
             return FakeResponse(200, [])
         if resource == "notes":
@@ -114,6 +116,8 @@ class SchemaFallbackRepo:
             }])
         if resource == "document_citations":
             return FakeResponse(404, {"message": "relation \"document_citations\" does not exist"})
+        if resource == "document_tags":
+            return FakeResponse(201, [])
         if resource == "document_notes":
             return FakeResponse(404, {"message": "relation \"document_notes\" does not exist"})
         return FakeResponse(201, [])

@@ -131,16 +131,41 @@ async def list_tags(user_id: str, *, limit: int = 200) -> list[dict]:
     return res.json() or []
 
 
-async def ensure_tags(user_id: str, *, tag_ids: list[str] | None = None, tag_names: list[str] | None = None) -> list[str]:
-    resolved: list[str] = []
+async def _validate_owned_tag_ids(user_id: str, tag_ids: list[str]) -> list[str]:
+    normalized: list[str] = []
     seen: set[str] = set()
-
-    for raw_id in tag_ids or []:
-        normalized = normalize_uuid(raw_id, field_name="tag_id")
-        if normalized in seen:
+    for raw_id in tag_ids:
+        tag_id = normalize_uuid(raw_id, field_name="tag_id")
+        if tag_id in seen:
             continue
-        seen.add(normalized)
-        resolved.append(normalized)
+        seen.add(tag_id)
+        normalized.append(tag_id)
+
+    if not normalized:
+        return []
+
+    res = await supabase_repo.get(
+        "tags",
+        params={
+            "user_id": f"eq.{user_id}",
+            "id": f"in.({','.join(normalized)})",
+            "select": "id",
+            "limit": str(len(normalized)),
+        },
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to validate tags")
+
+    found_ids = {row.get("id") for row in (res.json() or []) if row.get("id")}
+    if len(found_ids) != len(normalized):
+        raise HTTPException(status_code=403, detail="Invalid tag references.")
+    return normalized
+
+
+async def ensure_tags(user_id: str, *, tag_ids: list[str] | None = None, tag_names: list[str] | None = None) -> list[str]:
+    resolved = await _validate_owned_tag_ids(user_id, tag_ids or [])
+    seen = set(resolved)
 
     for name in tag_names or []:
         clean_name = (name or "").strip()
@@ -175,6 +200,7 @@ async def ensure_tags(user_id: str, *, tag_ids: list[str] | None = None, tag_nam
 
 
 async def replace_note_tag_links(user_id: str, note_id: str, tag_ids: list[str]) -> None:
+    normalized = await _validate_owned_tag_ids(user_id, tag_ids)
     delete_res = await supabase_repo.delete(
         "note_tag_links",
         params={"user_id": f"eq.{user_id}", "note_id": f"eq.{note_id}"},
@@ -182,9 +208,9 @@ async def replace_note_tag_links(user_id: str, note_id: str, tag_ids: list[str])
     )
     if delete_res.status_code not in (200, 204):
         raise HTTPException(status_code=500, detail="Failed to update note tags")
-    if not tag_ids:
+    if not normalized:
         return
-    rows = [{"note_id": note_id, "tag_id": tag_id, "user_id": user_id} for tag_id in tag_ids]
+    rows = [{"note_id": note_id, "tag_id": tag_id, "user_id": user_id} for tag_id in normalized]
     insert_res = await supabase_repo.post(
         "note_tag_links",
         json=rows,
@@ -195,22 +221,57 @@ async def replace_note_tag_links(user_id: str, note_id: str, tag_ids: list[str])
 
 
 async def replace_document_tags(user_id: str, document_id: str, tag_ids: list[str]) -> None:
+    normalized = await _validate_owned_tag_ids(user_id, tag_ids)
     delete_res = await supabase_repo.delete(
         "document_tags",
         params={"user_id": f"eq.{user_id}", "document_id": f"eq.{document_id}"},
         headers=supabase_repo.headers(prefer="return=minimal", include_content_type=False),
     )
+    if is_schema_missing_response(delete_res):
+        raise HTTPException(status_code=503, detail="Document tags are not configured in the database yet")
     if delete_res.status_code not in (200, 204, 404):
         raise HTTPException(status_code=500, detail="Failed to update document tags")
-    if not tag_ids:
+    if not normalized:
         return
-    rows = [{"document_id": document_id, "tag_id": tag_id, "user_id": user_id} for tag_id in tag_ids]
+    rows = [{"document_id": document_id, "tag_id": tag_id, "user_id": user_id} for tag_id in normalized]
     insert_res = await supabase_repo.post(
         "document_tags",
         json=rows,
         headers=supabase_repo.headers(prefer="resolution=merge-duplicates,return=minimal"),
     )
+    if is_schema_missing_response(insert_res):
+        raise HTTPException(status_code=503, detail="Document tags are not configured in the database yet")
     if insert_res.status_code not in (200, 201):
+        raise HTTPException(status_code=500, detail="Failed to update document tags")
+
+
+async def add_document_tags(user_id: str, document_id: str, tag_ids: list[str]) -> None:
+    normalized = await _validate_owned_tag_ids(user_id, tag_ids)
+    if not normalized:
+        return
+    rows = [{"document_id": document_id, "tag_id": tag_id, "user_id": user_id} for tag_id in normalized]
+    insert_res = await supabase_repo.post(
+        "document_tags",
+        json=rows,
+        headers=supabase_repo.headers(prefer="resolution=merge-duplicates,return=minimal"),
+    )
+    if is_schema_missing_response(insert_res):
+        raise HTTPException(status_code=503, detail="Document tags are not configured in the database yet")
+    if insert_res.status_code not in (200, 201):
+        raise HTTPException(status_code=500, detail="Failed to update document tags")
+
+
+async def remove_document_tag(user_id: str, document_id: str, tag_id: str) -> None:
+    normalized = normalize_uuid(tag_id, field_name="tag_id")
+    validated_ids = await _validate_owned_tag_ids(user_id, [normalized])
+    res = await supabase_repo.delete(
+        "document_tags",
+        params={"user_id": f"eq.{user_id}", "document_id": f"eq.{document_id}", "tag_id": f"eq.{validated_ids[0]}"},
+        headers=supabase_repo.headers(prefer="return=minimal", include_content_type=False),
+    )
+    if is_schema_missing_response(res):
+        raise HTTPException(status_code=503, detail="Document tags are not configured in the database yet")
+    if res.status_code not in (200, 204, 404):
         raise HTTPException(status_code=500, detail="Failed to update document tags")
 
 
@@ -258,6 +319,85 @@ async def list_document_citation_ids(user_id: str, document_id: str) -> list[str
     if res.status_code != 200:
         raise HTTPException(status_code=500, detail="Failed to load document citations")
     return [row.get("citation_id") for row in (res.json() or []) if row.get("citation_id")]
+
+
+async def list_document_citation_ids_map(user_id: str, document_ids: list[str]) -> dict[str, list[str]]:
+    normalized = [normalize_uuid(raw_id, field_name="document_id") for raw_id in document_ids if raw_id]
+    if not normalized:
+        return {}
+    res = await supabase_repo.get(
+        "document_citations",
+        params={
+            "user_id": f"eq.{user_id}",
+            "document_id": f"in.({','.join(normalized)})",
+            "select": "document_id,citation_id,attached_at",
+            "order": "attached_at.asc",
+        },
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+    if is_schema_missing_response(res):
+        raise HTTPException(status_code=503, detail="Document citations are not configured in the database yet")
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to load document citations")
+    by_document: dict[str, list[str]] = {doc_id: [] for doc_id in normalized}
+    for row in res.json() or []:
+        document_id = row.get("document_id")
+        citation_id = row.get("citation_id")
+        if not document_id or not citation_id:
+            continue
+        by_document.setdefault(document_id, []).append(citation_id)
+    return by_document
+
+
+async def list_document_tag_ids(user_id: str, document_id: str) -> list[str]:
+    tag_map = await list_document_tag_maps(user_id, [document_id])
+    return tag_map.get(document_id, {}).get("tag_ids", [])
+
+
+async def list_document_tags(user_id: str, document_id: str) -> list[dict]:
+    tag_map = await list_document_tag_maps(user_id, [document_id])
+    return tag_map.get(document_id, {}).get("tags", [])
+
+
+async def list_document_tag_maps(user_id: str, document_ids: list[str]) -> dict[str, dict]:
+    normalized = [normalize_uuid(raw_id, field_name="document_id") for raw_id in document_ids if raw_id]
+    if not normalized:
+        return {}
+    res = await supabase_repo.get(
+        "document_tags",
+        params={
+            "user_id": f"eq.{user_id}",
+            "document_id": f"in.({','.join(normalized)})",
+            "select": "document_id,tag_id,created_at,tags(id,name,created_at,updated_at)",
+            "order": "created_at.asc",
+        },
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+    if is_schema_missing_response(res):
+        raise HTTPException(status_code=503, detail="Document tags are not configured in the database yet")
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to load document tags")
+    by_document: dict[str, dict] = {doc_id: {"tag_ids": [], "tags": []} for doc_id in normalized}
+    for row in res.json() or []:
+        document_id = row.get("document_id")
+        tag_id = row.get("tag_id")
+        if not document_id or not tag_id:
+            continue
+        entry = by_document.setdefault(document_id, {"tag_ids": [], "tags": []})
+        entry["tag_ids"].append(tag_id)
+        tag_row = row.get("tags")
+        if isinstance(tag_row, list):
+            tag_row = tag_row[0] if tag_row else None
+        if isinstance(tag_row, dict) and tag_row.get("id"):
+            entry["tags"].append(
+                {
+                    "id": tag_row.get("id"),
+                    "name": tag_row.get("name"),
+                    "created_at": tag_row.get("created_at"),
+                    "updated_at": tag_row.get("updated_at"),
+                }
+            )
+    return by_document
 
 
 async def list_note_tag_ids(user_id: str, note_ids: list[str]) -> dict[str, list[str]]:

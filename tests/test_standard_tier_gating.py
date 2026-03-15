@@ -69,10 +69,14 @@ class DummyRepo:
     async def get(self, resource, *args, **kwargs):
         if resource == "document_citations":
             return DummyResp(200, [])
+        if resource == "document_tags":
+            return DummyResp(200, [])
         return DummyResp(200, [{"title": "Doc", "content_delta": {"ops": [{"insert": "x\n"}]}, "project_id": None, "created_at": "2020-01-01T00:00:00+00:00"}])
 
     async def post(self, resource, *args, **kwargs):
         if resource == "document_citations":
+            return DummyResp(201, [])
+        if resource == "document_tags":
             return DummyResp(201, [])
         return DummyResp(201, [{"id": "doc-1", "title": "Untitled", "content_delta": {"ops": [{"insert": "\n"}]}, "project_id": None, "updated_at": "2026-01-01T00:00:00+00:00"}])
 

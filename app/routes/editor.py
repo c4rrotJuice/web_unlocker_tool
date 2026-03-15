@@ -37,7 +37,18 @@ from app.services.free_tier_gating import (
     doc_is_archived,
     rolling_window,
 )
-from app.services.research_entities import ensure_project_exists, list_document_citation_ids, replace_document_citations
+from app.services.research_entities import (
+    add_document_tags,
+    ensure_project_exists,
+    ensure_tags,
+    list_document_citation_ids,
+    list_document_citation_ids_map,
+    list_document_tag_maps,
+    list_document_tags,
+    remove_document_tag,
+    replace_document_citations,
+    replace_document_tags,
+)
 from app.services.supabase_rest import SupabaseRestRepository
 from app.routes.citations import list_citation_records
 
@@ -74,6 +85,7 @@ def _is_schema_missing_response(response) -> bool:
 class DocumentCreate(BaseModel):
     title: Optional[str] = None
     project_id: Optional[str] = None
+    tag_ids: Optional[list[str]] = None
 
 
 class DocumentUpdate(BaseModel):
@@ -82,6 +94,7 @@ class DocumentUpdate(BaseModel):
     content_html: Optional[str] = None
     attached_citation_ids: list[str] = []
     project_id: Optional[str] = None
+    tag_ids: Optional[list[str]] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -89,6 +102,10 @@ class DocumentUpdate(BaseModel):
         if isinstance(value, dict) and "citation_ids" in value:
             raise ValueError("citation_ids is deprecated; use attached_citation_ids")
         return value
+
+
+class DocumentTagsWrite(BaseModel):
+    tag_ids: list[str] = []
 
 
 class DocumentNoteCreate(BaseModel):
@@ -115,6 +132,58 @@ def _set_document_attached_citations(row: dict, attached_citation_ids: list[str]
     row["attached_citation_ids"] = attached_citation_ids
     row["citation_ids"] = attached_citation_ids
     return row
+
+
+def _set_document_tags(row: dict, tag_ids: list[str], tags: list[dict]) -> dict:
+    row["tag_ids"] = tag_ids
+    row["tags"] = tags
+    return row
+
+
+def _apply_document_access_state(row: dict, account_type: str) -> dict:
+    archived = doc_is_archived(row.get("created_at"), account_type)
+    row["archived"] = archived
+    row["can_edit"] = not archived
+    row["allowed_export_formats"] = sorted(allowed_export_formats(account_type))
+    return row
+
+
+async def _serialize_document_row(
+    user_id: str,
+    account_type: str,
+    row: dict,
+    *,
+    attached_citation_ids: list[str] | None = None,
+    tag_payload: dict | None = None,
+) -> dict:
+    document_id = row.get("id")
+    if attached_citation_ids is None:
+        attached_citation_ids = await list_document_citation_ids(user_id, document_id)
+    if tag_payload is None:
+        tag_maps = await list_document_tag_maps(user_id, [document_id])
+        tag_payload = tag_maps.get(document_id, {"tag_ids": [], "tags": []})
+    _set_document_attached_citations(row, attached_citation_ids)
+    _set_document_tags(row, tag_payload.get("tag_ids", []), tag_payload.get("tags", []))
+    return _apply_document_access_state(row, account_type)
+
+
+async def _serialize_document_rows(user_id: str, account_type: str, rows: list[dict]) -> list[dict]:
+    document_ids = [row.get("id") for row in rows if row.get("id")]
+    citation_map = await list_document_citation_ids_map(user_id, document_ids)
+    tag_map = await list_document_tag_maps(user_id, document_ids)
+    serialized: list[dict] = []
+    for row in rows:
+        doc_id = row.get("id")
+        serialized.append(
+            await _serialize_document_row(
+                user_id,
+                account_type,
+                row,
+                attached_citation_ids=citation_map.get(doc_id, []),
+                tag_payload=tag_map.get(doc_id, {"tag_ids": [], "tags": []}),
+            )
+        )
+    return serialized
 
 
 
@@ -534,13 +603,12 @@ async def _fetch_doc_with_fallback(user_id: str, doc_id: str) -> dict:
             raise HTTPException(status_code=404, detail="Document not found")
         row = data[0]
         row["content_html"] = None
-        return _set_document_attached_citations(row, await list_document_citation_ids(user_id, doc_id))
+        return row
 
     data = res.json()
     if not data:
         raise HTTPException(status_code=404, detail="Document not found")
-    row = data[0]
-    return _set_document_attached_citations(row, await list_document_citation_ids(user_id, doc_id))
+    return data[0]
 
 
 async def _patch_doc_with_fallback(user_id: str, doc_id: str, payload: dict) -> dict:
@@ -712,6 +780,7 @@ async def create_doc(request: Request, payload: DocumentCreate):
     project_id = await ensure_project_exists(user_id, payload.project_id)
     if project_id:
         insert_payload["project_id"] = project_id
+    resolved_tag_ids = await ensure_tags(user_id, tag_ids=payload.tag_ids or []) if payload.tag_ids is not None else []
 
     attempts = [insert_payload]
     attempts.append({k: v for k, v in insert_payload.items() if k != "content_html"})
@@ -738,16 +807,17 @@ async def create_doc(request: Request, payload: DocumentCreate):
         raise HTTPException(status_code=500, detail="Failed to create document")
 
     data = res.json()[0]
-    return {
-        "id": data.get("id"),
-        "title": data.get("title"),
-        "content_delta": data.get("content_delta"),
-        "content_html": data.get("content_html"),
-        "project_id": data.get("project_id"),
-        "attached_citation_ids": [],
-        "citation_ids": [],
-        "updated_at": data.get("updated_at"),
-    }
+    document_id = data.get("id")
+    if document_id and resolved_tag_ids:
+        await replace_document_tags(user_id, document_id, resolved_tag_ids)
+    document = await _fetch_doc_with_fallback(user_id, document_id)
+    return await _serialize_document_row(
+        user_id,
+        account_type,
+        document,
+        attached_citation_ids=[],
+        tag_payload={"tag_ids": resolved_tag_ids, "tags": await list_document_tags(user_id, document_id) if document_id else []},
+    )
 
 
 @router.get("/api/docs")
@@ -761,7 +831,7 @@ async def list_docs(request: Request):
         "documents",
         params={
             "user_id": f"eq.{user_id}",
-            "select": "id,title,project_id,updated_at,created_at",
+            "select": "id,title,content_delta,content_html,project_id,updated_at,created_at",
             "order": "updated_at.desc",
             "or": f"(expires_at.is.null,expires_at.gt.{now_iso})",
         },
@@ -773,7 +843,7 @@ async def list_docs(request: Request):
             "documents",
             params={
                 "user_id": f"eq.{user_id}",
-                "select": "id,title,project_id,updated_at,created_at",
+                "select": "id,title,content_delta,project_id,updated_at,created_at",
                 "order": "updated_at.desc",
             },
             headers=supabase_repo.headers(),
@@ -784,13 +854,8 @@ async def list_docs(request: Request):
         raise HTTPException(status_code=500, detail="Failed to load documents")
 
     account_type = await _get_account_type(request, user_id)
-    docs = res.json()
-    for doc in docs:
-        archived = doc_is_archived(doc.get("created_at"), account_type)
-        doc["archived"] = archived
-        doc["can_edit"] = not archived
-        doc["allowed_export_formats"] = sorted(allowed_export_formats(account_type))
-    return docs
+    docs = res.json() or []
+    return await _serialize_document_rows(user_id, account_type, docs)
 
 
 @router.get("/api/docs/{doc_id}")
@@ -801,11 +866,7 @@ async def get_doc(request: Request, doc_id: str):
 
     account_type = await _get_account_type(request, user_id)
     doc = await _fetch_doc_with_fallback(user_id, doc_id)
-    archived = doc_is_archived(doc.get("created_at"), account_type)
-    doc["archived"] = archived
-    doc["can_edit"] = not archived
-    doc["allowed_export_formats"] = sorted(allowed_export_formats(account_type))
-    return doc
+    return await _serialize_document_row(user_id, account_type, doc)
 
 
 @router.put("/api/docs/{doc_id}")
@@ -821,6 +882,7 @@ async def update_doc(request: Request, doc_id: str, payload: DocumentUpdate):
             raise HTTPException(status_code=403, detail=_archived_doc_payload())
 
     validated_citations = await _validate_citation_ids(user_id, payload.attached_citation_ids or [])
+    resolved_tag_ids = await ensure_tags(user_id, tag_ids=payload.tag_ids or []) if payload.tag_ids is not None else None
     project_id = await ensure_project_exists(user_id, payload.project_id) if payload.project_id is not None else None
     update_payload = {
         "title": payload.title,
@@ -832,11 +894,65 @@ async def update_doc(request: Request, doc_id: str, payload: DocumentUpdate):
     if payload.project_id is not None:
         update_payload["project_id"] = project_id
 
-    updated = await _patch_doc_with_fallback(user_id, doc_id, update_payload)
-    return _set_document_attached_citations(
+    await _patch_doc_with_fallback(user_id, doc_id, update_payload)
+    attached_citation_ids = await replace_document_citations(user_id, doc_id, validated_citations)
+    if resolved_tag_ids is not None:
+        await replace_document_tags(user_id, doc_id, resolved_tag_ids)
+    updated = await _fetch_doc_with_fallback(user_id, doc_id)
+    return await _serialize_document_row(
+        user_id,
+        account_type,
         updated,
-        await replace_document_citations(user_id, doc_id, validated_citations),
+        attached_citation_ids=attached_citation_ids,
+        tag_payload={"tag_ids": resolved_tag_ids, "tags": await list_document_tags(user_id, doc_id)}
+        if resolved_tag_ids is not None
+        else None,
     )
+
+
+@router.get("/api/docs/{doc_id}/tags")
+async def get_doc_tags(request: Request, doc_id: str):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    await _fetch_doc_core(user_id, doc_id)
+    return await list_document_tags(user_id, doc_id)
+
+
+@router.post("/api/docs/{doc_id}/tags")
+async def assign_doc_tags(request: Request, doc_id: str, payload: DocumentTagsWrite):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    await _fetch_doc_core(user_id, doc_id)
+    resolved_tag_ids = await ensure_tags(user_id, tag_ids=payload.tag_ids or [])
+    await add_document_tags(user_id, doc_id, resolved_tag_ids)
+    return await list_document_tags(user_id, doc_id)
+
+
+@router.put("/api/docs/{doc_id}/tags")
+async def replace_doc_tags(request: Request, doc_id: str, payload: DocumentTagsWrite):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    await _fetch_doc_core(user_id, doc_id)
+    resolved_tag_ids = await ensure_tags(user_id, tag_ids=payload.tag_ids or [])
+    await replace_document_tags(user_id, doc_id, resolved_tag_ids)
+    return await list_document_tags(user_id, doc_id)
+
+
+@router.delete("/api/docs/{doc_id}/tags/{tag_id}")
+async def delete_doc_tag(request: Request, doc_id: str, tag_id: str):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    await _fetch_doc_core(user_id, doc_id)
+    await remove_document_tag(user_id, doc_id, tag_id)
+    return {"ok": True, "doc_id": doc_id, "tag_id": tag_id}
 
 
 @router.get("/api/docs/{doc_id}/notes")
@@ -1006,18 +1122,8 @@ async def restore_doc_checkpoint(request: Request, doc_id: str, payload: Restore
         "updated_at": datetime.utcnow().isoformat(),
     }
 
-    data = await _patch_doc_with_fallback(user_id, doc_id, update_payload)
-    attached_citation_ids = await list_document_citation_ids(user_id, doc_id)
-    return {
-        "id": data.get("id"),
-        "title": data.get("title"),
-        "content_delta": data.get("content_delta"),
-        "content_html": data.get("content_html"),
-        "project_id": data.get("project_id"),
-        "attached_citation_ids": attached_citation_ids,
-        "citation_ids": attached_citation_ids,
-        "updated_at": data.get("updated_at"),
-    }
+    await _patch_doc_with_fallback(user_id, doc_id, update_payload)
+    return await _serialize_document_row(user_id, account_type, await _fetch_doc_with_fallback(user_id, doc_id))
 
 
 @router.post("/api/docs/{doc_id}/export")

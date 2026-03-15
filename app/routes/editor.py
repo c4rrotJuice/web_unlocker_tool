@@ -828,17 +828,20 @@ async def create_doc(request: Request, payload: DocumentCreate):
 
 
 @router.get("/api/docs")
-async def list_docs(request: Request):
+async def list_docs(request: Request, view: str | None = None):
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     now_iso = datetime.utcnow().isoformat()
+    summary_view = (view or "").strip().lower() == "summary"
+    select_fields = "id,title,project_id,updated_at,created_at" if summary_view else "id,title,content_delta,content_html,project_id,updated_at,created_at"
+    fallback_select_fields = "id,title,project_id,updated_at,created_at" if summary_view else "id,title,content_delta,project_id,updated_at,created_at"
     res = await supabase_repo.get(
         "documents",
         params={
             "user_id": f"eq.{user_id}",
-            "select": "id,title,content_delta,content_html,project_id,updated_at,created_at",
+            "select": select_fields,
             "order": "updated_at.desc",
             "or": f"(expires_at.is.null,expires_at.gt.{now_iso})",
         },
@@ -850,7 +853,7 @@ async def list_docs(request: Request):
             "documents",
             params={
                 "user_id": f"eq.{user_id}",
-                "select": "id,title,content_delta,project_id,updated_at,created_at",
+                "select": fallback_select_fields,
                 "order": "updated_at.desc",
             },
             headers=supabase_repo.headers(),

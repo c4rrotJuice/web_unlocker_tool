@@ -215,6 +215,19 @@ def test_list_docs_falls_back_when_expires_at_filter_missing(monkeypatch):
     assert "or" not in second_params
 
 
+def test_list_docs_summary_view_requests_metadata_only(monkeypatch):
+    _app, repo, editor = _build_app(monkeypatch)
+    response = asyncio.run(editor.list_docs(_request(), view="summary"))
+
+    assert len(response) == 1
+    document_calls = [call for call in repo.get_calls if call[0] == "documents"]
+    assert document_calls
+    first_params = document_calls[0][1]["params"]
+    assert first_params["select"] == "id,title,project_id,updated_at,created_at"
+    assert "content_delta" not in first_params["select"]
+    assert "content_html" not in first_params["select"]
+
+
 def test_update_doc_falls_back_when_new_columns_missing(monkeypatch):
     _app, repo, editor = _build_app(monkeypatch)
     response = asyncio.run(

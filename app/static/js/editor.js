@@ -39,6 +39,20 @@ function startEditor() {
   window.__webUnlockerEditorStarted = true;
 
   const toast = window.webUnlockerUI?.createToastManager?.();
+  const runtime = window.WritiorEditorRuntime;
+  if (!runtime || typeof runtime.require !== "function") {
+    throw new Error("[editor] WritiorEditorRuntime core is required");
+  }
+  const createInstrumentation = runtime.require("instrumentation");
+  const createActiveDocumentRuntime = runtime.require("activeDocument");
+  const createEditorSessionRuntime = runtime.require("editorSession");
+  const createNotesStore = runtime.require("notesStore");
+  const createCitationsStore = runtime.require("citationsStore");
+  const createContainedRenderers = runtime.require("renderers");
+  const instrumentation = createInstrumentation();
+  const activeDocumentRuntime = createActiveDocumentRuntime();
+  const notesStore = createNotesStore();
+  const citationsStore = createCitationsStore();
   const citeTokenPrefix = "〔cite:";
   const citeTokenSuffix = "〕";
   const AUTOSAVE_DEBOUNCE_MS = 2000;
@@ -51,27 +65,19 @@ function startEditor() {
   const DEFAULT_LINE_HEIGHT = "1.15";
 
   let currentDocId = null;
-  let currentAttachedCitationIds = [];
-  let citationCache = new Map();
   let selectedCitationId = null;
   let autosaveTimer = null;
   let outlineTimer = null;
-  let isDirty = false;
   let allDocs = [];
   let allProjects = [];
-  let allNotes = [];
   let editingNoteId = null;
   let editingNoteFocusField = "title";
   let editingNoteDraft = null;
   let citationSearchTimer = null;
   let notesFilterTimer = null;
-  let lastCheckpointAt = 0;
-  let changedSinceCheckpoint = 0;
-  let lastKnownRange = null;
   let noteAttachContext = null;
   let quickNoteSourcesDraft = [];
   let quickNoteLinkedNoteIdsDraft = [];
-  const citationRenderCache = new Map();
   let autosaveRequestSeq = 0;
   let latestAppliedSaveSeq = 0;
   let openDocRequestSeq = 0;
@@ -82,10 +88,20 @@ function startEditor() {
   const inFlightRequestCache = new Map();
   const REQUEST_TIMEOUT_MS = 12000;
   const LOCAL_DOC_STATE_KEY = "editor_local_docs_v1";
-  const syncStateByDocId = new Map();
-  const syncTimersByDocId = new Map();
-  const syncInFlightByDocId = new Map();
+  const syncStateByDocId = activeDocumentRuntime.syncStateByDocId;
+  const syncTimersByDocId = activeDocumentRuntime.syncTimersByDocId;
+  const syncInFlightByDocId = activeDocumentRuntime.syncInFlightByDocId;
   let syncIntervalHandle = null;
+  let projectsLoaded = false;
+  let notesLoaded = false;
+  let citationLibraryLoaded = false;
+  let notesLoadingPromise = null;
+  let projectsLoadingPromise = null;
+  let citationLibraryLoadingPromise = null;
+  let pendingOutlineRender = false;
+  let pendingHistoryRender = false;
+  let pendingDocNotesRender = false;
+  let pendingInDocCitationsRender = false;
 
   const diagnosticsEnabled = window.localStorage?.getItem("editor_debug") === "1";
 
@@ -94,6 +110,8 @@ function startEditor() {
     if (data === undefined) console.debug(`[editor] ${event}`);
     else console.debug(`[editor] ${event}`, data);
   }
+
+  instrumentation.startPhase("boot");
 
   function warnIfSlow(label, startedAt, thresholdMs = 32) {
     if (!diagnosticsEnabled) return;
@@ -158,6 +176,35 @@ function startEditor() {
   const sidecarToggleBtn = document.getElementById("sidecar-toggle");
   const editorMain = document.querySelector(".editor-main");
   const signoutBtn = document.getElementById("signout-btn");
+  const outlinePanelEl = document.getElementById("outline-panel");
+  const historyPanelEl = document.getElementById("history-panel");
+  const docNotesPanelEl = document.getElementById("doc-notes-panel");
+  const citationLibraryPanelEl = document.getElementById("tab-library");
+  const inDocCitationsPanelEl = document.getElementById("tab-in-doc");
+  const researchNotesPanelEl = document.getElementById("tab-research");
+
+  function getDirtyState() {
+    return activeDocumentRuntime.getActive().dirty;
+  }
+
+  function setDirtyState(nextDirty) {
+    activeDocumentRuntime.setDirty(nextDirty);
+  }
+
+  function getAttachedCitationIds() {
+    return activeDocumentRuntime.getActive().attachedCitationIds.slice();
+  }
+
+  function isPanelVisible(panel) {
+    if (!panel) return false;
+    if (panel.classList.contains("collapsed")) return false;
+    if (panel.classList.contains("hidden")) return false;
+    if (panel.hidden || panel.getAttribute("aria-hidden") === "true") return false;
+    const hiddenParent = panel.closest('[aria-hidden="true"]');
+    if (hiddenParent) return false;
+    if (panel.classList.contains("tab-panel") && !panel.classList.contains("active")) return false;
+    return true;
+  }
 
   function attachButtonClickMotion() {
     const pressedButtons = new Set();
@@ -239,6 +286,8 @@ function startEditor() {
   quill.format("font", DEFAULT_FONT, "silent");
   quill.format("size", DEFAULT_SIZE, "silent");
   quill.format("lineheight", DEFAULT_LINE_HEIGHT, "silent");
+  const editorSession = createEditorSessionRuntime(quill);
+  const containedRenderers = createContainedRenderers(instrumentation);
 
   function isProTier() {
     const tier = (window.__editorAccess?.account_type || "").toLowerCase();
@@ -299,6 +348,8 @@ function startEditor() {
     if (!entry) delete state[docId];
     else state[docId] = entry;
     writeLocalDocState(state);
+    if (!entry) activeDocumentRuntime.clearOverlay(docId);
+    else activeDocumentRuntime.stageOverlay(docId, entry);
   }
 
   function getDocSyncState(docId) {
@@ -513,8 +564,8 @@ function startEditor() {
   }
 
   async function loadDocNotes() {
-    docNotesList.innerHTML = "";
     if (!currentDocId) return;
+    instrumentation.increment("doc_notes:load");
     const reqId = ++docNotesLoadRequestSeq;
     let res;
     try {
@@ -529,6 +580,14 @@ function startEditor() {
       return;
     }
     const links = await res.json();
+    if (!isPanelVisible(docNotesPanelEl)) {
+      pendingDocNotesRender = true;
+      docNotesPanelEl.dataset.pendingLinks = JSON.stringify(links || []);
+      return;
+    }
+    instrumentation.increment("render:doc_notes");
+    pendingDocNotesRender = false;
+    docNotesList.innerHTML = "";
     if (!links.length) {
       docNotesList.innerHTML = '<li class="empty-state">No notes attached to this document yet.</li>';
       return;
@@ -564,20 +623,22 @@ function startEditor() {
     setSaveStatus("Saving locally...");
     if (autosaveTimer) clearTimeout(autosaveTimer);
     debugLog("autosave.queued", { currentDocId });
+    instrumentation.increment("autosave:queued");
     autosaveTimer = setTimeout(() => autosaveDoc(), AUTOSAVE_DEBOUNCE_MS);
   }
 
   async function autosaveDoc() {
-    if (!currentDocId || !isDirty) return;
+    if (!currentDocId || !getDirtyState()) return;
+    instrumentation.increment("autosave:run");
     const payload = {
       title: docTitleInput.value.trim() || "Untitled",
       content_delta: quill.getContents(),
       content_html: quill.root.innerHTML,
-      attached_citation_ids: currentAttachedCitationIds,
+      attached_citation_ids: getAttachedCitationIds(),
     };
     stageLocalDocChange(currentDocId, payload);
     setSaveStatus("Saved locally");
-    isDirty = false;
+    setDirtyState(false);
     updateDocInList({ id: currentDocId, title: payload.title, updated_at: new Date().toISOString() });
     scheduleDocSync(currentDocId, 400);
   }
@@ -608,6 +669,7 @@ function startEditor() {
     setSaveStatus("Syncing...");
     const task = (async () => {
       try {
+        instrumentation.increment("sync:start");
         const res = await authFetchWithTimeout(`/api/docs/${docId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -620,6 +682,7 @@ function startEditor() {
         clearLocalDirtyDoc(docId, data);
         updateDocInList(data);
         setSaveStatus("Saved");
+        instrumentation.increment("sync:success");
         debugLog("sync.success", { saveSeq, docId });
       } catch (_err) {
         const retryCount = (state.retry_count || 0) + 1;
@@ -644,6 +707,7 @@ function startEditor() {
           last_synced_at: local?.last_synced_at || null,
         });
         setSaveStatus("Sync failed");
+        instrumentation.increment("sync:failed");
         toast?.show({ type: "error", message: "Sync failed. Will retry in background." });
         scheduleDocSync(docId, delayMs);
       } finally {
@@ -680,6 +744,7 @@ function startEditor() {
   }
 
   async function loadHeaderData() {
+    instrumentation.increment("boot:header_load");
     const res = await authFetch("/api/me");
     if (!res.ok) return;
     const data = await res.json();
@@ -695,7 +760,8 @@ function startEditor() {
   }
 
   async function loadDocsList() {
-    const res = await authFetch("/api/docs");
+    instrumentation.increment("boot:docs_summary_load");
+    const res = await authFetch("/api/docs?view=summary");
     if (!res.ok) {
       docsList.innerHTML = "<p>Unable to load documents.</p>";
       return;
@@ -706,18 +772,35 @@ function startEditor() {
     renderFreeQuota();
   }
 
-  function renderDocs(docs) {
-    docsList.innerHTML = "";
-    const q = (docSearchInput.value || "").toLowerCase();
-    const filtered = docs.filter((d) => d.title.toLowerCase().includes(q));
-    if (!filtered.length) { docsList.innerHTML = "<p>No documents found.</p>"; return; }
-    filtered.forEach((doc) => {
+  const docsListRenderer = containedRenderers.createKeyedContainerRenderer(docsList, {
+    itemKey: (doc) => doc.id,
+    emptyState: "<p>No documents found.</p>",
+    signature: (docs) => JSON.stringify((docs || []).map((doc) => {
+      const overlay = getLocalDocEntry(doc.id);
+      const overlayPayload = overlay?.payload || {};
+      return [
+        doc.id,
+        overlayPayload.title || doc.title,
+        overlay?.dirty ? "dirty" : "",
+        doc.updated_at,
+        doc.archived,
+        doc.id === currentDocId,
+      ];
+    })),
+    renderItem: (doc) => {
+      const overlay = getLocalDocEntry(doc.id);
+      const overlayPayload = overlay?.payload || {};
       const item = document.createElement("div");
       item.className = "doc-item";
+      item.dataset.docId = doc.id;
+      item.innerHTML = "";
       if (doc.id === currentDocId) item.classList.add("active");
+      const title = document.createElement("strong");
+      title.textContent = overlayPayload.title || doc.title;
       const meta = document.createElement("span");
       meta.className = "doc-meta";
-      meta.textContent = `Updated ${new Date(doc.updated_at).toLocaleString()}${doc.archived && !isProTier() ? " · Archived" : ""}`;
+      const dirtyLabel = overlay?.dirty ? " · Unsaved local changes" : "";
+      meta.textContent = `Updated ${new Date(doc.updated_at).toLocaleString()}${doc.archived && !isProTier() ? " · Archived" : ""}${dirtyLabel}`;
       const actions = document.createElement("div");
       actions.className = "doc-actions";
       const formats = new Set((doc.allowed_export_formats || allowedFormatsForTier()).map((f) => (f || "").toLowerCase()));
@@ -736,18 +819,31 @@ function startEditor() {
         del.addEventListener("click", async (e) => { e.stopPropagation(); await deleteDocument(doc.id); });
         actions.appendChild(del);
       }
-      item.innerHTML = `<strong>${doc.title}</strong>`;
-      item.append(meta, actions);
+      item.append(title, meta, actions);
       item.addEventListener("click", () => openDoc(doc.id));
-      docsList.appendChild(item);
-    });
+      return item;
+    },
+  });
+
+  function renderDocs(docs) {
+    const q = (docSearchInput.value || "").toLowerCase();
+    const filtered = docs.filter((d) => d.title.toLowerCase().includes(q));
+    docsListRenderer.render(filtered);
   }
 
   function updateDocInList(doc) {
     if (!doc?.id) return;
     const idx = allDocs.findIndex((d) => d.id === doc.id);
-    if (idx >= 0) allDocs[idx] = { ...allDocs[idx], ...doc }; else allDocs.unshift(doc);
+    const summaryDoc = { ...(idx >= 0 ? allDocs[idx] : {}), ...doc };
+    delete summaryDoc.content_delta;
+    delete summaryDoc.content_html;
+    if (idx >= 0) allDocs[idx] = summaryDoc; else allDocs.unshift(summaryDoc);
     renderDocs(allDocs);
+  }
+
+  async function fetchActiveDocument(docId) {
+    instrumentation.increment("document:active_fetch");
+    return authFetchWithTimeout(`/api/docs/${docId}`);
   }
 
   async function deleteDocument(docId) {
@@ -756,6 +852,8 @@ function startEditor() {
     if (!res.ok) return toast?.show({ type: "error", message: "Failed to delete document." });
     if (currentDocId === docId) {
       currentDocId = null;
+      activeDocumentRuntime.resetActive();
+      editorSession.resetForDocumentSwitch();
       quill.setContents(normalizeDelta({ ops: [{ insert: "\n" }] }), "silent");
       docTitleInput.value = "";
     }
@@ -767,35 +865,33 @@ function startEditor() {
       await autosaveDoc();
       const reqId = ++openDocRequestSeq;
       const startedAt = performance.now();
+      instrumentation.increment("document:switch");
+      instrumentation.startPhase(`openDoc:${docId}`, { docId });
       debugLog("openDoc.start", { reqId, docId });
       let res;
       try {
-        res = await authFetchWithTimeout(`/api/docs/${docId}`);
+        res = await fetchActiveDocument(docId);
       } catch (_err) {
         toast?.show({ type: "error", message: "Unable to open document. Please retry." });
+        instrumentation.endPhase(`openDoc:${docId}`, { ok: false });
         return false;
       }
       if (!res.ok) {
         toast?.show({ type: "error", message: "Unable to open document. Please retry." });
+        instrumentation.endPhase(`openDoc:${docId}`, { ok: false, status: res.status });
         return false;
       }
       const doc = await res.json();
       if (reqId !== openDocRequestSeq) {
         debugLog("openDoc.stale_ignored", { reqId, latest: openDocRequestSeq, docId: doc.id });
+        instrumentation.endPhase(`openDoc:${docId}`, { ok: false, stale: true });
         return false;
       }
+      editorSession.resetForDocumentSwitch();
       currentDocId = doc.id;
       const localEntry = getLocalDocEntry(doc.id);
-      const effective = localEntry?.dirty && localEntry?.payload
-        ? {
-            ...doc,
-            title: localEntry.payload.title || doc.title,
-            content_delta: localEntry.payload.content_delta || doc.content_delta,
-            content_html: localEntry.payload.content_html || doc.content_html,
-            attached_citation_ids: localEntry.payload.attached_citation_ids || doc.attached_citation_ids || [],
-          }
-        : doc;
-      currentAttachedCitationIds = effective.attached_citation_ids || [];
+      const activeState = activeDocumentRuntime.setActiveServerDoc(doc, localEntry);
+      const effective = activeState.effectiveDoc || doc;
       docTitleInput.value = effective.title;
       const readOnly = Boolean(doc.archived);
       quill.enable(!readOnly);
@@ -803,21 +899,26 @@ function startEditor() {
       if (effective.content_delta?.ops?.length) quill.setContents(normalizeDelta(effective.content_delta), "silent");
       else if (effective.content_html) quill.clipboard.dangerouslyPasteHTML(effective.content_html, "silent");
       else quill.setContents(normalizeDelta(effective.content_delta), "silent");
-      isDirty = false;
-      changedSinceCheckpoint = 0;
-      lastCheckpointAt = Date.now();
+      setDirtyState(false);
+      activeDocumentRuntime.setCheckpointState({ changedSinceCheckpoint: 0, lastCheckpointAt: Date.now() });
       updateWordCount();
-      buildAndRenderOutline();
+      buildAndRenderOutline({ force: false });
       await Promise.allSettled([loadDocNotes(), refreshInDocCitations(), loadCheckpoints()]);
       updateSyncStatusUI(doc.id);
       renderDocs(allDocs);
       warnIfSlow("openDoc", startedAt, 150);
+      instrumentation.endPhase(`openDoc:${docId}`, { ok: true, duration_ms: performance.now() - startedAt });
       debugLog("openDoc.success", { reqId, docId: doc.id });
       return true;
     });
   }
 
-  function buildAndRenderOutline() {
+  let lastOutlineSignature = "";
+  function buildAndRenderOutline({ force = false } = {}) {
+    if (!force && !isPanelVisible(outlinePanelEl)) {
+      pendingOutlineRender = true;
+      return;
+    }
     const lines = quill.getLines();
     const outline = [];
     let index = 0;
@@ -828,6 +929,11 @@ function startEditor() {
       if (level && text) outline.push({ level, text, index });
       index += (line.length?.() || text.length || 0);
     });
+    const signature = JSON.stringify(outline);
+    if (!force && signature === lastOutlineSignature) return;
+    lastOutlineSignature = signature;
+    instrumentation.increment("render:outline");
+    pendingOutlineRender = false;
     outlineList.innerHTML = "";
     if (!outline.length) {
       outlineList.innerHTML = '<p class="empty-state">No headings yet. Add Title/H1-H4 to build the outline.</p>';
@@ -845,11 +951,12 @@ function startEditor() {
 
   function scheduleOutlineBuild() {
     if (outlineTimer) clearTimeout(outlineTimer);
-    outlineTimer = setTimeout(() => buildAndRenderOutline(), OUTLINE_DEBOUNCE_MS);
+    outlineTimer = setTimeout(() => buildAndRenderOutline({ force: false }), OUTLINE_DEBOUNCE_MS);
   }
 
   async function loadCheckpoints() {
     if (!currentDocId) return;
+    instrumentation.increment("checkpoints:load");
     let res;
     try {
       res = await authFetchWithTimeout(`/api/docs/${currentDocId}/checkpoints?limit=15`);
@@ -862,6 +969,13 @@ function startEditor() {
   }
 
   function renderCheckpoints(checkpoints = []) {
+    if (!isPanelVisible(historyPanelEl)) {
+      pendingHistoryRender = true;
+      historyPanelEl.dataset.pendingCheckpoints = JSON.stringify(checkpoints || []);
+      return;
+    }
+    instrumentation.increment("render:history");
+    pendingHistoryRender = false;
     historyList.innerHTML = "";
     if (!checkpoints.length) return (historyList.innerHTML = '<p class="empty-state">No checkpoints yet.</p>');
     checkpoints.forEach((checkpoint) => {
@@ -882,11 +996,16 @@ function startEditor() {
   async function createCheckpointIfNeeded(force = false) {
     if (!currentDocId) return;
     const now = Date.now();
-    if (!force && now - lastCheckpointAt < CHECKPOINT_INTERVAL_MS && changedSinceCheckpoint < CHECKPOINT_CHANGE_THRESHOLD) return;
+    const active = activeDocumentRuntime.getActive();
+    if (!force && now - active.lastCheckpointAt < CHECKPOINT_INTERVAL_MS && active.changedSinceCheckpoint < CHECKPOINT_CHANGE_THRESHOLD) return;
     const res = await authFetch(`/api/docs/${currentDocId}/checkpoints`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content_delta: quill.getContents(), content_html: quill.root.innerHTML }),
     });
-    if (res.ok) { changedSinceCheckpoint = 0; lastCheckpointAt = now; await loadCheckpoints(); }
+    if (res.ok) {
+      activeDocumentRuntime.setCheckpointState({ changedSinceCheckpoint: 0, lastCheckpointAt: now });
+      if (isPanelVisible(historyPanelEl)) await loadCheckpoints();
+      else pendingHistoryRender = true;
+    }
   }
 
   async function restoreCheckpoint(checkpointId) {
@@ -896,10 +1015,10 @@ function startEditor() {
     if (!res.ok) return;
     const doc = await res.json();
     quill.setContents(normalizeDelta(doc.content_delta), "silent");
-    isDirty = false;
+    setDirtyState(false);
     setSaveStatus("Restored");
     updateWordCount();
-    buildAndRenderOutline();
+    buildAndRenderOutline({ force: true });
     await loadCheckpoints();
   }
 
@@ -909,7 +1028,7 @@ function startEditor() {
     const res = await authFetch(`/api/citations?${params.toString()}`);
     if (!res.ok) throw new Error("Failed to load citations");
     const citations = await res.json();
-    citations.forEach((c) => citationCache.set(c.id, c));
+    citationsStore.upsertMany(citations);
     return citations;
   }
 
@@ -919,7 +1038,7 @@ function startEditor() {
     const res = await fetchJsonCached(`citations:ids:${key}`, () => authFetchWithTimeout(`/api/citations/by_ids?ids=${encodeURIComponent(ids.join(","))}`));
     if (!res.ok) throw new Error("Failed to load citations");
     const citations = await res.json();
-    citations.forEach((c) => citationCache.set(c.id, c));
+    citationsStore.upsertMany(citations);
     return citations;
   }
 
@@ -945,32 +1064,17 @@ function startEditor() {
   }
 
   function getInsertionIndex() {
-    const range = quill.getSelection();
-    if (range) {
-      lastKnownRange = range;
-      return range.index;
-    }
-    if (lastKnownRange && Number.isFinite(lastKnownRange.index)) {
-      quill.focus();
-      quill.setSelection(lastKnownRange.index, lastKnownRange.length || 0, "silent");
-      lastKnownRange = { index: lastKnownRange.index, length: lastKnownRange.length || 0 };
-      return lastKnownRange.index;
-    }
-    const end = quill.getLength();
-    quill.focus();
-    quill.setSelection(end, 0, "silent");
-    lastKnownRange = { index: end, length: 0 };
-    return end;
+    return editorSession.focusAndResolveInsertionIndex();
   }
 
   async function renderCitationForStyle(citation, style) {
     const normalizedStyle = (style || defaultCitationStyle(citation)).toLowerCase();
     const cacheKey = `${citation.id}:${normalizedStyle}`;
-    if (citationRenderCache.has(cacheKey)) return citationRenderCache.get(cacheKey);
+    if (citationsStore.renderCache.has(cacheKey)) return citationsStore.renderCache.get(cacheKey);
 
     if ((citation.format || "").toLowerCase() === normalizedStyle && citation.inline_citation && citation.full_citation) {
       const sameStyleRender = { inline_citation: citation.inline_citation, full_citation: citation.full_citation };
-      citationRenderCache.set(cacheKey, sameStyleRender);
+      citationsStore.renderCache.set(cacheKey, sameStyleRender);
       return sameStyleRender;
     }
 
@@ -995,7 +1099,7 @@ function startEditor() {
       inline_citation: rendered.inline_citation || citation.inline_citation || "",
       full_citation: rendered.full_citation || citation.full_citation || "",
     };
-    citationRenderCache.set(cacheKey, output);
+    citationsStore.renderCache.set(cacheKey, output);
     return output;
   }
 
@@ -1074,11 +1178,13 @@ function startEditor() {
   async function deleteCitation(citationId) {
     const res = await authFetch(`/api/citations/${citationId}`, { method: "DELETE" });
     if (!res.ok) return toast?.show({ type: "error", message: "Failed to delete citation." });
-    citationCache.delete(citationId);
+    citationsStore.entities.delete(citationId);
     await loadCitationLibrary(document.getElementById("citation-search").value || "");
   }
 
   async function loadCitationLibrary(search = "") {
+    if (!isPanelVisible(citationLibraryPanelEl) && citationLibraryLoaded) return;
+    instrumentation.increment("citation_library:load");
     const reqId = ++citationLoadRequestSeq;
     const startedAt = performance.now();
     let citations;
@@ -1093,45 +1199,55 @@ function startEditor() {
       debugLog("citations.stale_ignored", { reqId, latest: citationLoadRequestSeq, search });
       return;
     }
+    citationLibraryLoaded = true;
+    citationsStore.setLibraryResults(search, citations);
     const container = document.getElementById("citations-list");
+    instrumentation.increment("render:citations_library");
     container.innerHTML = "";
-    citations.forEach((c) => container.appendChild(buildCitationCard(c)));
+    citationsStore.getLibraryCitations().forEach((c) => container.appendChild(buildCitationCard(c)));
     warnIfSlow("loadCitationLibrary", startedAt, 60);
   }
 
   async function refreshInDocCitations() {
     if (!currentDocId) return;
-    const missing = currentAttachedCitationIds.filter((id) => !citationCache.has(id));
+    if (!isPanelVisible(inDocCitationsPanelEl)) {
+      pendingInDocCitationsRender = true;
+      return;
+    }
+    const attachedIds = getAttachedCitationIds();
+    const missing = attachedIds.filter((id) => !citationsStore.getById(id));
     if (missing.length) await fetchCitationsByIds(missing);
     const container = document.getElementById("doc-citations-list");
+    instrumentation.increment("render:citations_attached");
+    pendingInDocCitationsRender = false;
     container.innerHTML = "";
-    const docCitations = Array.from(citationCache.values()).filter((c) => currentAttachedCitationIds.includes(c.id));
+    const docCitations = citationsStore.getAttachedCitations(attachedIds);
     if (!docCitations.length) return (container.innerHTML = "<p>No citations attached yet.</p>");
     docCitations.forEach((c) => container.appendChild(buildCitationCard(c, { showRemove: true, showAttach: false })));
   }
 
   function ensureCitationAttachedToDocument(citationId) {
     if (!currentDocId) return alert("Open a document before attaching citations.");
-    if (!currentAttachedCitationIds.includes(citationId)) {
-      currentAttachedCitationIds.push(citationId);
-      isDirty = true;
+    if (!getAttachedCitationIds().includes(citationId)) {
+      activeDocumentRuntime.addAttachedCitationId(citationId);
+      setDirtyState(true);
       queueAutosave();
       refreshInDocCitations();
     }
   }
 
   function removeCitationFromDoc(citationId) {
-      currentAttachedCitationIds = currentAttachedCitationIds.filter((id) => id !== citationId);
+    activeDocumentRuntime.removeAttachedCitationId(citationId);
     removeCitationTokens(citationId);
-    isDirty = true;
+    setDirtyState(true);
     queueAutosave();
     refreshInDocCitations();
   }
 
   async function insertBibliographySection() {
     const entries = [];
-    for (const id of currentAttachedCitationIds) {
-      const citation = citationCache.get(id);
+    for (const id of getAttachedCitationIds()) {
+      const citation = citationsStore.getById(id);
       if (!citation) continue;
       const rendered = await renderCitationForStyle(citation, defaultCitationStyle(citation));
       if (rendered.full_citation) entries.push(rendered.full_citation);
@@ -1142,12 +1258,11 @@ function startEditor() {
     entries.forEach((entry, i) => { text += `${i + 1}. ${entry}\n`; });
     quill.insertText(index, text, "user");
     const nextIndex = index + text.length;
-    quill.setSelection(nextIndex, 0, "silent");
-    lastKnownRange = { index: nextIndex, length: 0 };
+    editorSession.setSelection(nextIndex, 0, "silent");
   }
 
   async function insertCitationToken(citation, style) {
-    const citationData = citation || (selectedCitationId ? citationCache.get(selectedCitationId) : null);
+    const citationData = citation || (selectedCitationId ? citationsStore.getById(selectedCitationId) : null);
     if (!citationData) return alert("Select a citation to insert.");
     const token = `${citeTokenPrefix}${citationData.id}${citeTokenSuffix}`;
     const rendered = await renderCitationForStyle(citationData, style);
@@ -1156,13 +1271,12 @@ function startEditor() {
     const insertIndex = getInsertionIndex();
     quill.insertText(insertIndex, `${inText}${token} `, { background: "#eef4ff" }, "user");
     const nextIndex = insertIndex + inText.length + token.length + 1;
-    quill.setSelection(nextIndex, 0, "silent");
-    lastKnownRange = { index: nextIndex, length: 0 };
+    editorSession.setSelection(nextIndex, 0, "silent");
     ensureCitationAttachedToDocument(citationData.id);
   }
 
   async function insertFullCitation(citation, style) {
-    const citationData = citation || (selectedCitationId ? citationCache.get(selectedCitationId) : null);
+    const citationData = citation || (selectedCitationId ? citationsStore.getById(selectedCitationId) : null);
     if (!citationData) return alert("Select a citation to insert.");
     const rendered = await renderCitationForStyle(citationData, style);
     const fullCitation = (rendered.full_citation || citationData.full_citation || "").trim();
@@ -1172,13 +1286,12 @@ function startEditor() {
     const text = `${needsLeadingBreak ? "\n" : ""}${fullCitation}\n`;
     quill.insertText(insertIndex, text, "user");
     const nextIndex = insertIndex + text.length;
-    quill.setSelection(nextIndex, 0, "silent");
-    lastKnownRange = { index: nextIndex, length: 0 };
+    editorSession.setSelection(nextIndex, 0, "silent");
     ensureCitationAttachedToDocument(citationData.id);
   }
 
   async function insertCitationQuote() {
-    const citationData = selectedCitationId ? citationCache.get(selectedCitationId) : null;
+    const citationData = selectedCitationId ? citationsStore.getById(selectedCitationId) : null;
     if (!citationData) return alert("Select a citation to insert a quote.");
     const quoteText = citationData.quote || citationData.excerpt || "";
     const token = `${citeTokenPrefix}${citationData.id}${citeTokenSuffix}`;
@@ -1191,8 +1304,7 @@ ${quoteText}
 ${inText}${token}
 `, { blockquote: true }, "user");
     const nextIndex = idx + quoteText.length + inText.length + token.length + 3;
-    quill.setSelection(nextIndex, 0, "silent");
-    lastKnownRange = { index: nextIndex, length: 0 };
+    editorSession.setSelection(nextIndex, 0, "silent");
     ensureCitationAttachedToDocument(citationData.id);
   }
 
@@ -1213,13 +1325,22 @@ ${inText}${token}
   }
 
   async function loadProjects() {
+    if (projectsLoadingPromise) return projectsLoadingPromise;
+    instrumentation.increment("projects:load");
+    projectsLoadingPromise = (async () => {
     const res = await authFetch("/api/projects");
     if (!res.ok) { projectsList.innerHTML = "<p>Unable to load projects.</p>"; return; }
     allProjects = await res.json();
+    projectsLoaded = true;
     renderProjects();
+    })().finally(() => {
+      projectsLoadingPromise = null;
+    });
+    return projectsLoadingPromise;
   }
 
   function renderProjects() {
+    if (!document.getElementById("left-tab-projects").classList.contains("active")) return;
     projectsList.innerHTML = "";
     const q = (projectSearchInput.value || "").toLowerCase();
     const filtered = allProjects.filter((p) => (p.name || "").toLowerCase().includes(q));
@@ -1257,6 +1378,7 @@ ${inText}${token}
   }
 
   async function loadNotes() {
+    if (notesLoadingPromise) return notesLoadingPromise;
     const reqId = ++notesLoadRequestSeq;
     const startedAt = performance.now();
     const params = new URLSearchParams();
@@ -1271,23 +1393,32 @@ ${inText}${token}
     if (textSearch) params.set("search", textSearch);
     params.set("sort", sort);
     const query = params.toString();
-    let res;
-    try {
-      res = await fetchJsonCached(`notes:list:${query}`, () => authFetchWithTimeout(`/api/notes?${query}`));
-    } catch (_err) {
-      notesList.innerHTML = '<li class="empty-state">Unable to load notes.</li>';
-      return;
-    }
-    if (!res.ok) { notesList.innerHTML = '<li class="empty-state">Unable to load notes.</li>'; return; }
-    const payload = await res.json();
-    if (reqId !== notesLoadRequestSeq) {
-      debugLog("notes.stale_ignored", { reqId, latest: notesLoadRequestSeq });
-      return;
-    }
-    allNotes = Array.isArray(payload) ? payload : (payload?.notes || []);
-    renderNotes();
-    renderResearchNotes();
-    warnIfSlow("loadNotes", startedAt, 100);
+    notesStore.setQuery({ tag: t, project: p, source: s, search: textSearch, sort });
+    instrumentation.increment("notes:load");
+    notesLoadingPromise = (async () => {
+      let res;
+      try {
+        res = await fetchJsonCached(`notes:list:${query}`, () => authFetchWithTimeout(`/api/notes?${query}`));
+      } catch (_err) {
+        notesList.innerHTML = '<li class="empty-state">Unable to load notes.</li>';
+        return;
+      }
+      if (!res.ok) { notesList.innerHTML = '<li class="empty-state">Unable to load notes.</li>'; return; }
+      const payload = await res.json();
+      if (reqId !== notesLoadRequestSeq) {
+        debugLog("notes.stale_ignored", { reqId, latest: notesLoadRequestSeq });
+        return;
+      }
+      const resolvedNotes = Array.isArray(payload) ? payload : (payload?.notes || []);
+      notesStore.replaceAll(resolvedNotes);
+      notesLoaded = true;
+      renderNotes();
+      renderResearchNotes();
+      warnIfSlow("loadNotes", startedAt, 100);
+    })().finally(() => {
+      notesLoadingPromise = null;
+    });
+    return notesLoadingPromise;
   }
 
   function scheduleNotesReload() {
@@ -1299,11 +1430,9 @@ ${inText}${token}
     const text = (note?.highlight_text || note?.note_body || "").trim();
     if (!text) return;
     const idx = getInsertionIndex();
-    quill.insertText(idx, `${text}
-`, "user");
+    quill.insertText(idx, `${text}\n`, "user");
     const nextIndex = idx + text.length + 1;
-    quill.setSelection(nextIndex, 0, "silent");
-    lastKnownRange = { index: nextIndex, length: 0 };
+    editorSession.setSelection(nextIndex, 0, "silent");
   }
 
   function setAttachNoteModalView(view) {
@@ -1349,13 +1478,9 @@ ${inText}${token}
 
   function renderAttachNoteList() {
     if (!attachNoteList) return;
+    instrumentation.increment("render:attach_note_list");
     attachNoteList.innerHTML = "";
-    const q = (attachNoteSearch?.value || "").trim().toLowerCase();
-    const rows = allNotes.filter((note) => {
-      if (note.archived_at) return false;
-      const haystack = `${note.title || ""} ${note.highlight_text || ""} ${note.note_body || ""} ${note.source_title || ""}`.toLowerCase();
-      return !q || haystack.includes(q);
-    }).slice(0, 100);
+    const rows = notesStore.selectAttachableNotes(attachNoteSearch?.value || "").slice(0, 100);
     if (!rows.length) {
       attachNoteList.innerHTML = '<li class="empty-state">No notes found.</li>';
       return;
@@ -1386,7 +1511,7 @@ ${inText}${token}
 
   async function openAttachNoteModal(context = null) {
     noteAttachContext = context;
-    if (!allNotes.length) await loadNotes();
+    if (!notesLoaded) await loadNotes();
     setAttachNoteModalView("library");
     renderAttachNoteList();
     attachNoteModal?.setAttribute("aria-hidden", "false");
@@ -1417,7 +1542,7 @@ ${inText}${token}
     }
     const created = await createRes.json();
     await loadNotes();
-    const createdNote = allNotes.find((note) => note.id === created.note_id) || { id: created.note_id, title, note_body: noteBody };
+    const createdNote = notesStore.getById(created.note_id) || { id: created.note_id, title, note_body: noteBody };
     await attachNoteToCurrentDoc(createdNote);
     closeAttachNoteModal();
   }
@@ -1440,7 +1565,10 @@ ${inText}${token}
   }
 
   function renderNotes() {
+    if (!document.getElementById("left-tab-notes").classList.contains("active")) return;
+    instrumentation.increment("render:notes");
     notesList.innerHTML = "";
+    const allNotes = notesStore.selectVisibleNotes();
     if (!allNotes.length) return (notesList.innerHTML = '<li class="empty-state">No notes yet.</li>');
     allNotes.forEach((note) => {
       const li = document.createElement("li");
@@ -1646,16 +1774,11 @@ ${inText}${token}
 
   function renderResearchNotes() {
     if (!researchNotesList) return;
+    if (!isPanelVisible(researchNotesPanelEl)) return;
+    instrumentation.increment("render:research_notes");
     researchNotesList.innerHTML = "";
-    const q = (researchNotesSearch?.value || "").trim().toLowerCase();
-    const docProjectIds = new Set(allNotes.filter((n) => n.project_id).map((n) => n.project_id));
-    const rows = allNotes.filter((note) => {
-      if (note.archived_at) return false;
-      const text = `${note.title || ""} ${note.highlight_text || ""} ${note.note_body || ""} ${note.source_title || ""}`.toLowerCase();
-      const match = !q || text.includes(q);
-      const projectMatch = !currentDocId || !docProjectIds.size || docProjectIds.has(note.project_id);
-      return match && projectMatch;
-    }).slice(0, 80);
+    const docProjectIds = new Set(notesStore.getAll().filter((n) => n.project_id).map((n) => n.project_id));
+    const rows = notesStore.selectResearchNotes(docProjectIds, researchNotesSearch?.value || "").slice(0, 80);
     if (!rows.length) {
       researchNotesList.innerHTML = '<li class="empty-state">No research notes found.</li>';
       return;
@@ -1709,12 +1832,9 @@ ${inText}${token}
 
   function renderQuickNoteLinkList() {
     if (!quickNoteLinkList) return;
+    instrumentation.increment("render:quick_note_links");
     quickNoteLinkList.innerHTML = "";
-    const q = (quickNoteLinkSearch?.value || "").trim().toLowerCase();
-    const rows = allNotes.filter((n) => {
-      const text = `${n.title || ""} ${n.note_body || ""} ${n.highlight_text || ""}`.toLowerCase();
-      return !q || text.includes(q);
-    }).slice(0, 40);
+    const rows = notesStore.selectQuickLinkNotes(quickNoteLinkSearch?.value || "").slice(0, 40);
     if (!rows.length) {
       quickNoteLinkList.innerHTML = '<li class="note-item"><span class="doc-meta">No notes available.</span></li>';
       return;
@@ -1816,6 +1936,7 @@ ${inText}${token}
   }
 
   async function createNote() {
+    if (!notesLoaded) await loadNotes();
     openNewNoteModal();
   }
 
@@ -1829,7 +1950,14 @@ ${inText}${token}
     document.getElementById("left-tab-documents").classList.toggle("active", tab === "documents");
     document.getElementById("left-tab-projects").classList.toggle("active", tab === "projects");
     document.getElementById("left-tab-notes").classList.toggle("active", tab === "notes");
-    if (tab === "notes") loadNotes();
+    if (tab === "projects") {
+      if (!projectsLoaded) loadProjects();
+      else renderProjects();
+    }
+    if (tab === "notes") {
+      if (!notesLoaded) loadNotes();
+      else renderNotes();
+    }
   }
 
   async function downloadExportFile(doc, format) {
@@ -1891,28 +2019,26 @@ ${inText}${token}
   }
 
   function highlightActiveLine(range) {
-    document.querySelectorAll(".ql-editor .is-active-paragraph").forEach((node) => node.classList.remove("is-active-paragraph"));
-    if (!range) return;
-    const [line] = quill.getLine(range.index);
-    line?.domNode?.classList?.add("is-active-paragraph");
+    editorSession.highlightActiveLine(range);
   }
 
   quill.on("text-change", (delta, _old, source) => {
     if (source !== "user") return;
-    isDirty = true;
-    changedSinceCheckpoint += estimateDeltaLength(delta);
+    setDirtyState(true);
+    const active = activeDocumentRuntime.getActive();
+    activeDocumentRuntime.setCheckpointState({ changedSinceCheckpoint: active.changedSinceCheckpoint + estimateDeltaLength(delta) });
     queueAutosave();
     scheduleOutlineBuild();
     createCheckpointIfNeeded();
     updateWordCount();
   });
   quill.on("selection-change", (range, oldRange) => {
-    if (range) lastKnownRange = range;
+    if (range) editorSession.rememberRange(range);
     highlightActiveLine(range);
-    if (!range && oldRange && isDirty) autosaveDoc();
+    if (!range && oldRange && getDirtyState()) autosaveDoc();
   });
-  docTitleInput.addEventListener("input", () => { isDirty = true; queueAutosave(); });
-  window.addEventListener("beforeunload", () => { if (isDirty) autosaveDoc(); });
+  docTitleInput.addEventListener("input", () => { setDirtyState(true); queueAutosave(); });
+  window.addEventListener("beforeunload", () => { if (getDirtyState()) autosaveDoc(); });
 
   docSearchInput.addEventListener("input", () => renderDocs(allDocs));
   projectSearchInput.addEventListener("input", () => renderProjects());
@@ -1967,13 +2093,63 @@ ${inText}${token}
 
   document.getElementById("outline-refresh").addEventListener("click", buildAndRenderOutline);
   document.getElementById("history-refresh").addEventListener("click", loadCheckpoints);
-  document.getElementById("tool-outline").addEventListener("click", () => outlinePanel.classList.toggle("collapsed"));
-  document.getElementById("tool-history").addEventListener("click", () => historyPanel.classList.toggle("collapsed"));
+  document.getElementById("tool-outline").addEventListener("click", () => {
+    outlinePanel.classList.toggle("collapsed");
+    if (!outlinePanel.classList.contains("collapsed") && pendingOutlineRender) buildAndRenderOutline({ force: true });
+  });
+  document.getElementById("tool-history").addEventListener("click", () => {
+    historyPanel.classList.toggle("collapsed");
+    if (!historyPanel.classList.contains("collapsed") && pendingHistoryRender) {
+      const pending = historyPanelEl.dataset.pendingCheckpoints ? JSON.parse(historyPanelEl.dataset.pendingCheckpoints) : null;
+      if (pending) renderCheckpoints(pending);
+      else loadCheckpoints();
+    }
+  });
   document.getElementById("tool-add-doc-note").addEventListener("click", addDocNote);
   focusModeBtn?.addEventListener("click", toggleFocusMode);
   typewriterBtn?.addEventListener("click", toggleTypewriterMode);
   toggleToolbarBtn?.addEventListener("click", toggleToolbarVisibility);
-  sidecarToggleBtn?.addEventListener("click", () => setSidecarOpen(!editorMain?.classList.contains("sidecar-open")));
+  sidecarToggleBtn?.addEventListener("click", () => {
+    const open = !editorMain?.classList.contains("sidecar-open");
+    setSidecarOpen(open);
+    if (!open) return;
+    if (pendingOutlineRender) buildAndRenderOutline({ force: true });
+    if (pendingHistoryRender) {
+      const pending = historyPanelEl.dataset.pendingCheckpoints ? JSON.parse(historyPanelEl.dataset.pendingCheckpoints) : null;
+      if (pending) renderCheckpoints(pending);
+      else loadCheckpoints();
+    }
+    if (pendingDocNotesRender) {
+      const pendingLinks = docNotesPanelEl.dataset.pendingLinks ? JSON.parse(docNotesPanelEl.dataset.pendingLinks) : null;
+      if (pendingLinks) {
+        docNotesList.innerHTML = "";
+        pendingDocNotesRender = false;
+        pendingLinks.forEach((row) => {
+          const note = row.note || {};
+          const li = document.createElement("li");
+          li.className = "doc-note-item";
+          const preview = (note.highlight_text || note.note_body || "").slice(0, 180);
+          li.innerHTML = `<strong>${note.title || "Untitled note"}</strong><div>${preview}</div><div class="note-item-footer"><span class="doc-meta">Attached ${new Date(row.attached_at).toLocaleString()}</span></div>`;
+          const insertBtn = document.createElement("button");
+          insertBtn.className = "pill mini";
+          insertBtn.textContent = "Insert";
+          insertBtn.addEventListener("click", () => insertNoteBodyIntoEditor(note));
+          const del = document.createElement("button");
+          del.className = "text note-delete-btn";
+          del.textContent = "Detach";
+          del.addEventListener("click", async () => {
+            const detachRes = await authFetch(`/api/docs/${currentDocId}/notes/${note.id}`, { method: "DELETE" });
+            if (!detachRes.ok) return toast?.show({ type: "error", message: "Failed to detach note." });
+            await loadDocNotes();
+          });
+          li.querySelector(".note-item-footer").append(insertBtn, del);
+          docNotesList.appendChild(li);
+        });
+      } else {
+        loadDocNotes();
+      }
+    }
+  });
   signoutBtn?.addEventListener("click", signOutEditorUser);
   manualSyncBtn?.addEventListener("click", async () => {
     await runAction("manual-sync", async () => {
@@ -2004,6 +2180,12 @@ ${inText}${token}
     tab.classList.add("active");
     Object.values(panels).forEach((p) => p.classList.remove("active"));
     panels[tab.dataset.tab].classList.add("active");
+    if (tab.dataset.tab === "library" && !citationLibraryLoaded) loadCitationLibrary(document.getElementById("citation-search").value || "");
+    if (tab.dataset.tab === "in-doc" && pendingInDocCitationsRender) refreshInDocCitations();
+    if (tab.dataset.tab === "research") {
+      if (!notesLoaded) loadNotes();
+      else renderResearchNotes();
+    }
   }));
 
   document.querySelectorAll(".content-pill").forEach((pill) => pill.addEventListener("click", () => setContentTab(pill.dataset.contentTab)));
@@ -2028,11 +2210,9 @@ ${inText}${token}
   window.addEventListener("click", (event) => { if (event.target === exportModal) exportModal.setAttribute("aria-hidden", "true"); });
 
   (async () => {
+    instrumentation.mark("boot:critical:start");
     await loadHeaderData();
     await loadDocsList();
-    await loadProjects();
-    await loadNotes();
-    await loadCitationLibrary();
     const defaultTab = localStorage.getItem("editor_left_content_tab") || "documents";
     setContentTab(defaultTab);
     setSidecarOpen(false);
@@ -2043,6 +2223,7 @@ ${inText}${token}
       if (allDocs.length) await openDoc(allDocs[0].id);
       else document.getElementById("new-doc-btn").click();
     }
+    instrumentation.mark("boot:first_active_document_ready", { docId: currentDocId });
     updateSyncStatusUI();
     if (!syncIntervalHandle) {
       syncIntervalHandle = setInterval(() => {
@@ -2050,6 +2231,13 @@ ${inText}${token}
       }, SYNC_INTERVAL_MS);
     }
     await syncAllDirtyDocs();
+    instrumentation.endPhase("boot", { first_active_document_ready: true, current_doc_id: currentDocId });
+    const defer = window.requestIdleCallback || ((cb) => setTimeout(cb, 0));
+    defer(() => {
+      if (defaultTab === "projects") loadProjects();
+      if (defaultTab === "notes") loadNotes();
+      if (document.querySelector(".tab.active")?.dataset?.tab === "library") loadCitationLibrary(document.getElementById("citation-search").value || "");
+    });
   })();
 }
 

@@ -312,6 +312,114 @@ async def replace_document_citations(user_id: str, document_id: str, citation_id
     return result if isinstance(result, list) else normalized
 
 
+async def _validate_owned_citation_ids(user_id: str, citation_ids: list[str]) -> list[str]:
+    normalized = _normalize_uuid_list(citation_ids, field_name="citation_id")
+    if not normalized:
+        return []
+
+    res = await supabase_repo.get(
+        "citation_instances",
+        params={
+            "id": f"in.({','.join(normalized)})",
+            "select": "id,user_id",
+            "limit": str(len(normalized)),
+        },
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+    if is_schema_missing_response(res):
+        raise HTTPException(status_code=503, detail="Canonical citations are not configured in the database yet")
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to validate citations")
+
+    rows = res.json() or []
+    by_id = {row.get("id"): row for row in rows if row.get("id")}
+    missing_ids = [citation_id for citation_id in normalized if citation_id not in by_id]
+    if missing_ids:
+        raise HTTPException(status_code=404, detail="Citation not found")
+
+    foreign_ids = [citation_id for citation_id in normalized if by_id[citation_id].get("user_id") != user_id]
+    if foreign_ids:
+        raise HTTPException(status_code=403, detail="Invalid citation references.")
+
+    return normalized
+
+
+async def validate_owned_citation_ids(user_id: str, citation_ids: list[str]) -> list[str]:
+    return await _validate_owned_citation_ids(user_id, citation_ids)
+
+
+async def list_document_citation_links(user_id: str, document_id: str) -> list[dict]:
+    normalized_document_id = normalize_uuid(document_id, field_name="document_id")
+    res = await supabase_repo.get(
+        "document_citations",
+        params={
+            "user_id": f"eq.{user_id}",
+            "document_id": f"eq.{normalized_document_id}",
+            "select": "document_id,citation_id,attached_at",
+            "order": "attached_at.asc,citation_id.asc",
+        },
+        headers=supabase_repo.headers(include_content_type=False),
+    )
+    if is_schema_missing_response(res):
+        raise HTTPException(status_code=503, detail="Document citations are not configured in the database yet")
+    if res.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to load document citations")
+
+    rows = res.json() or []
+    ordered_ids = [row.get("citation_id") for row in rows if row.get("citation_id")]
+    if not ordered_ids:
+        return []
+
+    from app.routes.citations import list_citation_records
+
+    records = await list_citation_records(user_id, ids=ordered_ids, limit=len(ordered_ids))
+    by_id = {record.get("id"): record for record in records if record.get("id")}
+
+    hydrated: list[dict] = []
+    for row in rows:
+        citation_id = row.get("citation_id")
+        citation = by_id.get(citation_id)
+        if not citation:
+            continue
+        hydrated.append(
+            {
+                "doc_id": row.get("document_id"),
+                "citation_id": citation_id,
+                "attached_at": row.get("attached_at"),
+                "citation": citation,
+            }
+        )
+    return hydrated
+
+
+async def add_document_citations(user_id: str, document_id: str, citation_ids: list[str]) -> list[str]:
+    normalized_document_id = normalize_uuid(document_id, field_name="document_id")
+    normalized = await _validate_owned_citation_ids(user_id, citation_ids)
+    if not normalized:
+        return await list_document_citation_ids(user_id, normalized_document_id)
+
+    current_ids = await list_document_citation_ids(user_id, normalized_document_id)
+    existing = set(current_ids)
+    final_ids = list(current_ids)
+    for citation_id in normalized:
+        if citation_id in existing:
+            continue
+        existing.add(citation_id)
+        final_ids.append(citation_id)
+    return await replace_document_citations(user_id, normalized_document_id, final_ids)
+
+
+async def remove_document_citation(user_id: str, document_id: str, citation_id: str) -> None:
+    normalized_document_id = normalize_uuid(document_id, field_name="document_id")
+    normalized_citation_id = normalize_uuid(citation_id, field_name="citation_id")
+    await _validate_owned_citation_ids(user_id, [normalized_citation_id])
+    current_ids = await list_document_citation_ids(user_id, normalized_document_id)
+    if normalized_citation_id not in current_ids:
+        return
+    final_ids = [current_id for current_id in current_ids if current_id != normalized_citation_id]
+    await replace_document_citations(user_id, normalized_document_id, final_ids)
+
+
 def _normalize_note_sources_payload(sources: list[dict]) -> list[dict]:
     normalized: list[dict] = []
     seen: set[str] = set()
@@ -369,7 +477,7 @@ async def replace_note_links(user_id: str, note_id: str, linked_note_ids: list[s
 async def list_document_citation_ids(user_id: str, document_id: str) -> list[str]:
     res = await supabase_repo.get(
         "document_citations",
-        params={"user_id": f"eq.{user_id}", "document_id": f"eq.{document_id}", "select": "citation_id", "order": "attached_at.asc"},
+        params={"user_id": f"eq.{user_id}", "document_id": f"eq.{document_id}", "select": "citation_id", "order": "attached_at.asc,citation_id.asc"},
         headers=supabase_repo.headers(include_content_type=False),
     )
     if is_schema_missing_response(res):
@@ -389,7 +497,7 @@ async def list_document_citation_ids_map(user_id: str, document_ids: list[str]) 
             "user_id": f"eq.{user_id}",
             "document_id": f"in.({','.join(normalized)})",
             "select": "document_id,citation_id,attached_at",
-            "order": "attached_at.asc",
+            "order": "attached_at.asc,citation_id.asc",
         },
         headers=supabase_repo.headers(include_content_type=False),
     )

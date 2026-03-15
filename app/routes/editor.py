@@ -38,16 +38,20 @@ from app.services.free_tier_gating import (
     rolling_window,
 )
 from app.services.research_entities import (
+    add_document_citations,
     add_document_tags,
     ensure_project_exists,
     ensure_tags,
+    list_document_citation_links,
     list_document_citation_ids,
     list_document_citation_ids_map,
     list_document_tag_maps,
     list_document_tags,
+    remove_document_citation,
     remove_document_tag,
     replace_document_citations,
     replace_document_tags,
+    validate_owned_citation_ids,
 )
 from app.services.supabase_rest import SupabaseRestRepository
 from app.routes.citations import list_citation_records
@@ -106,6 +110,10 @@ class DocumentUpdate(BaseModel):
 
 class DocumentTagsWrite(BaseModel):
     tag_ids: list[str] = []
+
+
+class DocumentCitationWrite(BaseModel):
+    citation_ids: list[str] = []
 
 
 class DocumentNoteCreate(BaseModel):
@@ -549,6 +557,14 @@ async def _fetch_doc_core(user_id: str, doc_id: str) -> dict:
     return await _fetch_doc_with_fallback(user_id, doc_id)
 
 
+async def _require_mutable_doc(request: Request, user_id: str, doc_id: str) -> tuple[str, dict]:
+    doc = await _fetch_doc_core(user_id, doc_id)
+    account_type = await _get_account_type(request, user_id)
+    if get_tier_capabilities(account_type).freeze_documents and doc_is_archived(doc.get("created_at"), account_type):
+        raise HTTPException(status_code=403, detail=_archived_doc_payload())
+    return account_type, doc
+
+
 def _doc_expiration(account_type: str) -> Optional[str]:
     capabilities = get_tier_capabilities(account_type)
     if not capabilities.freeze_documents:
@@ -562,16 +578,7 @@ async def _validate_citation_ids(user_id: str, citation_ids: list[str]) -> list[
     unique_ids = list(dict.fromkeys(citation_ids))
     if len(unique_ids) > 200:
         raise HTTPException(status_code=422, detail="Too many citations attached.")
-    if not unique_ids:
-        return []
-
-    records = await list_citation_records(user_id, ids=unique_ids, limit=len(unique_ids))
-    found_ids = {item.get("id") for item in records}
-    missing = [cid for cid in unique_ids if cid not in found_ids]
-    if missing:
-        raise HTTPException(status_code=403, detail="Invalid citation references.")
-
-    return unique_ids
+    return await validate_owned_citation_ids(user_id, unique_ids)
 
 
 async def _fetch_doc_with_fallback(user_id: str, doc_id: str) -> dict:
@@ -875,11 +882,7 @@ async def update_doc(request: Request, doc_id: str, payload: DocumentUpdate):
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    account_type = await _get_account_type(request, user_id)
-    if get_tier_capabilities(account_type).freeze_documents:
-        doc = await _fetch_doc_core(user_id, doc_id)
-        if doc_is_archived(doc.get("created_at"), account_type):
-            raise HTTPException(status_code=403, detail=_archived_doc_payload())
+    account_type, _doc = await _require_mutable_doc(request, user_id, doc_id)
 
     validated_citations = await _validate_citation_ids(user_id, payload.attached_citation_ids or [])
     resolved_tag_ids = await ensure_tags(user_id, tag_ids=payload.tag_ids or []) if payload.tag_ids is not None else None
@@ -908,6 +911,50 @@ async def update_doc(request: Request, doc_id: str, payload: DocumentUpdate):
         if resolved_tag_ids is not None
         else None,
     )
+
+
+@router.get("/api/docs/{doc_id}/citations")
+async def get_doc_citations(request: Request, doc_id: str):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    await _fetch_doc_core(user_id, doc_id)
+    return await list_document_citation_links(user_id, doc_id)
+
+
+@router.post("/api/docs/{doc_id}/citations")
+async def add_doc_citations(request: Request, doc_id: str, payload: DocumentCitationWrite):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    await _require_mutable_doc(request, user_id, doc_id)
+    await add_document_citations(user_id, doc_id, payload.citation_ids or [])
+    return await list_document_citation_links(user_id, doc_id)
+
+
+@router.put("/api/docs/{doc_id}/citations")
+async def replace_doc_citations(request: Request, doc_id: str, payload: DocumentCitationWrite):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    await _require_mutable_doc(request, user_id, doc_id)
+    validated_citations = await _validate_citation_ids(user_id, payload.citation_ids or [])
+    await replace_document_citations(user_id, doc_id, validated_citations)
+    return await list_document_citation_links(user_id, doc_id)
+
+
+@router.delete("/api/docs/{doc_id}/citations/{citation_id}")
+async def delete_doc_citation(request: Request, doc_id: str, citation_id: str):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    await _require_mutable_doc(request, user_id, doc_id)
+    await remove_document_citation(user_id, doc_id, citation_id)
+    return {"ok": True, "doc_id": doc_id, "citation_id": citation_id}
 
 
 @router.get("/api/docs/{doc_id}/tags")

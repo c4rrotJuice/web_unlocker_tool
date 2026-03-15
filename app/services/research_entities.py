@@ -6,7 +6,12 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
-from app.services.supabase_rest import SupabaseRestRepository
+from app.services.supabase_rest import (
+    SupabaseRestRepository,
+    response_error_code,
+    response_error_text,
+    response_json,
+)
 
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -14,23 +19,68 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase_repo = SupabaseRestRepository(base_url=SUPABASE_URL, service_role_key=SUPABASE_KEY)
 
 
-def response_error_text(response) -> str:
-    try:
-        body = response.json()
-    except Exception:
-        return ""
-    if isinstance(body, dict):
-        return str(body.get("message") or body.get("error") or "")
-    if isinstance(body, list):
-        return " ".join(str(item) for item in body)
-    return str(body)
-
-
 def is_schema_missing_response(response) -> bool:
     if response.status_code not in (400, 404):
         return False
     detail = response_error_text(response).lower()
-    return any(token in detail for token in ("column", "relation", "table", "schema cache"))
+    return any(token in detail for token in ("column", "relation", "table", "schema cache", "function"))
+
+
+def _normalize_uuid_list(raw_ids: list[str], *, field_name: str) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_id in raw_ids:
+        item_id = normalize_uuid(raw_id, field_name=field_name)
+        if item_id in seen:
+            continue
+        seen.add(item_id)
+        normalized.append(item_id)
+    return normalized
+
+
+def _extract_rpc_result(response, *, key: str):
+    body = response_json(response)
+    if isinstance(body, dict):
+        return body.get(key, body)
+    if isinstance(body, list) and len(body) == 1 and isinstance(body[0], dict) and key in body[0]:
+        return body[0][key]
+    return body
+
+
+def _raise_rpc_write_error(
+    response,
+    *,
+    detail: str,
+    missing_schema_detail: str,
+    missing_parent_detail: str | None = None,
+) -> None:
+    if is_schema_missing_response(response):
+        raise HTTPException(status_code=503, detail=missing_schema_detail)
+    error_code = response_error_code(response)
+    error_detail = response_error_text(response).lower()
+    if missing_parent_detail and error_code == "P0001" and "parent_not_found" in error_detail:
+        raise HTTPException(status_code=404, detail=missing_parent_detail)
+    raise HTTPException(status_code=500, detail=detail)
+
+
+async def _call_atomic_replace_rpc(
+    function_name: str,
+    payload: dict,
+    *,
+    detail: str,
+    missing_schema_detail: str,
+    missing_parent_detail: str | None = None,
+    result_key: str,
+):
+    response = await supabase_repo.rpc(function_name, json=payload, headers=supabase_repo.headers())
+    if response.status_code != 200:
+        _raise_rpc_write_error(
+            response,
+            detail=detail,
+            missing_schema_detail=missing_schema_detail,
+            missing_parent_detail=missing_parent_detail,
+        )
+    return _extract_rpc_result(response, key=result_key)
 
 
 def normalize_uuid(raw_id: str | None, *, field_name: str) -> str:
@@ -132,14 +182,7 @@ async def list_tags(user_id: str, *, limit: int = 200) -> list[dict]:
 
 
 async def _validate_owned_tag_ids(user_id: str, tag_ids: list[str]) -> list[str]:
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for raw_id in tag_ids:
-        tag_id = normalize_uuid(raw_id, field_name="tag_id")
-        if tag_id in seen:
-            continue
-        seen.add(tag_id)
-        normalized.append(tag_id)
+    normalized = _normalize_uuid_list(tag_ids, field_name="tag_id")
 
     if not normalized:
         return []
@@ -200,49 +243,29 @@ async def ensure_tags(user_id: str, *, tag_ids: list[str] | None = None, tag_nam
 
 
 async def replace_note_tag_links(user_id: str, note_id: str, tag_ids: list[str]) -> None:
+    normalized_note_id = normalize_uuid(note_id, field_name="note_id")
     normalized = await _validate_owned_tag_ids(user_id, tag_ids)
-    delete_res = await supabase_repo.delete(
-        "note_tag_links",
-        params={"user_id": f"eq.{user_id}", "note_id": f"eq.{note_id}"},
-        headers=supabase_repo.headers(prefer="return=minimal", include_content_type=False),
+    await _call_atomic_replace_rpc(
+        "replace_note_tag_links_atomic",
+        {"p_user_id": user_id, "p_note_id": normalized_note_id, "p_tag_ids": normalized},
+        detail="Failed to update note tags",
+        missing_schema_detail="Note tags are not configured in the database yet",
+        missing_parent_detail="Note not found",
+        result_key="replace_note_tag_links_atomic",
     )
-    if delete_res.status_code not in (200, 204):
-        raise HTTPException(status_code=500, detail="Failed to update note tags")
-    if not normalized:
-        return
-    rows = [{"note_id": note_id, "tag_id": tag_id, "user_id": user_id} for tag_id in normalized]
-    insert_res = await supabase_repo.post(
-        "note_tag_links",
-        json=rows,
-        headers=supabase_repo.headers(prefer="resolution=merge-duplicates,return=minimal"),
-    )
-    if insert_res.status_code not in (200, 201):
-        raise HTTPException(status_code=500, detail="Failed to update note tags")
 
 
 async def replace_document_tags(user_id: str, document_id: str, tag_ids: list[str]) -> None:
+    normalized_document_id = normalize_uuid(document_id, field_name="document_id")
     normalized = await _validate_owned_tag_ids(user_id, tag_ids)
-    delete_res = await supabase_repo.delete(
-        "document_tags",
-        params={"user_id": f"eq.{user_id}", "document_id": f"eq.{document_id}"},
-        headers=supabase_repo.headers(prefer="return=minimal", include_content_type=False),
+    await _call_atomic_replace_rpc(
+        "replace_document_tags_atomic",
+        {"p_user_id": user_id, "p_document_id": normalized_document_id, "p_tag_ids": normalized},
+        detail="Failed to update document tags",
+        missing_schema_detail="Document tags are not configured in the database yet",
+        missing_parent_detail="Document not found",
+        result_key="replace_document_tags_atomic",
     )
-    if is_schema_missing_response(delete_res):
-        raise HTTPException(status_code=503, detail="Document tags are not configured in the database yet")
-    if delete_res.status_code not in (200, 204, 404):
-        raise HTTPException(status_code=500, detail="Failed to update document tags")
-    if not normalized:
-        return
-    rows = [{"document_id": document_id, "tag_id": tag_id, "user_id": user_id} for tag_id in normalized]
-    insert_res = await supabase_repo.post(
-        "document_tags",
-        json=rows,
-        headers=supabase_repo.headers(prefer="resolution=merge-duplicates,return=minimal"),
-    )
-    if is_schema_missing_response(insert_res):
-        raise HTTPException(status_code=503, detail="Document tags are not configured in the database yet")
-    if insert_res.status_code not in (200, 201):
-        raise HTTPException(status_code=500, detail="Failed to update document tags")
 
 
 async def add_document_tags(user_id: str, document_id: str, tag_ids: list[str]) -> None:
@@ -276,36 +299,69 @@ async def remove_document_tag(user_id: str, document_id: str, tag_id: str) -> No
 
 
 async def replace_document_citations(user_id: str, document_id: str, citation_ids: list[str]) -> list[str]:
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for raw_id in citation_ids:
-        citation_id = normalize_uuid(raw_id, field_name="citation_id")
-        if citation_id in seen:
-            continue
-        seen.add(citation_id)
-        normalized.append(citation_id)
-
-    delete_res = await supabase_repo.delete(
-        "document_citations",
-        params={"user_id": f"eq.{user_id}", "document_id": f"eq.{document_id}"},
-        headers=supabase_repo.headers(prefer="return=minimal", include_content_type=False),
+    normalized_document_id = normalize_uuid(document_id, field_name="document_id")
+    normalized = _normalize_uuid_list(citation_ids, field_name="citation_id")
+    result = await _call_atomic_replace_rpc(
+        "replace_document_citations_atomic",
+        {"p_user_id": user_id, "p_document_id": normalized_document_id, "p_citation_ids": normalized},
+        detail="Failed to update document citations",
+        missing_schema_detail="Document citations are not configured in the database yet",
+        missing_parent_detail="Document not found",
+        result_key="replace_document_citations_atomic",
     )
-    if delete_res.status_code not in (200, 204, 404):
-        raise HTTPException(status_code=500, detail="Failed to update document citations")
+    return result if isinstance(result, list) else normalized
 
-    if normalized:
-        rows = [
-            {"document_id": document_id, "citation_id": citation_id, "user_id": user_id, "attached_at": datetime.utcnow().isoformat()}
-            for citation_id in normalized
-        ]
-        insert_res = await supabase_repo.post(
-            "document_citations",
-            json=rows,
-            headers=supabase_repo.headers(prefer="resolution=merge-duplicates,return=minimal"),
+
+def _normalize_note_sources_payload(sources: list[dict]) -> list[dict]:
+    normalized: list[dict] = []
+    seen: set[str] = set()
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        url = str(src.get("url") or "").strip()
+        if not url:
+            continue
+        dedupe_key = url.lower()
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        normalized.append(
+            {
+                "url": url,
+                "title": (src.get("title") or "").strip() or None,
+                "hostname": (src.get("hostname") or "").strip() or None,
+                "attached_at": (src.get("attached_at") or "").strip() or None,
+            }
         )
-        if insert_res.status_code not in (200, 201):
-            raise HTTPException(status_code=500, detail="Failed to update document citations")
     return normalized
+
+
+async def replace_note_sources(user_id: str, note_id: str, sources: list[dict]) -> list[dict]:
+    normalized_note_id = normalize_uuid(note_id, field_name="note_id")
+    normalized_sources = _normalize_note_sources_payload(sources)
+    result = await _call_atomic_replace_rpc(
+        "replace_note_sources_atomic",
+        {"p_user_id": user_id, "p_note_id": normalized_note_id, "p_sources": normalized_sources},
+        detail="Failed to update note sources",
+        missing_schema_detail="Note sources are not configured in the database yet",
+        missing_parent_detail="Note not found",
+        result_key="replace_note_sources_atomic",
+    )
+    return result if isinstance(result, list) else normalized_sources
+
+
+async def replace_note_links(user_id: str, note_id: str, linked_note_ids: list[str]) -> list[str]:
+    normalized_note_id = normalize_uuid(note_id, field_name="note_id")
+    normalized_linked_ids = _normalize_uuid_list(linked_note_ids, field_name="linked_note_id")
+    result = await _call_atomic_replace_rpc(
+        "replace_note_links_atomic",
+        {"p_user_id": user_id, "p_note_id": normalized_note_id, "p_linked_note_ids": normalized_linked_ids},
+        detail="Failed to update linked notes",
+        missing_schema_detail="Note links are not configured in the database yet",
+        missing_parent_detail="Note not found",
+        result_key="replace_note_links_atomic",
+    )
+    return result if isinstance(result, list) else normalized_linked_ids
 
 
 async def list_document_citation_ids(user_id: str, document_id: str) -> list[str]:

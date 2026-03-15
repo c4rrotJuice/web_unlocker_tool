@@ -126,7 +126,7 @@ def test_extension_selection_writes_document_citations_only(monkeypatch):
     assert document_posts[0]["user_id"] == "user-1"
     assert document_posts[0]["title"] == "Example"
     assert document_posts[0]["content_delta"] == {"ops": [{"insert": "Selected source text\n"}]}
-    assert document_posts[0]["expires_at"] is None
+    assert document_posts[0]["expires_at"] is not None
     assert "citation_ids" not in document_posts[0]
     assert document_citation_writes == [("user-1", "doc-1", ["citation-1"])]
 

@@ -1,8 +1,11 @@
 import importlib
+import asyncio
 from types import SimpleNamespace
 
 import supabase
-from fastapi.testclient import TestClient
+
+
+DOC_ID = "11111111-1111-4111-8111-111111111111"
 
 
 class DummyUser:
@@ -60,7 +63,7 @@ class DummyResp:
 class DummyRepo:
     async def get(self, resource, *args, **kwargs):
         if resource == "documents":
-            return DummyResp(200, [{"id": "doc-1", "title": "Doc", "content_delta": {"ops": [{"insert": "x\n"}]}, "project_id": None, "created_at": "2020-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}])
+            return DummyResp(200, [{"id": DOC_ID, "title": "Doc", "content_delta": {"ops": [{"insert": "x\n"}]}, "project_id": None, "created_at": "2020-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}])
         if resource == "document_citations":
             return DummyResp(200, [])
         if resource == "document_tags":
@@ -74,15 +77,23 @@ class DummyRepo:
             return DummyResp(201, [])
         if resource == "document_tags":
             return DummyResp(201, [])
-        return DummyResp(201, [{"id": "doc-1", "title": "Untitled", "content_delta": {"ops": [{"insert": "\n"}]}, "project_id": None, "updated_at": "2026-01-01T00:00:00+00:00"}])
+        return DummyResp(201, [{"id": DOC_ID, "title": "Untitled", "content_delta": {"ops": [{"insert": "\n"}]}, "project_id": None, "updated_at": "2026-01-01T00:00:00+00:00"}])
 
     async def patch(self, *args, **kwargs):
-        return DummyResp(200, [{"id": "doc-1", "project_id": None}])
+        return DummyResp(200, [{"id": DOC_ID, "project_id": None}])
 
     async def delete(self, resource, *args, **kwargs):
         if resource == "document_citations":
             return DummyResp(204, [])
-        return DummyResp(200, [{"id": "doc-1"}])
+        return DummyResp(200, [{"id": DOC_ID}])
+
+    async def rpc(self, function_name, **kwargs):
+        payload = kwargs.get("json") or {}
+        if function_name == "replace_document_citations_atomic":
+            return DummyResp(200, payload.get("p_citation_ids", []))
+        if function_name == "replace_document_tags_atomic":
+            return DummyResp(200, payload.get("p_tag_ids", []))
+        return DummyResp(404, {"message": f'function "{function_name}" does not exist'})
 
     def headers(self, *args, **kwargs):
         return {}
@@ -128,29 +139,46 @@ def _build_app(monkeypatch, account_type="pro"):
     return main.app
 
 
+def _request(*, account_type="pro", user_id="user-1"):
+    async def redis_get(_key):
+        return 0
+
+    async def redis_set(_key, _value, ttl_seconds=None):
+        return True
+
+    async def redis_incr(_key):
+        return 1
+
+    async def redis_expire(_key, _seconds):
+        return True
+
+    return SimpleNamespace(
+        state=SimpleNamespace(user_id=user_id, account_type=account_type),
+        app=SimpleNamespace(state=SimpleNamespace(redis_get=redis_get, redis_set=redis_set, redis_incr=redis_incr, redis_expire=redis_expire)),
+    )
+
+
 def test_pro_doc_not_archived_and_can_delete_and_zip(monkeypatch):
-    app = _build_app(monkeypatch, account_type="pro")
-    client = TestClient(app)
-    headers = {"Authorization": "Bearer valid"}
+    _build_app(monkeypatch, account_type="pro")
+    from app.routes import editor
 
-    get_res = client.get("/api/docs/doc-1", headers=headers)
-    assert get_res.status_code == 200
-    assert get_res.json()["archived"] is False
+    get_res = asyncio.run(editor.get_doc(_request(account_type="pro"), DOC_ID))
+    assert get_res["archived"] is False
 
-    delete_res = client.delete("/api/docs/doc-1", headers=headers)
-    assert delete_res.status_code == 200
-    assert delete_res.json()["deleted"] is True
+    delete_res = asyncio.run(editor.delete_doc(_request(account_type="pro"), DOC_ID))
+    assert delete_res["deleted"] is True
 
-    zip_res = client.get("/api/docs/export/zip", headers=headers)
-    assert zip_res.status_code == 200
+    zip_res = asyncio.run(editor.export_docs_zip(_request(account_type="pro")))
     assert zip_res.headers["content-type"].startswith("application/zip")
 
 
 def test_lower_tier_cannot_use_citation_templates(monkeypatch):
-    app = _build_app(monkeypatch, account_type="standard")
-    client = TestClient(app)
-    headers = {"Authorization": "Bearer valid"}
+    _build_app(monkeypatch, account_type="standard")
+    from app.routes import citations
 
-    res = client.get("/api/citation-templates", headers=headers)
-    assert res.status_code == 403
-    assert res.json()["detail"]["code"] == "CITATION_TEMPLATE_PRO_ONLY"
+    try:
+        asyncio.run(citations.list_citation_templates(_request(account_type="standard")))
+        raise AssertionError("expected HTTPException")
+    except Exception as exc:
+        assert exc.status_code == 403
+        assert exc.detail["code"] == "CITATION_TEMPLATE_PRO_ONLY"

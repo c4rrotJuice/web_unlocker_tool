@@ -17,6 +17,10 @@ class FakeClient:
         self.calls.append(("GET", url, kwargs))
         return FakeResponse(200)
 
+    async def post(self, url, **kwargs):
+        self.calls.append(("POST", url, kwargs))
+        return FakeResponse(200)
+
 
 @pytest.mark.anyio
 async def test_headers_include_auth_and_prefer():
@@ -43,6 +47,21 @@ async def test_request_builds_rest_v1_resource_url(monkeypatch):
 
     assert response.status_code == 200
     assert fake_client.calls[0][1] == "https://demo.supabase.co/rest/v1/user_meta"
+
+
+@pytest.mark.anyio
+async def test_rpc_builds_rest_v1_rpc_url(monkeypatch):
+    repo = SupabaseRestRepository(base_url="https://demo.supabase.co", service_role_key="service-key")
+    fake_client = FakeClient()
+
+    import app.services.supabase_rest as supabase_rest
+
+    monkeypatch.setattr(supabase_rest, "http_client", fake_client)
+
+    response = await repo.rpc("replace_document_tags_atomic", json={"p_user_id": "user-1"}, headers=repo.headers())
+
+    assert response.status_code == 200
+    assert fake_client.calls[0][1] == "https://demo.supabase.co/rest/v1/rpc/replace_document_tags_atomic"
 
 
 def test_headers_raise_when_service_role_missing():

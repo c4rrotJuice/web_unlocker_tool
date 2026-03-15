@@ -1,7 +1,8 @@
 import importlib
+import asyncio
+from types import SimpleNamespace
 
 import supabase
-from fastapi.testclient import TestClient
 
 
 class DummyUser:
@@ -70,6 +71,13 @@ class FakeSupabaseRepo:
 
     async def get(self, resource, **kwargs):
         self.calls.append(("get", resource, kwargs))
+        if resource == "tags":
+            params = kwargs.get("params", {})
+            ids_filter = params.get("id", "")
+            if ids_filter.startswith("in.("):
+                ids = [item.strip() for item in ids_filter[4:-1].split(",") if item.strip()]
+                return FakeResponse(200, [{"id": tag_id} for tag_id in ids])
+            return FakeResponse(200, [])
         if resource == "notes" and kwargs.get("params", {}).get("id", "").startswith("eq."):
             return FakeResponse(200, [{
                 "id": kwargs["params"]["id"].replace("eq.", ""),
@@ -93,6 +101,19 @@ class FakeSupabaseRepo:
     async def delete(self, resource, **kwargs):
         self.calls.append(("delete", resource, kwargs))
         return FakeResponse(204, [])
+
+    async def rpc(self, function_name, **kwargs):
+        self.calls.append(("rpc", function_name, kwargs))
+        payload = kwargs.get("json") or {}
+        if function_name == "replace_note_tag_links_atomic":
+            return FakeResponse(200, payload.get("p_tag_ids", []))
+        if function_name == "replace_note_sources_atomic":
+            return FakeResponse(200, payload.get("p_sources", []))
+        if function_name == "replace_note_links_atomic":
+            return FakeResponse(200, payload.get("p_linked_note_ids", []))
+        if function_name == "replace_document_citations_atomic":
+            return FakeResponse(200, payload.get("p_citation_ids", []))
+        return FakeResponse(404, {"message": f'function "{function_name}" does not exist'})
 
 
 def _build_app(monkeypatch):
@@ -121,6 +142,15 @@ def _build_app(monkeypatch):
     return main
 
 
+def _request(user_id: str = "user-notes"):
+    app_state = SimpleNamespace(
+        redis_get=lambda *_args, **_kwargs: 0,
+        redis_incr=lambda *_args, **_kwargs: 1,
+        redis_expire=lambda *_args, **_kwargs: True,
+    )
+    return SimpleNamespace(state=SimpleNamespace(user_id=user_id, account_type="standard"), app=SimpleNamespace(state=app_state))
+
+
 def test_notes_create_sync(monkeypatch):
     main = _build_app(monkeypatch)
     from app.routes import extension
@@ -130,21 +160,19 @@ def test_notes_create_sync(monkeypatch):
     extension.supabase_repo = repo
     research_entities.supabase_repo = repo
 
-    client = TestClient(main.app)
-    payload = {
-        "id": "2f3f2367-64f3-422d-b14d-cf70650fc4ca",
-        "title": "Title",
-        "note_body": "Body",
-        "source_url": "https://example.com/a",
-        "tags": ["43f2fbbf-2390-4ea3-bfc4-28ea0803aca7"],
-    }
+    payload = extension.ExtensionNotePayload(
+        id="2f3f2367-64f3-422d-b14d-cf70650fc4ca",
+        title="Title",
+        note_body="Body",
+        source_url="https://example.com/a",
+        tags=["43f2fbbf-2390-4ea3-bfc4-28ea0803aca7"],
+    )
 
-    response = client.post("/api/notes", headers={"Authorization": "Bearer token"}, json=payload)
+    response = asyncio.run(extension.create_note(_request(), payload))
 
-    assert response.status_code == 200
-    assert response.json()["ok"] is True
+    assert response["ok"] is True
     assert any(call[0] == "post" and call[1] == "notes" for call in repo.calls)
-    assert any(call[0] == "post" and call[1] == "note_tag_links" for call in repo.calls)
+    assert any(call[0] == "rpc" and call[1] == "replace_note_tag_links_atomic" for call in repo.calls)
 
 
 def test_notes_update_sync(monkeypatch):
@@ -156,18 +184,16 @@ def test_notes_update_sync(monkeypatch):
     extension.supabase_repo = repo
     research_entities.supabase_repo = repo
 
-    client = TestClient(main.app)
-    payload = {
-        "id": "2f3f2367-64f3-422d-b14d-cf70650fc4ca",
-        "title": "Title2",
-        "note_body": "Body2",
-        "tags": [],
-    }
+    payload = extension.ExtensionNotePatchRequest(
+        id="2f3f2367-64f3-422d-b14d-cf70650fc4ca",
+        title="Title2",
+        note_body="Body2",
+        tags=[],
+    )
 
-    response = client.patch("/api/notes", headers={"Authorization": "Bearer token"}, json=payload)
+    response = asyncio.run(extension.update_note(_request(), payload))
 
-    assert response.status_code == 200
-    assert response.json()["ok"] is True
+    assert response["ok"] is True
     assert any(call[0] == "patch" and call[1] == "notes" for call in repo.calls)
 
 
@@ -180,12 +206,10 @@ def test_notes_delete_sync(monkeypatch):
     extension.supabase_repo = repo
     research_entities.supabase_repo = repo
 
-    client = TestClient(main.app)
     note_id = "2f3f2367-64f3-422d-b14d-cf70650fc4ca"
-    response = client.delete(f"/api/notes/{note_id}", headers={"Authorization": "Bearer token"})
+    response = asyncio.run(extension.delete_note(_request(), note_id))
 
-    assert response.status_code == 200
-    assert response.json()["ok"] is True
+    assert response["ok"] is True
     assert any(call[0] == "delete" and call[1] == "notes" for call in repo.calls)
 
 
@@ -198,18 +222,11 @@ def test_notes_create_sync_generates_id_when_missing(monkeypatch):
     extension.supabase_repo = repo
     research_entities.supabase_repo = repo
 
-    client = TestClient(main.app)
-    payload = {
-        "title": "No ID",
-        "note_body": "Body",
-        "source_url": "https://example.com/a",
-        "tags": [],
-    }
+    payload = extension.ExtensionNotePayload(title="No ID", note_body="Body", source_url="https://example.com/a", tags=[])
 
-    response = client.post("/api/notes", headers={"Authorization": "Bearer token"}, json=payload)
+    response = asyncio.run(extension.create_note(_request(), payload))
 
-    assert response.status_code == 200
-    note_id = response.json()["note_id"]
+    note_id = response["note_id"]
     assert isinstance(note_id, str)
     assert len(note_id) == 36
 
@@ -223,21 +240,19 @@ def test_notes_create_sync_accepts_comma_separated_tags(monkeypatch):
     extension.supabase_repo = repo
     research_entities.supabase_repo = repo
 
-    client = TestClient(main.app)
-    payload = {
-        "id": "2f3f2367-64f3-422d-b14d-cf70650fc4ca",
-        "title": "Tags",
-        "note_body": "Body",
-        "tags": "43f2fbbf-2390-4ea3-bfc4-28ea0803aca7, 5ec57fbc-5662-47f5-8abf-4f95ce13fd77",
-    }
+    payload = extension.ExtensionNotePayload(
+        id="2f3f2367-64f3-422d-b14d-cf70650fc4ca",
+        title="Tags",
+        note_body="Body",
+        tags="43f2fbbf-2390-4ea3-bfc4-28ea0803aca7, 5ec57fbc-5662-47f5-8abf-4f95ce13fd77",
+    )
 
-    response = client.post("/api/notes", headers={"Authorization": "Bearer token"}, json=payload)
+    response = asyncio.run(extension.create_note(_request(), payload))
 
-    assert response.status_code == 200
-    join_posts = [call for call in repo.calls if call[0] == "post" and call[1] == "note_tag_links"]
-    assert len(join_posts) == 1
-    rows = join_posts[0][2]["json"]
-    assert len(rows) == 2
+    assert response["ok"] is True
+    join_calls = [call for call in repo.calls if call[0] == "rpc" and call[1] == "replace_note_tag_links_atomic"]
+    assert len(join_calls) == 1
+    assert len(join_calls[0][2]["json"]["p_tag_ids"]) == 2
 
 
 def test_notes_create_sync_accepts_legacy_body_field(monkeypatch):
@@ -249,17 +264,18 @@ def test_notes_create_sync_accepts_legacy_body_field(monkeypatch):
     extension.supabase_repo = repo
     research_entities.supabase_repo = repo
 
-    client = TestClient(main.app)
-    payload = {
-        "id": "2f3f2367-64f3-422d-b14d-cf70650fc4ca",
-        "title": "Legacy",
-        "body": "Body from legacy field",
-        "tags": [],
-    }
+    payload = extension.ExtensionNotePayload.model_validate(
+        {
+            "id": "2f3f2367-64f3-422d-b14d-cf70650fc4ca",
+            "title": "Legacy",
+            "body": "Body from legacy field",
+            "tags": [],
+        }
+    )
 
-    response = client.post("/api/notes", headers={"Authorization": "Bearer token"}, json=payload)
+    response = asyncio.run(extension.create_note(_request(), payload))
 
-    assert response.status_code == 200
+    assert response["ok"] is True
     note_post = [call for call in repo.calls if call[0] == "post" and call[1] == "notes"][0]
     assert note_post[2]["json"]["note_body"] == "Body from legacy field"
 
@@ -273,15 +289,11 @@ def test_notes_update_sync_supports_partial_patch_without_note_body(monkeypatch)
     extension.supabase_repo = repo
     research_entities.supabase_repo = repo
 
-    client = TestClient(main.app)
-    payload = {
-        "id": "2f3f2367-64f3-422d-b14d-cf70650fc4ca",
-        "title": "Title only",
-    }
+    payload = extension.ExtensionNotePatchRequest(id="2f3f2367-64f3-422d-b14d-cf70650fc4ca", title="Title only")
 
-    response = client.patch("/api/notes", headers={"Authorization": "Bearer token"}, json=payload)
+    response = asyncio.run(extension.update_note(_request(), payload))
 
-    assert response.status_code == 200
+    assert response["ok"] is True
     patch_call = [call for call in repo.calls if call[0] == "patch" and call[1] == "notes"][0]
     assert "note_body" not in patch_call[2]["json"]
 
@@ -295,11 +307,7 @@ def test_notes_list_sync(monkeypatch):
     extension.supabase_repo = repo
     research_entities.supabase_repo = repo
 
-    client = TestClient(main.app)
-    response = client.get("/api/notes?limit=999&offset=-4", headers={"Authorization": "Bearer token"})
-
-    assert response.status_code == 200
-    payload = response.json()
+    payload = asyncio.run(extension.list_notes(_request(), limit=999, offset=-4))
     assert payload["ok"] is True
     assert payload["total_count"] == 17
     assert len(payload["notes"]) == 1
@@ -320,14 +328,12 @@ def test_notes_archive_and_restore(monkeypatch):
     extension.supabase_repo = repo
     research_entities.supabase_repo = repo
 
-    client = TestClient(main.app)
     note_id = "2f3f2367-64f3-422d-b14d-cf70650fc4ca"
+    archive_res = asyncio.run(extension.archive_note(_request(), note_id))
+    restore_res = asyncio.run(extension.restore_note(_request(), note_id))
 
-    archive_res = client.post(f"/api/notes/{note_id}/archive", headers={"Authorization": "Bearer token"})
-    restore_res = client.post(f"/api/notes/{note_id}/restore", headers={"Authorization": "Bearer token"})
-
-    assert archive_res.status_code == 200
-    assert restore_res.status_code == 200
+    assert archive_res["ok"] is True
+    assert restore_res["ok"] is True
     assert any(call[0] == "patch" and call[1] == "notes" for call in repo.calls)
 
 
@@ -349,10 +355,8 @@ def test_create_citation_from_note_links_note(monkeypatch):
     extension._get_account_type = fake_account_type
     extension.create_citation = fake_create_citation
 
-    client = TestClient(main.app)
     note_id = "2f3f2367-64f3-422d-b14d-cf70650fc4ca"
-    response = client.post(f"/api/notes/{note_id}/citation", headers={"Authorization": "Bearer token"})
+    response = asyncio.run(extension.create_citation_from_note(_request(), note_id))
 
-    assert response.status_code == 200
-    assert response.json()["citation_id"] == "c2b7ff8e-50bb-4fb8-a377-c62f84fbcc88"
+    assert response["citation_id"] == "c2b7ff8e-50bb-4fb8-a377-c62f84fbcc88"
     assert any(call[0] == "patch" and call[1] == "notes" for call in repo.calls)

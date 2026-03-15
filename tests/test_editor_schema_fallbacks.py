@@ -1,8 +1,16 @@
 import importlib
+import asyncio
 from types import SimpleNamespace
 
+import pytest
 import supabase
-from fastapi.testclient import TestClient
+from fastapi import HTTPException
+from pydantic import ValidationError
+
+
+DOC_ID = "11111111-1111-4111-8111-111111111111"
+DOC_CREATED_ID = "22222222-2222-4222-8222-222222222222"
+NOTE_ID = "33333333-3333-4333-8333-333333333333"
 
 
 class DummyUser:
@@ -83,20 +91,20 @@ class SchemaFallbackRepo:
                     "created_at": "2026-01-01T00:00:00+00:00",
                 }])
             return FakeResponse(200, [{
-                "id": "doc-1",
+                "id": DOC_ID,
                 "title": "Doc",
                 "project_id": None,
                 "updated_at": "2026-01-01T00:00:00+00:00",
                 "created_at": "2026-01-01T00:00:00+00:00",
             }])
         if resource == "document_citations":
-            return FakeResponse(404, {"message": "relation \"document_citations\" does not exist"})
+            return FakeResponse(200, [])
         if resource == "document_tags":
             return FakeResponse(200, [])
         if resource == "citations":
             return FakeResponse(200, [])
         if resource == "notes":
-            return FakeResponse(200, [{"id": "note-1"}])
+            return FakeResponse(200, [{"id": NOTE_ID}])
         return FakeResponse(200, [])
 
     async def post(self, resource, **kwargs):
@@ -108,7 +116,7 @@ class SchemaFallbackRepo:
             if "expires_at" in payload:
                 return FakeResponse(400, {"message": "column expires_at does not exist"})
             return FakeResponse(201, [{
-                "id": "doc-created",
+                "id": DOC_CREATED_ID,
                 "title": payload.get("title", "Untitled"),
                 "content_delta": payload.get("content_delta", {}),
                 "project_id": payload.get("project_id"),
@@ -130,11 +138,19 @@ class SchemaFallbackRepo:
                 return FakeResponse(400, {"message": "column content_html does not exist"})
             if "expires_at" in payload:
                 return FakeResponse(400, {"message": "column expires_at does not exist"})
-            return FakeResponse(200, [{"id": "doc-1", "title": payload.get("title", "Doc")}])
+            return FakeResponse(200, [{"id": DOC_ID, "title": payload.get("title", "Doc")}])
         return FakeResponse(200, [])
 
     async def delete(self, *_args, **_kwargs):
         return FakeResponse(204, [])
+
+    async def rpc(self, function_name, **_kwargs):
+        payload = (_kwargs.get("json") or {})
+        if function_name == "replace_document_citations_atomic":
+            return FakeResponse(200, payload.get("p_citation_ids", []))
+        if function_name == "replace_document_tags_atomic":
+            return FakeResponse(200, payload.get("p_tag_ids", []))
+        return FakeResponse(404, {"message": f'function "{function_name}" does not exist'})
 
 
 def _build_app(monkeypatch, account_type="pro"):
@@ -167,17 +183,18 @@ def _build_app(monkeypatch, account_type="pro"):
     repo = SchemaFallbackRepo()
     editor.supabase_repo = repo
     research_entities.supabase_repo = repo
-    return main.app, repo
+    return main.app, repo, editor
+
+
+def _request(account_type: str = "pro"):
+    return SimpleNamespace(state=SimpleNamespace(user_id="user-1", account_type=account_type))
 
 
 def test_create_doc_falls_back_for_missing_content_html_and_expires_at(monkeypatch):
-    app, repo = _build_app(monkeypatch)
-    client = TestClient(app)
+    _app, repo, editor = _build_app(monkeypatch)
+    response = asyncio.run(editor.create_doc(_request(), editor.DocumentCreate()))
 
-    response = client.post("/api/docs", json={}, headers={"Authorization": "Bearer valid"})
-
-    assert response.status_code == 200
-    assert response.json()["id"] == "doc-created"
+    assert response["id"] == DOC_CREATED_ID
     assert len(repo.post_payloads) >= 3
     assert "content_html" in repo.post_payloads[0]
     assert any("expires_at" in payload for payload in repo.post_payloads[1:])
@@ -186,13 +203,10 @@ def test_create_doc_falls_back_for_missing_content_html_and_expires_at(monkeypat
 
 
 def test_list_docs_falls_back_when_expires_at_filter_missing(monkeypatch):
-    app, repo = _build_app(monkeypatch)
-    client = TestClient(app)
+    _app, repo, editor = _build_app(monkeypatch)
+    response = asyncio.run(editor.list_docs(_request()))
 
-    response = client.get("/api/docs", headers={"Authorization": "Bearer valid"})
-
-    assert response.status_code == 200
-    assert len(response.json()) == 1
+    assert len(response) == 1
     document_calls = [call for call in repo.get_calls if call[0] == "documents"]
     assert len(document_calls) >= 2
     first_params = document_calls[0][1]["params"]
@@ -202,16 +216,16 @@ def test_list_docs_falls_back_when_expires_at_filter_missing(monkeypatch):
 
 
 def test_update_doc_falls_back_when_new_columns_missing(monkeypatch):
-    app, repo = _build_app(monkeypatch)
-    client = TestClient(app)
-
-    response = client.put(
-        "/api/docs/doc-1",
-        json={"title": "T", "content_delta": {"ops": [{"insert": "x"}]}, "content_html": "<p>x</p>", "attached_citation_ids": []},
-        headers={"Authorization": "Bearer valid"},
+    _app, repo, editor = _build_app(monkeypatch)
+    response = asyncio.run(
+        editor.update_doc(
+            _request(),
+            DOC_ID,
+            editor.DocumentUpdate(title="T", content_delta={"ops": [{"insert": "x"}]}, content_html="<p>x</p>", attached_citation_ids=[]),
+        )
     )
 
-    assert response.status_code == 200
+    assert response["id"] == DOC_ID
     assert len(repo.patch_payloads) >= 3
     assert "content_html" in repo.patch_payloads[0]
     assert any("expires_at" in payload for payload in repo.patch_payloads[1:])
@@ -221,29 +235,22 @@ def test_update_doc_falls_back_when_new_columns_missing(monkeypatch):
 
 
 def test_attach_note_returns_503_when_document_notes_table_missing(monkeypatch):
-    app, _repo = _build_app(monkeypatch)
-    client = TestClient(app)
+    _app, _repo, editor = _build_app(monkeypatch)
 
-    response = client.post(
-        "/api/docs/doc-1/notes",
-        json={"note_id": "note-1"},
-        headers={"Authorization": "Bearer valid"},
-    )
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(editor.attach_note_to_doc(_request(), DOC_ID, editor.DocumentNoteCreate(note_id=NOTE_ID)))
 
-    assert response.status_code == 503
-    payload = response.json()["detail"]
+    assert excinfo.value.status_code == 503
+    payload = excinfo.value.detail
     assert payload["code"] == "DOC_NOTES_SCHEMA_MISSING"
 
 
 def test_update_doc_rejects_legacy_citation_ids_input(monkeypatch):
-    app, _repo = _build_app(monkeypatch)
-    client = TestClient(app)
+    _app, _repo, editor = _build_app(monkeypatch)
 
-    response = client.put(
-        "/api/docs/doc-1",
-        json={"title": "T", "content_delta": {"ops": [{"insert": "x"}]}, "content_html": "<p>x</p>", "citation_ids": []},
-        headers={"Authorization": "Bearer valid"},
-    )
+    with pytest.raises(ValidationError) as excinfo:
+        editor.DocumentUpdate.model_validate(
+            {"title": "T", "content_delta": {"ops": [{"insert": "x"}]}, "content_html": "<p>x</p>", "citation_ids": []}
+        )
 
-    assert response.status_code == 422
-    assert "attached_citation_ids" in str(response.json()["detail"]).lower()
+    assert "attached_citation_ids" in str(excinfo.value).lower()

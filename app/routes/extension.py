@@ -23,6 +23,8 @@ from app.services.research_entities import (
     list_projects as list_canonical_projects,
     list_tags as list_canonical_tags,
     replace_document_citations,
+    replace_note_links,
+    replace_note_sources,
     replace_note_tag_links,
 )
 
@@ -253,56 +255,6 @@ def _clean_linked_note_ids(linked_note_ids: list[str] | None, *, note_id: str | 
         seen.add(normalized)
         unique.append(normalized)
     return unique
-
-
-async def _replace_note_sources(user_id: str, note_id: str, sources: list[dict]):
-    delete_res = await supabase_repo.delete(
-        "note_sources",
-        params={"user_id": f"eq.{user_id}", "note_id": f"eq.{note_id}"},
-        headers=supabase_repo.headers(prefer="return=minimal", include_content_type=False),
-    )
-    if delete_res.status_code not in (200, 204, 404):
-        raise HTTPException(status_code=500, detail="Failed to update note sources")
-    if not sources:
-        return
-    rows = [
-        {
-            "note_id": note_id,
-            "user_id": user_id,
-            "url": src.get("url"),
-            "title": src.get("title"),
-            "hostname": src.get("hostname"),
-            "attached_at": src.get("attached_at"),
-        }
-        for src in sources
-    ]
-    insert_res = await supabase_repo.post(
-        "note_sources",
-        json=rows,
-        headers=supabase_repo.headers(prefer="return=minimal"),
-    )
-    if insert_res.status_code not in (200, 201):
-        raise HTTPException(status_code=500, detail="Failed to update note sources")
-
-
-async def _replace_note_links(user_id: str, note_id: str, linked_note_ids: list[str]):
-    delete_res = await supabase_repo.delete(
-        "note_links",
-        params={"user_id": f"eq.{user_id}", "note_id": f"eq.{note_id}"},
-        headers=supabase_repo.headers(prefer="return=minimal", include_content_type=False),
-    )
-    if delete_res.status_code not in (200, 204, 404):
-        raise HTTPException(status_code=500, detail="Failed to update linked notes")
-    if not linked_note_ids:
-        return
-    rows = [{"note_id": note_id, "linked_note_id": linked_id, "user_id": user_id} for linked_id in linked_note_ids]
-    insert_res = await supabase_repo.post(
-        "note_links",
-        json=rows,
-        headers=supabase_repo.headers(prefer="resolution=merge-duplicates,return=minimal"),
-    )
-    if insert_res.status_code not in (200, 201):
-        raise HTTPException(status_code=500, detail="Failed to update linked notes")
 
 
 async def _enrich_notes_with_sources_and_links(user_id: str, notes: list[dict]) -> list[dict]:
@@ -697,8 +649,8 @@ async def create_note(request: Request, payload: ExtensionNotePayload):
         raise HTTPException(status_code=500, detail="Failed to sync note")
 
     await _upsert_note_tags_for_note(user_id, note_id, tag_ids)
-    await _replace_note_sources(user_id, note_id, sources)
-    await _replace_note_links(user_id, note_id, linked_note_ids)
+    await replace_note_sources(user_id, note_id, sources)
+    await replace_note_links(user_id, note_id, linked_note_ids)
     return {"ok": True, "note_id": note_id}
 
 
@@ -928,9 +880,9 @@ async def update_note(request: Request, payload: ExtensionNotePatchRequest):
     if payload.tag_ids is not None or payload.tags is not None:
         await _upsert_note_tags_for_note(user_id, note_id, tag_ids)
     if sources is not None:
-        await _replace_note_sources(user_id, note_id, sources)
+        await replace_note_sources(user_id, note_id, sources)
     if linked_note_ids is not None:
-        await _replace_note_links(user_id, note_id, linked_note_ids)
+        await replace_note_links(user_id, note_id, linked_note_ids)
     return {"ok": True, "note_id": note_id}
 
 
@@ -1080,8 +1032,8 @@ async def attach_note_source(request: Request, note_id: str, payload: dict):
     )
     current_sources = existing.json() if existing.status_code == 200 else []
     deduped = _clean_note_sources([*current_sources, *source_list])
-    await _replace_note_sources(user_id, normalized_note_id, deduped)
-    return {"ok": True, "note_id": normalized_note_id, "sources": deduped}
+    applied_sources = await replace_note_sources(user_id, normalized_note_id, deduped)
+    return {"ok": True, "note_id": normalized_note_id, "sources": applied_sources}
 
 
 @router.post("/api/notes/{note_id}/links")
@@ -1093,5 +1045,5 @@ async def link_note_to_notes(request: Request, note_id: str, payload: dict):
     await _assert_note_exists(user_id, normalized_note_id)
     raw_ids = payload.get("linked_note_ids") if isinstance(payload, dict) else None
     linked_note_ids = _clean_linked_note_ids(raw_ids, note_id=normalized_note_id)
-    await _replace_note_links(user_id, normalized_note_id, linked_note_ids)
-    return {"ok": True, "note_id": normalized_note_id, "linked_note_ids": linked_note_ids}
+    applied_linked_note_ids = await replace_note_links(user_id, normalized_note_id, linked_note_ids)
+    return {"ok": True, "note_id": normalized_note_id, "linked_note_ids": applied_linked_note_ids}

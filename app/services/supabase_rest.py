@@ -98,6 +98,39 @@ class SupabaseRestRepository:
     ):
         return await self.request("DELETE", resource=resource, params=params, headers=headers)
 
+    async def rpc(
+        self,
+        function_name: str,
+        *,
+        json: Any = None,
+        headers: dict[str, str] | None = None,
+    ):
+        return await self.request("POST", resource=f"rpc/{function_name}", json=json, headers=headers)
+
+
+def response_json(response) -> Any:
+    try:
+        return response.json()
+    except Exception:
+        return None
+
+
+def response_error_text(response) -> str:
+    body = response_json(response)
+    if isinstance(body, dict):
+        return str(body.get("message") or body.get("error") or body.get("details") or "")
+    if isinstance(body, list):
+        return " ".join(str(item) for item in body)
+    return "" if body is None else str(body)
+
+
+def response_error_code(response) -> str:
+    body = response_json(response)
+    if not isinstance(body, dict):
+        return ""
+    code = body.get("code")
+    return "" if code is None else str(code)
+
 
 async def expect_ok(response, *, detail: str, allowed: set[int] | tuple[int, ...] = (200,)):
     if response.status_code not in set(allowed):

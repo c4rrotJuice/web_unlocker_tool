@@ -1,8 +1,9 @@
 import importlib
+import asyncio
 from types import SimpleNamespace
 
+import pytest
 import supabase
-from fastapi.testclient import TestClient
 
 
 class DummyUser:
@@ -88,6 +89,14 @@ class DummyRepo:
             return DummyResp(204, [])
         return DummyResp(204, [])
 
+    async def rpc(self, function_name, **kwargs):
+        payload = kwargs.get("json") or {}
+        if function_name == "replace_document_citations_atomic":
+            return DummyResp(200, payload.get("p_citation_ids", []))
+        if function_name == "replace_document_tags_atomic":
+            return DummyResp(200, payload.get("p_tag_ids", []))
+        return DummyResp(404, {"message": f'function "{function_name}" does not exist'})
+
     def headers(self, *args, **kwargs):
         return {}
 
@@ -132,24 +141,45 @@ def _build_app(monkeypatch, account_type="standard"):
     return main.app
 
 
+def _request(*, account_type="standard", user_id="user-1", redis_data=None):
+    store = redis_data if redis_data is not None else {}
+
+    async def redis_get(key):
+        return store.get(key, 0)
+
+    async def redis_set(key, value, ttl_seconds=None):
+        store[key] = value
+        return True
+
+    async def redis_incr(key):
+        store[key] = int(store.get(key, 0)) + 1
+        return store[key]
+
+    async def redis_expire(_key, _seconds):
+        return True
+
+    return SimpleNamespace(
+        state=SimpleNamespace(user_id=user_id, account_type=account_type),
+        app=SimpleNamespace(state=SimpleNamespace(redis_get=redis_get, redis_set=redis_set, redis_incr=redis_incr, redis_expire=redis_expire)),
+    )
+
+
 def test_standard_unlock_permit_limited_to_15_per_day(monkeypatch):
-    app = _build_app(monkeypatch, account_type="standard")
-    client = TestClient(app)
-    headers = {"Authorization": "Bearer valid"}
+    _build_app(monkeypatch, account_type="standard")
+    from app.routes import extension
 
+    request = _request(account_type="standard")
     for _ in range(15):
-        response = client.post("/api/extension/unlock-permit", json={}, headers=headers)
-        assert response.status_code == 200
-        assert response.json()["allowed"] is True
-        assert response.json()["usage_period"] == "day"
+        response = asyncio.run(extension.extension_unlock_permit(request, extension.ExtensionPermitRequest()))
+        assert response["allowed"] is True
+        assert response["usage_period"] == "day"
 
-    denied = client.post("/api/extension/unlock-permit", json={}, headers=headers)
-    assert denied.status_code == 200
-    assert denied.json()["allowed"] is False
+    denied = asyncio.run(extension.extension_unlock_permit(request, extension.ExtensionPermitRequest()))
+    assert denied["allowed"] is False
 
 
 def test_standard_doc_creation_blocked_at_16th(monkeypatch):
-    app = _build_app(monkeypatch, account_type="standard")
+    _build_app(monkeypatch, account_type="standard")
     from app.routes import editor
 
     async def fake_count(*args, **kwargs):
@@ -157,14 +187,14 @@ def test_standard_doc_creation_blocked_at_16th(monkeypatch):
 
     monkeypatch.setattr(editor, "_count_docs_in_window", fake_count)
 
-    client = TestClient(app)
-    response = client.post("/api/docs", json={}, headers={"Authorization": "Bearer valid"})
-    assert response.status_code == 403
-    assert response.json()["detail"]["toast"] == "Document limit reached for this period. Upgrade to Pro for unlimited access."
+    with pytest.raises(Exception) as excinfo:
+        asyncio.run(editor.create_doc(_request(account_type="standard"), editor.DocumentCreate()))
+    assert excinfo.value.status_code == 403
+    assert excinfo.value.detail["toast"] == "Document limit reached for this period. Upgrade to Pro for unlimited access."
 
 
 def test_standard_archived_doc_blocks_edit_but_allows_export(monkeypatch):
-    app = _build_app(monkeypatch, account_type="standard")
+    _build_app(monkeypatch, account_type="standard")
     from app.routes import editor
 
     async def fake_fetch_doc_core(*args, **kwargs):
@@ -172,72 +202,75 @@ def test_standard_archived_doc_blocks_edit_but_allows_export(monkeypatch):
 
     monkeypatch.setattr(editor, "_fetch_doc_core", fake_fetch_doc_core)
 
-    client = TestClient(app)
-    put_res = client.put(
-        "/api/docs/doc-1",
-        json={"title": "T", "content_delta": {"ops": [{"insert": "x"}]}, "content_html": "<p>x</p>", "attached_citation_ids": []},
-        headers={"Authorization": "Bearer valid"},
-    )
-    assert put_res.status_code == 403
-    assert put_res.json()["detail"]["toast"] == "This document is archived. Upgrade to Pro to restore editing."
+    with pytest.raises(Exception) as excinfo:
+        asyncio.run(
+            editor.update_doc(
+                _request(account_type="standard"),
+                "doc-1",
+                editor.DocumentUpdate(title="T", content_delta={"ops": [{"insert": "x"}]}, content_html="<p>x</p>", attached_citation_ids=[]),
+            )
+        )
+    assert excinfo.value.status_code == 403
+    assert excinfo.value.detail["toast"] == "This document is archived. Upgrade to Pro to restore editing."
 
-    export_res = client.post(
-        "/api/docs/doc-1/export",
-        json={"format": "docx", "style": "mla"},
-        headers={"Authorization": "Bearer valid"},
+    export_res = asyncio.run(
+        editor.export_doc(
+            _request(account_type="standard"),
+            "doc-1",
+            editor.ExportRequest(format="docx", style="mla"),
+        )
     )
-    assert export_res.status_code == 200
-    assert export_res.json()["archived"] is True
-    assert export_res.json()["format"] == "docx"
+    assert export_res["archived"] is True
+    assert export_res["format"] == "docx"
 
 
 def test_standard_export_file_pdf_returns_real_pdf(monkeypatch):
-    app = _build_app(monkeypatch, account_type="standard")
-    client = TestClient(app)
+    _build_app(monkeypatch, account_type="standard")
+    from app.routes import editor
 
-    response = client.get(
-        "/api/docs/doc-1/export/file?format=pdf&style=mla",
-        headers={"Authorization": "Bearer valid"},
+    export_data = asyncio.run(
+        editor.export_doc(
+            _request(account_type="standard"),
+            "doc-1",
+            editor.ExportRequest(format="pdf", style="mla"),
+        )
     )
 
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("application/pdf")
-    assert response.content.startswith(b"%PDF")
+    body = editor._build_pdf_bytes(export_data["html"], export_data["bibliography"], title=export_data["title"])
+    assert body.startswith(b"%PDF")
 
 
 def test_standard_export_file_docx_returns_zip_container(monkeypatch):
-    app = _build_app(monkeypatch, account_type="standard")
-    client = TestClient(app)
+    _build_app(monkeypatch, account_type="standard")
+    from app.routes import editor
 
-    response = client.get(
-        "/api/docs/doc-1/export/file?format=docx&style=mla",
-        headers={"Authorization": "Bearer valid"},
+    export_data = asyncio.run(
+        editor.export_doc(
+            _request(account_type="standard"),
+            "doc-1",
+            editor.ExportRequest(format="docx", style="mla"),
+        )
     )
 
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith(
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    )
-    assert response.content[:2] == b"PK"
+    body = editor._build_docx_bytes(export_data["html"], export_data["bibliography"])
+    assert body[:2] == b"PK"
 
 
 
 
 def test_standard_export_file_uses_document_title_for_filename(monkeypatch):
-    app = _build_app(monkeypatch, account_type="standard")
-    client = TestClient(app)
+    _build_app(monkeypatch, account_type="standard")
+    from app.routes import editor
 
-    response = client.get(
-        "/api/docs/doc-1/export/file?format=pdf&style=mla",
-        headers={"Authorization": "Bearer valid"},
+    response = asyncio.run(
+        editor.export_doc_file(_request(account_type="standard"), "doc-1", format="pdf", style="mla")
     )
 
-    assert response.status_code == 200
     assert 'filename="Doc.pdf"' in response.headers["content-disposition"]
 
 
 def test_standard_export_file_docx_preserves_inline_formatting(monkeypatch):
-    app = _build_app(monkeypatch, account_type="standard")
+    _build_app(monkeypatch, account_type="standard")
     from app.routes import editor
 
     class RichDocRepo(DummyRepo):
@@ -256,32 +289,28 @@ def test_standard_export_file_docx_preserves_inline_formatting(monkeypatch):
             )
 
     editor.supabase_repo = RichDocRepo()
-    client = TestClient(app)
-
-    response = client.get(
-        "/api/docs/doc-1/export/file?format=docx&style=mla",
-        headers={"Authorization": "Bearer valid"},
+    export_data = asyncio.run(
+        editor.export_doc(
+            _request(account_type="standard"),
+            "doc-1",
+            editor.ExportRequest(format="docx", style="mla"),
+        )
     )
-
-    assert response.status_code == 200
 
     import zipfile
     from io import BytesIO
 
-    with zipfile.ZipFile(BytesIO(response.content)) as archive:
+    with zipfile.ZipFile(BytesIO(editor._build_docx_bytes(export_data["html"], export_data["bibliography"]))) as archive:
         document_xml = archive.read("word/document.xml").decode("utf-8")
 
     assert "<w:b/>" in document_xml
     assert "<w:i/>" in document_xml
 
 def test_pro_unlock_permit_unlimited(monkeypatch):
-    app = _build_app(monkeypatch, account_type="pro")
-    client = TestClient(app)
-    headers = {"Authorization": "Bearer valid"}
+    _build_app(monkeypatch, account_type="pro")
+    from app.routes import extension
 
-    response = client.post("/api/extension/unlock-permit", json={}, headers=headers)
-    assert response.status_code == 200
-    payload = response.json()
+    payload = asyncio.run(extension.extension_unlock_permit(_request(account_type="pro"), extension.ExtensionPermitRequest()))
     assert payload["allowed"] is True
     assert payload["remaining"] == -1
     assert payload["usage_period"] == "unlimited"

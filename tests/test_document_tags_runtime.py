@@ -6,7 +6,6 @@ from types import SimpleNamespace
 import pytest
 import supabase
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
 
 
 USER_ID = "11111111-1111-1111-1111-111111111111"
@@ -80,6 +79,7 @@ class DocumentTagRepo:
                 "content_delta": {"ops": [{"insert": "Hello\n"}]},
                 "content_html": "<p>Hello</p>",
                 "project_id": None,
+                "expires_at": None,
                 "created_at": "2026-01-01T00:00:00+00:00",
                 "updated_at": "2026-01-02T00:00:00+00:00",
                 "user_id": USER_ID,
@@ -91,6 +91,8 @@ class DocumentTagRepo:
             TAG_FOREIGN: {"id": TAG_FOREIGN, "user_id": FOREIGN_USER_ID, "name": "foreign", "created_at": "2026-01-04T00:00:00+00:00", "updated_at": "2026-01-04T00:00:00+00:00"},
         }
         self.document_tags = {(DOC_ID, TAG_ALPHA)}
+        self.note_tag_links = set()
+        self.document_citations = set()
         self.checkpoints = {
             CHECKPOINT_ID: {
                 "id": CHECKPOINT_ID,
@@ -138,6 +140,7 @@ class DocumentTagRepo:
                 "content_delta": payload.get("content_delta") or {"ops": [{"insert": "\n"}]},
                 "content_html": payload.get("content_html"),
                 "project_id": payload.get("project_id"),
+                "expires_at": payload.get("expires_at"),
                 "created_at": payload.get("created_at") or "2026-01-05T00:00:00+00:00",
                 "updated_at": payload.get("updated_at") or "2026-01-05T00:00:00+00:00",
                 "user_id": payload.get("user_id") or USER_ID,
@@ -178,6 +181,36 @@ class DocumentTagRepo:
                 self.document_tags = {link for link in self.document_tags if link[0] != doc_id}
             return DummyResp(204, [])
         return DummyResp(204, [])
+
+    async def rpc(self, function_name, **kwargs):
+        if self.schema_missing:
+            return DummyResp(404, {"message": f'function "{function_name}" does not exist'})
+        payload = kwargs.get("json") or {}
+        if function_name == "replace_document_tags_atomic":
+            document_id = payload.get("p_document_id")
+            tag_ids = payload.get("p_tag_ids", [])
+            self.document_tags = {link for link in self.document_tags if link[0] != document_id}
+            for tag_id in tag_ids:
+                self.document_tags.add((document_id, tag_id))
+            return DummyResp(200, tag_ids)
+        if function_name == "replace_document_citations_atomic":
+            document_id = payload.get("p_document_id")
+            citation_ids = payload.get("p_citation_ids", [])
+            self.document_citations = {link for link in self.document_citations if link[0] != document_id}
+            for citation_id in citation_ids:
+                self.document_citations.add((document_id, citation_id))
+            return DummyResp(200, citation_ids)
+        if function_name == "replace_note_tag_links_atomic":
+            note_id = payload.get("p_note_id")
+            tag_ids = payload.get("p_tag_ids", [])
+            invalid = [tag_id for tag_id in tag_ids if self.tags.get(tag_id, {}).get("user_id") != USER_ID]
+            if invalid:
+                return DummyResp(400, {"code": "P0001", "message": "invalid_related_rows"})
+            self.note_tag_links = {link for link in self.note_tag_links if link[0] != note_id}
+            for tag_id in tag_ids:
+                self.note_tag_links.add((note_id, tag_id))
+            return DummyResp(200, tag_ids)
+        return DummyResp(404, {"message": f'function "{function_name}" does not exist'})
 
     def _document_tag_rows(self, params):
         doc_filter = params.get("document_id", "")
@@ -236,6 +269,9 @@ def _build_app(monkeypatch, repo=None, account_type="pro"):
     async def redis_get(_key):
         return 0
 
+    async def redis_set(_key, _value, ttl_seconds=None):
+        return True
+
     async def redis_incr(_key):
         return 1
 
@@ -243,6 +279,7 @@ def _build_app(monkeypatch, repo=None, account_type="pro"):
         return True
 
     main.app.state.redis_get = redis_get
+    main.app.state.redis_set = redis_set
     main.app.state.redis_incr = redis_incr
     main.app.state.redis_expire = redis_expire
     main.app.state.http_session = None
@@ -256,32 +293,37 @@ def _build_app(monkeypatch, repo=None, account_type="pro"):
     return main.app, repo, editor, research_entities
 
 
+def _request(account_type: str = "pro"):
+    return SimpleNamespace(state=SimpleNamespace(user_id=USER_ID, account_type=account_type))
+
+
 def test_document_endpoints_return_consistent_tag_shape(monkeypatch):
-    app, repo, _editor, _research_entities = _build_app(monkeypatch)
-    client = TestClient(app)
-    headers = {"Authorization": "Bearer valid"}
+    _app, repo, editor, _research_entities = _build_app(monkeypatch)
+    request = _request()
 
-    created = client.post("/api/docs", json={"title": "Created", "tag_ids": [TAG_ALPHA, TAG_BETA]}, headers=headers)
-    fetched = client.get(f"/api/docs/{DOC_ID}", headers=headers)
-    listed = client.get("/api/docs", headers=headers)
-    updated = client.put(
-        f"/api/docs/{DOC_ID}",
-        json={"title": "Updated", "content_delta": {"ops": [{"insert": "Changed\n"}]}, "content_html": "<p>Changed</p>", "attached_citation_ids": [], "tag_ids": [TAG_BETA]},
-        headers=headers,
+    created = asyncio.run(editor.create_doc(request, editor.DocumentCreate(title="Created", tag_ids=[TAG_ALPHA, TAG_BETA])))
+    fetched = asyncio.run(editor.get_doc(request, DOC_ID))
+    listed = asyncio.run(editor.list_docs(request))
+    updated = asyncio.run(
+        editor.update_doc(
+            request,
+            DOC_ID,
+            editor.DocumentUpdate(
+                title="Updated",
+                content_delta={"ops": [{"insert": "Changed\n"}]},
+                content_html="<p>Changed</p>",
+                attached_citation_ids=[],
+                tag_ids=[TAG_BETA],
+            ),
+        )
     )
-    restored = client.post(f"/api/docs/{DOC_ID}/restore", json={"checkpoint_id": CHECKPOINT_ID}, headers=headers)
+    restored = asyncio.run(editor.restore_doc_checkpoint(request, DOC_ID, editor.RestoreCheckpointRequest(checkpoint_id=CHECKPOINT_ID)))
 
-    assert created.status_code == 200
-    assert fetched.status_code == 200
-    assert listed.status_code == 200
-    assert updated.status_code == 200
-    assert restored.status_code == 200
-
-    create_payload = created.json()
-    get_payload = fetched.json()
-    list_payload = listed.json()[0]
-    update_payload = updated.json()
-    restore_payload = restored.json()
+    create_payload = created
+    get_payload = fetched
+    list_payload = listed[0]
+    update_payload = updated
+    restore_payload = restored
 
     expected_keys = set(create_payload.keys())
     assert expected_keys == set(get_payload.keys()) == set(list_payload.keys()) == set(update_payload.keys()) == set(restore_payload.keys())
@@ -294,43 +336,50 @@ def test_document_endpoints_return_consistent_tag_shape(monkeypatch):
 
 
 def test_document_tag_endpoints_support_add_replace_remove_and_noop_duplicates(monkeypatch):
-    app, repo, _editor, _research_entities = _build_app(monkeypatch)
-    client = TestClient(app)
-    headers = {"Authorization": "Bearer valid"}
+    _app, repo, editor, _research_entities = _build_app(monkeypatch)
+    request = _request()
 
-    additive = client.post(f"/api/docs/{DOC_ID}/tags", json={"tag_ids": [TAG_ALPHA, TAG_BETA, TAG_ALPHA]}, headers=headers)
-    assert additive.status_code == 200
-    assert [tag["id"] for tag in additive.json()] == [TAG_ALPHA, TAG_BETA]
+    additive = asyncio.run(editor.assign_doc_tags(request, DOC_ID, editor.DocumentTagsWrite(tag_ids=[TAG_ALPHA, TAG_BETA, TAG_ALPHA])))
+    assert [tag["id"] for tag in additive] == [TAG_ALPHA, TAG_BETA]
     assert repo.document_tags == {(DOC_ID, TAG_ALPHA), (DOC_ID, TAG_BETA)}
 
-    replaced = client.put(f"/api/docs/{DOC_ID}/tags", json={"tag_ids": [TAG_BETA]}, headers=headers)
-    assert replaced.status_code == 200
-    assert [tag["id"] for tag in replaced.json()] == [TAG_BETA]
+    replaced = asyncio.run(editor.replace_doc_tags(request, DOC_ID, editor.DocumentTagsWrite(tag_ids=[TAG_BETA])))
+    assert [tag["id"] for tag in replaced] == [TAG_BETA]
 
-    removed = client.delete(f"/api/docs/{DOC_ID}/tags/{TAG_BETA}", headers=headers)
-    assert removed.status_code == 200
-    assert removed.json() == {"ok": True, "doc_id": DOC_ID, "tag_id": TAG_BETA}
+    removed = asyncio.run(editor.delete_doc_tag(request, DOC_ID, TAG_BETA))
+    assert removed == {"ok": True, "doc_id": DOC_ID, "tag_id": TAG_BETA}
     assert repo.document_tags == set()
 
 
 def test_document_tag_invalid_ownership_returns_403(monkeypatch):
-    app, _repo, _editor, research_entities = _build_app(monkeypatch)
-    client = TestClient(app)
-    headers = {"Authorization": "Bearer valid"}
+    _app, _repo, editor, research_entities = _build_app(monkeypatch)
+    request = _request()
 
-    create_response = client.post("/api/docs", json={"title": "Bad", "tag_ids": [TAG_FOREIGN]}, headers=headers)
-    update_response = client.put(
-        f"/api/docs/{DOC_ID}",
-        json={"title": "Bad", "content_delta": {"ops": [{"insert": "x\n"}]}, "content_html": "<p>x</p>", "attached_citation_ids": [], "tag_ids": [TAG_FOREIGN]},
-        headers=headers,
-    )
-    assign_response = client.post(f"/api/docs/{DOC_ID}/tags", json={"tag_ids": [TAG_FOREIGN]}, headers=headers)
-    replace_response = client.put(f"/api/docs/{DOC_ID}/tags", json={"tag_ids": [TAG_FOREIGN]}, headers=headers)
+    with pytest.raises(HTTPException) as create_excinfo:
+        asyncio.run(editor.create_doc(request, editor.DocumentCreate(title="Bad", tag_ids=[TAG_FOREIGN])))
+    with pytest.raises(HTTPException) as update_excinfo:
+        asyncio.run(
+            editor.update_doc(
+                request,
+                DOC_ID,
+                editor.DocumentUpdate(
+                    title="Bad",
+                    content_delta={"ops": [{"insert": "x\n"}]},
+                    content_html="<p>x</p>",
+                    attached_citation_ids=[],
+                    tag_ids=[TAG_FOREIGN],
+                ),
+            )
+        )
+    with pytest.raises(HTTPException) as assign_excinfo:
+        asyncio.run(editor.assign_doc_tags(request, DOC_ID, editor.DocumentTagsWrite(tag_ids=[TAG_FOREIGN])))
+    with pytest.raises(HTTPException) as replace_excinfo:
+        asyncio.run(editor.replace_doc_tags(request, DOC_ID, editor.DocumentTagsWrite(tag_ids=[TAG_FOREIGN])))
 
-    assert create_response.status_code == 403
-    assert update_response.status_code == 403
-    assert assign_response.status_code == 403
-    assert replace_response.status_code == 403
+    assert create_excinfo.value.status_code == 403
+    assert update_excinfo.value.status_code == 403
+    assert assign_excinfo.value.status_code == 403
+    assert replace_excinfo.value.status_code == 403
 
     with pytest.raises(HTTPException) as excinfo:
         asyncio.run(research_entities.ensure_tags(USER_ID, tag_ids=[TAG_FOREIGN]))
@@ -342,12 +391,13 @@ def test_document_tag_invalid_ownership_returns_403(monkeypatch):
 
 
 def test_document_tag_schema_missing_returns_503(monkeypatch):
-    app, _repo, _editor, _research_entities = _build_app(monkeypatch, repo=DocumentTagRepo(schema_missing=True))
-    client = TestClient(app)
-    headers = {"Authorization": "Bearer valid"}
+    _app, _repo, editor, _research_entities = _build_app(monkeypatch, repo=DocumentTagRepo(schema_missing=True))
+    request = _request()
 
-    get_response = client.get(f"/api/docs/{DOC_ID}", headers=headers)
-    assign_response = client.post(f"/api/docs/{DOC_ID}/tags", json={"tag_ids": [TAG_ALPHA]}, headers=headers)
+    with pytest.raises(HTTPException) as get_excinfo:
+        asyncio.run(editor.get_doc(request, DOC_ID))
+    with pytest.raises(HTTPException) as assign_excinfo:
+        asyncio.run(editor.assign_doc_tags(request, DOC_ID, editor.DocumentTagsWrite(tag_ids=[TAG_ALPHA])))
 
-    assert get_response.status_code == 503
-    assert assign_response.status_code == 503
+    assert get_excinfo.value.status_code == 503
+    assert assign_excinfo.value.status_code == 503

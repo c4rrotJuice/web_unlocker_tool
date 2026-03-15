@@ -78,16 +78,19 @@ class SchemaFallbackRepo:
                     "title": "Doc",
                     "content_delta": {"ops": [{"insert": "x\n"}]},
                     "content_html": "<p>x</p>",
-                    "citation_ids": [],
+                    "project_id": None,
                     "updated_at": "2026-01-01T00:00:00+00:00",
                     "created_at": "2026-01-01T00:00:00+00:00",
                 }])
             return FakeResponse(200, [{
                 "id": "doc-1",
                 "title": "Doc",
+                "project_id": None,
                 "updated_at": "2026-01-01T00:00:00+00:00",
                 "created_at": "2026-01-01T00:00:00+00:00",
             }])
+        if resource == "document_citations":
+            return FakeResponse(404, {"message": "relation \"document_citations\" does not exist"})
         if resource == "citations":
             return FakeResponse(200, [])
         if resource == "notes":
@@ -106,9 +109,11 @@ class SchemaFallbackRepo:
                 "id": "doc-created",
                 "title": payload.get("title", "Untitled"),
                 "content_delta": payload.get("content_delta", {}),
-                "citation_ids": payload.get("citation_ids", []),
+                "project_id": payload.get("project_id"),
                 "updated_at": "2026-01-01T00:00:00+00:00",
             }])
+        if resource == "document_citations":
+            return FakeResponse(404, {"message": "relation \"document_citations\" does not exist"})
         if resource == "document_notes":
             return FakeResponse(404, {"message": "relation \"document_notes\" does not exist"})
         return FakeResponse(201, [])
@@ -153,9 +158,12 @@ def _build_app(monkeypatch, account_type="pro"):
     main.app.state.http_session = None
 
     from app.routes import editor
+    from app.services import research_entities
 
-    editor.supabase_repo = SchemaFallbackRepo()
-    return main.app, editor.supabase_repo
+    repo = SchemaFallbackRepo()
+    editor.supabase_repo = repo
+    research_entities.supabase_repo = repo
+    return main.app, repo
 
 
 def test_create_doc_falls_back_for_missing_content_html_and_expires_at(monkeypatch):
@@ -195,7 +203,7 @@ def test_update_doc_falls_back_when_new_columns_missing(monkeypatch):
 
     response = client.put(
         "/api/docs/doc-1",
-        json={"title": "T", "content_delta": {"ops": [{"insert": "x"}]}, "content_html": "<p>x</p>", "citation_ids": []},
+        json={"title": "T", "content_delta": {"ops": [{"insert": "x"}]}, "content_html": "<p>x</p>", "attached_citation_ids": []},
         headers={"Authorization": "Bearer valid"},
     )
 
@@ -205,6 +213,7 @@ def test_update_doc_falls_back_when_new_columns_missing(monkeypatch):
     assert any("expires_at" in payload for payload in repo.patch_payloads[1:])
     assert "content_html" not in repo.patch_payloads[-1]
     assert "expires_at" not in repo.patch_payloads[-1]
+    assert all("citation_ids" not in payload for payload in repo.patch_payloads)
 
 
 def test_attach_note_returns_503_when_document_notes_table_missing(monkeypatch):
@@ -220,3 +229,17 @@ def test_attach_note_returns_503_when_document_notes_table_missing(monkeypatch):
     assert response.status_code == 503
     payload = response.json()["detail"]
     assert payload["code"] == "DOC_NOTES_SCHEMA_MISSING"
+
+
+def test_update_doc_rejects_legacy_citation_ids_input(monkeypatch):
+    app, _repo = _build_app(monkeypatch)
+    client = TestClient(app)
+
+    response = client.put(
+        "/api/docs/doc-1",
+        json={"title": "T", "content_delta": {"ops": [{"insert": "x"}]}, "content_html": "<p>x</p>", "citation_ids": []},
+        headers={"Authorization": "Bearer valid"},
+    )
+
+    assert response.status_code == 422
+    assert "attached_citation_ids" in str(response.json()["detail"]).lower()

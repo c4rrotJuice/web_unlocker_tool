@@ -21,6 +21,7 @@ from app.services.citation_domain import (
     legacy_metadata_to_payload,
     normalize_citation_payload,
 )
+from app.services.research_entities import create_quote_row, list_quote_rows, normalize_uuid
 from app.services.citation_templates import render_template, validate_template
 from app.services.entitlements import get_tier_capabilities, normalize_account_type
 from app.services.free_tier_gating import allowed_citation_formats
@@ -54,6 +55,13 @@ class CitationInput(BaseModel):
 class CitationTemplateInput(BaseModel):
     name: str
     template: str
+
+
+class QuoteInput(BaseModel):
+    citation_id: str
+    excerpt: str
+    locator: dict[str, Any] = Field(default_factory=dict)
+    annotation: str | None = None
 
 
 _SAFE_CITATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -156,63 +164,6 @@ def _build_extraction_payload(citation: CitationInput) -> ExtractionPayload:
     )
 
 
-async def _legacy_create_citation_row(user_id: str, citation: CitationInput, normalized: dict[str, Any]) -> str:
-    source = normalized["source"]
-    context = normalized["context"]
-    style = (citation.format or "mla").strip().lower()
-    render_bundle = generate_render_bundle(source, context, styles=sorted(SUPPORTED_STYLES), render_kinds=["inline", "bibliography"])
-    render_cache = [
-        {
-            "style": render_style,
-            "inline_citation": outputs["inline"],
-            "full_citation": outputs["bibliography"],
-            "source_version": source["source_version"],
-            "citation_version": context["citation_version"],
-            "render_version": RENDER_VERSION,
-            "rendered_at": datetime.utcnow().isoformat(),
-        }
-        for render_style, outputs in render_bundle["renders"].items()
-    ]
-    style_renders = render_bundle["renders"].get(style) or render_bundle["renders"]["mla"]
-
-    response = await http_client.post(
-        f"{SUPABASE_URL}/rest/v1/citations",
-        headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation",
-        },
-        json={
-            "user_id": user_id,
-            "url": source["canonical_url"] or source["page_url"],
-            "excerpt": context["excerpt"],
-            "inline_citation": style_renders["inline"],
-            "full_citation": style_renders["bibliography"],
-            "full_text": style_renders["bibliography"],
-            "format": style,
-            "metadata": {
-                **(source.get("metadata") or {}),
-                "locator": context["locator"],
-                "annotation": context["annotation"],
-                "quote": context["quote"],
-                "source_fingerprint": source["fingerprint"],
-                "source_version": source["source_version"],
-            },
-            "source_fingerprint": source["fingerprint"],
-            "source_version": source["source_version"],
-            "render_cache": render_cache,
-            "cited_at": datetime.utcnow().isoformat(),
-        },
-    )
-    if response.status_code not in (200, 201):
-        raise HTTPException(status_code=500, detail="Failed to add citation")
-    rows = response.json() or []
-    if not rows:
-        raise HTTPException(status_code=500, detail="Failed to add citation")
-    return rows[0]["id"]
-
-
 async def _get_source_by_fingerprint(fingerprint: str) -> dict[str, Any] | None:
     response = await supabase_repo.get(
         "sources",
@@ -224,7 +175,7 @@ async def _get_source_by_fingerprint(fingerprint: str) -> dict[str, Any] | None:
         if rows:
             return rows[0]
     if _is_schema_missing_response(response):
-        return None
+        raise HTTPException(status_code=503, detail="Canonical citation sources are not configured in the database yet")
     if response.status_code not in (200, 404):
         raise HTTPException(status_code=500, detail="Failed to load source metadata")
     return None
@@ -256,7 +207,7 @@ async def _upsert_source(source: dict[str, Any]) -> dict[str, Any] | None:
         },
     )
     if _is_schema_missing_response(response):
-        return None
+        raise HTTPException(status_code=503, detail="Canonical citation instances are not configured in the database yet")
     if response.status_code not in (200, 201):
         raise HTTPException(status_code=500, detail="Failed to store source metadata")
     rows = response.json() or []
@@ -433,31 +384,6 @@ def _record_from_new_rows(instance_row: dict[str, Any], source_row: dict[str, An
     )
 
 
-def _record_from_legacy_row(row: dict[str, Any]) -> dict[str, Any]:
-    metadata = row.get("metadata") or {}
-    normalized = normalize_citation_payload(
-        legacy_metadata_to_payload(
-            url=row.get("url") or metadata.get("url") or "",
-            excerpt=row.get("excerpt") or "",
-            metadata=metadata,
-            full_text=row.get("full_text"),
-        ),
-    )
-    source = normalized["source"]
-    context = normalized["context"]
-    return build_api_citation_record(
-        {
-            "id": row.get("id"),
-            "source_id": row.get("source_fingerprint") or source.get("fingerprint"),
-            "context": context,
-            "created_at": row.get("cited_at"),
-            "style": row.get("format") or "mla",
-        },
-        source,
-        preferred_style=row.get("format") or "mla",
-    )
-
-
 async def list_citation_records(
     user_id: str,
     *,
@@ -511,41 +437,9 @@ async def list_citation_records(
             records = [records_by_id[citation_id] for citation_id in requested_ids if citation_id in records_by_id]
         return records
 
-    if not _is_schema_missing_response(response):
-        raise HTTPException(status_code=500, detail="Failed to load citations")
-
-    legacy_params = {
-        "user_id": f"eq.{user_id}",
-        "order": "cited_at.desc",
-        "limit": str(limit),
-        "select": "id,url,excerpt,inline_citation,full_citation,full_text,cited_at,format,metadata",
-    }
-    if ids:
-        legacy_params["id"] = f"in.({','.join(_quote_id_for_supabase(raw_id) for raw_id in ids)})"
-    legacy_response = await http_client.get(
-        f"{SUPABASE_URL}/rest/v1/citations",
-        params=legacy_params,
-        headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
-    )
-    if legacy_response.status_code != 200:
-        raise HTTPException(status_code=500, detail="Failed to load citations")
-    records = [_record_from_legacy_row(row) for row in (legacy_response.json() or [])]
-    if search and search.strip():
-        needle = search.strip().lower()
-        records = [
-            record
-            for record in records
-            if needle in (record.get("excerpt") or "").lower()
-            or needle in (record.get("full_citation") or "").lower()
-            or needle in (record.get("url") or "").lower()
-        ]
-    if format:
-        normalized_format = format.strip().lower()
-        records = [record for record in records if record.get("format") == normalized_format]
-    if requested_ids:
-        records_by_id = {record.get("id"): record for record in records}
-        records = [records_by_id[citation_id] for citation_id in requested_ids if citation_id in records_by_id]
-    return records
+    if _is_schema_missing_response(response):
+        raise HTTPException(status_code=503, detail="Canonical citations are not configured in the database yet")
+    raise HTTPException(status_code=500, detail="Failed to load citations")
 
 
 async def create_citation(
@@ -579,12 +473,7 @@ async def create_citation(
     extraction_payload = _build_extraction_payload(citation)
     normalized = normalize_citation_payload(extraction_payload)
     source_row = await _upsert_source(normalized["source"])
-    if source_row is None:
-        return await _legacy_create_citation_row(user_id, citation, normalized)
-
     citation_instance_row = await _create_citation_instance_row(user_id=user_id, source_row=source_row, normalized=normalized)
-    if citation_instance_row is None:
-        return await _legacy_create_citation_row(user_id, citation, normalized)
 
     render_bundle = generate_render_bundle(normalized["source"], normalized["context"])
     await _store_render_cache(citation_instance_row["id"], source_row["id"], render_bundle)
@@ -813,6 +702,39 @@ async def render_citation_payload(request: Request, citation: CitationInput):
     }
 
 
+@router.get("/api/quotes")
+async def list_quotes(request: Request, citation_id: str | None = None):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return await list_quote_rows(user_id, citation_id=citation_id)
+
+
+@router.get("/api/quotes/by_ids")
+async def get_quotes_by_ids(request: Request, ids: str = Query("")):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    raw_ids = [item.strip() for item in ids.split(",") if item.strip()]
+    if not raw_ids:
+        return []
+    return await list_quote_rows(user_id, ids=raw_ids)
+
+
+@router.post("/api/quotes")
+async def create_quote(request: Request, payload: QuoteInput):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return await create_quote_row(
+        user_id,
+        citation_id=payload.citation_id,
+        excerpt=payload.excerpt,
+        locator=payload.locator,
+        annotation=payload.annotation,
+    )
+
+
 @router.delete("/api/citations/{citation_id}")
 async def delete_citation(request: Request, citation_id: str):
     user_id = request.state.user_id
@@ -829,17 +751,6 @@ async def delete_citation(request: Request, citation_id: str):
         if rows:
             return {"ok": True, "id": citation_id}
         raise HTTPException(status_code=404, detail="Citation not found")
-    if not _is_schema_missing_response(response):
-        raise HTTPException(status_code=500, detail="Failed to delete citation")
-
-    legacy_response = await http_client.delete(
-        f"{SUPABASE_URL}/rest/v1/citations",
-        params={"id": f"eq.{citation_id}", "user_id": f"eq.{user_id}"},
-        headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Prefer": "return=representation"},
-    )
-    if legacy_response.status_code != 200:
-        raise HTTPException(status_code=500, detail="Failed to delete citation")
-    rows = legacy_response.json() or []
-    if not rows:
-        raise HTTPException(status_code=404, detail="Citation not found")
-    return {"ok": True, "id": citation_id}
+    if _is_schema_missing_response(response):
+        raise HTTPException(status_code=503, detail="Canonical citations are not configured in the database yet")
+    raise HTTPException(status_code=500, detail="Failed to delete citation")

@@ -18,7 +18,7 @@ from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTempl
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from app.services.entitlements import (
     FREE_TIER,
@@ -37,6 +37,7 @@ from app.services.free_tier_gating import (
     doc_is_archived,
     rolling_window,
 )
+from app.services.research_entities import ensure_project_exists, list_document_citation_ids, replace_document_citations
 from app.services.supabase_rest import SupabaseRestRepository
 from app.routes.citations import list_citation_records
 
@@ -72,13 +73,22 @@ def _is_schema_missing_response(response) -> bool:
 
 class DocumentCreate(BaseModel):
     title: Optional[str] = None
+    project_id: Optional[str] = None
 
 
 class DocumentUpdate(BaseModel):
     title: str
     content_delta: dict
     content_html: Optional[str] = None
-    citation_ids: list[str] = []
+    attached_citation_ids: list[str] = []
+    project_id: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_legacy_citation_ids(cls, value):
+        if isinstance(value, dict) and "citation_ids" in value:
+            raise ValueError("citation_ids is deprecated; use attached_citation_ids")
+        return value
 
 
 class DocumentNoteCreate(BaseModel):
@@ -99,6 +109,12 @@ class CheckpointCreate(BaseModel):
 
 class RestoreCheckpointRequest(BaseModel):
     checkpoint_id: str
+
+
+def _set_document_attached_citations(row: dict, attached_citation_ids: list[str]) -> dict:
+    row["attached_citation_ids"] = attached_citation_ids
+    row["citation_ids"] = attached_citation_ids
+    return row
 
 
 
@@ -493,7 +509,7 @@ async def _fetch_doc_with_fallback(user_id: str, doc_id: str) -> dict:
     params = {
         "id": f"eq.{doc_id}",
         "user_id": f"eq.{user_id}",
-        "select": "id,title,content_delta,content_html,citation_ids,updated_at,created_at",
+        "select": "id,title,content_delta,content_html,project_id,updated_at,created_at",
     }
     res = await supabase_repo.get(
         "documents",
@@ -506,7 +522,7 @@ async def _fetch_doc_with_fallback(user_id: str, doc_id: str) -> dict:
             params={
                 "id": f"eq.{doc_id}",
                 "user_id": f"eq.{user_id}",
-                "select": "id,title,content_delta,citation_ids,updated_at,created_at",
+                "select": "id,title,content_delta,project_id,updated_at,created_at",
             },
             headers=supabase_repo.headers(),
         )
@@ -518,12 +534,13 @@ async def _fetch_doc_with_fallback(user_id: str, doc_id: str) -> dict:
             raise HTTPException(status_code=404, detail="Document not found")
         row = data[0]
         row["content_html"] = None
-        return row
+        return _set_document_attached_citations(row, await list_document_citation_ids(user_id, doc_id))
 
     data = res.json()
     if not data:
         raise HTTPException(status_code=404, detail="Document not found")
-    return data[0]
+    row = data[0]
+    return _set_document_attached_citations(row, await list_document_citation_ids(user_id, doc_id))
 
 
 async def _patch_doc_with_fallback(user_id: str, doc_id: str, payload: dict) -> dict:
@@ -688,11 +705,13 @@ async def create_doc(request: Request, payload: DocumentCreate):
         "title": payload.title or "Untitled",
         "content_delta": {"ops": [{"insert": "\n"}]},
         "content_html": "<p><br></p>",
-        "citation_ids": [],
         "created_at": now_iso,
         "updated_at": now_iso,
         "expires_at": _doc_expiration(account_type),
     }
+    project_id = await ensure_project_exists(user_id, payload.project_id)
+    if project_id:
+        insert_payload["project_id"] = project_id
 
     attempts = [insert_payload]
     attempts.append({k: v for k, v in insert_payload.items() if k != "content_html"})
@@ -724,7 +743,9 @@ async def create_doc(request: Request, payload: DocumentCreate):
         "title": data.get("title"),
         "content_delta": data.get("content_delta"),
         "content_html": data.get("content_html"),
-        "citation_ids": data.get("citation_ids"),
+        "project_id": data.get("project_id"),
+        "attached_citation_ids": [],
+        "citation_ids": [],
         "updated_at": data.get("updated_at"),
     }
 
@@ -740,7 +761,7 @@ async def list_docs(request: Request):
         "documents",
         params={
             "user_id": f"eq.{user_id}",
-            "select": "id,title,updated_at,created_at",
+            "select": "id,title,project_id,updated_at,created_at",
             "order": "updated_at.desc",
             "or": f"(expires_at.is.null,expires_at.gt.{now_iso})",
         },
@@ -752,7 +773,7 @@ async def list_docs(request: Request):
             "documents",
             params={
                 "user_id": f"eq.{user_id}",
-                "select": "id,title,updated_at,created_at",
+                "select": "id,title,project_id,updated_at,created_at",
                 "order": "updated_at.desc",
             },
             headers=supabase_repo.headers(),
@@ -799,17 +820,23 @@ async def update_doc(request: Request, doc_id: str, payload: DocumentUpdate):
         if doc_is_archived(doc.get("created_at"), account_type):
             raise HTTPException(status_code=403, detail=_archived_doc_payload())
 
-    validated_citations = await _validate_citation_ids(user_id, payload.citation_ids or [])
+    validated_citations = await _validate_citation_ids(user_id, payload.attached_citation_ids or [])
+    project_id = await ensure_project_exists(user_id, payload.project_id) if payload.project_id is not None else None
     update_payload = {
         "title": payload.title,
         "content_delta": payload.content_delta,
         "content_html": payload.content_html,
-        "citation_ids": validated_citations,
         "updated_at": datetime.utcnow().isoformat(),
         "expires_at": _doc_expiration(account_type),
     }
+    if payload.project_id is not None:
+        update_payload["project_id"] = project_id
 
-    return await _patch_doc_with_fallback(user_id, doc_id, update_payload)
+    updated = await _patch_doc_with_fallback(user_id, doc_id, update_payload)
+    return _set_document_attached_citations(
+        updated,
+        await replace_document_citations(user_id, doc_id, validated_citations),
+    )
 
 
 @router.get("/api/docs/{doc_id}/notes")
@@ -980,12 +1007,15 @@ async def restore_doc_checkpoint(request: Request, doc_id: str, payload: Restore
     }
 
     data = await _patch_doc_with_fallback(user_id, doc_id, update_payload)
+    attached_citation_ids = await list_document_citation_ids(user_id, doc_id)
     return {
         "id": data.get("id"),
         "title": data.get("title"),
         "content_delta": data.get("content_delta"),
         "content_html": data.get("content_html"),
-        "citation_ids": data.get("citation_ids"),
+        "project_id": data.get("project_id"),
+        "attached_citation_ids": attached_citation_ids,
+        "citation_ids": attached_citation_ids,
         "updated_at": data.get("updated_at"),
     }
 
@@ -1001,7 +1031,7 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
         params={
             "id": f"eq.{doc_id}",
             "user_id": f"eq.{user_id}",
-            "select": "title,content_delta,content_html,citation_ids,created_at",
+            "select": "title,content_delta,content_html,project_id,created_at",
         },
         headers=supabase_repo.headers(),
     )
@@ -1022,7 +1052,7 @@ async def export_doc(request: Request, doc_id: str, payload: ExportRequest):
         raise HTTPException(status_code=403, detail={"code": "EXPORT_FORMAT_LOCKED", "message": "Export format not available on your plan.", "toast": "Export format not available on your plan."})
 
     delta = doc.get("content_delta") or {}
-    citation_ids = doc.get("citation_ids") or []
+    citation_ids = await list_document_citation_ids(user_id, doc_id)
 
     raw_html = doc.get("content_html") or _delta_to_html(delta)
     html = _sanitize_html(raw_html)
@@ -1107,7 +1137,7 @@ async def export_docs_zip(request: Request):
         "documents",
         params={
             "user_id": f"eq.{user_id}",
-            "select": "id,title,content_delta,citation_ids,created_at",
+            "select": "id,title,content_delta,project_id,created_at",
             "order": "updated_at.desc",
             "or": f"(expires_at.is.null,expires_at.gt.{now_iso})",
             "limit": 1000,
@@ -1131,7 +1161,7 @@ async def export_docs_zip(request: Request):
             archive.writestr(f"{folder}/pdf_render.html", html)
 
             bibliography: list[str] = []
-            citation_ids = doc.get("citation_ids") or []
+            citation_ids = await list_document_citation_ids(user_id, doc.get("id"))
             if citation_ids:
                 citation_records = await list_citation_records(user_id, ids=citation_ids, limit=len(citation_ids), format="mla")
                 bibliography = [item.get("full_citation") or "" for item in citation_records if item.get("full_citation")]

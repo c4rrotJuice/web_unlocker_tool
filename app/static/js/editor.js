@@ -51,7 +51,7 @@ function startEditor() {
   const DEFAULT_LINE_HEIGHT = "1.15";
 
   let currentDocId = null;
-  let currentCitationIds = [];
+  let currentAttachedCitationIds = [];
   let citationCache = new Map();
   let selectedCitationId = null;
   let autosaveTimer = null;
@@ -376,7 +376,7 @@ function startEditor() {
         title: serverDoc.title || "Untitled",
         content_delta: serverDoc.content_delta || normalizeDelta({ ops: [{ insert: "\n" }] }),
         content_html: serverDoc.content_html || "",
-        citation_ids: serverDoc.citation_ids || [],
+        attached_citation_ids: serverDoc.attached_citation_ids || [],
       } : local.payload,
       dirty: false,
       status: "synced",
@@ -542,7 +542,7 @@ function startEditor() {
       const insertBtn = document.createElement("button");
       insertBtn.className = "pill mini";
       insertBtn.textContent = "Insert";
-      insertBtn.addEventListener("click", () => insertNoteIntoEditor(note));
+      insertBtn.addEventListener("click", () => insertNoteBodyIntoEditor(note));
       const del = document.createElement("button");
       del.className = "text note-delete-btn";
       del.textContent = "Detach";
@@ -573,7 +573,7 @@ function startEditor() {
       title: docTitleInput.value.trim() || "Untitled",
       content_delta: quill.getContents(),
       content_html: quill.root.innerHTML,
-      citation_ids: currentCitationIds,
+      attached_citation_ids: currentAttachedCitationIds,
     };
     stageLocalDocChange(currentDocId, payload);
     setSaveStatus("Saved locally");
@@ -792,10 +792,10 @@ function startEditor() {
             title: localEntry.payload.title || doc.title,
             content_delta: localEntry.payload.content_delta || doc.content_delta,
             content_html: localEntry.payload.content_html || doc.content_html,
-            citation_ids: localEntry.payload.citation_ids || doc.citation_ids,
+            attached_citation_ids: localEntry.payload.attached_citation_ids || doc.attached_citation_ids || [],
           }
         : doc;
-      currentCitationIds = effective.citation_ids || [];
+      currentAttachedCitationIds = effective.attached_citation_ids || [];
       docTitleInput.value = effective.title;
       const readOnly = Boolean(doc.archived);
       quill.enable(!readOnly);
@@ -1043,7 +1043,7 @@ function startEditor() {
       attachBtn.textContent = "Attach to doc";
       attachBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        attachCitation(citation.id);
+        ensureCitationAttachedToDocument(citation.id);
       });
       actions.append(attachBtn);
 
@@ -1101,19 +1101,19 @@ function startEditor() {
 
   async function refreshInDocCitations() {
     if (!currentDocId) return;
-    const missing = currentCitationIds.filter((id) => !citationCache.has(id));
+    const missing = currentAttachedCitationIds.filter((id) => !citationCache.has(id));
     if (missing.length) await fetchCitationsByIds(missing);
     const container = document.getElementById("doc-citations-list");
     container.innerHTML = "";
-    const docCitations = Array.from(citationCache.values()).filter((c) => currentCitationIds.includes(c.id));
+    const docCitations = Array.from(citationCache.values()).filter((c) => currentAttachedCitationIds.includes(c.id));
     if (!docCitations.length) return (container.innerHTML = "<p>No citations attached yet.</p>");
     docCitations.forEach((c) => container.appendChild(buildCitationCard(c, { showRemove: true, showAttach: false })));
   }
 
-  function attachCitation(citationId) {
+  function ensureCitationAttachedToDocument(citationId) {
     if (!currentDocId) return alert("Open a document before attaching citations.");
-    if (!currentCitationIds.includes(citationId)) {
-      currentCitationIds.push(citationId);
+    if (!currentAttachedCitationIds.includes(citationId)) {
+      currentAttachedCitationIds.push(citationId);
       isDirty = true;
       queueAutosave();
       refreshInDocCitations();
@@ -1121,7 +1121,7 @@ function startEditor() {
   }
 
   function removeCitationFromDoc(citationId) {
-    currentCitationIds = currentCitationIds.filter((id) => id !== citationId);
+      currentAttachedCitationIds = currentAttachedCitationIds.filter((id) => id !== citationId);
     removeCitationTokens(citationId);
     isDirty = true;
     queueAutosave();
@@ -1130,7 +1130,7 @@ function startEditor() {
 
   async function insertBibliographySection() {
     const entries = [];
-    for (const id of currentCitationIds) {
+    for (const id of currentAttachedCitationIds) {
       const citation = citationCache.get(id);
       if (!citation) continue;
       const rendered = await renderCitationForStyle(citation, defaultCitationStyle(citation));
@@ -1158,7 +1158,7 @@ function startEditor() {
     const nextIndex = insertIndex + inText.length + token.length + 1;
     quill.setSelection(nextIndex, 0, "silent");
     lastKnownRange = { index: nextIndex, length: 0 };
-    attachCitation(citationData.id);
+    ensureCitationAttachedToDocument(citationData.id);
   }
 
   async function insertFullCitation(citation, style) {
@@ -1174,7 +1174,7 @@ function startEditor() {
     const nextIndex = insertIndex + text.length;
     quill.setSelection(nextIndex, 0, "silent");
     lastKnownRange = { index: nextIndex, length: 0 };
-    attachCitation(citationData.id);
+    ensureCitationAttachedToDocument(citationData.id);
   }
 
   async function insertCitationQuote() {
@@ -1193,7 +1193,7 @@ ${inText}${token}
     const nextIndex = idx + quoteText.length + inText.length + token.length + 3;
     quill.setSelection(nextIndex, 0, "silent");
     lastKnownRange = { index: nextIndex, length: 0 };
-    attachCitation(citationData.id);
+    ensureCitationAttachedToDocument(citationData.id);
   }
 
   function removeCitationTokens(citationId) {
@@ -1213,7 +1213,7 @@ ${inText}${token}
   }
 
   async function loadProjects() {
-    const res = await authFetch("/api/note-projects");
+    const res = await authFetch("/api/projects");
     if (!res.ok) { projectsList.innerHTML = "<p>Unable to load projects.</p>"; return; }
     allProjects = await res.json();
     renderProjects();
@@ -1232,7 +1232,7 @@ ${inText}${token}
       del.className = "text tile-delete-btn";
       del.textContent = "✕";
       del.addEventListener("click", async () => {
-        const res = await authFetch(`/api/note-projects/${project.id}`, { method: "DELETE" });
+        const res = await authFetch(`/api/projects/${project.id}`, { method: "DELETE" });
         if (res.ok) await loadProjects();
       });
       row.appendChild(del);
@@ -1246,7 +1246,7 @@ ${inText}${token}
     await runAction("create-project", async () => {
       let res;
       try {
-        res = await authFetchWithTimeout("/api/note-projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim() }) });
+        res = await authFetchWithTimeout("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim() }) });
       } catch (_err) {
         toast?.show({ type: "error", message: "Failed to create project." });
         return;
@@ -1295,7 +1295,7 @@ ${inText}${token}
     notesFilterTimer = setTimeout(() => loadNotes(), 220);
   }
 
-  function insertNoteIntoEditor(note) {
+  function insertNoteBodyIntoEditor(note) {
     const text = (note?.highlight_text || note?.note_body || "").trim();
     if (!text) return;
     const idx = getInsertionIndex();
@@ -1343,7 +1343,7 @@ ${inText}${token}
       return;
     }
     await loadDocNotes();
-    if (insertIntoEditor) insertNoteIntoEditor(note);
+    if (insertIntoEditor) insertNoteBodyIntoEditor(note);
     toast?.show({ type: "success", message: "Note attached to this document." });
   }
 
@@ -1428,7 +1428,7 @@ ${inText}${token}
     if (!allProjects.length) await loadProjects();
     const existing = allProjects.find((project) => (project.name || "").trim().toLowerCase() === normalized.toLowerCase());
     if (existing?.id) return existing.id;
-    const res = await authFetch("/api/note-projects", {
+    const res = await authFetch("/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: normalized }),
@@ -1600,7 +1600,7 @@ ${inText}${token}
             return;
           }
           if (btn.dataset.action === "insert") {
-            insertNoteIntoEditor(note);
+            insertNoteBodyIntoEditor(note);
             return;
           }
           if (btn.dataset.action === "cite") {
@@ -1611,7 +1611,7 @@ ${inText}${token}
             }
             const data = await res.json();
             if (data?.citation_id) {
-              attachCitation(data.citation_id);
+              ensureCitationAttachedToDocument(data.citation_id);
               await fetchCitationsByIds([data.citation_id]);
               await loadCitationLibrary(document.getElementById("citation-search").value || "");
               await loadNotes();
@@ -1671,7 +1671,7 @@ ${inText}${token}
       insertBtn.className = "pill mini";
       insertBtn.textContent = "Insert";
       insertBtn.addEventListener("click", () => {
-        insertNoteIntoEditor(note);
+        insertNoteBodyIntoEditor(note);
       });
       actions.appendChild(insertBtn);
       li.appendChild(actions);

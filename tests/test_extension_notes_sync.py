@@ -124,9 +124,11 @@ def _build_app(monkeypatch):
 def test_notes_create_sync(monkeypatch):
     main = _build_app(monkeypatch)
     from app.routes import extension
+    from app.services import research_entities
 
     repo = FakeSupabaseRepo()
     extension.supabase_repo = repo
+    research_entities.supabase_repo = repo
 
     client = TestClient(main.app)
     payload = {
@@ -142,15 +144,17 @@ def test_notes_create_sync(monkeypatch):
     assert response.status_code == 200
     assert response.json()["ok"] is True
     assert any(call[0] == "post" and call[1] == "notes" for call in repo.calls)
-    assert any(call[0] == "post" and call[1] == "note_note_tags" for call in repo.calls)
+    assert any(call[0] == "post" and call[1] == "note_tag_links" for call in repo.calls)
 
 
 def test_notes_update_sync(monkeypatch):
     main = _build_app(monkeypatch)
     from app.routes import extension
+    from app.services import research_entities
 
     repo = FakeSupabaseRepo()
     extension.supabase_repo = repo
+    research_entities.supabase_repo = repo
 
     client = TestClient(main.app)
     payload = {
@@ -170,9 +174,11 @@ def test_notes_update_sync(monkeypatch):
 def test_notes_delete_sync(monkeypatch):
     main = _build_app(monkeypatch)
     from app.routes import extension
+    from app.services import research_entities
 
     repo = FakeSupabaseRepo()
     extension.supabase_repo = repo
+    research_entities.supabase_repo = repo
 
     client = TestClient(main.app)
     note_id = "2f3f2367-64f3-422d-b14d-cf70650fc4ca"
@@ -186,9 +192,11 @@ def test_notes_delete_sync(monkeypatch):
 def test_notes_create_sync_generates_id_when_missing(monkeypatch):
     main = _build_app(monkeypatch)
     from app.routes import extension
+    from app.services import research_entities
 
     repo = FakeSupabaseRepo()
     extension.supabase_repo = repo
+    research_entities.supabase_repo = repo
 
     client = TestClient(main.app)
     payload = {
@@ -209,9 +217,11 @@ def test_notes_create_sync_generates_id_when_missing(monkeypatch):
 def test_notes_create_sync_accepts_comma_separated_tags(monkeypatch):
     main = _build_app(monkeypatch)
     from app.routes import extension
+    from app.services import research_entities
 
     repo = FakeSupabaseRepo()
     extension.supabase_repo = repo
+    research_entities.supabase_repo = repo
 
     client = TestClient(main.app)
     payload = {
@@ -224,7 +234,7 @@ def test_notes_create_sync_accepts_comma_separated_tags(monkeypatch):
     response = client.post("/api/notes", headers={"Authorization": "Bearer token"}, json=payload)
 
     assert response.status_code == 200
-    join_posts = [call for call in repo.calls if call[0] == "post" and call[1] == "note_note_tags"]
+    join_posts = [call for call in repo.calls if call[0] == "post" and call[1] == "note_tag_links"]
     assert len(join_posts) == 1
     rows = join_posts[0][2]["json"]
     assert len(rows) == 2
@@ -233,9 +243,11 @@ def test_notes_create_sync_accepts_comma_separated_tags(monkeypatch):
 def test_notes_create_sync_accepts_legacy_body_field(monkeypatch):
     main = _build_app(monkeypatch)
     from app.routes import extension
+    from app.services import research_entities
 
     repo = FakeSupabaseRepo()
     extension.supabase_repo = repo
+    research_entities.supabase_repo = repo
 
     client = TestClient(main.app)
     payload = {
@@ -255,9 +267,11 @@ def test_notes_create_sync_accepts_legacy_body_field(monkeypatch):
 def test_notes_update_sync_supports_partial_patch_without_note_body(monkeypatch):
     main = _build_app(monkeypatch)
     from app.routes import extension
+    from app.services import research_entities
 
     repo = FakeSupabaseRepo()
     extension.supabase_repo = repo
+    research_entities.supabase_repo = repo
 
     client = TestClient(main.app)
     payload = {
@@ -275,9 +289,11 @@ def test_notes_update_sync_supports_partial_patch_without_note_body(monkeypatch)
 def test_notes_list_sync(monkeypatch):
     main = _build_app(monkeypatch)
     from app.routes import extension
+    from app.services import research_entities
 
     repo = FakeSupabaseRepo()
     extension.supabase_repo = repo
+    research_entities.supabase_repo = repo
 
     client = TestClient(main.app)
     response = client.get("/api/notes?limit=999&offset=-4", headers={"Authorization": "Bearer token"})
@@ -298,9 +314,11 @@ def test_notes_list_sync(monkeypatch):
 def test_notes_archive_and_restore(monkeypatch):
     main = _build_app(monkeypatch)
     from app.routes import extension
+    from app.services import research_entities
 
     repo = FakeSupabaseRepo()
     extension.supabase_repo = repo
+    research_entities.supabase_repo = repo
 
     client = TestClient(main.app)
     note_id = "2f3f2367-64f3-422d-b14d-cf70650fc4ca"
@@ -316,9 +334,11 @@ def test_notes_archive_and_restore(monkeypatch):
 def test_create_citation_from_note_links_note(monkeypatch):
     main = _build_app(monkeypatch)
     from app.routes import extension
+    from app.services import research_entities
 
     repo = FakeSupabaseRepo()
     extension.supabase_repo = repo
+    research_entities.supabase_repo = repo
 
     async def fake_account_type(_request, _user_id):
         return "standard"

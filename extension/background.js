@@ -581,6 +581,75 @@ function upsertNamedEntity(list, name) {
   return { list: [...list, entity], entity };
 }
 
+async function ensureRemoteProjectId(note, state, accessToken) {
+  const project = (state.projects || []).find((item) => item.id === note.project_id);
+  if (!project?.name) {
+    return note.project_id || null;
+  }
+  const response = await apiFetch(
+    "/api/projects",
+    {
+      method: "POST",
+      body: JSON.stringify({ name: project.name, color: project.color || null }),
+    },
+    accessToken,
+  );
+  if (!response.ok) {
+    throw new Error("project_resolution_failed");
+  }
+  const data = await response.json();
+  if (!data?.id) {
+    throw new Error("project_resolution_missing_id");
+  }
+  return data.id;
+}
+
+async function ensureRemoteTagIds(note, state, accessToken) {
+  const resolved = [];
+  for (const tagRef of Array.isArray(note.tags) ? note.tags : []) {
+    const tag = (state.tags || []).find((item) => item.id === tagRef);
+    if (!tag?.name) {
+      continue;
+    }
+    const response = await apiFetch(
+      "/api/tags",
+      {
+        method: "POST",
+        body: JSON.stringify({ name: tag.name }),
+      },
+      accessToken,
+    );
+    if (!response.ok) {
+      throw new Error("tag_resolution_failed");
+    }
+    const data = await response.json();
+    if (!data?.id) {
+      throw new Error("tag_resolution_missing_id");
+    }
+    resolved.push(data.id);
+  }
+  return resolved;
+}
+
+async function buildCanonicalNotePayload(note, accessToken) {
+  const state = await getNotesState();
+  const project_id = await ensureRemoteProjectId(note, state, accessToken);
+  const tag_ids = await ensureRemoteTagIds(note, state, accessToken);
+  return {
+    id: note.id,
+    title: note.title || null,
+    highlight_text: note.highlight_text || null,
+    note_body: note.note_body || "",
+    source_url: note.source_url || null,
+    project_id,
+    tag_ids,
+    sources: Array.isArray(note.sources) ? note.sources : [],
+    linked_note_ids: Array.isArray(note.linked_note_ids) ? note.linked_note_ids : [],
+    created_at: note.created_at,
+    updated_at: note.updated_at || new Date().toISOString(),
+  };
+}
+
 async function upsertNote(notePayload = {}) {
   const state = await getNotesState();
   const now = new Date().toISOString();
@@ -679,13 +748,18 @@ async function flushSyncQueue() {
     for (const item of queue) {
       const endpoint = item.type === "delete" ? `/api/notes/${encodeURIComponent(item.note.id)}` : "/api/notes";
       const method = item.type === "delete" ? "DELETE" : item.type === "update" ? "PATCH" : "POST";
-      const response = await apiFetch(endpoint, { method, body: item.type === "delete" ? undefined : JSON.stringify(item.note) }, session.access_token);
-      if (!response.ok) {
-        if (response.status === 401) {
-          await clearSession();
+      try {
+        const notePayload = item.type === "delete" ? undefined : await buildCanonicalNotePayload(item.note, session.access_token);
+        const response = await apiFetch(endpoint, { method, body: item.type === "delete" ? undefined : JSON.stringify(notePayload) }, session.access_token);
+        if (!response.ok) {
+          if (response.status === 401) {
+            await clearSession();
+            remaining.push(item);
+            break;
+          }
           remaining.push(item);
-          break;
         }
+      } catch (error) {
         remaining.push(item);
       }
     }

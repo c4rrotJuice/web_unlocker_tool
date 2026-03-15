@@ -66,14 +66,23 @@ class DummyResp:
 
 
 class DummyRepo:
-    async def get(self, *args, **kwargs):
-        return DummyResp(200, [{"title": "Doc", "content_delta": {"ops": [{"insert": "x\n"}]}, "citation_ids": [], "created_at": "2020-01-01T00:00:00+00:00"}])
+    async def get(self, resource, *args, **kwargs):
+        if resource == "document_citations":
+            return DummyResp(200, [])
+        return DummyResp(200, [{"title": "Doc", "content_delta": {"ops": [{"insert": "x\n"}]}, "project_id": None, "created_at": "2020-01-01T00:00:00+00:00"}])
 
-    async def post(self, *args, **kwargs):
-        return DummyResp(201, [{"id": "doc-1", "title": "Untitled", "content_delta": {"ops": [{"insert": "\n"}]}, "citation_ids": [], "updated_at": "2026-01-01T00:00:00+00:00"}])
+    async def post(self, resource, *args, **kwargs):
+        if resource == "document_citations":
+            return DummyResp(201, [])
+        return DummyResp(201, [{"id": "doc-1", "title": "Untitled", "content_delta": {"ops": [{"insert": "\n"}]}, "project_id": None, "updated_at": "2026-01-01T00:00:00+00:00"}])
 
     async def patch(self, *args, **kwargs):
-        return DummyResp(200, [{"id": "doc-1"}])
+        return DummyResp(200, [{"id": "doc-1", "project_id": None}])
+
+    async def delete(self, resource, *args, **kwargs):
+        if resource == "document_citations":
+            return DummyResp(204, [])
+        return DummyResp(204, [])
 
     def headers(self, *args, **kwargs):
         return {}
@@ -111,8 +120,11 @@ def _build_app(monkeypatch, account_type="standard"):
     main.app.state.redis_expire = redis_expire
 
     from app.routes import editor
+    from app.services import research_entities
 
-    editor.supabase_repo = DummyRepo()
+    repo = DummyRepo()
+    editor.supabase_repo = repo
+    research_entities.supabase_repo = repo
     return main.app
 
 
@@ -159,7 +171,7 @@ def test_standard_archived_doc_blocks_edit_but_allows_export(monkeypatch):
     client = TestClient(app)
     put_res = client.put(
         "/api/docs/doc-1",
-        json={"title": "T", "content_delta": {"ops": [{"insert": "x"}]}, "content_html": "<p>x</p>", "citation_ids": []},
+        json={"title": "T", "content_delta": {"ops": [{"insert": "x"}]}, "content_html": "<p>x</p>", "attached_citation_ids": []},
         headers={"Authorization": "Bearer valid"},
     )
     assert put_res.status_code == 403

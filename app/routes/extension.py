@@ -14,6 +14,17 @@ from app.routes.citations import CitationInput, create_citation
 from app.routes.editor import _count_docs_in_window, _doc_expiration, _get_account_type, _quota_for_tier, _doc_limit_toast_payload
 from app.routes.render import save_unlock_history
 from app.services.free_tier_gating import current_week_window, unlock_window_for_tier, week_key
+from app.services.research_entities import (
+    create_project as create_canonical_project,
+    delete_project as delete_canonical_project,
+    ensure_project_exists,
+    ensure_tags,
+    list_note_tag_ids,
+    list_projects as list_canonical_projects,
+    list_tags as list_canonical_tags,
+    replace_document_citations,
+    replace_note_tag_links,
+)
 
 
 router = APIRouter()
@@ -80,6 +91,8 @@ class ExtensionNotePayload(BaseModel):
     source_published_at: str | None = None
     project_id: str | None = None
     citation_id: str | None = None
+    quote_id: str | None = None
+    tag_ids: list[str] = []
     tags: list[str] = []
     created_at: str | None = None
     updated_at: str | None = None
@@ -118,6 +131,8 @@ class ExtensionNotePatchRequest(BaseModel):
     source_published_at: str | None = None
     project_id: str | None = None
     citation_id: str | None = None
+    quote_id: str | None = None
+    tag_ids: list[str] | None = None
     tags: list[str] | None = None
     updated_at: str | None = None
     sources: list[dict] | None = None
@@ -127,6 +142,10 @@ class ExtensionNotePatchRequest(BaseModel):
 class NoteProjectPayload(BaseModel):
     name: str
     color: str | None = None
+
+
+class TagPayload(BaseModel):
+    name: str
 
 
 def _source_domain(url: str | None) -> str | None:
@@ -176,6 +195,20 @@ def _clean_note_tags(tags: list[str] | None) -> list[str]:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="tags must contain UUIDs") from exc
     return cleaned
+
+
+def _split_tag_inputs(values: list[str] | None) -> tuple[list[str], list[str]]:
+    tag_ids: list[str] = []
+    tag_names: list[str] = []
+    for value in values or []:
+        raw = str(value or "").strip()
+        if not raw:
+            continue
+        try:
+            tag_ids.append(str(UUID(raw)))
+        except ValueError:
+            tag_names.append(raw)
+    return tag_ids, tag_names
 
 
 def _clean_note_sources(sources: list[dict] | None) -> list[dict]:
@@ -322,25 +355,7 @@ async def _enrich_notes_with_sources_and_links(user_id: str, notes: list[dict]) 
 
 
 async def _upsert_note_tags_for_note(user_id: str, note_id: str, tag_ids: list[str]):
-    delete_existing = await supabase_repo.delete(
-        "note_note_tags",
-        params={"user_id": f"eq.{user_id}", "note_id": f"eq.{note_id}"},
-        headers=supabase_repo.headers(prefer="return=minimal", include_content_type=False),
-    )
-    if delete_existing.status_code not in (200, 204):
-        raise HTTPException(status_code=500, detail="Failed to update note tags")
-
-    if not tag_ids:
-        return
-
-    rows = [{"note_id": note_id, "tag_id": tag_id, "user_id": user_id} for tag_id in tag_ids]
-    insert_join = await supabase_repo.post(
-        "note_note_tags",
-        json=rows,
-        headers=supabase_repo.headers(prefer="resolution=merge-duplicates,return=minimal"),
-    )
-    if insert_join.status_code not in (200, 201):
-        raise HTTPException(status_code=500, detail="Failed to update note tags")
+    await replace_note_tag_links(user_id, note_id, tag_ids)
 
 
 async def _assert_note_exists(user_id: str, note_id: str) -> None:
@@ -558,7 +573,6 @@ async def extension_selection(request: Request, payload: ExtensionSelectionReque
         "user_id": user_id,
         "title": (payload.title or "New clip").strip(),
         "content_delta": {"ops": [{"insert": f"{selected_text}\n"}]},
-        "citation_ids": [citation_id] if citation_id else [],
         "created_at": now_iso,
         "updated_at": now_iso,
         "expires_at": _doc_expiration(account_type),
@@ -579,6 +593,10 @@ async def extension_selection(request: Request, payload: ExtensionSelectionReque
     if not data:
         raise HTTPException(status_code=500, detail="Failed to create document")
 
+    document_id = data[0].get("id")
+    if citation_id and document_id:
+        await replace_document_citations(user_id, document_id, [citation_id])
+
     if get_tier_capabilities(account_type).has_unlock_limits:
         if usage_count == 0:
             await request.app.state.redis_expire(usage_key, ttl_seconds)
@@ -589,8 +607,8 @@ async def extension_selection(request: Request, payload: ExtensionSelectionReque
         remaining = -1
 
     return {
-        "doc_id": data[0].get("id"),
-        "editor_url": f"/editor?doc={data[0].get('id')}",
+        "doc_id": document_id,
+        "editor_url": f"/editor?doc={document_id}",
         "citation_id": citation_id,
         "account_type": normalize_account_type(account_type),
         "allowed": True,
@@ -637,13 +655,20 @@ async def create_note(request: Request, payload: ExtensionNotePayload):
 
     note_id = _coerce_note_id(payload.id) if payload.id else str(uuid4())
     note_body = _clean_note_body(payload.note_body, payload.highlight_text)
-    tag_ids = _clean_note_tags(payload.tags)
+    legacy_tag_ids, legacy_tag_names = _split_tag_inputs(payload.tags)
+    tag_ids = await ensure_tags(
+        user_id,
+        tag_ids=_clean_note_tags(payload.tag_ids or []) + legacy_tag_ids,
+        tag_names=legacy_tag_names,
+    )
     created_at = _parse_iso_datetime(payload.created_at) or datetime.utcnow()
     updated_at = _parse_iso_datetime(payload.updated_at) or datetime.utcnow()
     source_published_at = _parse_iso_datetime(payload.source_published_at)
     citation_id = _coerce_note_id(payload.citation_id) if payload.citation_id else None
+    quote_id = _coerce_note_id(payload.quote_id) if payload.quote_id else None
     sources = _clean_note_sources(payload.sources)
     linked_note_ids = _clean_linked_note_ids(payload.linked_note_ids, note_id=note_id)
+    project_id = await ensure_project_exists(user_id, payload.project_id) if payload.project_id else None
 
     insert_payload = {
         "id": note_id,
@@ -656,8 +681,9 @@ async def create_note(request: Request, payload: ExtensionNotePayload):
         "source_author": (payload.source_author or "").strip() or None,
         "source_published_at": source_published_at.isoformat() if source_published_at else None,
         "source_domain": _source_domain(payload.source_url),
-        "project_id": payload.project_id,
+        "project_id": project_id,
         "citation_id": citation_id,
+        "quote_id": quote_id,
         "created_at": created_at.isoformat(),
         "updated_at": updated_at.isoformat(),
     }
@@ -702,7 +728,7 @@ async def list_notes(
         "order": order,
         "limit": str(normalized_limit),
         "offset": str(normalized_offset),
-        "select": "id,title,highlight_text,note_body,source_url,source_domain,source_title,source_author,source_published_at,project_id,citation_id,archived_at,created_at,updated_at",
+        "select": "id,title,highlight_text,note_body,source_url,source_domain,source_title,source_author,source_published_at,project_id,citation_id,quote_id,archived_at,created_at,updated_at",
     }
 
     if include_archived:
@@ -724,7 +750,7 @@ async def list_notes(
 
     if project:
         project_res = await supabase_repo.get(
-            "note_projects",
+            "projects",
             params={
                 "user_id": f"eq.{user_id}",
                 "name": f"ilike.*{project.strip()}*",
@@ -748,10 +774,14 @@ async def list_notes(
 
     notes = res.json() or []
     notes = await _enrich_notes_with_sources_and_links(user_id, notes)
+    tags_by_note = await list_note_tag_ids(user_id, [row.get("id") for row in notes if row.get("id")])
+    for note in notes:
+        note["tag_ids"] = tags_by_note.get(note.get("id"), [])
+        note["tags"] = note["tag_ids"]
 
     if tag:
         tag_res = await supabase_repo.get(
-            "note_tags",
+            "tags",
             params={
                 "user_id": f"eq.{user_id}",
                 "name": f"ilike.*{tag.strip()}*",
@@ -764,7 +794,7 @@ async def list_notes(
         if not tag_ids:
             return {"ok": True, "total_count": 0, "notes": []}
         tag_join = await supabase_repo.get(
-            "note_note_tags",
+            "note_tag_links",
             params={
                 "user_id": f"eq.{user_id}",
                 "tag_id": f"in.({','.join(tag_ids)})",
@@ -788,67 +818,62 @@ async def list_notes(
     return {"ok": True, "total_count": total_count, "notes": notes}
 
 
-@router.get("/api/note-projects")
-async def list_note_projects(request: Request):
+@router.get("/api/projects")
+async def list_projects(request: Request):
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
+    return await list_canonical_projects(user_id)
 
-    res = await supabase_repo.get(
-        "note_projects",
-        params={
-            "user_id": f"eq.{user_id}",
-            "order": "updated_at.desc",
-            "limit": 200,
-            "select": "id,name,color,created_at,updated_at",
-        },
-        headers=supabase_repo.headers(include_content_type=False),
-    )
-    if res.status_code != 200:
-        raise HTTPException(status_code=500, detail="Failed to load note projects")
-    return res.json() or []
+
+@router.post("/api/projects")
+async def create_project(request: Request, payload: NoteProjectPayload):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return await create_canonical_project(user_id, name=payload.name, color=payload.color)
+
+
+@router.delete("/api/projects/{project_id}")
+async def delete_project(request: Request, project_id: str):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    await delete_canonical_project(user_id, project_id)
+    return {"ok": True, "id": project_id}
+
+@router.get("/api/note-projects")
+async def list_note_projects(request: Request):
+    return await list_projects(request)
 
 
 @router.post("/api/note-projects")
 async def create_note_project(request: Request, payload: NoteProjectPayload):
-    user_id = request.state.user_id
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    name = (payload.name or "").strip()
-    if not name:
-        raise HTTPException(status_code=422, detail="name is required")
-
-    res = await supabase_repo.post(
-        "note_projects",
-        json={"user_id": user_id, "name": name[:120], "color": (payload.color or "").strip() or None},
-        headers=supabase_repo.headers(prefer="return=representation"),
-    )
-    if res.status_code not in (200, 201):
-        raise HTTPException(status_code=500, detail="Failed to create note project")
-    rows = res.json() or []
-    return rows[0] if rows else {"ok": True}
+    return await create_project(request, payload)
 
 
 @router.delete("/api/note-projects/{project_id}")
 async def delete_note_project(request: Request, project_id: str):
+    return await delete_project(request, project_id)
+
+
+@router.get("/api/tags")
+async def list_tags(request: Request):
     user_id = request.state.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
+    return await list_canonical_tags(user_id)
 
-    try:
-        normalized_id = str(UUID(project_id))
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail="project_id must be a valid UUID") from exc
 
-    res = await supabase_repo.delete(
-        "note_projects",
-        params={"id": f"eq.{normalized_id}", "user_id": f"eq.{user_id}"},
-        headers=supabase_repo.headers(prefer="return=minimal", include_content_type=False),
-    )
-    if res.status_code not in (200, 204):
-        raise HTTPException(status_code=500, detail="Failed to delete note project")
-    return {"ok": True, "id": normalized_id}
+@router.post("/api/tags")
+async def create_tag(request: Request, payload: TagPayload):
+    user_id = request.state.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    tag_ids = await ensure_tags(user_id, tag_names=[payload.name])
+    tags = await list_canonical_tags(user_id)
+    tag_map = {row["id"]: row for row in tags if row.get("id")}
+    return tag_map[tag_ids[0]]
 
 
 @router.patch("/api/notes")
@@ -858,7 +883,10 @@ async def update_note(request: Request, payload: ExtensionNotePatchRequest):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     note_id = _coerce_note_id(payload.id)
-    tag_ids = _clean_note_tags(payload.tags)
+    legacy_tag_ids, legacy_tag_names = _split_tag_inputs(payload.tags)
+    provided_tag_ids = _clean_note_tags(payload.tag_ids or []) + legacy_tag_ids
+    provided_tag_names = legacy_tag_names
+    tag_ids = await ensure_tags(user_id, tag_ids=provided_tag_ids, tag_names=provided_tag_names) if (payload.tag_ids is not None or payload.tags is not None) else []
     updated_at = _parse_iso_datetime(payload.updated_at) or datetime.utcnow()
     source_published_at = _parse_iso_datetime(payload.source_published_at) if payload.source_published_at is not None else None
     sources = _clean_note_sources(payload.sources) if payload.sources is not None else None
@@ -881,9 +909,11 @@ async def update_note(request: Request, payload: ExtensionNotePatchRequest):
     if payload.source_published_at is not None:
         patch_payload["source_published_at"] = source_published_at.isoformat() if source_published_at else None
     if payload.project_id is not None:
-        patch_payload["project_id"] = payload.project_id
+        patch_payload["project_id"] = await ensure_project_exists(user_id, payload.project_id) if payload.project_id else None
     if payload.citation_id is not None:
         patch_payload["citation_id"] = _coerce_note_id(payload.citation_id) if payload.citation_id else None
+    if payload.quote_id is not None:
+        patch_payload["quote_id"] = _coerce_note_id(payload.quote_id) if payload.quote_id else None
     res = await supabase_repo.patch(
         "notes",
         params={"id": f"eq.{note_id}", "user_id": f"eq.{user_id}"},
@@ -895,7 +925,8 @@ async def update_note(request: Request, payload: ExtensionNotePatchRequest):
     if not res.json():
         raise HTTPException(status_code=404, detail="Note not found")
 
-    await _upsert_note_tags_for_note(user_id, note_id, tag_ids)
+    if payload.tag_ids is not None or payload.tags is not None:
+        await _upsert_note_tags_for_note(user_id, note_id, tag_ids)
     if sources is not None:
         await _replace_note_sources(user_id, note_id, sources)
     if linked_note_ids is not None:

@@ -258,6 +258,8 @@ begin
       nullif(trim(item->>'url'), '') as url,
       nullif(trim(item->>'title'), '') as title,
       nullif(trim(item->>'hostname'), '') as hostname,
+      nullif(trim(item->>'source_author'), '') as source_author,
+      (item->>'source_published_at')::timestamptz as source_published_at,
       (item->>'attached_at')::timestamptz as attached_at
     from jsonb_array_elements(coalesce(p_sources, '[]'::jsonb)) with ordinality as input(item, ord)
   )
@@ -267,6 +269,8 @@ begin
         'url', url,
         'title', title,
         'hostname', hostname,
+        'source_author', source_author,
+        'source_published_at', source_published_at,
         'attached_at', attached_at
       )
       order by ord
@@ -293,13 +297,15 @@ begin
   where user_id = p_user_id
     and note_id = p_note_id;
 
-  insert into public.note_sources (note_id, user_id, url, title, hostname, attached_at)
+  insert into public.note_sources (note_id, user_id, url, title, hostname, source_author, source_published_at, attached_at)
   select
     p_note_id,
     p_user_id,
     nullif(trim(item->>'url'), ''),
     nullif(trim(item->>'title'), ''),
     nullif(trim(item->>'hostname'), ''),
+    nullif(trim(item->>'source_author'), ''),
+    (item->>'source_published_at')::timestamptz,
     (item->>'attached_at')::timestamptz
   from jsonb_array_elements(v_applied_sources) as input(item);
 

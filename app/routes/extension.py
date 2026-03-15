@@ -227,13 +227,17 @@ def _clean_note_sources(sources: list[dict] | None) -> list[dict]:
             continue
         seen.add(dedupe_key)
         parsed_title = (src.get("title") or "").strip() or None
+        parsed_author = (src.get("source_author") or "").strip() or None
         host = _source_domain(url)
         attached_at = _parse_iso_datetime(src.get("attached_at")) or datetime.utcnow()
+        published_at = _parse_iso_datetime(src.get("source_published_at"))
         cleaned.append(
             {
                 "url": url,
                 "title": parsed_title,
                 "hostname": (src.get("hostname") or host or "").strip() or host,
+                "source_author": parsed_author,
+                "source_published_at": published_at.isoformat() if published_at else None,
                 "attached_at": attached_at.isoformat(),
             }
         )
@@ -266,7 +270,7 @@ async def _enrich_notes_with_sources_and_links(user_id: str, notes: list[dict]) 
     id_filter = f"in.({','.join(note_ids)})"
     sources_res = await supabase_repo.get(
         "note_sources",
-        params={"user_id": f"eq.{user_id}", "note_id": id_filter, "select": "note_id,url,title,hostname,attached_at", "order": "attached_at.desc"},
+        params={"user_id": f"eq.{user_id}", "note_id": id_filter, "select": "note_id,url,title,hostname,source_author,source_published_at,attached_at", "order": "attached_at.desc"},
         headers=supabase_repo.headers(include_content_type=False),
     )
     links_res = await supabase_repo.get(
@@ -286,6 +290,8 @@ async def _enrich_notes_with_sources_and_links(user_id: str, notes: list[dict]) 
                     "url": row.get("url"),
                     "title": row.get("title"),
                     "hostname": row.get("hostname"),
+                    "source_author": row.get("source_author"),
+                    "source_published_at": row.get("source_published_at"),
                     "attached_at": row.get("attached_at"),
                 }
             )
@@ -1007,7 +1013,7 @@ async def get_note_sources(request: Request, note_id: str):
     await _assert_note_exists(user_id, normalized_note_id)
     res = await supabase_repo.get(
         "note_sources",
-        params={"user_id": f"eq.{user_id}", "note_id": f"eq.{normalized_note_id}", "select": "url,title,hostname,attached_at", "order": "attached_at.desc"},
+        params={"user_id": f"eq.{user_id}", "note_id": f"eq.{normalized_note_id}", "select": "url,title,hostname,source_author,source_published_at,attached_at", "order": "attached_at.desc"},
         headers=supabase_repo.headers(include_content_type=False),
     )
     if res.status_code not in (200, 404):
@@ -1027,7 +1033,7 @@ async def attach_note_source(request: Request, note_id: str, payload: dict):
         raise HTTPException(status_code=422, detail="Valid http/https source URL is required")
     existing = await supabase_repo.get(
         "note_sources",
-        params={"user_id": f"eq.{user_id}", "note_id": f"eq.{normalized_note_id}", "select": "url,title,hostname,attached_at"},
+        params={"user_id": f"eq.{user_id}", "note_id": f"eq.{normalized_note_id}", "select": "url,title,hostname,source_author,source_published_at,attached_at"},
         headers=supabase_repo.headers(include_content_type=False),
     )
     current_sources = existing.json() if existing.status_code == 200 else []

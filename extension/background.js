@@ -1,6 +1,11 @@
 import { apiFetch } from "./lib/api.js";
 import { createSupabaseAuthClient } from "./lib/supabase.js";
 import { BACKEND_BASE_URL } from "./config.js";
+import {
+  buildCanonicalNotePayloadBase,
+  normalizeQueuedOperation,
+  normalizeTimestamp,
+} from "./lib/note_sync.js";
 
 const USAGE_KEY = "usage_snapshot";
 const NOTES_KEY = "notes_state";
@@ -635,24 +640,14 @@ async function buildCanonicalNotePayload(note, accessToken) {
   const state = await getNotesState();
   const project_id = await ensureRemoteProjectId(note, state, accessToken);
   const tag_ids = await ensureRemoteTagIds(note, state, accessToken);
-  return {
-    id: note.id,
-    title: note.title || null,
-    highlight_text: note.highlight_text || null,
-    note_body: note.note_body || "",
-    source_url: note.source_url || null,
-    project_id,
-    tag_ids,
-    sources: Array.isArray(note.sources) ? note.sources : [],
-    linked_note_ids: Array.isArray(note.linked_note_ids) ? note.linked_note_ids : [],
-    created_at: note.created_at,
-    updated_at: note.updated_at || new Date().toISOString(),
-  };
+  return buildCanonicalNotePayloadBase(note, { project_id, tag_ids });
 }
 
 async function upsertNote(notePayload = {}) {
   const state = await getNotesState();
   const now = new Date().toISOString();
+  const incomingCreatedAt = normalizeTimestamp(notePayload.created_at) || normalizeTimestamp(notePayload.timestamp) || now;
+  const incomingUpdatedAt = normalizeTimestamp(notePayload.updated_at) || incomingCreatedAt;
   let nextProjects = state.projects || [];
   const projectResult = upsertNamedEntity(nextProjects, notePayload.project);
   nextProjects = projectResult.list;
@@ -679,12 +674,18 @@ async function upsertNote(notePayload = {}) {
     highlight_text: notePayload.highlight_text || null,
     note_body: notePayload.note_body || "",
     source_url: notePayload.source_url || null,
+    source_title: notePayload.source_title || null,
+    source_author: notePayload.source_author || null,
+    source_published_at: notePayload.source_published_at || null,
+    citation_id: notePayload.citation_id || null,
+    quote_id: notePayload.quote_id || null,
     sources: Array.isArray(notePayload.sources) ? notePayload.sources : [],
     linked_note_ids: Array.isArray(notePayload.linked_note_ids) ? notePayload.linked_note_ids : [],
     project_id: projectResult.entity?.id || notePayload.project_id || null,
     tags: resolvedTagIds,
-    created_at: notePayload.created_at || now,
-    updated_at: now,
+    timestamp: normalizeTimestamp(notePayload.timestamp) || null,
+    created_at: incomingCreatedAt,
+    updated_at: incomingUpdatedAt,
     sync_status: "pending",
   };
 
@@ -697,6 +698,7 @@ async function upsertNote(notePayload = {}) {
       sources: Array.isArray(notePayload.sources) ? note.sources : (nextNotes[existingIdx].sources || []),
       linked_note_ids: Array.isArray(notePayload.linked_note_ids) ? note.linked_note_ids : (nextNotes[existingIdx].linked_note_ids || []),
       created_at: nextNotes[existingIdx].created_at || note.created_at,
+      updated_at: normalizeTimestamp(notePayload.updated_at) || now,
     };
   } else {
     nextNotes.unshift(note);
@@ -730,7 +732,7 @@ function applyFilters(notes, state, filters = {}, sort = "desc") {
 
 async function enqueueSyncOperation(operation) {
   const queue = await getSyncQueue();
-  queue.push({ ...operation, queued_at: new Date().toISOString() });
+  queue.push(normalizeQueuedOperation(operation, { queuedAt: new Date().toISOString() }));
   await setSyncQueue(queue);
 }
 

@@ -1,6 +1,9 @@
 import importlib
+import json
+import pytest
 import supabase
-from fastapi.testclient import TestClient
+
+from tests.conftest import async_test_client
 
 
 class DummyAuth:
@@ -44,25 +47,34 @@ def _load_main(monkeypatch):
     return importlib.reload(main)
 
 
-def test_request_id_is_returned_and_logged(monkeypatch, caplog):
+@pytest.mark.anyio
+async def test_request_id_is_returned_and_logged(monkeypatch, capsys):
     main = _load_main(monkeypatch)
-    client = TestClient(main.app)
 
     request_id = "req-test-123"
-    response = client.get("/api/public-config", headers={"X-Request-Id": request_id})
+    async with async_test_client(main.app) as client:
+        response = await client.get("/api/public-config", headers={"X-Request-Id": request_id})
 
     assert response.status_code == 200
     assert response.headers["x-request-id"] == request_id
 
-    completed_records = [r for r in caplog.records if r.message == "request.completed"]
+    completed_records = []
+    for line in capsys.readouterr().out.splitlines():
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if payload.get("message") == "request.completed":
+            completed_records.append(payload)
+
     assert completed_records
 
     match = None
     for record in completed_records:
-        if getattr(record, "request_id", None) == request_id and getattr(record, "route", None) == "/api/public-config":
+        if record.get("request_id") == request_id and record.get("route") == "/api/public-config":
             match = record
             break
 
     assert match is not None
-    assert getattr(match, "status", None) == 200
-    assert isinstance(getattr(match, "latency_ms", None), (float, int))
+    assert match.get("status") == 200
+    assert isinstance(match.get("latency_ms"), (float, int))

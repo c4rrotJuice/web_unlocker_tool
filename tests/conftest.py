@@ -1,6 +1,10 @@
 import os
 import sys
 import types
+from contextlib import asynccontextmanager
+
+import httpx
+import pytest
 
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -70,3 +74,31 @@ if "supabase" not in sys.modules:
     supabase_client_stub.AuthApiError = AuthApiError
     sys.modules["supabase"] = supabase_stub
     sys.modules["supabase.client"] = supabase_client_stub
+
+
+@asynccontextmanager
+async def async_test_client(app, **client_kwargs):
+    transport = httpx.ASGITransport(app=app)
+    client = httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+        **client_kwargs,
+    )
+    try:
+        yield client
+    finally:
+        # AsyncClient/ASGITransport shutdown can hang in this environment even
+        # after the response is complete, so tests intentionally skip teardown.
+        pass
+
+
+@asynccontextmanager
+async def lifespan_test_client(app, **client_kwargs):
+    async with app.router.lifespan_context(app):
+        async with async_test_client(app, **client_kwargs) as client:
+            yield client
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"

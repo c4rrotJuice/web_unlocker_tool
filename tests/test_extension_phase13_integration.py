@@ -50,6 +50,28 @@ def test_background_contains_shared_state_sync_and_tier_gating_markers():
     assert 'WORK_IN_EDITOR' in source
 
 
+def test_background_note_sync_preserves_canonical_research_fields():
+    source = Path('extension/background.js').read_text()
+    helper_source = Path('extension/lib/note_sync.js').read_text()
+
+    assert 'buildCanonicalNotePayloadBase' in source
+    assert 'normalizeQueuedOperation' in source
+    assert 'normalizeTimestamp' in source
+    assert 'return buildCanonicalNotePayloadBase(note, { project_id, tag_ids });' in source
+    assert 'queue.push(normalizeQueuedOperation(operation, { queuedAt: new Date().toISOString() }));' in source
+    assert 'await buildCanonicalNotePayload(item.note, session.access_token)' in source
+    assert 'source_author: note.source_author || null' in helper_source
+    assert 'source_published_at: note.source_published_at || null' in helper_source
+
+
+def test_note_sources_metadata_migration_is_additive_and_nullable():
+    source = Path('sql/20260324_extend_note_sources_metadata.sql').read_text().lower()
+
+    assert 'add column if not exists source_author text' in source
+    assert 'add column if not exists source_published_at timestamptz' in source
+    assert 'not null' not in source
+
+
 def test_background_side_panel_toggle_uses_window_id_and_runtime_listeners():
     source = Path('extension/background.js').read_text()
 

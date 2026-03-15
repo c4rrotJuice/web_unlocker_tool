@@ -1,9 +1,10 @@
 import importlib
 
+import pytest
 import supabase
-from fastapi.testclient import TestClient
 
 from app.services.ui_messages import is_valid_unlock_transition, map_error_payload
+from tests.conftest import async_test_client
 
 
 class DummyAuth:
@@ -42,14 +43,14 @@ def _build_app(monkeypatch):
     return main
 
 
-def test_legacy_login_routes_redirect_to_auth(monkeypatch):
+@pytest.mark.anyio
+async def test_legacy_login_routes_redirect_to_auth(monkeypatch):
     main = _build_app(monkeypatch)
-    client = TestClient(main.app)
-
-    for route in ("/login", "/signin", "/auth/login"):
-        response = client.get(route, follow_redirects=False)
-        assert response.status_code in (302, 307)
-        assert response.headers["location"] == "/auth"
+    async with async_test_client(main.app, follow_redirects=False) as client:
+        for route in ("/login", "/signin", "/auth/login"):
+            response = await client.get(route)
+            assert response.status_code in (302, 307)
+            assert response.headers["location"] == "/auth"
 
 
 def test_static_auth_page_redirects_to_canonical_auth():

@@ -1,8 +1,10 @@
 import importlib
 from types import SimpleNamespace
 
+import pytest
 import supabase
-from fastapi.testclient import TestClient
+
+from tests.conftest import async_test_client
 
 
 class DummyLoginAuth:
@@ -47,14 +49,14 @@ def _build_app(monkeypatch):
     return main.app
 
 
-def test_login_sets_cookie_and_returns_refresh_token(monkeypatch):
+@pytest.mark.anyio
+async def test_login_sets_cookie_and_returns_refresh_token(monkeypatch):
     app = _build_app(monkeypatch)
-    client = TestClient(app)
-
-    response = client.post(
-        "/api/login",
-        json={"email": "user@example.com", "password": "password123"},
-    )
+    async with async_test_client(app) as client:
+        response = await client.post(
+            "/api/login",
+            json={"email": "user@example.com", "password": "password123"},
+        )
 
     assert response.status_code == 200
     body = response.json()

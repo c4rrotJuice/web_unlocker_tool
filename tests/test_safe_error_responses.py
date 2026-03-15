@@ -1,9 +1,10 @@
 import importlib
 
+import pytest
 import supabase
-from fastapi.testclient import TestClient
 
 from app.routes.error_responses import safe_api_error_response, safe_html_error_response
+from tests.conftest import async_test_client
 
 
 class DummyAuth:
@@ -95,9 +96,9 @@ def test_safe_html_error_response_shape_hides_exception_text():
 
 
 
-def test_fetch_and_clean_page_uses_safe_html_error_response(monkeypatch):
+@pytest.mark.anyio
+async def test_fetch_and_clean_page_uses_safe_html_error_response(monkeypatch):
     main = _build_app(monkeypatch)
-    client = TestClient(main.app)
 
     async def fake_check_login(*args, **kwargs):
         return {"user_id": "user-1", "use_cloudscraper": False}
@@ -108,10 +109,11 @@ def test_fetch_and_clean_page_uses_safe_html_error_response(monkeypatch):
     monkeypatch.setattr(main.render, "check_login", fake_check_login)
     monkeypatch.setattr(main.render, "fetch_and_clean_page", boom_fetch_and_clean_page)
 
-    response = client.post(
-        "/fetch_and_clean_page",
-        json={"url": "https://example.com", "unlock": True},
-    )
+    async with async_test_client(main.app) as client:
+        response = await client.post(
+            "/fetch_and_clean_page",
+            json={"url": "https://example.com", "unlock": True},
+        )
 
     assert response.status_code == 500
     assert "Unable to load page right now." in response.text

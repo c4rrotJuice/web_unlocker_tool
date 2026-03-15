@@ -50,6 +50,8 @@ class AtomicReplaceRepo:
                     "url": "https://example.com/original",
                     "title": "Original",
                     "hostname": "example.com",
+                    "source_author": "Original Author",
+                    "source_published_at": "2026-01-01T00:00:00+00:00",
                     "attached_at": "2026-01-01T00:00:00+00:00",
                 }
             ]
@@ -189,6 +191,37 @@ def test_note_sources_failure_keeps_prior_rows_and_route_still_reads_old_state(a
     assert excinfo.value.status_code == 500
     response = asyncio.run(extension.get_note_sources(request, NOTE_ID))
     assert response["sources"] == atomic_repo.note_sources[NOTE_ID]
+
+
+def test_note_sources_preserve_author_and_published_metadata(atomic_repo):
+    applied = asyncio.run(
+        research_entities.replace_note_sources(
+            USER_ID,
+            NOTE_ID,
+            [
+                {
+                    "url": "https://example.com/new",
+                    "title": "New",
+                    "hostname": "example.com",
+                    "source_author": "New Author",
+                    "source_published_at": "2026-01-02T00:00:00+00:00",
+                    "attached_at": "2026-01-03T00:00:00+00:00",
+                }
+            ],
+        )
+    )
+
+    assert applied == [
+        {
+            "url": "https://example.com/new",
+            "title": "New",
+            "hostname": "example.com",
+            "source_author": "New Author",
+            "source_published_at": "2026-01-02T00:00:00+00:00",
+            "attached_at": "2026-01-03T00:00:00+00:00",
+        }
+    ]
+    assert atomic_repo.note_sources[NOTE_ID] == applied
 
 
 def test_note_links_failure_keeps_prior_rows(atomic_repo):

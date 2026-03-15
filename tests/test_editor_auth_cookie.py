@@ -1,8 +1,10 @@
 import importlib
 from types import SimpleNamespace
 
+import pytest
 import supabase
-from fastapi.testclient import TestClient
+
+from tests.conftest import async_test_client
 
 
 class DummyUser:
@@ -73,42 +75,62 @@ def _build_app(monkeypatch, account_type="pro"):
     from app import main
 
     importlib.reload(main)
+
+    async def immediate_supabase_call(fn):
+        return fn()
+
+    main._supabase_call = immediate_supabase_call
+
+    async def redis_get(_key):
+        return {"name": "T", "account_type": account_type, "daily_limit": 5}
+
+    async def redis_set(_key, _value, ttl_seconds=None):
+        return True
+
+    async def redis_incr(_key):
+        return 1
+
+    async def redis_expire(_key, _seconds):
+        return True
+
+    main.app.state.redis_get = redis_get
+    main.app.state.redis_set = redis_set
+    main.app.state.redis_incr = redis_incr
+    main.app.state.redis_expire = redis_expire
     return main.app
 
 
-def test_editor_allows_authenticated_cookie_user(monkeypatch):
+@pytest.mark.anyio
+async def test_editor_allows_authenticated_cookie_user(monkeypatch):
     app = _build_app(monkeypatch)
-    client = TestClient(app)
-
-    response = client.get(
-        "/editor",
-        cookies={"wu_access_token": "good-token"},
-        follow_redirects=False,
-    )
+    async with async_test_client(app, follow_redirects=False) as client:
+        response = await client.get(
+            "/editor",
+            cookies={"wu_access_token": "good-token"},
+        )
 
     assert response.status_code == 200
     assert "Writior Editor" in response.text
 
 
-def test_editor_redirects_to_auth_without_token(monkeypatch):
+@pytest.mark.anyio
+async def test_editor_redirects_to_auth_without_token(monkeypatch):
     app = _build_app(monkeypatch)
-    client = TestClient(app)
-
-    response = client.get("/editor", follow_redirects=False)
+    async with async_test_client(app, follow_redirects=False) as client:
+        response = await client.get("/editor")
 
     assert response.status_code == 302
     assert response.headers["location"] == "/auth"
 
 
-def test_editor_redirects_free_tier_to_pricing(monkeypatch):
+@pytest.mark.anyio
+async def test_editor_redirects_free_tier_to_pricing(monkeypatch):
     app = _build_app(monkeypatch, account_type="free")
-    client = TestClient(app)
-
-    response = client.get(
-        "/editor",
-        cookies={"wu_access_token": "good-token"},
-        follow_redirects=False,
-    )
+    async with async_test_client(app, follow_redirects=False) as client:
+        response = await client.get(
+            "/editor",
+            cookies={"wu_access_token": "good-token"},
+        )
 
     assert response.status_code == 200
     assert "Writior Editor" in response.text

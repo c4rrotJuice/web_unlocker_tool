@@ -2,7 +2,8 @@ import importlib
 
 import pytest
 import supabase
-from fastapi.testclient import TestClient
+
+from tests.conftest import async_test_client
 
 
 class DummyAuth:
@@ -49,56 +50,56 @@ def _load_main(monkeypatch, *, env="prod", cors_origins="https://web-unlocker-to
     return importlib.reload(main)
 
 
-def test_cors_preflight_allows_allowlisted_origin(monkeypatch):
+@pytest.mark.anyio
+async def test_cors_preflight_allows_allowlisted_origin(monkeypatch):
     main = _load_main(monkeypatch)
-    client = TestClient(main.app)
-
-    response = client.options(
-        "/api/public-config",
-        headers={
-            "Origin": "https://web-unlocker-tool.onrender.com",
-            "Access-Control-Request-Method": "GET",
-        },
-    )
+    async with async_test_client(main.app) as client:
+        response = await client.options(
+            "/api/public-config",
+            headers={
+                "Origin": "https://web-unlocker-tool.onrender.com",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
 
     assert response.status_code == 200
     assert response.headers.get("access-control-allow-origin") == "https://web-unlocker-tool.onrender.com"
 
 
-def test_cors_disallows_non_allowlisted_origin(monkeypatch):
+@pytest.mark.anyio
+async def test_cors_disallows_non_allowlisted_origin(monkeypatch):
     main = _load_main(monkeypatch)
-    client = TestClient(main.app)
-
-    response = client.options(
-        "/api/public-config",
-        headers={
-            "Origin": "https://evil.example.com",
-            "Access-Control-Request-Method": "GET",
-        },
-    )
+    async with async_test_client(main.app) as client:
+        response = await client.options(
+            "/api/public-config",
+            headers={
+                "Origin": "https://evil.example.com",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
 
     assert response.status_code == 400
     assert response.headers.get("access-control-allow-origin") is None
 
 
-def test_cors_credentials_header_only_for_allowlisted_origin(monkeypatch):
+@pytest.mark.anyio
+async def test_cors_credentials_header_only_for_allowlisted_origin(monkeypatch):
     main = _load_main(monkeypatch)
-    client = TestClient(main.app)
-
-    allowed = client.options(
-        "/api/public-config",
-        headers={
-            "Origin": "https://web-unlocker-tool.onrender.com",
-            "Access-Control-Request-Method": "GET",
-        },
-    )
-    denied = client.options(
-        "/api/public-config",
-        headers={
-            "Origin": "https://evil.example.com",
-            "Access-Control-Request-Method": "GET",
-        },
-    )
+    async with async_test_client(main.app) as client:
+        allowed = await client.options(
+            "/api/public-config",
+            headers={
+                "Origin": "https://web-unlocker-tool.onrender.com",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        denied = await client.options(
+            "/api/public-config",
+            headers={
+                "Origin": "https://evil.example.com",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
 
     assert allowed.headers.get("access-control-allow-credentials") == "true"
     assert allowed.headers.get("access-control-allow-origin") == "https://web-unlocker-tool.onrender.com"

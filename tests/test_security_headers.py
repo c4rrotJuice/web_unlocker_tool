@@ -1,7 +1,9 @@
 import importlib
 
+import pytest
 import supabase
-from fastapi.testclient import TestClient
+
+from tests.conftest import async_test_client
 
 
 class DummyAuth:
@@ -53,22 +55,22 @@ def _load_main(monkeypatch):
     return importlib.reload(main)
 
 
-def test_security_headers_added_to_success_response(monkeypatch):
+@pytest.mark.anyio
+async def test_security_headers_added_to_success_response(monkeypatch):
     main = _load_main(monkeypatch)
-    client = TestClient(main.app)
-
-    response = client.get("/api/public-config")
+    async with async_test_client(main.app) as client:
+        response = await client.get("/api/public-config")
 
     assert response.status_code == 200
     for header, value in EXPECTED_SECURITY_HEADERS.items():
         assert response.headers.get(header) == value
 
 
-def test_security_headers_added_to_unauthorized_response(monkeypatch):
+@pytest.mark.anyio
+async def test_security_headers_added_to_unauthorized_response(monkeypatch):
     main = _load_main(monkeypatch)
-    client = TestClient(main.app)
-
-    response = client.get("/api/me")
+    async with async_test_client(main.app) as client:
+        response = await client.get("/api/me")
 
     assert response.status_code == 401
     for header, value in EXPECTED_SECURITY_HEADERS.items():

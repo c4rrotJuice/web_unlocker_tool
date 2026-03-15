@@ -4,10 +4,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import supabase
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
 
 from app.routes.citations import CitationInput, create_citation
 from app.services.free_tier_gating import current_14_day_window, current_week_window, doc_is_archived
+from tests.conftest import async_test_client
 
 
 class DummyAuth:
@@ -59,9 +59,16 @@ def _build_app(monkeypatch):
 
     importlib.reload(main)
 
+    async def immediate_supabase_call(fn):
+        return fn()
+
+    main._supabase_call = immediate_supabase_call
+
     redis_data = {}
 
     async def redis_get(key):
+        if key.startswith("user_meta:"):
+            return {"name": "Free User", "account_type": "freemium", "daily_limit": 5}
         return redis_data.get(key, 0)
 
     async def redis_set(key, value, ttl_seconds=None):
@@ -181,22 +188,24 @@ def test_standard_14_day_window_archive_behavior():
     assert doc_is_archived(current_created_at, "standard", now) is False
 
 
-def test_extension_unlock_permit_free_user_weekly_limit(monkeypatch):
+@pytest.mark.anyio
+async def test_extension_unlock_permit_free_user_weekly_limit(monkeypatch):
     main = _build_app(monkeypatch)
-    client = TestClient(main.app)
     headers = {"Authorization": "Bearer valid"}
 
-    for _ in range(10):
-        response = client.post("/api/extension/unlock-permit", json={}, headers=headers)
-        assert response.status_code == 200
-        assert response.json()["allowed"] is True
+    async with async_test_client(main.app) as client:
+        for _ in range(10):
+            response = await client.post("/api/extension/unlock-permit", json={}, headers=headers)
+            assert response.status_code == 200
+            assert response.json()["allowed"] is True
 
-    denied = client.post("/api/extension/unlock-permit", json={}, headers=headers)
+        denied = await client.post("/api/extension/unlock-permit", json={}, headers=headers)
     assert denied.status_code == 200
     assert denied.json()["allowed"] is False
 
 
-def test_extension_selection_free_doc_limit_returns_editor_redirect(monkeypatch):
+@pytest.mark.anyio
+async def test_extension_selection_free_doc_limit_returns_editor_redirect(monkeypatch):
     main = _build_app(monkeypatch)
     from app.routes import extension
 
@@ -205,18 +214,18 @@ def test_extension_selection_free_doc_limit_returns_editor_redirect(monkeypatch)
 
     monkeypatch.setattr(extension, "_count_docs_in_window", fake_count)
 
-    client = TestClient(main.app)
     headers = {"Authorization": "Bearer valid"}
-    response = client.post(
-        "/api/extension/selection",
-        json={
-            "url": "https://example.com",
-            "selected_text": "quoted text",
-            "title": "Example",
-            "citation_format": "mla",
-        },
-        headers=headers,
-    )
+    async with async_test_client(main.app) as client:
+        response = await client.post(
+            "/api/extension/selection",
+            json={
+                "url": "https://example.com",
+                "selected_text": "quoted text",
+                "title": "Example",
+                "citation_format": "mla",
+            },
+            headers=headers,
+        )
 
     assert response.status_code == 200
     payload = response.json()

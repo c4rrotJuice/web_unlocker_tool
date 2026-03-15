@@ -330,6 +330,8 @@ def _normalize_note_sources_payload(sources: list[dict]) -> list[dict]:
                 "url": url,
                 "title": (src.get("title") or "").strip() or None,
                 "hostname": (src.get("hostname") or "").strip() or None,
+                "source_author": (src.get("source_author") or "").strip() or None,
+                "source_published_at": (src.get("source_published_at") or "").strip() or None,
                 "attached_at": (src.get("attached_at") or "").strip() or None,
             }
         )

@@ -1,10 +1,11 @@
+import asyncio
 import importlib
 from types import SimpleNamespace
 
-from concurrent.futures import ThreadPoolExecutor
-
+import pytest
 import supabase
-from fastapi.testclient import TestClient
+
+from tests.conftest import async_test_client
 
 
 class DummyUser:
@@ -144,9 +145,16 @@ def _build_app(monkeypatch, account_type="pro", http_client=None):
 
     importlib.reload(main)
 
+    async def immediate_supabase_call(fn):
+        return fn()
+
+    main._supabase_call = immediate_supabase_call
+
     redis_data = {}
 
     async def redis_get(key):
+        if key.startswith("user_meta:"):
+            return {"name": "Tier User", "account_type": account_type, "daily_limit": 5}
         return redis_data.get(key, 0)
 
     async def redis_set(key, value, ttl_seconds=None):
@@ -176,65 +184,66 @@ def _build_app(monkeypatch, account_type="pro", http_client=None):
     return main.app
 
 
-def test_citation_templates_returns_empty_list_for_pro_without_templates(monkeypatch):
+@pytest.mark.anyio
+async def test_citation_templates_returns_empty_list_for_pro_without_templates(monkeypatch):
     app = _build_app(monkeypatch, account_type="pro", http_client=DummyHTTPClient(templates_payload=[]))
-    client = TestClient(app)
-
-    response = client.get("/api/citation-templates", headers={"Authorization": "Bearer valid"})
+    async with async_test_client(app) as client:
+        response = await client.get("/api/citation-templates", headers={"Authorization": "Bearer valid"})
 
     assert response.status_code == 200
     assert response.json() == []
 
 
-def test_citation_templates_returns_templates_for_pro(monkeypatch):
+@pytest.mark.anyio
+async def test_citation_templates_returns_templates_for_pro(monkeypatch):
     templates = [{"id": "t1", "name": "APA", "template": "{author}", "created_at": "", "updated_at": ""}]
     app = _build_app(monkeypatch, account_type="pro", http_client=DummyHTTPClient(templates_payload=templates))
-    client = TestClient(app)
-
-    response = client.get("/api/citation-templates", headers={"Authorization": "Bearer valid"})
+    async with async_test_client(app) as client:
+        response = await client.get("/api/citation-templates", headers={"Authorization": "Bearer valid"})
 
     assert response.status_code == 200
     assert response.json() == templates
 
 
-def test_citations_by_ids_invalid_input_returns_422(monkeypatch):
+@pytest.mark.anyio
+async def test_citations_by_ids_invalid_input_returns_422(monkeypatch):
     app = _build_app(monkeypatch, account_type="pro", http_client=DummyHTTPClient())
-    client = TestClient(app)
-
-    response = client.get("/api/citations/by_ids?ids=bad!,2", headers={"Authorization": "Bearer valid"})
+    async with async_test_client(app) as client:
+        response = await client.get("/api/citations/by_ids?ids=bad!,2", headers={"Authorization": "Bearer valid"})
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "CITATION_IDS_INVALID"
 
 
-def test_citations_by_ids_missing_ids_returns_empty_list(monkeypatch):
+@pytest.mark.anyio
+async def test_citations_by_ids_missing_ids_returns_empty_list(monkeypatch):
     app = _build_app(monkeypatch, account_type="pro", http_client=DummyHTTPClient())
-    client = TestClient(app)
-
-    response = client.get("/api/citations/by_ids?ids=", headers={"Authorization": "Bearer valid"})
+    async with async_test_client(app) as client:
+        response = await client.get("/api/citations/by_ids?ids=", headers={"Authorization": "Bearer valid"})
 
     assert response.status_code == 200
     assert response.json() == []
 
 
-def test_citations_by_ids_parallel_calls_stay_successful(monkeypatch):
+@pytest.mark.anyio
+async def test_citations_by_ids_parallel_calls_stay_successful(monkeypatch):
     app = _build_app(monkeypatch, account_type="pro", http_client=DummyHTTPClient())
-    client = TestClient(app)
-
-    def make_call():
-        return client.get("/api/citations/by_ids?ids=1,2,3", headers={"Authorization": "Bearer valid"})
-
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        responses = list(pool.map(lambda _x: make_call(), range(8)))
+    async with async_test_client(app) as client:
+        responses = await asyncio.gather(
+            *(
+                client.get("/api/citations/by_ids?ids=1,2,3", headers={"Authorization": "Bearer valid"})
+                for _ in range(8)
+            )
+        )
 
     assert all(r.status_code == 200 for r in responses)
 
 
-def test_history_missing_token_returns_machine_readable_401(monkeypatch):
+@pytest.mark.anyio
+async def test_history_missing_token_returns_machine_readable_401(monkeypatch):
     app = _build_app(monkeypatch, account_type="standard", http_client=DummyHTTPClient())
-    client = TestClient(app)
-
-    response = client.get("/api/history")
+    async with async_test_client(app) as client:
+        response = await client.get("/api/history")
 
     assert response.status_code == 401
     payload = response.json()
@@ -242,43 +251,43 @@ def test_history_missing_token_returns_machine_readable_401(monkeypatch):
     assert code in {"AUTH_INVALID", "AUTH_MISSING"}
 
 
-def test_history_standard_uses_request_auth_without_authorization_header_roundtrip(monkeypatch):
+@pytest.mark.anyio
+async def test_history_standard_uses_request_auth_without_authorization_header_roundtrip(monkeypatch):
     app = _build_app(monkeypatch, account_type="standard", http_client=DummyHTTPClient())
-    client = TestClient(app)
-
-    response = client.get("/api/history", headers={"Authorization": "Bearer valid"})
+    async with async_test_client(app) as client:
+        response = await client.get("/api/history", headers={"Authorization": "Bearer valid"})
 
     assert response.status_code == 200
     assert response.json() == [{"url": "https://example.com"}]
 
 
-def test_history_free_tier_remains_strictly_gated(monkeypatch):
+@pytest.mark.anyio
+async def test_history_free_tier_remains_strictly_gated(monkeypatch):
     app = _build_app(monkeypatch, account_type="free", http_client=DummyHTTPClient())
-    client = TestClient(app)
-
-    response = client.get("/api/history", headers={"Authorization": "Bearer valid"})
+    async with async_test_client(app) as client:
+        response = await client.get("/api/history", headers={"Authorization": "Bearer valid"})
 
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "HISTORY_SEARCH_TIER_LOCKED"
 
 
-def test_unlocks_free_tier_is_capped_to_five(monkeypatch):
+@pytest.mark.anyio
+async def test_unlocks_free_tier_is_capped_to_five(monkeypatch):
     http = DummyHTTPClient()
     app = _build_app(monkeypatch, account_type="free", http_client=http)
-    client = TestClient(app)
-
-    response = client.get("/api/unlocks?limit=100", headers={"Authorization": "Bearer valid"})
+    async with async_test_client(app) as client:
+        response = await client.get("/api/unlocks?limit=100", headers={"Authorization": "Bearer valid"})
 
     assert response.status_code == 200
     assert "limit=5" in (http.last_url or "")
 
 
-def test_unlocks_paid_tier_can_request_longer_history(monkeypatch):
+@pytest.mark.anyio
+async def test_unlocks_paid_tier_can_request_longer_history(monkeypatch):
     http = DummyHTTPClient()
     app = _build_app(monkeypatch, account_type="pro", http_client=http)
-    client = TestClient(app)
-
-    response = client.get("/api/unlocks?limit=100", headers={"Authorization": "Bearer valid"})
+    async with async_test_client(app) as client:
+        response = await client.get("/api/unlocks?limit=100", headers={"Authorization": "Bearer valid"})
 
     assert response.status_code == 200
     assert "limit=100" in (http.last_url or "")

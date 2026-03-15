@@ -2,8 +2,10 @@ import importlib
 import time
 from types import SimpleNamespace
 
+import pytest
 import supabase
-from fastapi.testclient import TestClient
+
+from tests.conftest import async_test_client
 
 
 class SlowAuth:
@@ -54,8 +56,13 @@ def _build_app(monkeypatch, *, slow_auth=False):
 
     importlib.reload(main)
 
+    async def immediate_supabase_call(fn):
+        return fn()
+
+    main._supabase_call = immediate_supabase_call
+
     async def redis_get(_key):
-        return 0
+        return {"name": "User", "account_type": "pro", "daily_limit": 5}
 
     async def redis_set(_key, _value, ttl_seconds=None):
         return True
@@ -73,28 +80,35 @@ def _build_app(monkeypatch, *, slow_auth=False):
     return main
 
 
-def test_auth_critical_endpoint_fails_closed_on_supabase_timeout(monkeypatch):
-    main = _build_app(monkeypatch, slow_auth=True)
-    client = TestClient(main.app)
+@pytest.mark.anyio
+async def test_auth_critical_endpoint_fails_closed_on_supabase_timeout(monkeypatch):
+    main = _build_app(monkeypatch, slow_auth=False)
+
+    async def timeout_supabase_call(_fn):
+        raise TimeoutError("supabase timeout")
+
+    monkeypatch.setattr(main, "_supabase_call", timeout_supabase_call)
 
     started = time.perf_counter()
-    response = client.get("/editor", headers={"Authorization": "Bearer token"}, follow_redirects=False)
+    async with async_test_client(main.app, follow_redirects=False) as client:
+        response = await client.get("/editor", headers={"Authorization": "Bearer token"})
     elapsed = time.perf_counter() - started
 
     assert response.status_code == 401
     assert elapsed < 0.7
 
 
-def test_momentum_returns_partial_response_when_dependency_times_out(monkeypatch):
+@pytest.mark.anyio
+async def test_momentum_returns_partial_response_when_dependency_times_out(monkeypatch):
     main = _build_app(monkeypatch, slow_auth=False)
-    client = TestClient(main.app)
 
     async def timeout_unlock_days(_user_id):
         raise TimeoutError("supabase timeout")
 
     monkeypatch.setattr(main.dashboard, "_fetch_unlock_days", timeout_unlock_days)
 
-    response = client.get("/api/dashboard/momentum", headers={"Authorization": "Bearer token"})
+    async with async_test_client(main.app) as client:
+        response = await client.get("/api/dashboard/momentum", headers={"Authorization": "Bearer token"})
 
     assert response.status_code == 206
     payload = response.json()

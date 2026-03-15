@@ -1,7 +1,9 @@
 import importlib
 
+import pytest
 import supabase
-from fastapi.testclient import TestClient
+
+from tests.conftest import async_test_client
 
 
 class DummyUser:
@@ -66,7 +68,14 @@ def _build_app(monkeypatch):
 
     importlib.reload(main)
 
-    async def redis_get(_key):
+    async def immediate_supabase_call(fn):
+        return fn()
+
+    main._supabase_call = immediate_supabase_call
+
+    async def redis_get(key):
+        if key.startswith("user_meta:"):
+            return {"name": "Tester", "account_type": "standard", "daily_limit": 5}
         return 0
 
     async def redis_incr(_key):
@@ -82,19 +91,20 @@ def _build_app(monkeypatch):
     return main
 
 
-def test_extension_usage_event_requires_auth(monkeypatch):
+@pytest.mark.anyio
+async def test_extension_usage_event_requires_auth(monkeypatch):
     main = _build_app(monkeypatch)
-    client = TestClient(main.app)
-
-    response = client.post(
-        "/api/extension/usage-event",
-        json={"url": "https://example.com", "event_id": "a5d54e8d-3eff-4a93-ae21-d74f0ebf8b7f"},
-    )
+    async with async_test_client(main.app) as client:
+        response = await client.post(
+            "/api/extension/usage-event",
+            json={"url": "https://example.com", "event_id": "a5d54e8d-3eff-4a93-ae21-d74f0ebf8b7f"},
+        )
 
     assert response.status_code == 401
 
 
-def test_extension_usage_event_records_as_extension(monkeypatch):
+@pytest.mark.anyio
+async def test_extension_usage_event_records_as_extension(monkeypatch):
     main = _build_app(monkeypatch)
 
     from app.routes import extension
@@ -114,12 +124,12 @@ def test_extension_usage_event_records_as_extension(monkeypatch):
 
     extension.save_unlock_history = fake_save_unlock_history
 
-    client = TestClient(main.app)
-    response = client.post(
-        "/api/extension/usage-event",
-        headers={"Authorization": "Bearer token"},
-        json={"url": "https://example.com/article", "event_id": "a5d54e8d-3eff-4a93-ae21-d74f0ebf8b7f"},
-    )
+    async with async_test_client(main.app) as client:
+        response = await client.post(
+            "/api/extension/usage-event",
+            headers={"Authorization": "Bearer token"},
+            json={"url": "https://example.com/article", "event_id": "a5d54e8d-3eff-4a93-ae21-d74f0ebf8b7f"},
+        )
 
     assert response.status_code == 200
     assert response.json() == {"ok": True, "deduped": False}
@@ -131,7 +141,8 @@ def test_extension_usage_event_records_as_extension(monkeypatch):
     }
 
 
-def test_extension_usage_event_idempotent(monkeypatch):
+@pytest.mark.anyio
+async def test_extension_usage_event_idempotent(monkeypatch):
     main = _build_app(monkeypatch)
 
     from app.routes import extension
@@ -147,22 +158,22 @@ def test_extension_usage_event_idempotent(monkeypatch):
 
     extension.save_unlock_history = fake_save_unlock_history
 
-    client = TestClient(main.app)
     payload = {
         "url": "https://example.com/article",
         "event_id": "a5d54e8d-3eff-4a93-ae21-d74f0ebf8b7f",
     }
 
-    first = client.post(
-        "/api/extension/usage-event",
-        headers={"Authorization": "Bearer token"},
-        json=payload,
-    )
-    second = client.post(
-        "/api/extension/usage-event",
-        headers={"Authorization": "Bearer token"},
-        json=payload,
-    )
+    async with async_test_client(main.app) as client:
+        first = await client.post(
+            "/api/extension/usage-event",
+            headers={"Authorization": "Bearer token"},
+            json=payload,
+        )
+        second = await client.post(
+            "/api/extension/usage-event",
+            headers={"Authorization": "Bearer token"},
+            json=payload,
+        )
 
     assert first.status_code == 200
     assert second.status_code == 200
@@ -170,7 +181,8 @@ def test_extension_usage_event_idempotent(monkeypatch):
     assert second.json()["deduped"] is True
 
 
-def test_extension_usage_event_write_failure(monkeypatch):
+@pytest.mark.anyio
+async def test_extension_usage_event_write_failure(monkeypatch):
     main = _build_app(monkeypatch)
 
     from app.routes import extension
@@ -180,18 +192,19 @@ def test_extension_usage_event_write_failure(monkeypatch):
 
     extension.save_unlock_history = fake_save_unlock_history
 
-    client = TestClient(main.app)
-    response = client.post(
-        "/api/extension/usage-event",
-        headers={"Authorization": "Bearer token"},
-        json={"url": "https://example.com/article", "event_id": "a5d54e8d-3eff-4a93-ae21-d74f0ebf8b7f"},
-    )
+    async with async_test_client(main.app) as client:
+        response = await client.post(
+            "/api/extension/usage-event",
+            headers={"Authorization": "Bearer token"},
+            json={"url": "https://example.com/article", "event_id": "a5d54e8d-3eff-4a93-ae21-d74f0ebf8b7f"},
+        )
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Failed to record extension usage event."
 
 
-def test_extension_usage_event_fallback_without_unique_constraint(monkeypatch):
+@pytest.mark.anyio
+async def test_extension_usage_event_fallback_without_unique_constraint(monkeypatch):
     main = _build_app(monkeypatch)
 
     from app.routes import extension, render
@@ -229,12 +242,12 @@ def test_extension_usage_event_fallback_without_unique_constraint(monkeypatch):
 
     main.app.state.http_session = FakeHttpClient()
 
-    client = TestClient(main.app)
-    response = client.post(
-        "/api/extension/usage-event",
-        headers={"Authorization": "Bearer token"},
-        json={"url": "https://example.com/article", "event_id": "a5d54e8d-3eff-4a93-ae21-d74f0ebf8b7f"},
-    )
+    async with async_test_client(main.app) as client:
+        response = await client.post(
+            "/api/extension/usage-event",
+            headers={"Authorization": "Bearer token"},
+            json={"url": "https://example.com/article", "event_id": "a5d54e8d-3eff-4a93-ae21-d74f0ebf8b7f"},
+        )
 
     assert response.status_code == 200
     assert response.json() == {"ok": True, "deduped": False}

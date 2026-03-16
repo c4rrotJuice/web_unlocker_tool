@@ -1,0 +1,873 @@
+Extension Architecture & File Structure
+Implementation Brief
+1. Objective
+Rebuild the Writior browser extension as a production-grade extension-first client for the new v2 product.
+
+The extension must preserve the strong parts of the existing system:
+
+persistent sidepanel
+
+popup launcher
+
+on-page selection capture
+
+icon entry point for toggling panel visibility
+
+local-first capture behavior
+
+extension-to-web auth handoff
+
+“Work in Editor” seeded flow
+
+But the rebuild must remove the weak parts:
+
+extension-local policy as entitlement truth
+
+duplicated business logic for notes/projects/tags
+
+scattered serialization behavior
+
+unsafe coupling between extension UI logic and backend quirks
+
+host-page CSS interference risk
+
+The existing system already proves the extension is a real client with a content script, popup, sidepanel, background authority, local queues, auth handoff, and editor seeding flow. That architecture is worth preserving, but it must be cleaned up and made canonical in v2.
+
+2. Product Role of the Extension
+In v2, the extension is not a side utility.
+It is a primary product surface.
+
+Its role is to:
+
+capture research directly from webpages
+
+create or stage canonical research entities
+
+support local-first capture when appropriate
+
+sync into the shared research graph
+
+bridge the user from web research into the editor
+
+The preserved cross-surface workflow remains one of the most important product behaviors: selection on a page → extension capture → canonical entity creation → auth handoff → open seeded editor document.
+
+3. Architectural Principles
+3.1 Extension surfaces must stay clearly separated
+The current extension has the right surface split and that should remain:
+
+content script = page capture and metadata extraction
+
+background service worker = session, network, queue, authority
+
+sidepanel = persistent workspace
+
+popup = quick launcher/status surface
+
+3.2 The extension is a real client, not a shortcut around the app
+Authenticated extension requests must behave like proper client requests:
+
+send verified bearer tokens
+
+rely on backend ownership and entitlement services
+
+use canonical routes/services
+
+never become entitlement source-of-truth locally
+
+3.3 Local-first remains, but only for UX resilience
+Local-first note/citation capture is worth preserving because it is part of the user-visible capability set, especially in popup/sidepanel workflows. But local state must be optimistic and reconcilable, not policy-authoritative.
+
+3.4 Host-page safety is non-negotiable
+Injected UI must be isolated from host CSS and must avoid page layout interference. The content-script surface must remain minimal and overlay-based, not page-structural.
+
+4. Target Runtime Architecture
+Implement the extension as four main runtime layers.
+
+4.1 Layer A — Content Runtime
+Responsibilities:
+
+detect text selection
+
+extract page metadata
+
+render isolated capture UI
+
+send user intents to background
+
+never own network truth
+
+never own entitlement truth
+
+never persist canonical business logic
+
+Typical actions:
+
+SAVE_QUOTE
+
+CREATE_NOTE
+
+CITE_SOURCE
+
+COPY_ASSIST
+
+WORK_IN_EDITOR
+
+OPEN_PANEL
+
+This matches the current capture role, where the content script gathers selection and page metadata and hands intent to the background runtime.
+
+4.2 Layer B — Background Authority Runtime
+Responsibilities:
+
+auth/session authority
+
+API authority
+
+sync queue processing
+
+optimistic state reconciliation
+
+usage event queueing
+
+auth handoff issuance
+
+canonical capability snapshot caching
+
+message routing between extension surfaces
+
+This is already the core authority in the current extension and should remain so, but with cleaner separation and less business-rule sprawl.
+
+4.3 Layer C — Sidepanel Workspace Runtime
+Responsibilities:
+
+persistent research companion UI
+
+local note/citation browsing
+
+sync state visibility
+
+current-page staging context
+
+jump-to-editor actions
+
+queue/retry visibility
+
+The sidepanel currently acts as the richer persistent workspace and that role should be preserved explicitly. 
+product features
+
+
+4.4 Layer D — Popup Runtime
+Responsibilities:
+
+auth state snapshot
+
+sync state
+
+quick navigation
+
+recent captures
+
+open panel / open editor / settings
+
+Popup must remain a launcher and status surface, not a second full workspace. The current system already treats popup and sidepanel as overlapping surfaces, and v2 should simplify that by keeping popup light. 
+product features
+
+
+5. Canonical Extension Flow Model
+5.1 Core research flow
+The extension must integrate into the canonical research graph:
+
+Source → Citation → Quote → Note → Document
+
+This is the v2 product model and the extension must feed it, not invent parallel shadow records. 
+writior backend reconstruction
+
+
+5.2 “Work in Editor” flow
+Required flow:
+
+User highlights text on a page.
+
+Content runtime captures selection + page metadata.
+
+Background validates current session state.
+
+Background calls canonical extension selection endpoint.
+
+Backend creates or resolves canonical source/citation and creates the seeded document flow as defined by v2 services.
+
+Background requests secure auth handoff.
+
+Browser opens app handoff route.
+
+Web app lands in editor seeded state.
+
+5.3 Local-first note flow
+Required flow:
+
+User selects text.
+
+Content runtime opens mini note composer.
+
+Note saves locally first.
+
+Background queues sync if authenticated.
+
+Background reconciles local note with canonical note row.
+
+UI reflects local / queued / synced / failed states.
+
+5.4 Citation capture flow
+Required flow:
+
+User selects text or invokes cite-source action.
+
+Content runtime sends capture payload to background.
+
+Background resolves source/citation creation through canonical backend APIs.
+
+Citation stores locally for UX continuity if needed.
+
+Canonical sync result updates local cache.
+
+6. Non-Negotiable Architecture Rules
+6.1 Background is the only network authority
+The content script, popup, and sidepanel must not directly own API policy logic.
+
+They may request actions through a shared internal message protocol, but the background runtime must own:
+
+API request composition
+
+token attachment
+
+retry policy
+
+queue persistence
+
+sync reconciliation
+
+handoff issuance
+
+6.2 Extension-local tier logic must not be policy authority
+The current product has a local tier cache and local credit consumption behavior, but this has been explicitly identified as a workaround that must be redesigned. v2 must treat backend capability state as final truth. Local snapshots may exist only for UX hints or temporary optimistic flow.
+
+6.3 Canonical backend entities only
+Extension-created notes, citations, quotes, and documents must be first-class canonical rows. No side-channel shadow entity model.
+
+6.4 Preserve auth handoff, but harden it
+The handoff model is important and should stay, but it must be rebuilt around canonical verified identity, one-time codes, redirect-path validation, and app.writior.com as the canonical authenticated origin.
+
+7. Recommended File Structure
+Implement the extension in a modular structure like this:
+
+
+extension/
+  manifest.json
+
+  background/
+    background.js
+    router.js
+    message_bus.js
+    session_manager.js
+    capability_cache.js
+    sync_manager.js
+    queue_manager.js
+    usage_events.js
+    handoff_manager.js
+    api_client.js
+    retry_policy.js
+
+  content/
+    content_entry.js
+    selection_watcher.js
+    page_metadata.js
+    capture_overlay.js
+    shadow_root.js
+    positioning.js
+    copy_assist.js
+    content_bridge.js
+
+  sidepanel/
+    sidepanel.html
+    sidepanel.js
+    panel_app.js
+    panel_state.js
+    panel_router.js
+    tabs/
+      capture_tab.js
+      notes_tab.js
+      citations_tab.js
+      activity_tab.js
+    components/
+      page_card.js
+      selection_card.js
+      note_list.js
+      citation_list.js
+      sync_status.js
+      queue_card.js
+
+  popup/
+    popup.html
+    popup.js
+    popup_app.js
+    popup_state.js
+    components/
+      auth_card.js
+      sync_card.js
+      recent_capture_list.js
+      quick_actions.js
+
+  shared/
+    constants.js
+    message_types.js
+    storage_keys.js
+    schemas.js
+    serializers.js
+    capability_model.js
+    errors.js
+    urls.js
+    logger.js
+    time.js
+
+  storage/
+    chrome_store.js
+    idb.js
+    notes_store.js
+    citations_store.js
+    recent_activity_store.js
+    queue_store.js
+
+  auth/
+    supabase_client.js
+    token_store.js
+    auth_state.js
+
+  styles/
+    tokens.css
+    overlay.css
+    panel.css
+    popup.css
+This mirrors the direction already recommended elsewhere in the rebuild: modular runtimes, deliberate boundaries, and no giant all-knowing single file. The editor brief explicitly warns against a monolithic runtime, and the same principle should be enforced here too. 
+Quill Editor Reconstruction Imp…
+
+
+8. Detailed Module Responsibilities
+8.1 background/background.js
+Entry point for MV3 service worker.
+
+Must:
+
+register listeners
+
+initialize queues
+
+hydrate cached session snapshot
+
+wire message handlers
+
+schedule retry/replay tasks
+
+Must not:
+
+become a giant dumping ground for all business logic
+
+8.2 background/router.js
+Maps incoming extension messages to handlers.
+
+Example actions:
+
+AUTH_GET_STATE
+
+CAPTURE_SAVE_QUOTE
+
+CAPTURE_CREATE_NOTE
+
+CAPTURE_CITE_SOURCE
+
+CAPTURE_WORK_IN_EDITOR
+
+PANEL_GET_BOOTSTRAP
+
+SYNC_RETRY_ITEM
+
+OPEN_EDITOR
+
+OPEN_PANEL
+
+8.3 background/session_manager.js
+Owns extension session lifecycle.
+
+Must:
+
+read/write bearer session state
+
+detect expiry
+
+refresh or invalidate local auth state
+
+expose normalized auth state to popup/sidepanel/content
+
+never fall back to weak cookie bridge behavior, which v2 explicitly forbids.
+
+8.4 background/capability_cache.js
+Stores last-known backend capability snapshot.
+
+Must:
+
+cache only for UX
+
+expire conservatively
+
+reconcile with backend responses
+
+never become final entitlement authority.
+
+8.5 background/sync_manager.js
+Coordinates canonical sync for:
+
+notes
+
+citations
+
+usage events
+
+recent capture reconciliation
+
+Must understand local item states:
+
+local_only
+
+queued
+
+syncing
+
+synced
+
+failed
+
+8.6 background/queue_manager.js
+Owns durable queue persistence and replay.
+
+Must persist queues into chrome storage / IndexedDB because the current extension already depends on local-first queues and durable browser-side research state.
+
+8.7 background/handoff_manager.js
+Owns secure extension-to-web editor entry.
+
+Must:
+
+request one-time handoff issue
+
+validate destination path
+
+open app route
+
+prevent accidental external redirects
+
+This is directly aligned with the security brief’s redirect and handoff hardening requirements.
+
+8.8 content/selection_watcher.js
+Observes user selection safely.
+
+Must:
+
+debounce selection changes
+
+ignore selections inside inputs/textareas/contenteditable where inappropriate
+
+ignore extension UI selection
+
+emit minimal normalized selection payload
+
+8.9 content/page_metadata.js
+Extracts normalized source metadata.
+
+Examples:
+
+title
+
+canonical URL
+
+hostname/domain
+
+selected text
+
+page author if safely available
+
+published date if safely available
+
+Metadata must stay normalized and small.
+
+8.10 content/capture_overlay.js
+Renders the isolated Shadow-DOM capture pill and micro-interactions.
+
+Must:
+
+never mutate host layout
+
+remain fixed-position
+
+isolate CSS
+
+only communicate through the content bridge
+
+8.11 sidepanel/panel_app.js
+Bootstraps persistent panel workspace.
+
+Must request background bootstrap payload including:
+
+auth state
+
+sync state
+
+current page snapshot
+
+last selection
+
+recent local notes
+
+recent citations
+
+queue summary
+
+capability snapshot
+
+8.12 popup/popup_app.js
+Bootstraps popup snapshot only.
+
+Must load fast and avoid heavy hydration.
+
+9. Storage Strategy
+The current product already uses a split storage model across local extension state, queues, and indexed research stores. That is worth keeping, but with better boundaries. 
+product features
+
+
+9.1 Use chrome.storage.local for:
+auth session snapshot
+
+capability snapshot
+
+last active popup/panel tab
+
+sidepanel collapsed state
+
+recent selection metadata
+
+lightweight UI preferences
+
+queue summaries
+
+9.2 Use IndexedDB for:
+local notes cache
+
+local citations cache
+
+recent capture records
+
+durable sync queue payload bodies
+
+The current extension already stores notes/citations in IndexedDB and maintains local-first research state; preserve that model.
+
+9.3 Recommended storage keys
+
+session
+capability_snapshot
+popup_active_tab
+sidepanel_collapsed
+research_last_selection
+sync_queue_meta
+recent_capture_index
+ui_preferences
+9.4 Recommended IndexedDB stores
+
+writior_extension.notes
+writior_extension.citations
+writior_extension.recent_activity
+writior_extension.sync_queue
+writior_extension.page_context
+10. Internal Message Bus Contract
+Implement one shared message contract in shared/message_types.js.
+
+Recommended message groups:
+
+10.1 Auth
+AUTH_GET_STATE
+
+AUTH_SIGN_OUT
+
+AUTH_SESSION_UPDATED
+
+10.2 Capture
+CAPTURE_SELECTION_CHANGED
+
+CAPTURE_SAVE_QUOTE
+
+CAPTURE_CREATE_NOTE
+
+CAPTURE_CITE_SOURCE
+
+CAPTURE_COPY_ASSIST
+
+CAPTURE_WORK_IN_EDITOR
+
+10.3 Panel/Popup
+PANEL_OPEN
+
+PANEL_GET_BOOTSTRAP
+
+POPUP_GET_BOOTSTRAP
+
+10.4 Sync
+SYNC_QUEUE_UPDATED
+
+SYNC_RETRY_ITEM
+
+SYNC_ITEM_STATUS_CHANGED
+
+10.5 Navigation
+OPEN_EDITOR
+
+OPEN_DASHBOARD
+
+OPEN_SETTINGS
+
+Rules:
+
+no ad hoc string literals scattered across files
+
+every message must have a normalized request/response shape
+
+error payloads must be normalized
+
+11. Backend Contract Expectations
+The extension must talk only to canonical v2 backend services.
+
+It must rely on:
+
+canonical capability/account services
+
+canonical notes service
+
+canonical citations service
+
+canonical workspace/document service
+
+secure handoff services
+
+The backend reconstruction plan explicitly requires reconnecting extension support only after shared auth/helpers, entitlement builder, serialization, and canonical services are in place. 
+writior backend reconstruction
+
+
+11.1 Extension endpoints must not become mini business silos
+The current system audit notes that extension-facing routes mix transport and business logic, and even house notes/projects/tags APIs the web editor consumes indirectly. That should be cleaned up. Extension routes in v2 should orchestrate shared services, not own domain logic.
+
+11.2 Required canonical backend support for extension
+Minimum expected backend surfaces:
+
+auth handoff issue/exchange
+
+extension selection → seeded editor document
+
+note capture through canonical notes service
+
+citation/source creation through canonical citation service
+
+usage event recording
+
+capability/account snapshot read
+
+12. Security Requirements
+12.1 Auth model
+Use verified bearer-token auth.
+Do not preserve weak JS-readable cookie trust. That old pattern is explicitly rejected by the security brief.
+
+12.2 Origin strategy
+Authenticated web destination must prefer:
+
+https://app.writior.com
+
+Do not let web-unlocker-tool.onrender.com become long-term authenticated source-of-truth.
+
+12.3 Redirect validation
+Handoff destinations must allow only safe internal app paths. External redirects must be rejected.
+
+12.4 Logging hygiene
+Never log:
+
+access tokens
+
+refresh tokens
+
+handoff codes
+
+raw session payloads. 
+new Security & Authentication I…
+
+
+12.5 Capability enforcement
+Local UI may show optimistic hints, but extension sync writes must always reconcile against backend entitlement and ownership truth.
+
+13. Performance Rules
+The extension must feel instant.
+
+13.1 Must do
+lazy boot non-critical panel content
+
+debounce selection watchers
+
+keep overlay injection tiny
+
+avoid large MutationObserver sweeps
+
+keep popup boot extremely light
+
+separate summary hydration from detail hydration
+
+This same staged hydration philosophy is already recommended for the editor interaction engine and should be mirrored in the extension runtime too. 
+new Editor Interaction Engine B…
+
+
+13.2 Must not do
+no giant background file with all concerns mixed together
+
+no direct content-script fetch sprawl
+
+no full research graph hydration on panel open
+
+no entitlement computation in the UI
+
+no host-page DOM rewrites beyond minimal copy-assist scope
+
+14. Build Order
+Phase 1 — Core extension runtime
+Implement:
+
+manifest cleanup
+
+background entry
+
+message bus
+
+storage wrappers
+
+session manager
+
+API client
+
+queue manager
+
+Phase 2 — Content runtime
+Implement:
+
+shadow root
+
+selection watcher
+
+page metadata extraction
+
+capture pill
+
+note mini composer
+
+toast system
+
+Phase 3 — Sidepanel runtime
+Implement:
+
+panel shell
+
+capture tab
+
+notes tab
+
+citations tab
+
+activity tab
+
+sync state rendering
+
+Phase 4 — Popup runtime
+Implement:
+
+popup shell
+
+auth card
+
+sync card
+
+quick actions
+
+recent captures
+
+Phase 5 — Canonical integration
+Implement:
+
+note capture sync
+
+citation capture sync
+
+usage events
+
+work-in-editor handoff
+
+bootstrap payloads
+
+Phase 6 — Hardening
+Implement:
+
+redirect validation
+
+auth/session edge handling
+
+retry/backoff
+
+stale capability reconciliation
+
+error normalization
+
+This sequencing aligns with the broader backend reconstruction order, where extension support comes after core auth, entitlements, serialization, and canonical services are in place. 
+writior backend reconstruction
+
+
+15. Acceptance Criteria
+The extension architecture is complete only if all of the following are true:
+
+content script only handles page capture/UI concerns
+
+background is the sole network and authority runtime
+
+popup is lightweight and non-duplicative
+
+sidepanel is the main persistent workspace
+
+local-first capture works without becoming policy truth
+
+extension-created notes/citations/documents are canonical backend entities
+
+auth handoff works through one-time secure handoff flow
+
+backend capability truth overrides local stale cache
+
+injected UI remains isolated from host CSS/layout
+
+no weak cookie bridge remains in extension/web auth flow
+
+These acceptance ideas are directly consistent with the security brief, product audit, and reconstruction brief.
+
+16. Final Expected Result
+The finished extension should be:
+
+a cleanly separated MV3 client
+
+safe on arbitrary webpages
+
+fast for capture
+
+resilient offline or under flaky connectivity
+
+canonical in how it creates and syncs entities
+
+trustworthy in auth/security
+
+tightly integrated with the Writior research-to-writing workflow
+
+It should feel like a serious research companion, not a bundle of popup scripts.

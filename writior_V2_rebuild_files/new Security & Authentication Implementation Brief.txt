@@ -1,0 +1,1059 @@
+Writior v2 Security & Authentication Implementation Brief
+Role
+You are a senior security-minded backend/product engineer implementing the production-grade authentication, authorization, session, and request-hardening layer for Writior v2.
+
+This is a fresh canonical security rebuild, not a small hardening pass on legacy auth code.
+
+Assume:
+
+the product is being rebuilt around the new canonical schema,
+
+the old user_meta-driven auth/account patterns are no longer the source of truth,
+
+the old weak session bridge patterns must not be preserved,
+
+the browser extension remains a first-class client,
+
+app.writior.com is the canonical authenticated app origin,
+
+writior.com is the parent/marketing domain,
+
+web-unlocker-tool.onrender.com is a secondary access host that must not become the long-term session authority. 
+system audit
+
+ 
+system audit
+
+
+Product/domain context
+Writior is not just a web app. It is a multi-surface research workflow product with:
+
+web auth and workspace access,
+
+dashboard/reporting,
+
+editor/document workflows,
+
+browser extension capture flows,
+
+extension-to-web auth handoff,
+
+billing and entitlement mutation,
+
+protected canonical research entities. 
+product features
+
+ 
+product features
+
+
+The new canonical identity/account model already exists in the SQL blueprint:
+
+user_profiles
+
+user_preferences
+
+user_entitlements
+
+billing_customers
+
+billing_subscriptions
+
+auth_handoff_codes 
+new database
+
+
+Your job is to make the auth/security system clean, centralized, and hard to break.
+
+Critical implementation stance
+1. Supabase Auth is the only identity provider
+Use Supabase Auth as the sole identity system for:
+
+email/password sign up
+
+email/password login
+
+future Google OAuth sign-in/sign-up
+
+session identity verification
+
+Do not create a parallel custom identity system in app code.
+
+2. Canonical account truth comes from the new account tables
+The app-layer account/security truth must come from:
+
+user_profiles
+
+user_preferences
+
+user_entitlements
+
+billing tables
+
+auth_handoff_codes
+
+Do not rebuild around legacy user_meta. The backend reconstruction brief explicitly says entitlement truth must come from user_entitlements, with richer capability objects derived in service code rather than scattered flags or duplicated policy. 
+writior backend reconstruction
+
+
+3. Do not preserve the weak browser cookie bridge
+The current system audit shows that /api/login sets wu_access_token with httponly=False and secure=False, and middleware accepts either bearer auth or that cookie. That pattern must be removed. It is not acceptable for v2. 
+system audit
+
+
+4. The extension is a real client, not a hack
+Preserve and improve the extension auth handoff model. The product audit identifies extension-to-web auth handoff through auth_handoff_codes as a core cross-surface workflow and recommends preserving it. 
+product features
+
+ 
+product features
+
+
+5. Security must be enforced in layers
+Security for Writior v2 must be implemented across:
+
+browser/client auth state,
+
+backend token verification,
+
+shared ownership/entitlement services,
+
+database RLS,
+
+RPC ownership assertions,
+
+request hardening,
+
+CORS/CSP/headers,
+
+rate limiting,
+
+billing/webhook verification. 
+new database
+
+ 
+new database
+
+
+Canonical security architecture to implement
+1. Identity architecture
+Canonical identity source
+Use Supabase Auth auth.users as the identity root.
+
+Canonical account bootstrap
+On new signup or first successful OAuth login:
+
+create/confirm the Supabase auth user,
+
+call bootstrap_new_user(p_user_id, p_display_name, p_use_case) to initialize:
+
+user_profiles
+
+user_preferences
+
+user_entitlements with free/active defaults. 
+new database
+
+
+Required app-layer account object
+Implement a canonical account state service that reads:
+
+profile
+
+preferences
+
+entitlements
+
+billing state if present
+
+Use v_user_account_state where helpful, but keep the final normalized payload assembled in service code. 
+new database
+
+
+2. Session architecture
+Web session model
+For app.writior.com, use Supabase-authenticated browser sessions and require authenticated frontend API requests to send a bearer token.
+
+Backend APIs must:
+
+accept Authorization: Bearer <token>,
+
+verify the token against Supabase,
+
+resolve the user id from the verified token,
+
+load canonical account/capability state from canonical tables.
+
+Forbidden legacy pattern
+Do not:
+
+mirror access tokens into JS-readable cookies,
+
+trust browser-set auth cookies as equivalent to verified bearer identity,
+
+preserve the old wu_access_token strategy. 
+system audit
+
+
+Optional server-managed cookie mode
+If a cookie-backed app session is introduced later, it must be:
+
+HttpOnly
+
+Secure
+
+SameSite=Lax or stricter
+
+scoped to app.writior.com
+
+independently managed and rotatable
+
+But the default v2 implementation should remain: verified bearer-token API auth, not raw cookie auth.
+
+3. Domain/origin strategy
+Canonical authenticated origin
+Use:
+
+https://app.writior.com as the only canonical authenticated web origin
+
+Parent domain
+Use:
+
+https://writior.com for landing pages, pricing, docs, and marketing
+
+Secondary deployment host
+Treat:
+
+https://web-unlocker-tool.onrender.com as a secondary deployment/access host only
+
+Important rules
+Auth callback and authenticated app routes should prefer app.writior.com
+
+writior.com should redirect app access into app.writior.com
+
+web-unlocker-tool.onrender.com must not become the long-term cross-surface session source of truth
+
+Any auth handoff or OAuth flow that originates elsewhere must terminate into app.writior.com
+
+4. Google sign-in / sign-up readiness
+Implement the auth layer so Google OAuth can be enabled without architecture changes.
+
+Required readiness
+structure Supabase auth config for multiple providers,
+
+support PKCE-compatible OAuth flow,
+
+implement callback handling at app.writior.com,
+
+ensure first-time Google users go through the same canonical bootstrap flow as password users,
+
+do not create provider-specific parallel account rows.
+
+Callback target
+Preferred callback:
+
+https://app.writior.com/auth/callback
+
+Do not make web-unlocker-tool.onrender.com the preferred long-term OAuth callback target.
+
+5. Canonical capability and authorization service
+Implement one shared capability builder driven by user_entitlements.
+
+The reconstruction brief explicitly requires a shared entitlement capability builder and says capability truth must come from user_entitlements, not scattered route heuristics. 
+writior backend reconstruction
+
+ 
+writior backend reconstruction
+
+
+Output shape
+Return a normalized payload like:
+
+JSON
+
+{
+  "authenticated": true,
+  "user_id": "uuid",
+  "tier": "free",
+  "status": "active",
+  "paid_until": null,
+  "capabilities": {
+    "unlocks": { "limit": 10, "window": "week" },
+    "documents": { "limit": 3, "window": "week", "freeze": true },
+    "exports": ["pdf", "html"],
+    "zip_export": false,
+    "citation_styles": ["apa", "mla"],
+    "custom_templates": false,
+    "bookmarks": false,
+    "history_search": false,
+    "reports": false,
+    "delete_documents": false,
+    "ads": true
+  }
+}
+Important rules
+derive these values in service code,
+
+do not scatter checks across routes,
+
+do not let extension-local policy become source of truth,
+
+route code should consume the shared capability result.
+
+The current product audit explicitly identifies scattered entitlement checks and recommends redesigning them into a centralized model. 
+product features
+
+ 
+product features
+
+
+6. Auth handoff architecture
+The extension auth handoff must be preserved and rebuilt around canonical account/session truth.
+
+Existing basis to preserve
+The current product already uses one-time auth_handoff_codes for extension-to-web auth handoff. This is a real product capability and should remain. 
+product features
+
+ 
+product features
+
+
+Canonical handoff table
+Use auth_handoff_codes:
+
+code
+
+user_id
+
+redirect_path
+
+session_payload
+
+expires_at
+
+used_at 
+new database
+
+
+Required handoff behavior
+Implement:
+
+issue handoff code
+
+consume handoff code
+
+one-time usage only
+
+strict expiration
+
+immediate used-state marking
+
+redirect-path validation
+
+Security rules
+short TTL, ideally 60–120 seconds
+
+reject reused codes
+
+reject expired codes
+
+reject invalid users
+
+reject external redirect destinations
+
+allow only internal app-relative redirect paths like /editor?... or /dashboard
+
+do not allow arbitrary external URLs
+
+rate limit issuance and exchange endpoints
+
+never log raw session tokens
+
+Extension flow
+Required flow:
+
+extension authenticates with Supabase,
+
+extension requests one-time handoff code from backend,
+
+backend validates user identity and stores short-lived handoff code,
+
+browser opens app.writior.com/auth/handoff?code=...,
+
+handoff page exchanges the code,
+
+web session is established,
+
+user is redirected to the validated internal path.
+
+7. Route protection model
+The audit shows the current app relies partly on middleware public-path logic and some client-side redirect behavior. That is not enough for v2. 
+system audit
+
+
+Implement a strict route classification model.
+
+Public routes
+Allow unauthenticated access to:
+
+/
+
+pricing/docs/marketing pages
+
+/auth
+
+/auth/callback
+
+/auth/handoff
+
+/api/public-config only if still needed
+
+verified webhook endpoints
+
+Auth-required page routes
+Require authenticated identity for:
+
+/dashboard
+
+/editor
+
+any future /workspace/*
+
+any future account/settings pages
+
+Auth-required API routes
+Require verified auth for:
+
+/api/me
+
+/api/profile*
+
+/api/preferences*
+
+/api/entitlements*
+
+/api/docs*
+
+/api/notes*
+
+/api/projects*
+
+/api/tags*
+
+/api/citations*
+
+/api/quotes*
+
+/api/bookmarks*
+
+/api/history*
+
+/api/reports*
+
+authenticated extension sync endpoints
+
+handoff issue endpoints
+
+Important rule
+Do not treat frontend redirect logic as security. Page and API protection must be authoritative server-side.
+
+8. Ownership and authorization enforcement
+The source docs already establish the right direction:
+
+centralized ownership validation,
+
+RLS,
+
+atomic RPCs with owner assertions,
+
+no route-level ad hoc duplication. 
+writior backend reconstruction
+
+ 
+new database
+
+
+Required enforcement layers
+Layer 1 — verified identity
+Every protected request must resolve a verified user_id from the Supabase token.
+
+Layer 2 — shared service authorization
+Shared services must enforce:
+
+entitlement checks,
+
+ownership checks,
+
+cross-entity relation ownership checks
+
+Layer 3 — database RLS
+RLS must remain enabled for user-owned tables, including:
+
+user/account tables
+
+notes
+
+quotes
+
+projects
+
+tags
+
+citations
+
+documents
+
+relation tables
+
+unlock/bookmark/account tables. 
+new database
+
+
+Layer 4 — atomic RPC guards
+For relation replacement and ownership-sensitive operations, use the canonical RPCs that assert ownership:
+
+assert_document_owner
+
+assert_note_owner
+
+relation replacement RPC functions. 
+new database
+
+
+Important rule
+Do not duplicate route-local authorization logic everywhere. Shared services must become the standard path.
+
+9. Middleware and shared auth helpers
+Refactor the current route-centric auth model into reusable auth infrastructure.
+
+Required core modules
+Build or clean up:
+
+app/core/auth.py
+
+app/core/entitlements.py
+
+app/core/security.py
+
+app/core/config.py
+
+app/core/errors.py
+
+Required auth helpers
+Implement helpers for:
+
+bearer token extraction
+
+Supabase token verification
+
+current user resolution
+
+current account state resolution
+
+capability object generation
+
+auth-required dependency/helper
+
+entitlement-required helper
+
+authenticated user audit context
+
+Important rule
+The old pattern of mixing middleware-resolved user state with scattered manual checks should be replaced by a clean shared auth layer. The reconstruction brief explicitly asks for shared auth helpers and module boundaries. 
+writior backend reconstruction
+
+
+10. Request hardening
+The current audit explicitly notes:
+
+no CSRF middleware,
+
+no generic rate-limit middleware,
+
+only baseline security headers,
+
+route/service-local throttling. 
+system audit
+
+
+That must be hardened.
+
+Required hardening measures
+CORS
+Implement strict production CORS allowlists.
+
+Allowed origins should be limited to:
+
+https://app.writior.com
+
+https://writior.com only where necessary
+
+extension origins
+
+local dev origins in non-production
+
+No wildcard production CORS.
+
+CSRF
+If protected APIs rely exclusively on bearer-token auth and not cookies, CSRF exposure is significantly reduced.
+
+Still:
+
+add CSRF protection for any cookie-authenticated mutation endpoints,
+
+do not allow mixed trust between cookies and bearer auth,
+
+prefer token-authenticated API calls for SPA-like surfaces.
+
+Security headers
+Add/strengthen:
+
+Content Security Policy
+
+HSTS
+
+X-Content-Type-Options: nosniff
+
+Referrer-Policy: strict-origin-when-cross-origin
+
+Permissions-Policy
+
+frame protection via CSP frame-ancestors 'none' or equivalent
+
+secure cache-control for sensitive auth pages where appropriate
+
+Rate limiting
+Implement generic middleware/service support for rate limiting and apply it especially to:
+
+login/signup
+
+password reset if added
+
+OAuth callback abuse points if needed
+
+handoff issue/exchange
+
+extension usage-event endpoints
+
+unlock endpoints
+
+search/report endpoints
+
+webhook endpoints where appropriate
+
+Redirect/path validation
+Validate every redirect path and next destination.
+Only allow:
+
+internal relative paths,
+
+normalized app paths,
+
+known auth callback completions.
+
+Reject:
+
+external URLs,
+
+protocol-relative redirects,
+
+injected malformed paths.
+
+Logging hygiene
+Never log:
+
+access tokens
+
+refresh tokens
+
+handoff code values
+
+raw session payloads
+
+sensitive provider secrets
+
+11. Extension security model
+The extension remains part of the product and must be secured as a proper client.
+
+Preserve
+local-first capture,
+
+local queues,
+
+auth handoff,
+
+guest unlock permit model,
+
+canonical sync into shared note/citation/document graphs. 
+writior backend reconstruction
+
+
+Redesign
+local tier cache must not be policy authority,
+
+backend capability state must be the final source of truth,
+
+extension routes should orchestrate canonical note/citation/document services,
+
+extension-created entities must be first-class canonical entities, not side-channel records. 
+writior backend reconstruction
+
+
+Required extension auth/security behavior
+authenticated extension requests send verified Supabase bearer tokens,
+
+extension sync writes are checked against entitlement + ownership services,
+
+local optimistic state must reconcile with backend truth,
+
+handoff issuance must require verified extension identity,
+
+anonymous/guest extension usage must be rate-limited and abuse-resistant.
+
+12. Billing and entitlement mutation security
+Billing remains a privileged mutation path.
+
+Required behavior
+webhook verification must be strict and mandatory,
+
+billing writes must be idempotent,
+
+subscription/customer mapping must be canonical,
+
+entitlement mutation must write into:
+
+billing_customers
+
+billing_subscriptions
+
+user_entitlements 
+new database
+
+
+Important rule
+Only verified webhook/admin flows may mutate paid entitlement state.
+Do not let client code directly set account tier or paid_until.
+
+13. Required module structure
+Implement or move toward this structure:
+
+
+app/
+  core/
+    auth.py
+    entitlements.py
+    security.py
+    config.py
+    errors.py
+    serialization.py
+
+  modules/
+    identity/
+      routes.py
+      service.py
+      repo.py
+      schemas.py
+
+    billing/
+      routes.py
+      service.py
+      repo.py
+      schemas.py
+
+    extension/
+      routes.py
+      service.py
+      repo.py
+      schemas.py
+
+    workspace/
+      routes.py
+      service.py
+      repo.py
+      schemas.py
+
+    research/
+      citations/
+      quotes/
+      notes/
+      taxonomy/
+
+    unlock/
+      routes.py
+      service.py
+      repo.py
+      schemas.py
+
+    insights/
+      routes.py
+      service.py
+      repo.py
+      schemas.py
+This matches the broader reconstruction direction and keeps auth/security as shared infrastructure rather than hidden inside route files. 
+writior backend reconstruction
+
+
+14. Concrete implementation tasks
+Implement in this order.
+
+Phase 1 — Core auth/security foundation
+Create shared auth verification helpers.
+
+Create canonical account state loader.
+
+Create canonical capability builder from user_entitlements.
+
+Remove legacy wu_access_token cookie trust.
+
+Remove auth logic that depends on legacy user_meta.
+
+Introduce shared route/dependency helpers for authenticated user resolution.
+
+Add centralized redirect/path validation helpers.
+
+Add security header configuration.
+
+Add structured rate limiting utilities.
+
+Phase 2 — Identity/account domain
+Implement signup bootstrap through Supabase Auth + bootstrap_new_user(...).
+
+Implement profile read/update service.
+
+Implement preferences read/update service.
+
+Implement entitlement read/current-capability service.
+
+Implement canonical /api/me backed by new account tables only.
+
+Phase 3 — Auth flows
+Implement email/password signup flow.
+
+Implement email/password login flow.
+
+Implement logout flow.
+
+Implement auth callback flow for OAuth readiness.
+
+Implement Google OAuth-ready callback handling.
+
+Ensure all auth flows terminate into canonical app origin.
+
+Phase 4 — Handoff flow
+Implement secure handoff-code issuance.
+
+Implement secure handoff-code exchange.
+
+Add one-time usage enforcement.
+
+Add short expiry and replay protection.
+
+Add rate limiting.
+
+Add internal redirect-path allowlisting.
+
+Phase 5 — Route and service hardening
+Reclassify all routes into public/auth-required/admin/system.
+
+Apply shared auth enforcement to all protected APIs.
+
+Replace scattered entitlement checks with capability-service calls.
+
+Ensure protected page routes reject unauthenticated requests server-side.
+
+Ensure extension routes use shared canonical services.
+
+Phase 6 — Billing security
+Implement verified webhook handling.
+
+Update billing tables canonically.
+
+Update user_entitlements canonically.
+
+Add idempotency and replay-safe processing.
+
+Phase 7 — Production hardening
+Add strict CORS config by environment.
+
+Add CSP/HSTS/security headers.
+
+Add targeted rate limiting.
+
+Add logging redaction.
+
+Remove any remaining legacy session bridge behavior.
+
+Add abuse protection around unlock and extension usage endpoints.
+
+15. Required API/behavior rules
+Account rules
+every authenticated user must have canonical profile/preferences/entitlements rows,
+
+missing bootstrap state must be treated as a fixable account bootstrap issue, not silently ignored,
+
+user_entitlements is the only tier/status truth. 
+new database
+
+
+Session rules
+no JS-readable auth token cookies,
+
+no route trusting of client-writeable auth cookies,
+
+backend verifies bearer identity on protected requests.
+
+Handoff rules
+one-time code only,
+
+short TTL,
+
+internal redirect only,
+
+replay attempts denied.
+
+Extension rules
+extension is authenticated through Supabase like web,
+
+extension routes never bypass canonical services,
+
+extension tier cache cannot override backend entitlement truth.
+
+Security rules
+no wildcard production CORS,
+
+no open redirect paths,
+
+no secret/token logging,
+
+no unverified entitlement mutation,
+
+no client-side-only protection for sensitive routes.
+
+16. Testing requirements
+You must add or update tests proving the new security model is real.
+
+Minimum required test coverage
+Account/bootstrap
+signup bootstraps user_profiles
+
+signup bootstraps user_preferences
+
+signup bootstraps user_entitlements
+
+repeat bootstrap is idempotent
+
+Auth verification
+protected route rejects missing bearer token
+
+protected route rejects invalid/expired bearer token
+
+protected route accepts valid verified bearer token
+
+legacy cookie-only auth is rejected if that path is removed
+
+Capabilities/authorization
+capability object derives correctly for free
+
+capability object derives correctly for standard
+
+capability object derives correctly for pro
+
+expired/grace states behave correctly
+
+protected routes use shared capability checks, not route-local ad hoc logic
+
+Handoff
+authenticated extension can issue handoff code
+
+handoff exchange succeeds once
+
+reused code is rejected
+
+expired code is rejected
+
+invalid redirect path is rejected
+
+external redirect URL is rejected
+
+Ownership/RLS integration
+cross-user access to notes/documents/citations is denied
+
+relation replacement RPCs reject unowned entities
+
+shared services refuse unauthorized cross-user linking
+
+Billing
+valid webhook mutates billing + entitlement state correctly
+
+invalid signature is rejected
+
+duplicate event is idempotently ignored or safely handled
+
+Request hardening
+production CORS only allows approved origins
+
+security headers are present
+
+rate-limited endpoints throttle correctly
+
+auth-sensitive logs redact tokens/secrets
+
+Extension/web integration
+extension authenticated flow can open web editor through handoff
+
+extension-created canonical entities remain user-owned and readable in web
+
+extension local cache mismatch does not override backend entitlement truth
+
+17. Explicit anti-goals
+Do not implement or preserve:
+
+legacy wu_access_token cookie trust
+
+httponly=False auth cookies
+
+secure=False auth cookies in production
+
+legacy user_meta as the canonical account source
+
+route-local ad hoc entitlement logic as the main policy engine
+
+extension-local tier logic as entitlement truth
+
+open redirect behavior
+
+wildcard production CORS
+
+security-by-client-redirect for protected pages
+
+The current audit flags several of these as weaknesses or transitional behaviors, and the v2 rebuild should intentionally remove them. 
+system audit
+
+ 
+product features
+
+
+18. Final deliverable
+Deliver a production-grade Writior v2 auth/security system such that:
+
+Supabase Auth is the sole identity root,
+
+canonical account truth comes from the new account tables,
+
+capability/entitlement logic is centralized,
+
+all protected routes require verified identity,
+
+the weak cookie session bridge is gone,
+
+extension↔web auth handoff is preserved and hardened,
+
+OAuth/Google readiness is built in,
+
+ownership and relation authorization are consistently enforced,
+
+RLS remains the final DB wall,
+
+billing mutation is secure and canonical,
+
+request hardening is strong enough for production deployment on app.writior.com.

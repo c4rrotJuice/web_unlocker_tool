@@ -1,0 +1,2887 @@
+openapi: 3.1.0
+info:
+  title: Writior V2 API
+  version: 2.0.0
+  summary: Canonical backend API for the Writior V2 research-to-writing product
+  description: |
+    Writior V2 is a structured research workflow product built around the canonical graph:
+
+      Sources -> Citations -> Quotes -> Notes -> Documents
+
+    The backend is a fresh canonical rebuild. It must use:
+    - bearer-token authenticated API requests
+    - centralized entity serializers
+    - shared ownership and capability enforcement
+    - atomic relation replacement endpoints
+    - secure extension-to-web handoff
+    - canonical extension capture flows
+    - no legacy cookie auth bridge
+    - no legacy schema fallback behavior
+
+servers:
+  - url: https://app.writior.com
+    description: Canonical authenticated app origin
+  - url: https://web-unlocker-tool.onrender.com
+    description: Secondary deployment host, not canonical auth origin
+  - url: http://localhost:5000
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Account
+  - name: Auth
+  - name: Projects
+  - name: Tags
+  - name: Sources
+  - name: Citations
+  - name: Quotes
+  - name: Notes
+  - name: Documents
+  - name: Extension
+  - name: Activity
+  - name: Insights
+  - name: Billing
+  - name: Health
+
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Health check
+      security: []
+      responses:
+        "200":
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/me:
+    get:
+      tags: [Account]
+      summary: Get canonical account bootstrap payload
+      description: |
+        Returns the authenticated user's canonical account state, preferences,
+        entitlement, and derived capability object.
+      responses:
+        "200":
+          description: Account bootstrap payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeResponse"
+
+  /api/profile:
+    get:
+      tags: [Account]
+      summary: Get profile
+      responses:
+        "200":
+          description: Profile payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileResponse"
+    patch:
+      tags: [Account]
+      summary: Update profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileUpdateRequest"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileResponse"
+
+  /api/preferences:
+    get:
+      tags: [Account]
+      summary: Get preferences
+      responses:
+        "200":
+          description: Preference payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreferencesResponse"
+    patch:
+      tags: [Account]
+      summary: Update preferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreferencesUpdateRequest"
+      responses:
+        "200":
+          description: Updated preferences
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreferencesResponse"
+
+  /api/entitlements/current:
+    get:
+      tags: [Account]
+      summary: Get current entitlement and derived capabilities
+      responses:
+        "200":
+          description: Entitlement payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntitlementResponse"
+
+  /api/auth/signup:
+    post:
+      tags: [Auth]
+      summary: Sign up and bootstrap canonical account rows
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignupRequest"
+      responses:
+        "200":
+          description: Signup/bootstrap result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignupResponse"
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Email/password login helper
+      description: |
+        Optional helper if the app coordinates login server-side. Protected APIs still
+        require verified bearer tokens and may not trust JS-readable auth cookies.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout helper
+      responses:
+        "200":
+          description: Logout acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkEnvelope"
+
+  /api/auth/session:
+    get:
+      tags: [Auth]
+      summary: Get current resolved session/account state
+      responses:
+        "200":
+          description: Session state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+
+  /auth/callback:
+    get:
+      tags: [Auth]
+      summary: OAuth callback endpoint
+      security: []
+      parameters:
+        - in: query
+          name: code
+          schema: { type: string }
+        - in: query
+          name: state
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to validated internal app route
+
+  /api/auth/handoff:
+    post:
+      tags: [Auth]
+      summary: Issue secure one-time extension-to-web handoff code
+      description: |
+        Issues a short-lived one-time handoff code for opening a validated internal app path,
+        usually into a seeded editor state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HandoffIssueRequest"
+      responses:
+        "200":
+          description: Handoff issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HandoffIssueResponse"
+
+  /api/auth/handoff/exchange:
+    post:
+      tags: [Auth]
+      summary: Exchange one-time handoff code
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HandoffExchangeRequest"
+      responses:
+        "200":
+          description: Handoff exchange result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HandoffExchangeResponse"
+
+  /api/projects:
+    get:
+      tags: [Projects]
+      summary: List projects
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - in: query
+          name: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Project list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectListResponse"
+    post:
+      tags: [Projects]
+      summary: Create project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectCreateRequest"
+      responses:
+        "200":
+          description: Created project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResponse"
+
+  /api/projects/{project_id}:
+    get:
+      tags: [Projects]
+      summary: Get project detail
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Project detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResponse"
+    patch:
+      tags: [Projects]
+      summary: Update project
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectUpdateRequest"
+      responses:
+        "200":
+          description: Updated project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResponse"
+    delete:
+      tags: [Projects]
+      summary: Delete project
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkEnvelope"
+
+  /api/projects/{project_id}/archive:
+    post:
+      tags: [Projects]
+      summary: Archive project
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Archived project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResponse"
+
+  /api/projects/{project_id}/restore:
+    post:
+      tags: [Projects]
+      summary: Restore archived project
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Restored project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResponse"
+
+  /api/tags:
+    get:
+      tags: [Tags]
+      summary: List tags
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - in: query
+          name: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Tag list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagListResponse"
+    post:
+      tags: [Tags]
+      summary: Create tag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TagCreateRequest"
+      responses:
+        "200":
+          description: Created tag
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagResponse"
+
+  /api/tags/{tag_id}:
+    patch:
+      tags: [Tags]
+      summary: Update tag
+      parameters:
+        - $ref: "#/components/parameters/TagId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TagUpdateRequest"
+      responses:
+        "200":
+          description: Updated tag
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagResponse"
+    delete:
+      tags: [Tags]
+      summary: Delete tag
+      parameters:
+        - $ref: "#/components/parameters/TagId"
+      responses:
+        "200":
+          description: Deleted tag
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkEnvelope"
+
+  /api/tags/resolve:
+    post:
+      tags: [Tags]
+      summary: Resolve tag names to existing or new normalized tags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TagResolveRequest"
+      responses:
+        "200":
+          description: Resolved tags
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagResolveResponse"
+
+  /api/sources:
+    get:
+      tags: [Sources]
+      summary: List sources
+      parameters:
+        - in: query
+          name: project_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: query
+          schema: { type: string }
+        - in: query
+          name: hostname
+          schema: { type: string }
+        - in: query
+          name: source_type
+          schema: { type: string }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Source list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceListResponse"
+
+  /api/sources/resolve:
+    post:
+      tags: [Sources]
+      summary: Resolve or create canonical source from page metadata
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceResolveRequest"
+      responses:
+        "200":
+          description: Resolved source
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceResolveResponse"
+
+  /api/sources/{source_id}:
+    get:
+      tags: [Sources]
+      summary: Get source detail with relationship summary
+      parameters:
+        - $ref: "#/components/parameters/SourceId"
+      responses:
+        "200":
+          description: Source detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceDetailResponse"
+
+  /api/citations:
+    get:
+      tags: [Citations]
+      summary: List citation instances
+      parameters:
+        - in: query
+          name: source_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: project_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: document_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: style
+          schema: { $ref: "#/components/schemas/CitationStyle" }
+        - in: query
+          name: query
+          schema: { type: string }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Citation list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CitationListResponse"
+    post:
+      tags: [Citations]
+      summary: Create citation instance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CitationCreateRequest"
+      responses:
+        "200":
+          description: Citation created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CitationResponse"
+
+  /api/citations/{citation_id}:
+    get:
+      tags: [Citations]
+      summary: Get citation detail
+      parameters:
+        - $ref: "#/components/parameters/CitationId"
+      responses:
+        "200":
+          description: Citation detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CitationResponse"
+    patch:
+      tags: [Citations]
+      summary: Update citation instance
+      parameters:
+        - $ref: "#/components/parameters/CitationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CitationUpdateRequest"
+      responses:
+        "200":
+          description: Citation updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CitationResponse"
+    delete:
+      tags: [Citations]
+      summary: Delete citation instance
+      parameters:
+        - $ref: "#/components/parameters/CitationId"
+      responses:
+        "200":
+          description: Citation deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkEnvelope"
+
+  /api/citations/render:
+    post:
+      tags: [Citations]
+      summary: Render citation output for a style and locator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CitationRenderRequest"
+      responses:
+        "200":
+          description: Rendered citation data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CitationRenderResponse"
+
+  /api/citations/by-ids:
+    post:
+      tags: [Citations]
+      summary: Bulk citation hydration by ids
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdsRequest"
+      responses:
+        "200":
+          description: Bulk citations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CitationListResponse"
+
+  /api/quotes:
+    get:
+      tags: [Quotes]
+      summary: List quotes
+      parameters:
+        - in: query
+          name: citation_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: document_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: project_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: query
+          schema: { type: string }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Quote list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteListResponse"
+    post:
+      tags: [Quotes]
+      summary: Create quote under a citation instance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteCreateRequest"
+      responses:
+        "200":
+          description: Quote created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteResponse"
+
+  /api/quotes/{quote_id}:
+    get:
+      tags: [Quotes]
+      summary: Get quote detail
+      parameters:
+        - $ref: "#/components/parameters/QuoteId"
+      responses:
+        "200":
+          description: Quote detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteResponse"
+    patch:
+      tags: [Quotes]
+      summary: Update quote
+      parameters:
+        - $ref: "#/components/parameters/QuoteId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteUpdateRequest"
+      responses:
+        "200":
+          description: Quote updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteResponse"
+    delete:
+      tags: [Quotes]
+      summary: Delete quote
+      parameters:
+        - $ref: "#/components/parameters/QuoteId"
+      responses:
+        "200":
+          description: Quote deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkEnvelope"
+
+  /api/quotes/{quote_id}/notes:
+    post:
+      tags: [Quotes]
+      summary: Create note from quote context
+      parameters:
+        - $ref: "#/components/parameters/QuoteId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteToNoteRequest"
+      responses:
+        "200":
+          description: Note created from quote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteResponse"
+
+  /api/notes:
+    get:
+      tags: [Notes]
+      summary: List notes
+      parameters:
+        - in: query
+          name: project_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: tag_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: citation_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: quote_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: status
+          schema: { $ref: "#/components/schemas/NoteStatus" }
+        - in: query
+          name: query
+          schema: { type: string }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Note list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteListResponse"
+    post:
+      tags: [Notes]
+      summary: Create note
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoteCreateRequest"
+      responses:
+        "200":
+          description: Note created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteResponse"
+
+  /api/notes/{note_id}:
+    get:
+      tags: [Notes]
+      summary: Get note detail
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      responses:
+        "200":
+          description: Note detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteResponse"
+    patch:
+      tags: [Notes]
+      summary: Update note
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoteUpdateRequest"
+      responses:
+        "200":
+          description: Note updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteResponse"
+    delete:
+      tags: [Notes]
+      summary: Delete note
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      responses:
+        "200":
+          description: Note deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkEnvelope"
+
+  /api/notes/{note_id}/archive:
+    post:
+      tags: [Notes]
+      summary: Archive note
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      responses:
+        "200":
+          description: Archived note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteResponse"
+
+  /api/notes/{note_id}/restore:
+    post:
+      tags: [Notes]
+      summary: Restore note
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      responses:
+        "200":
+          description: Restored note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteResponse"
+
+  /api/notes/{note_id}/tags:
+    put:
+      tags: [Notes]
+      summary: Atomically replace note tag links
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TagIdsReplaceRequest"
+      responses:
+        "200":
+          description: Updated note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteResponse"
+
+  /api/notes/{note_id}/sources:
+    put:
+      tags: [Notes]
+      summary: Atomically replace note sources
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoteSourcesReplaceRequest"
+      responses:
+        "200":
+          description: Updated note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteResponse"
+
+  /api/notes/{note_id}/links:
+    put:
+      tags: [Notes]
+      summary: Atomically replace linked note relations
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoteLinksReplaceRequest"
+      responses:
+        "200":
+          description: Updated note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteResponse"
+
+  /api/docs:
+    get:
+      tags: [Documents]
+      summary: List documents
+      parameters:
+        - in: query
+          name: project_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: status
+          schema: { $ref: "#/components/schemas/DocumentStatus" }
+        - in: query
+          name: query
+          schema: { type: string }
+        - in: query
+          name: view
+          schema:
+            type: string
+            enum: [summary, full]
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Document list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentListResponse"
+    post:
+      tags: [Documents]
+      summary: Create document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentCreateRequest"
+      responses:
+        "200":
+          description: Document created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+
+  /api/editor/access:
+    get:
+      tags: [Documents]
+      summary: Get editor access and capability gates
+      responses:
+        "200":
+          description: Editor access payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EditorAccessResponse"
+
+  /api/docs/{document_id}:
+    get:
+      tags: [Documents]
+      summary: Get document detail
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Document detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+    patch:
+      tags: [Documents]
+      summary: Update document
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentUpdateRequest"
+      responses:
+        "200":
+          description: Document updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+    delete:
+      tags: [Documents]
+      summary: Delete document
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Document deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkEnvelope"
+
+  /api/docs/{document_id}/archive:
+    post:
+      tags: [Documents]
+      summary: Archive document
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Document archived
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+
+  /api/docs/{document_id}/restore:
+    post:
+      tags: [Documents]
+      summary: Restore archived document
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RestoreCheckpointRequest"
+      responses:
+        "200":
+          description: Restored document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+
+  /api/docs/{document_id}/citations:
+    put:
+      tags: [Documents]
+      summary: Atomically replace attached citation relations
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CitationIdsReplaceRequest"
+      responses:
+        "200":
+          description: Updated document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+
+  /api/docs/{document_id}/notes:
+    put:
+      tags: [Documents]
+      summary: Atomically replace attached note relations
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoteIdsReplaceRequest"
+      responses:
+        "200":
+          description: Updated document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+
+  /api/docs/{document_id}/tags:
+    put:
+      tags: [Documents]
+      summary: Atomically replace document tag links
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TagIdsReplaceRequest"
+      responses:
+        "200":
+          description: Updated document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+
+  /api/docs/{document_id}/checkpoints:
+    get:
+      tags: [Documents]
+      summary: List document checkpoints
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Checkpoint list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckpointListResponse"
+    post:
+      tags: [Documents]
+      summary: Create document checkpoint
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CheckpointCreateRequest"
+      responses:
+        "200":
+          description: Checkpoint created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckpointResponse"
+
+  /api/docs/{document_id}/hydrate:
+    get:
+      tags: [Documents]
+      summary: Get editor hydration payload
+      description: |
+        Compact editor boot payload containing canonical document read plus attached summaries
+        and any seed state needed for extension-originated workflows.
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Hydration payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentHydrateResponse"
+
+  /api/docs/{document_id}/outline:
+    get:
+      tags: [Documents]
+      summary: Get computed document outline
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Outline payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutlineResponse"
+
+  /api/docs/{document_id}/export:
+    post:
+      tags: [Documents]
+      summary: Export document
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentExportRequest"
+      responses:
+        "200":
+          description: Export prepared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentExportResponse"
+
+  /api/docs/export/zip:
+    get:
+      tags: [Documents]
+      summary: Export ZIP bundle of documents and/or research objects
+      responses:
+        "200":
+          description: ZIP export response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZipExportResponse"
+
+  /api/extension/bootstrap:
+    get:
+      tags: [Extension]
+      summary: Get extension bootstrap payload
+      responses:
+        "200":
+          description: Extension bootstrap
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtensionBootstrapResponse"
+
+  /api/extension/recent-taxonomy:
+    get:
+      tags: [Extension]
+      summary: Get recent projects and tags for capture UX
+      responses:
+        "200":
+          description: Recent taxonomy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecentTaxonomyResponse"
+
+  /api/extension/capture/citation:
+    post:
+      tags: [Extension]
+      summary: Capture source and citation from extension
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtensionCitationCaptureRequest"
+      responses:
+        "200":
+          description: Canonical citation capture result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CitationResponse"
+
+  /api/extension/capture/quote:
+    post:
+      tags: [Extension]
+      summary: Capture quote from extension
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtensionQuoteCaptureRequest"
+      responses:
+        "200":
+          description: Canonical quote capture result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteResponse"
+
+  /api/extension/capture/note:
+    post:
+      tags: [Extension]
+      summary: Capture note from extension
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtensionNoteCaptureRequest"
+      responses:
+        "200":
+          description: Canonical note capture result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteResponse"
+
+  /api/extension/work-in-editor:
+    post:
+      tags: [Extension]
+      summary: Create seeded editor workflow from extension selection
+      description: |
+        Critical cross-surface route. Creates canonical entities as needed, seeds a document,
+        attaches source/citation, optionally creates quote/note, and returns redirect/open state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkInEditorRequest"
+      responses:
+        "200":
+          description: Seeded editor workflow created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkInEditorResponse"
+
+  /api/extension/usage-events:
+    post:
+      tags: [Extension]
+      summary: Record extension usage event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UsageEventRequest"
+      responses:
+        "200":
+          description: Event recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkEnvelope"
+
+  /api/activity/unlocks:
+    get:
+      tags: [Activity]
+      summary: List unlock/capture activity history
+      parameters:
+        - in: query
+          name: event_type
+          schema: { type: string }
+        - in: query
+          name: domain
+          schema: { type: string }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Activity list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivityListResponse"
+
+  /api/activity/bookmarks:
+    get:
+      tags: [Activity]
+      summary: List bookmarks
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Bookmark list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BookmarkListResponse"
+    post:
+      tags: [Activity]
+      summary: Create bookmark
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BookmarkCreateRequest"
+      responses:
+        "200":
+          description: Bookmark created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BookmarkResponse"
+
+  /api/activity/bookmarks/{bookmark_id}:
+    delete:
+      tags: [Activity]
+      summary: Delete bookmark
+      parameters:
+        - $ref: "#/components/parameters/BookmarkId"
+      responses:
+        "200":
+          description: Bookmark deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkEnvelope"
+
+  /api/activity/milestones:
+    get:
+      tags: [Activity]
+      summary: List milestone reads
+      responses:
+        "200":
+          description: Milestone payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MilestoneListResponse"
+
+  /api/insights/momentum:
+    get:
+      tags: [Insights]
+      summary: Get research momentum summary
+      responses:
+        "200":
+          description: Momentum summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentumResponse"
+
+  /api/insights/domains:
+    get:
+      tags: [Insights]
+      summary: Get top research domains
+      responses:
+        "200":
+          description: Domain insight payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainInsightResponse"
+
+  /api/insights/citation-styles:
+    get:
+      tags: [Insights]
+      summary: Get citation style breakdown
+      responses:
+        "200":
+          description: Citation style breakdown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CitationStyleInsightResponse"
+
+  /api/insights/monthly-summary:
+    get:
+      tags: [Insights]
+      summary: Get monthly summary
+      responses:
+        "200":
+          description: Monthly summary payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MonthlySummaryResponse"
+
+  /api/reports/monthly:
+    get:
+      tags: [Insights]
+      summary: Get downloadable monthly report
+      responses:
+        "200":
+          description: Monthly report metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MonthlyReportResponse"
+
+  /api/billing/checkout:
+    post:
+      tags: [Billing]
+      summary: Create checkout session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingCheckoutRequest"
+      responses:
+        "200":
+          description: Checkout created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCheckoutResponse"
+
+  /api/billing/customer:
+    get:
+      tags: [Billing]
+      summary: Get billing customer state
+      responses:
+        "200":
+          description: Billing customer payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCustomerResponse"
+
+  /api/billing/subscription:
+    get:
+      tags: [Billing]
+      summary: Get billing subscription state
+      responses:
+        "200":
+          description: Billing subscription payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingSubscriptionResponse"
+
+  /api/billing/portal:
+    post:
+      tags: [Billing]
+      summary: Create billing portal session
+      responses:
+        "200":
+          description: Billing portal result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingPortalResponse"
+
+  /api/webhooks/paddle:
+    post:
+      tags: [Billing]
+      summary: Billing webhook
+      security: []
+      responses:
+        "200":
+          description: Webhook accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkEnvelope"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Limit:
+      in: query
+      name: limit
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+    Cursor:
+      in: query
+      name: cursor
+      schema:
+        type: string
+    ProjectId:
+      in: path
+      name: project_id
+      required: true
+      schema: { type: string, format: uuid }
+    TagId:
+      in: path
+      name: tag_id
+      required: true
+      schema: { type: string, format: uuid }
+    SourceId:
+      in: path
+      name: source_id
+      required: true
+      schema: { type: string, format: uuid }
+    CitationId:
+      in: path
+      name: citation_id
+      required: true
+      schema: { type: string, format: uuid }
+    QuoteId:
+      in: path
+      name: quote_id
+      required: true
+      schema: { type: string, format: uuid }
+    NoteId:
+      in: path
+      name: note_id
+      required: true
+      schema: { type: string, format: uuid }
+    DocumentId:
+      in: path
+      name: document_id
+      required: true
+      schema: { type: string, format: uuid }
+    BookmarkId:
+      in: path
+      name: bookmark_id
+      required: true
+      schema: { type: string, format: uuid }
+
+  schemas:
+    Envelope:
+      type: object
+      required: [ok, data, meta, error]
+      properties:
+        ok: { type: boolean }
+        data: {}
+        meta:
+          type: object
+          additionalProperties: true
+        error:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ErrorObject"
+
+    OkEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            ok: { const: true }
+            data:
+              type: object
+              additionalProperties: true
+            error: { type: "null" }
+
+    ErrorObject:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details:
+          type: object
+          additionalProperties: true
+
+    PagingMeta:
+      type: object
+      properties:
+        next_cursor:
+          type: [string, "null"]
+        has_more:
+          type: boolean
+
+    HealthResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                status: { type: string, enum: [ok] }
+                version: { type: string }
+
+    CitationStyle:
+      type: string
+      enum: [apa, mla, chicago, harvard]
+
+    NoteStatus:
+      type: string
+      enum: [active, archived]
+
+    DocumentStatus:
+      type: string
+      enum: [active, archived, frozen]
+
+    CapabilityObject:
+      type: object
+      properties:
+        tier:
+          type: string
+          enum: [guest, free, standard, pro]
+        unlocks:
+          type: object
+          properties:
+            limit: { type: integer }
+            window: { type: string }
+        documents:
+          type: object
+          properties:
+            limit: { type: integer }
+            window: { type: string }
+            freeze: { type: boolean }
+        exports:
+          type: array
+          items: { type: string }
+        zip_export: { type: boolean }
+        citation_styles:
+          type: array
+          items: { $ref: "#/components/schemas/CitationStyle" }
+        custom_templates: { type: boolean }
+        bookmarks: { type: boolean }
+        history_search: { type: boolean }
+        reports: { type: boolean }
+
+    Profile:
+      type: object
+      required: [id, display_name]
+      properties:
+        id: { type: string, format: uuid }
+        display_name: { type: string }
+        use_case: { type: [string, "null"] }
+
+    Preferences:
+      type: object
+      properties:
+        theme: { type: string }
+        editor_density: { type: string }
+        default_citation_style: { $ref: "#/components/schemas/CitationStyle" }
+        sidebar_collapsed: { type: boolean }
+
+    Entitlement:
+      type: object
+      properties:
+        tier:
+          type: string
+          enum: [guest, free, standard, pro]
+        status:
+          type: string
+        paid_until:
+          type: [string, "null"]
+          format: date-time
+        auto_renew:
+          type: boolean
+
+    Source:
+      type: object
+      required: [id, title, page_url]
+      properties:
+        id: { type: string, format: uuid }
+        fingerprint: { type: [string, "null"] }
+        title: { type: string }
+        authors:
+          type: array
+          items: { type: string }
+        publisher: { type: [string, "null"] }
+        page_url: { type: string }
+        canonical_url: { type: [string, "null"] }
+        hostname: { type: [string, "null"] }
+        source_type: { type: [string, "null"] }
+        issued_date:
+          type: [object, "null"]
+          additionalProperties: true
+        created_at: { type: string, format: date-time }
+        updated_at: { type: [string, "null"], format: date-time }
+
+    CitationRenderBundle:
+      type: object
+      additionalProperties:
+        type: object
+        properties:
+          inline: { type: [string, "null"] }
+          full: { type: [string, "null"] }
+          bibliography: { type: [string, "null"] }
+
+    Citation:
+      type: object
+      required: [id, source_id, source]
+      properties:
+        id: { type: string, format: uuid }
+        source_id: { type: string, format: uuid }
+        source:
+          $ref: "#/components/schemas/Source"
+        locator:
+          type: [object, "null"]
+          additionalProperties: true
+        excerpt: { type: [string, "null"] }
+        annotation: { type: [string, "null"] }
+        renders:
+          $ref: "#/components/schemas/CitationRenderBundle"
+        quote_count: { type: integer }
+        note_count: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Quote:
+      type: object
+      required: [id, excerpt, citation]
+      properties:
+        id: { type: string, format: uuid }
+        excerpt: { type: string }
+        locator:
+          type: [object, "null"]
+          additionalProperties: true
+        annotation: { type: [string, "null"] }
+        citation:
+          $ref: "#/components/schemas/Citation"
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Tag:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        normalized_name: { type: [string, "null"] }
+
+    NoteSource:
+      type: object
+      properties:
+        url: { type: string }
+        hostname: { type: [string, "null"] }
+        title: { type: [string, "null"] }
+        source_author: { type: [string, "null"] }
+        source_published_at:
+          type: [string, "null"]
+          format: date-time
+
+    Note:
+      type: object
+      required: [id, title, note_body]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        note_body: { type: string }
+        highlight_text: { type: [string, "null"] }
+        project_id: { type: [string, "null"], format: uuid }
+        citation_id: { type: [string, "null"], format: uuid }
+        quote_id: { type: [string, "null"], format: uuid }
+        tags:
+          type: array
+          items: { $ref: "#/components/schemas/Tag" }
+        linked_note_ids:
+          type: array
+          items: { type: string, format: uuid }
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/NoteSource" }
+        status: { $ref: "#/components/schemas/NoteStatus" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Project:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        color: { type: [string, "null"] }
+        description: { type: [string, "null"] }
+        icon: { type: [string, "null"] }
+        archived: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Document:
+      type: object
+      required: [id, title]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        content_delta:
+          type: [object, "null"]
+          additionalProperties: true
+        content_html:
+          type: [string, "null"]
+        project_id:
+          type: [string, "null"]
+          format: uuid
+        status:
+          $ref: "#/components/schemas/DocumentStatus"
+        archived: { type: boolean }
+        attached_citation_ids:
+          type: array
+          items: { type: string, format: uuid }
+        attached_note_ids:
+          type: array
+          items: { type: string, format: uuid }
+        tag_ids:
+          type: array
+          items: { type: string, format: uuid }
+        tags:
+          type: array
+          items: { $ref: "#/components/schemas/Tag" }
+        can_edit: { type: boolean }
+        allowed_export_formats:
+          type: array
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Checkpoint:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        document_id: { type: string, format: uuid }
+        label: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+
+    OutlineItem:
+      type: object
+      properties:
+        level: { type: integer }
+        text: { type: string }
+        anchor: { type: string }
+
+    SeedState:
+      type: object
+      properties:
+        source_id: { type: [string, "null"], format: uuid }
+        citation_id: { type: [string, "null"], format: uuid }
+        quote_id: { type: [string, "null"], format: uuid }
+        note_id: { type: [string, "null"], format: uuid }
+
+    ActivityEvent:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        event_type: { type: string }
+        domain: { type: [string, "null"] }
+        url: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+
+    Bookmark:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string }
+        domain: { type: [string, "null"] }
+        title: { type: [string, "null"] }
+        saved_from: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+
+    Milestone:
+      type: object
+      properties:
+        key: { type: string }
+        label: { type: string }
+        achieved_at:
+          type: [string, "null"]
+          format: date-time
+
+    SignupRequest:
+      type: object
+      required: [email, password, display_name]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+        display_name: { type: string }
+        use_case: { type: [string, "null"] }
+
+    SignupResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                user_id: { type: string, format: uuid }
+                bootstrap_completed: { type: boolean }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+
+    LoginResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                authenticated: { type: boolean }
+
+    SessionResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                authenticated: { type: boolean }
+                user:
+                  oneOf:
+                    - type: "null"
+                    - $ref: "#/components/schemas/Profile"
+                entitlement:
+                  oneOf:
+                    - type: "null"
+                    - $ref: "#/components/schemas/Entitlement"
+
+    HandoffIssueRequest:
+      type: object
+      required: [redirect_path]
+      properties:
+        redirect_path: { type: string }
+        seed:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/SeedState"
+
+    HandoffIssueResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                code: { type: string }
+                expires_in_seconds: { type: integer }
+                handoff_url: { type: string }
+
+    HandoffExchangeRequest:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string }
+
+    HandoffExchangeResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                redirect_path: { type: string }
+                seed:
+                  oneOf:
+                    - type: "null"
+                    - $ref: "#/components/schemas/SeedState"
+
+    MeResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                user: { $ref: "#/components/schemas/Profile" }
+                preferences: { $ref: "#/components/schemas/Preferences" }
+                entitlement: { $ref: "#/components/schemas/Entitlement" }
+                capabilities: { $ref: "#/components/schemas/CapabilityObject" }
+
+    ProfileResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Profile"
+
+    ProfileUpdateRequest:
+      type: object
+      properties:
+        display_name: { type: string }
+        use_case: { type: [string, "null"] }
+
+    PreferencesResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Preferences"
+
+    PreferencesUpdateRequest:
+      type: object
+      properties:
+        theme: { type: string }
+        editor_density: { type: string }
+        default_citation_style: { $ref: "#/components/schemas/CitationStyle" }
+        sidebar_collapsed: { type: boolean }
+
+    EntitlementResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                entitlement: { $ref: "#/components/schemas/Entitlement" }
+                capabilities: { $ref: "#/components/schemas/CapabilityObject" }
+
+    ProjectCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        color: { type: [string, "null"] }
+        description: { type: [string, "null"] }
+        icon: { type: [string, "null"] }
+
+    ProjectUpdateRequest:
+      type: object
+      properties:
+        name: { type: string }
+        color: { type: [string, "null"] }
+        description: { type: [string, "null"] }
+        icon: { type: [string, "null"] }
+
+    ProjectResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Project"
+
+    ProjectListResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Project" }
+            meta:
+              $ref: "#/components/schemas/PagingMeta"
+
+    TagCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+
+    TagUpdateRequest:
+      type: object
+      properties:
+        name: { type: string }
+
+    TagResolveRequest:
+      type: object
+      required: [names]
+      properties:
+        names:
+          type: array
+          items: { type: string }
+
+    TagResolveResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                tags:
+                  type: array
+                  items: { $ref: "#/components/schemas/Tag" }
+
+    TagResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Tag"
+
+    TagListResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Tag" }
+            meta:
+              $ref: "#/components/schemas/PagingMeta"
+
+    SourceResolveRequest:
+      type: object
+      required: [page_url, title]
+      properties:
+        page_url: { type: string }
+        canonical_url: { type: [string, "null"] }
+        title: { type: string }
+        authors:
+          type: array
+          items: { type: string }
+        publisher: { type: [string, "null"] }
+        issued_date:
+          type: [object, "null"]
+          additionalProperties: true
+        source_type: { type: [string, "null"] }
+        metadata:
+          type: [object, "null"]
+          additionalProperties: true
+        raw_extraction:
+          type: [object, "null"]
+          additionalProperties: true
+
+    SourceResolveResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                source: { $ref: "#/components/schemas/Source" }
+                created: { type: boolean }
+
+    SourceDetailResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                source: { $ref: "#/components/schemas/Source" }
+                stats:
+                  type: object
+                  properties:
+                    citation_count: { type: integer }
+                    quote_count: { type: integer }
+                    note_count: { type: integer }
+                    document_count: { type: integer }
+
+    SourceListResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Source" }
+            meta:
+              $ref: "#/components/schemas/PagingMeta"
+
+    CitationCreateRequest:
+      type: object
+      required: [source_id]
+      properties:
+        source_id: { type: string, format: uuid }
+        locator:
+          type: [object, "null"]
+          additionalProperties: true
+        excerpt: { type: [string, "null"] }
+        annotation: { type: [string, "null"] }
+        style: { $ref: "#/components/schemas/CitationStyle" }
+
+    CitationUpdateRequest:
+      type: object
+      properties:
+        locator:
+          type: [object, "null"]
+          additionalProperties: true
+        excerpt: { type: [string, "null"] }
+        annotation: { type: [string, "null"] }
+
+    CitationRenderRequest:
+      type: object
+      required: [source_id, style]
+      properties:
+        source_id: { type: string, format: uuid }
+        locator:
+          type: [object, "null"]
+          additionalProperties: true
+        style: { $ref: "#/components/schemas/CitationStyle" }
+        render_kinds:
+          type: array
+          items:
+            type: string
+            enum: [inline, full, bibliography]
+
+    CitationRenderResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                renders:
+                  type: object
+                  additionalProperties: { type: string }
+                cache_hit: { type: boolean }
+
+    CitationResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Citation"
+
+    CitationListResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Citation" }
+            meta:
+              $ref: "#/components/schemas/PagingMeta"
+
+    IdsRequest:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    QuoteCreateRequest:
+      type: object
+      required: [citation_id, excerpt]
+      properties:
+        citation_id: { type: string, format: uuid }
+        excerpt: { type: string }
+        locator:
+          type: [object, "null"]
+          additionalProperties: true
+        annotation: { type: [string, "null"] }
+
+    QuoteUpdateRequest:
+      type: object
+      properties:
+        excerpt: { type: string }
+        locator:
+          type: [object, "null"]
+          additionalProperties: true
+        annotation: { type: [string, "null"] }
+
+    QuoteToNoteRequest:
+      type: object
+      required: [title, note_body]
+      properties:
+        title: { type: string }
+        note_body: { type: string }
+        project_id: { type: [string, "null"], format: uuid }
+        tag_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    QuoteResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Quote"
+
+    QuoteListResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Quote" }
+            meta:
+              $ref: "#/components/schemas/PagingMeta"
+
+    NoteCreateRequest:
+      type: object
+      required: [title, note_body]
+      properties:
+        title: { type: string }
+        note_body: { type: string }
+        highlight_text: { type: [string, "null"] }
+        project_id: { type: [string, "null"], format: uuid }
+        citation_id: { type: [string, "null"], format: uuid }
+        quote_id: { type: [string, "null"], format: uuid }
+        tag_ids:
+          type: array
+          items: { type: string, format: uuid }
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/NoteSource" }
+        linked_note_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    NoteUpdateRequest:
+      type: object
+      properties:
+        title: { type: string }
+        note_body: { type: string }
+        highlight_text: { type: [string, "null"] }
+        status: { $ref: "#/components/schemas/NoteStatus" }
+
+    NoteSourcesReplaceRequest:
+      type: object
+      required: [sources]
+      properties:
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/NoteSource" }
+
+    NoteLinksReplaceRequest:
+      type: object
+      required: [linked_note_ids]
+      properties:
+        linked_note_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    NoteResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Note"
+
+    NoteListResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Note" }
+            meta:
+              $ref: "#/components/schemas/PagingMeta"
+
+    DocumentCreateRequest:
+      type: object
+      properties:
+        title: { type: string }
+        project_id: { type: [string, "null"], format: uuid }
+        seed:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/SeedState"
+
+    DocumentUpdateRequest:
+      type: object
+      properties:
+        title: { type: string }
+        content_delta:
+          type: [object, "null"]
+          additionalProperties: true
+        content_html: { type: [string, "null"] }
+        project_id: { type: [string, "null"], format: uuid }
+        status: { $ref: "#/components/schemas/DocumentStatus" }
+
+    RestoreCheckpointRequest:
+      type: object
+      properties:
+        checkpoint_id: { type: string, format: uuid }
+
+    CitationIdsReplaceRequest:
+      type: object
+      required: [citation_ids]
+      properties:
+        citation_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    NoteIdsReplaceRequest:
+      type: object
+      required: [note_ids]
+      properties:
+        note_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    TagIdsReplaceRequest:
+      type: object
+      required: [tag_ids]
+      properties:
+        tag_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    CheckpointCreateRequest:
+      type: object
+      properties:
+        label: { type: [string, "null"] }
+
+    CheckpointResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Checkpoint"
+
+    CheckpointListResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Checkpoint" }
+
+    DocumentResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Document"
+
+    DocumentListResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Document" }
+            meta:
+              $ref: "#/components/schemas/PagingMeta"
+
+    EditorAccessResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                capabilities: { $ref: "#/components/schemas/CapabilityObject" }
+                limits:
+                  type: object
+                  properties:
+                    can_create_document: { type: boolean }
+                    can_edit_existing: { type: boolean }
+
+    DocumentHydrateResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                document: { $ref: "#/components/schemas/Document" }
+                attached_citations:
+                  type: array
+                  items: { $ref: "#/components/schemas/Citation" }
+                attached_notes:
+                  type: array
+                  items: { $ref: "#/components/schemas/Note" }
+                seed:
+                  oneOf:
+                    - type: "null"
+                    - $ref: "#/components/schemas/SeedState"
+
+    OutlineResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items: { $ref: "#/components/schemas/OutlineItem" }
+
+    DocumentExportRequest:
+      type: object
+      required: [format]
+      properties:
+        format:
+          type: string
+          enum: [pdf, html, docx, txt]
+
+    DocumentExportResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                download_url: { type: string }
+
+    ZipExportResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                download_url: { type: string }
+
+    ExtensionBootstrapResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                authenticated: { type: boolean }
+                user:
+                  oneOf:
+                    - type: "null"
+                    - $ref: "#/components/schemas/Profile"
+                capabilities:
+                  oneOf:
+                    - type: "null"
+                    - $ref: "#/components/schemas/CapabilityObject"
+                recent_projects:
+                  type: array
+                  items: { $ref: "#/components/schemas/Project" }
+                recent_tags:
+                  type: array
+                  items: { $ref: "#/components/schemas/Tag" }
+                sync:
+                  type: object
+                  properties:
+                    queue_size: { type: integer }
+
+    RecentTaxonomyResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                projects:
+                  type: array
+                  items: { $ref: "#/components/schemas/Project" }
+                tags:
+                  type: array
+                  items: { $ref: "#/components/schemas/Tag" }
+
+    ExtensionCitationCaptureRequest:
+      type: object
+      required: [source]
+      properties:
+        source:
+          $ref: "#/components/schemas/SourceResolveRequest"
+        citation:
+          type: object
+          properties:
+            locator:
+              type: [object, "null"]
+              additionalProperties: true
+            excerpt: { type: [string, "null"] }
+            annotation: { type: [string, "null"] }
+
+    ExtensionQuoteCaptureRequest:
+      type: object
+      required: [source, quote]
+      properties:
+        source:
+          $ref: "#/components/schemas/SourceResolveRequest"
+        citation:
+          type: [object, "null"]
+          properties:
+            locator:
+              type: [object, "null"]
+              additionalProperties: true
+        quote:
+          type: object
+          required: [excerpt]
+          properties:
+            excerpt: { type: string }
+            locator:
+              type: [object, "null"]
+              additionalProperties: true
+            annotation: { type: [string, "null"] }
+
+    ExtensionNoteCaptureRequest:
+      type: object
+      required: [source, note]
+      properties:
+        source:
+          $ref: "#/components/schemas/SourceResolveRequest"
+        citation:
+          type: [object, "null"]
+          properties:
+            locator:
+              type: [object, "null"]
+              additionalProperties: true
+        quote:
+          type: [object, "null"]
+          properties:
+            excerpt: { type: [string, "null"] }
+            locator:
+              type: [object, "null"]
+              additionalProperties: true
+        note:
+          type: object
+          required: [title, note_body]
+          properties:
+            title: { type: string }
+            note_body: { type: string }
+            project_id: { type: [string, "null"], format: uuid }
+            tag_ids:
+              type: array
+              items: { type: string, format: uuid }
+
+    WorkInEditorRequest:
+      type: object
+      required: [source]
+      properties:
+        source:
+          $ref: "#/components/schemas/SourceResolveRequest"
+        selection_text: { type: [string, "null"] }
+        note_body: { type: [string, "null"] }
+        project_id: { type: [string, "null"], format: uuid }
+        tag_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    WorkInEditorResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                document_id: { type: string, format: uuid }
+                seed: { $ref: "#/components/schemas/SeedState" }
+                redirect_path: { type: string }
+
+    UsageEventRequest:
+      type: object
+      required: [event_type]
+      properties:
+        event_type: { type: string }
+        url: { type: [string, "null"] }
+        domain: { type: [string, "null"] }
+        event_id: { type: [string, "null"], format: uuid }
+
+    ActivityListResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/ActivityEvent" }
+            meta:
+              $ref: "#/components/schemas/PagingMeta"
+
+    BookmarkCreateRequest:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string }
+        domain: { type: [string, "null"] }
+        title: { type: [string, "null"] }
+        saved_from: { type: [string, "null"] }
+
+    BookmarkResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Bookmark"
+
+    BookmarkListResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Bookmark" }
+            meta:
+              $ref: "#/components/schemas/PagingMeta"
+
+    MilestoneListResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/Milestone" }
+
+    MomentumResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                current_streak_days: { type: integer }
+                active_days_this_month: { type: integer }
+                captures_this_month: { type: integer }
+                documents_updated_this_month: { type: integer }
+
+    DomainInsightResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                type: object
+                properties:
+                  domain: { type: string }
+                  count: { type: integer }
+
+    CitationStyleInsightResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                type: object
+                properties:
+                  style: { $ref: "#/components/schemas/CitationStyle" }
+                  count: { type: integer }
+
+    MonthlySummaryResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              additionalProperties: true
+
+    MonthlyReportResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                download_url: { type: string }
+
+    BillingCheckoutRequest:
+      type: object
+      required: [tier, interval]
+      properties:
+        tier:
+          type: string
+          enum: [standard, pro]
+        interval:
+          type: string
+          enum: [monthly, yearly]
+
+    BillingCheckoutResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                checkout_url: { type: string }
+
+    BillingCustomerResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              additionalProperties: true
+
+    BillingSubscriptionResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              additionalProperties: true
+
+    BillingPortalResponse:
+      allOf:
+        - $ref: "#/components/schemas/OkEnvelope"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                portal_url: { type: string }

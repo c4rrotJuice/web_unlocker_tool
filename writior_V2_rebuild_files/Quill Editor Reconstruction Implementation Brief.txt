@@ -1,0 +1,891 @@
+# Quill Editor Reconstruction Implementation Brief
+
+## Role
+
+You are a senior product engineer rebuilding the **Writior editor** for the new v2 system.
+
+This is **not** a light refactor of the legacy `/editor` page.
+It is a **targeted reconstruction** that preserves the useful strengths of the old editor while replacing its legacy runtime, legacy data assumptions, and old table dependencies.
+
+The old system already proves that Writior’s editor is not a generic text editor. It is a **research-to-writing workspace** with documents, citations, quotes, notes, projects, tags, checkpoints, exports, and extension handoff. Preserve that product identity. Do **not** preserve the brittle implementation shape that grew around it.
+
+Your job is to rebuild the Quill-based editor so it works cleanly with:
+
+* the **v2 canonical database model**
+* the **v2 backend architecture**
+* the **v2 security/auth model**
+* the **new research graph + writing workflow**
+* the **new editor interaction engine**
+
+The result should be a **production-grade, lightweight, modular editor runtime** that still uses **Quill** as the writing engine, but no longer treats Quill or `editor.js` as the place where all product logic lives.
+
+---
+
+## Source-grounded context you must respect
+
+The current system audit confirms that the old `/editor` surface is a protected page loading **Quill**, `auth.js`, `theme.js`, `editor.js`, runtime modules, and many `/api/docs*`, `/api/notes*`, `/api/projects*`, `/api/tags*`, `/api/citations*`, and `/api/quotes*` calls. The editor is functionally rich, but the browser-side runtime is large and organically assembled, and the old backend mixes route logic, business logic, and persistence logic. The audit also confirms transitional legacy behavior around old auth/session patterns, old `user_meta`-driven account truth, mixed canonical-vs-legacy data contracts, and old document/citation assumptions. fileciteturn3file5turn3file14turn3file17
+
+The v2 backend reconstruction brief defines the new canonical model and requires thin routes, real services, canonical repositories, centralized serialization, atomic relation writes, and capability truth derived from `user_entitlements` rather than legacy heuristics. The canonical workspace and research tables now include `documents`, `document_checkpoints`, `document_citations`, `document_notes`, `document_tags`, `sources`, `citation_instances`, `citation_renders`, `quotes`, `notes`, `note_sources`, `note_links`, and `note_tag_links`. fileciteturn3file16
+
+The v2 research workflow brief defines the product philosophy clearly: Writior is a structured **research graph + writing workflow** product where the canonical relationship chain is **Sources → Citations → Quotes → Notes → Documents**, while the user experience should feel like **Capture → Understand → Synthesize → Write**. fileciteturn3file18
+
+The v2 editor interaction brief defines the intended editor behavior: layered hydration, a three-panel workspace, command-driven actions, subtle inline intelligence, autosave/checkpoints, outline behavior, bibliography generation from attached citations, project-aware suggestion bias, and a first-class seeded extension-to-editor workflow. fileciteturn3file0turn3file15turn3file19
+
+The v2 security brief requires bearer-token authenticated API calls verified against Supabase, canonical account/capability state derived from canonical account tables, removal of the weak `wu_access_token` cookie trust model, and preservation of hardened extension↔web auth handoff via `auth_handoff_codes` terminating at `app.writior.com`. fileciteturn3file1turn3file13
+
+---
+
+# Implementation stance
+
+## What to preserve from the old editor
+
+Preserve these product strengths from the old system:
+
+* Quill as the core rich-text editing engine
+* document-centered writing workspace behavior
+* autosave concept
+* checkpoints / restore concept
+* document export
+* inline citation and quote-oriented writing flow
+* note attachment / research attachment behavior
+* extension-to-editor handoff as a first-class flow
+* the fact that the editor is a real research workspace, not just a page with a toolbar
+
+The product capability audit explicitly confirms that document CRUD, editor access, document quota/freeze behavior, checkpoints, export, citations, quotes, notes, projects, tags, document-note/citation/tag links, quote-to-note, and extension workflows are real product capabilities and should be preserved while implementation details are redesigned. fileciteturn3file7turn3file8turn3file10turn3file12
+
+## What to remove from the old editor
+
+Do **not** preserve these implementation patterns:
+
+* giant monolithic `editor.js` as the primary orchestration brain
+* route-local ad hoc contract shaping as the editor’s primary backend dependency model
+* legacy document/citation assumptions such as inline document citation truth
+* old compatibility/fallback behavior that exists only because the legacy schema drifted
+* legacy `user_meta`-driven capability truth
+* weak JS-readable cookie-based session trust
+* large eager boot-time hydration of everything
+* scattered write flows that depend on multiple best-effort API sequences instead of canonical atomic relation writes
+
+The current audit explicitly flags route modules doing service/repository work, mixed canonical-vs-legacy contracts, duplicated persistence logic, fragile editor/backend coupling, and weak auth/session boundaries as architectural risks that should not be carried forward into v2. fileciteturn3file3turn3file17
+
+---
+
+# Core architectural decision
+
+## Keep Quill. Replace the editor shell.
+
+Quill remains the text engine.
+
+But in v2, Quill must become only the **composition surface**, not the place where account truth, research graph truth, entitlement logic, backend orchestration, or relation ownership rules are decided.
+
+### Quill should own only:
+
+* title editing
+* body editing
+* content delta interaction
+* selection and cursor events
+* heading extraction inputs
+* inline embed rendering hooks
+* formatting commands
+
+### Quill must not own:
+
+* citation truth
+* note truth
+* quote truth
+* document relation truth
+* entitlement logic
+* auth/session logic
+* extension handoff state truth
+* project/tag relation truth
+* persistence orchestration across multiple research objects
+
+All product truth must live in the v2 backend and in modular frontend controllers that consume canonical contracts.
+
+---
+
+# Mandatory v2 editor architecture
+
+Implement the editor as a modular runtime around Quill.
+
+## Required workspace layout
+
+Use the canonical three-panel editor workspace:
+
+**Research Explorer | Writing Surface | Context Rail**
+
+This layout is already established in the new UI/UX and interaction briefs and must be the shell for the rebuilt editor. fileciteturn3file9turn3file15
+
+### Left panel: Research Explorer
+
+This panel is for navigating the research graph.
+
+Sections:
+
+* Sources
+* Citations
+* Quotes
+* Notes
+
+Important rule:
+These are not separate mini-apps. They are filtered views of the same research graph. Opening an item should reveal its neighborhood and available actions. fileciteturn3file18
+
+### Center: Writing Surface
+
+This is the Quill editor workspace.
+
+Required elements:
+
+* title field
+* Quill body
+* autosave status
+* checkpoint access
+* inline citation chips
+* inline note markers
+* quote insertion support
+* outline-aware navigation support
+
+This area must feel distraction-light and responsive.
+
+### Right panel: Context Rail
+
+This panel is dynamic and context-driven.
+
+It must support the following modes:
+
+* idle document mode
+* empty document mode
+* selection mode
+* citation focus mode
+* quote focus mode
+* note focus mode
+* source focus mode
+* seeded extension review mode
+* lightweight insert/search mode
+
+The right rail replaces many old modal-heavy or toolbar-heavy workflows.
+
+---
+
+# Required frontend runtime decomposition
+
+Do **not** rebuild a giant all-knowing `editor.js` file.
+
+Implement a modular runtime structure like this:
+
+```text
+app/static/js/editor_v2/
+  core/
+    editor_app.js
+    event_bus.js
+    command_registry.js
+    keyboard.js
+    workspace_state.js
+    selection_state.js
+    context_state.js
+
+  document/
+    document_controller.js
+    autosave_controller.js
+    checkpoint_controller.js
+    outline_controller.js
+    export_controller.js
+
+  research/
+    research_hydrator.js
+    explorer_controller.js
+    source_store.js
+    citation_store.js
+    quote_store.js
+    note_store.js
+    project_store.js
+    tag_store.js
+
+  actions/
+    insert_actions.js
+    attach_actions.js
+    link_actions.js
+    convert_actions.js
+
+  ui/
+    quill_adapter.js
+    shell_renderer.js
+    explorer_renderer.js
+    context_rail_renderer.js
+    object_cards.js
+    inline_affordances.js
+    status_bar.js
+    popovers.js
+
+  api/
+    workspace_api.js
+    research_api.js
+    capability_api.js
+```
+
+Exact filenames may vary, but the separation of concerns must hold.
+
+## Architectural rules
+
+* `editor_app.js` may coordinate boot, but must not accumulate business logic over time
+* UI renderers must stay dumb where possible
+* stores/controllers may cache normalized summaries, but must not become a giant global SPA state manager
+* the event system must be intentional and finite, not random DOM event sprawl
+* command registration must be registry-driven, not implemented through scattered branching logic
+
+The interaction brief explicitly warns against a giant global state manager and against heavy modal-driven flows. Keep this system lightweight and modular. fileciteturn3file0turn3file15
+
+---
+
+# Backend contract expectations for the new editor
+
+The editor must speak to the **v2 canonical backend**, not legacy tables or transitional contracts.
+
+## The editor must build around these canonical workspace/research tables
+
+### Workspace
+
+* `documents`
+* `document_checkpoints`
+* `document_citations`
+* `document_notes`
+* `document_tags`
+
+### Canonical research graph
+
+* `sources`
+* `citation_instances`
+* `citation_renders`
+* `quotes`
+* `notes`
+* `note_sources`
+* `note_links`
+* `note_tag_links`
+
+### Account / capability
+
+* `user_profiles`
+* `user_preferences`
+* `user_entitlements`
+* `auth_handoff_codes`
+
+The backend reconstruction brief defines these as authoritative. fileciteturn3file16
+
+## Non-negotiable data rules
+
+* Document text lives in `documents`.
+* Attached citations live in `document_citations`, not inline legacy document citation arrays.
+* Attached notes live in `document_notes`.
+* Attached tags live in `document_tags`.
+* Checkpoints live in `document_checkpoints`.
+* Citation objects are canonical `citation_instances` backed by `sources` and `citation_renders`.
+* Bibliography generation must use attached citation relations as the source of truth.
+* Quote insertion must attach its citation if not already attached.
+
+The interaction brief explicitly says attached citations are the bibliography source of truth and quote+citation insertion must auto-attach the citation. fileciteturn3file15turn3file19
+
+## API/serialization rules
+
+The backend must expose clean canonical contracts for the editor through thin routes and shared service/repository layers.
+
+Required contract characteristics:
+
+* route handlers stay thin
+* service modules assemble capability-aware responses
+* ownership authorization is centralized
+* serialization is centralized
+* relation replacement writes use canonical atomic RPCs when replace-all semantics are needed
+* no route should emit legacy compatibility-only fields unless absolutely necessary during a controlled migration window
+
+This is directly aligned with the v2 backend reconstruction brief. fileciteturn3file16
+
+---
+
+# Required editor boot and hydration strategy
+
+One of the biggest problems with old organic editor systems is that they try to hydrate too much too early.
+
+The new editor must use **layered hydration**.
+
+## Required hydration layers
+
+### Layer 1: Document summary hydration
+
+On document open, fetch only:
+
+* document core payload
+* attached citation ids
+* attached note ids
+* tag summaries
+* lightweight capability state
+
+### Layer 2: Attached object hydration
+
+Then fetch compact summaries for attached citations and attached notes.
+
+### Layer 3: Explorer hydration
+
+Only when the user opens a rail section, fetch the first relevant page of:
+
+* sources
+* citations
+* quotes
+* notes
+
+### Layer 4: Detail hydration
+
+Only when the user opens a specific object, fetch its richer detail/neighborhood payload.
+
+This exact hydration model is already defined in the interaction brief and should be implemented, not reinvented. fileciteturn3file0turn3file15
+
+## Required boot sequence
+
+### First paint
+
+Render immediately:
+
+* editor shell
+* current document title/body
+* autosave status placeholder
+* empty/skeleton rails
+
+### Second step
+
+Hydrate:
+
+* attached research summaries
+* outline
+* capability state
+
+### Third step
+
+Hydrate on demand:
+
+* explorer sections
+* context detail neighborhoods
+* recent insertables
+
+The user must be able to start writing before all side data finishes loading. fileciteturn3file0turn3file15
+
+---
+
+# Required document behavior
+
+## Autosave
+
+Autosave must feel trustworthy but unobtrusive.
+
+### Required visible save states
+
+* Saved
+* Saving…
+* Offline/local only
+* Save failed
+
+Render this in a small but persistent status area. fileciteturn3file0turn3file15
+
+### Required autosave behavior
+
+* debounce document writes
+* coalesce repeated edits
+* avoid refetching the full document after every save
+* support local fallback/recovery if practical
+* keep write loops idempotent and quiet
+
+## Checkpoints
+
+Required checkpoint behavior:
+
+* manual checkpoint available via command menu
+* optional lightweight auto-checkpoints at sensible intervals
+* checkpoint list and restore flow must be lightweight
+* restore confirmation should appear in the context rail, not a giant blocking modal
+
+## Outline
+
+Required outline behavior:
+
+* derive headings from document body
+* update incrementally
+* click jumps to section
+* highlight current section while scrolling
+* remain lightweight; no overbuilt tree editor
+
+The interaction brief already specifies these behaviors. fileciteturn3file0turn3file15
+
+---
+
+# Required research-aware editing behavior
+
+The editor is not a plain word processor. It must be research-aware in subtle, useful ways.
+
+## Inline citation chips
+
+Implement lightweight inline citation chips.
+
+Required behavior:
+
+* visually distinct but subtle
+* hover shows citation preview
+* click opens Citation Focus mode in context rail
+* inline representation is a UI affordance only; canonical relation truth remains in backend tables
+
+## Inline note markers
+
+Implement lightweight inline note markers.
+
+Required behavior:
+
+* small marker/icon, not large intrusive callouts by default
+* hover reveals note preview
+* click opens Note Focus mode in context rail
+
+## Quote blocks
+
+Implement quote insertion as a first-class evidence flow.
+
+Required behavior:
+
+* block quote insertion option
+* quick actions around quote blocks: cite, open source, create note
+* quote insertion must preserve lineage to quote/citation/source where applicable
+
+The interaction brief defines these inline behaviors and lineage-preserving conversions. fileciteturn3file15
+
+---
+
+# Universal action model
+
+The editor must support a unified action vocabulary across research objects.
+
+## Required actions
+
+* Open
+* Insert
+* Attach
+* Link
+* Convert
+
+These actions should operate consistently across cards, search, rails, and inline flows.
+
+## Meaning of each action
+
+### Open
+
+View the full object or its neighborhood in the context rail.
+
+### Insert
+
+Insert research into the document at cursor, for example:
+
+* citation
+* quote
+* note-derived insertable block
+* bibliography
+
+### Attach
+
+Attach an object to the document without necessarily inserting visible body content.
+
+Examples:
+
+* attach citation → `document_citations`
+* attach note → `document_notes`
+* attach tag → `document_tags`
+
+### Link
+
+Create canonical graph relationships where appropriate.
+
+Examples:
+
+* note ↔ note
+* note ↔ source
+* note ↔ quote
+* note ↔ citation when appropriate
+
+### Convert
+
+Support lineage-preserving conversions, including:
+
+* Selection → Note
+* Selection → Quote
+* Quote → Note
+* Note → Insertable block
+* Source → Citation attach flow
+
+The interaction brief explicitly defines these conversions and the requirement to preserve lineage. fileciteturn3file15
+
+---
+
+# Required command system
+
+The command system should make the editor feel fast and modern.
+
+Implement a registry-driven command engine.
+
+## Required commands
+
+### `@` insert menu
+
+Must open insert search for:
+
+* citations
+* quotes
+* notes
+* recent sources
+
+### `/` command menu
+
+Must expose document/editor actions such as:
+
+* checkpoint
+* export
+* attach tag
+* attach note
+* open outline
+* insert bibliography
+
+### `Cmd/Ctrl + K`
+
+Global quick switcher for:
+
+* switching documents
+* opening projects
+* jumping to notes, sources, quotes, citations
+
+### `Cmd/Ctrl + Shift + F`
+
+Research search across:
+
+* notes
+* quotes
+* sources
+* citations
+
+### `Cmd/Ctrl + Enter`
+
+Insert the currently focused research object.
+
+These requirements come directly from the interaction brief and should be implemented as a central command registry, not as scattered event handlers. fileciteturn3file15
+
+---
+
+# Required bibliography behavior
+
+Bibliography must feel close to automatic.
+
+## Rules
+
+* attached citations are the source of truth
+* inserting a quote + citation should auto-attach the citation
+* bibliography insertion must dedupe by citation instance id
+* bibliography should be inserted via `/bibliography` or command palette, not via an oversized dedicated manager
+
+This behavior is specified in the interaction brief and must be honored. fileciteturn3file0turn3file19
+
+---
+
+# Required project-aware behavior
+
+If a document belongs to a project, the editor should bias suggestions toward that project without becoming noisy.
+
+Required examples:
+
+* show project notes first in empty-document assistance
+* show project sources first in the Research Explorer where sensible
+* prioritize project quotes in insert search
+
+This behavior is explicitly called for in the interaction brief. fileciteturn3file19
+
+---
+
+# Extension-to-editor seeded workflow
+
+This flow is too important to be treated as an edge case.
+
+The product/UI briefs explicitly define **Work in editor** as a key extension action, where selecting that flow should create or resolve the source record, create a citation instance, create a document, and open the editor with captured context available for immediate writing. fileciteturn3file9turn3file17
+
+## Required seeded editor state
+
+When arriving from extension handoff, the editor must support a structured seeded state containing:
+
+* active document already created or resolved
+* source attached
+* citation instance attached
+* quote inserted or immediately insertable
+* optional starter note
+* context rail opened into Quote Focus or Seed Review mode
+
+### Seed Review mode must show
+
+* captured source
+* captured quote
+* attached citation
+* quick actions:
+
+  * Insert quote now
+  * Create note from quote
+  * Start outline
+  * Continue writing
+
+The interaction brief explicitly defines this seeded flow and its UI behavior. fileciteturn3file19
+
+## Required implementation rule
+
+The editor must accept a clean seed contract from the extension/web handoff layer rather than reconstructing state from random local heuristics.
+
+A suitable seed payload may resemble:
+
+```json
+{
+  "document_id": "uuid",
+  "seed": {
+    "source_id": "uuid",
+    "citation_id": "uuid",
+    "quote_id": "uuid",
+    "note_id": "uuid | null"
+  }
+}
+```
+
+Exact payload shape may vary, but the contract must be explicit and canonical.
+
+---
+
+# Security/auth requirements that affect the editor
+
+The editor is a protected authenticated application surface and must be rebuilt to match the new security model.
+
+## Required auth model
+
+* web app origin: `https://app.writior.com`
+* authenticated API requests send `Authorization: Bearer <token>`
+* backend verifies bearer token against Supabase
+* backend resolves canonical account/capability state from canonical tables
+* capability truth comes from `user_entitlements`
+* extension↔web handoff uses hardened `auth_handoff_codes`
+
+## Forbidden legacy patterns
+
+Do **not** preserve:
+
+* JS-readable access-token cookies as the auth authority
+* trusting browser-set cookies as equivalent to verified bearer identity
+* legacy `wu_access_token` behavior
+* `user_meta` as canonical account truth
+
+These rules come directly from the v2 security brief. fileciteturn3file1turn3file13
+
+## Editor-specific consequence
+
+The frontend editor runtime must be capability-aware but not capability-authoritative.
+
+That means:
+
+* the editor may render capability-aware UI states
+* the backend remains the source of truth for whether a write/export/delete/attach action is allowed
+* frontend gating improves UX, but backend enforcement remains mandatory
+
+---
+
+# Performance rules
+
+The rebuilt editor must feel clearly faster and cleaner than the legacy one.
+
+## Must do
+
+* lazy hydrate non-critical panels
+* memoize object card rendering where sensible
+* avoid full rail rerenders on minor state changes
+* use event-driven updates rather than polling
+* keep network payloads compact
+* keep the writing surface usable during background hydration
+* avoid repeated recomputation of outline or research neighborhoods on every keystroke
+
+## Must not do
+
+* no giant global SPA state manager
+* no fetch-all-on-boot behavior
+* no heavy modal workflow dependence
+* no route fan-out on every little UI event
+* no full document refetch after each save
+* no duplicated entitlement logic in the editor runtime
+
+These performance rules are explicitly grounded in the interaction brief. fileciteturn3file0turn3file19
+
+---
+
+# Accessibility and usability rules
+
+The editor must support:
+
+* full keyboard navigation across rails and cards
+* visible focus states
+* searchable command menus
+* non-color-only save/status indication
+* screen-reader-friendly action labels where practical
+* readable contrast and lightweight visual density
+
+These are already called out in the interaction/UI briefs and should be implemented, not deferred. fileciteturn3file0turn3file9
+
+---
+
+# Required implementation sequence
+
+Follow this sequence unless there is a compelling architectural reason to adjust it.
+
+## Phase 1 — Audit old editor implementation precisely
+
+Before replacing code, trace the old Quill editor flow in detail and document:
+
+* how `/editor` currently boots
+* current Quill initialization path
+* current `editor.js` responsibilities
+* runtime module boundaries that already exist
+* all old `/api/docs*`, `/api/citations*`, `/api/quotes*`, `/api/notes*`, `/api/projects*`, `/api/tags*` dependencies
+* old autosave/checkpoint/export flows
+* inline citation/note/quote interaction behavior
+* old extension handoff behavior
+* all legacy data assumptions that must be removed
+
+This phase is for precise migration planning, not for preserving old architecture.
+
+## Phase 2 — Define v2 editor contracts
+
+Establish the new canonical editor API contracts for:
+
+* document summary read
+* document write/update
+* checkpoint list/create/restore
+* attached citation summary fetch
+* attached note summary fetch
+* explorer section pagination
+* object detail/neighborhood reads
+* insert/attach/link/convert actions
+* seeded extension handoff payload
+* capability state read for editor surface
+
+Keep contracts compact and canonical.
+
+## Phase 3 — Build the new modular runtime skeleton
+
+Implement:
+
+* shell renderer
+* Quill adapter
+* workspace state primitives
+* command registry
+* event bus
+* document controller
+* research hydrator
+* context rail renderer
+* autosave and outline controllers
+
+At this stage, prioritize stable boot and write behavior over full feature richness.
+
+## Phase 4 — Move document behavior to v2 contracts
+
+Rewire:
+
+* document load
+* save/update
+* checkpoints
+* restore
+* export
+* outline
+
+Make these flows work entirely through v2 workspace services and canonical tables.
+
+## Phase 5 — Rebuild research-aware interactions
+
+Implement:
+
+* explorer lists
+* attached citation/note hydration
+* inline citation chip behavior
+* note markers
+* quote insertion
+* context rail focus modes
+* insert/attach/link/convert actions
+* bibliography generation from attached citations
+
+## Phase 6 — Rebuild seeded extension workflow
+
+Implement the explicit seed contract and Seed Review mode.
+
+The editor must gracefully handle entry from extension-created source/citation/quote/note state.
+
+## Phase 7 — Performance pass
+
+Measure and improve:
+
+* initial paint time
+* first writable time
+* save latency perception
+* rail hydration cost
+* outline recomputation cost
+* object-card rerender behavior
+* command menu responsiveness
+
+## Phase 8 — Cleanup and remove legacy dependencies
+
+After the v2 editor is proven functional, remove or isolate:
+
+* old editor-only legacy serializers
+* old route-local compatibility paths that were only needed for the legacy editor
+* legacy document citation assumptions
+* dead code from the old `editor.js` orchestration layer
+
+Do not leave dual logic paths longer than necessary.
+
+---
+
+# Required deliverables
+
+## 1. Rebuilt v2 Quill editor runtime
+
+A modular frontend runtime using Quill as the composition engine.
+
+## 2. Canonical editor contract alignment
+
+The new editor must read/write entirely against v2 canonical backend contracts and tables.
+
+## 3. Research-aware writing experience
+
+Working explorer, context rail, inline research affordances, command-driven insertion, and bibliography behavior.
+
+## 4. Seeded extension handoff support
+
+A polished handoff into editor from extension capture.
+
+## 5. Security-compliant protected editor behavior
+
+Bearer-authenticated, capability-aware, no weak legacy cookie trust.
+
+## 6. Performance improvement over the old implementation
+
+The editor must feel lighter, faster, and less stall-prone than the legacy runtime.
+
+---
+
+# Final success criteria
+
+The work is successful only if the rebuilt editor satisfies all of the following:
+
+* Quill is still the writing engine
+* the old editor shell has been replaced by a modular v2 runtime
+* the editor uses the new canonical v2 database model only
+* route-level legacy drift is no longer driving editor behavior
+* document, citation, note, quote, tag, and checkpoint relationships are canonical and predictable
+* extension-to-editor handoff feels first-class
+* bibliography is generated from attached citations, not ad hoc inline state
+* auth/capability behavior follows the v2 security model
+* the editor becomes faster to boot, faster to write in, and easier to evolve
+
+Do not stop at visual parity.
+Do not stop at route rewiring.
+Do not preserve accidental legacy complexity.
+
+Build the editor that the old product was pointing toward, but on the v2 architecture the product now deserves.
+

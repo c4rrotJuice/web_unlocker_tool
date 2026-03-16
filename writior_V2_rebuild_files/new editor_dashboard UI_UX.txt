@@ -1,0 +1,407 @@
+# v2 Frontend UI/UX Implementation Brief
+
+## Objective
+
+Design and implement the frontend interface for both the **Dashboard** and **Editor Workspace**.
+
+The UI must be:
+
+* lightweight
+* visually calm and professional
+* fast to load
+* keyboard friendly
+* research‑workflow oriented
+
+Lyra is **not a generic note‑taking tool**. The UI must reinforce the research pipeline:
+
+Sources → Citations → Quotes → Notes → Documents
+
+Every part of the UI should guide the user through this flow.
+
+---
+
+# Core UI Principles
+
+## 1. Lightweight Architecture
+
+Avoid heavy frameworks.
+
+Preferred stack:
+
+* HTML templates
+* modular vanilla JS
+* AlpineJS for small interactions
+* HTMX for server actions
+
+Do NOT introduce React/Next/Vue unless absolutely necessary.
+
+---
+
+## 2. Layout Philosophy
+
+The application uses a **three‑panel workspace model**.
+
+Global layout pattern:
+
+Sidebar | Main Content | Context Panel
+
+This keeps navigation stable while allowing deep research interactions.
+
+---
+
+# Visual Design System
+
+## Color Palette
+
+Background: #0f1115
+Panel: #161a21
+Card: #1d222b
+Accent: #5b8cff
+Secondary accent: #7dd3fc
+Primary text: #e6e8eb
+Secondary text: #9aa3af
+Borders: #2a2f38
+
+Dark mode is the default experience.
+
+---
+
+## Typography
+
+UI font: Inter
+Editor font: Source Serif or IBM Plex Serif
+Monospace: JetBrains Mono
+
+Spacing should be generous to reduce cognitive load.
+
+---
+
+# Global Navigation
+
+Left sidebar navigation remains consistent across pages.
+
+Sidebar structure:
+
+Dashboard
+Research
+Documents
+Projects
+Bookmarks
+Insights
+Settings
+
+Sidebar must support collapsed mode.
+
+---
+
+# Dashboard Interface
+
+The dashboard acts as the user's **research command center**.
+
+Layout:
+
+Sidebar | Dashboard content
+
+## Dashboard Sections
+
+Greeting header
+
+Research activity summary:
+
+* Unlocks today
+* Sources captured
+* Notes written
+* Documents updated
+
+Recent Research:
+
+* Recently captured sources
+
+Recent Documents:
+
+* Recently edited documents
+
+Milestones:
+
+* Research streak
+* Sources captured achievements
+
+Use card based layout for these blocks.
+
+---
+
+# Research Explorer
+
+The Research section manages the knowledge graph.
+
+Subsections:
+
+Sources
+Citations
+Quotes
+Notes
+
+Each list should display:
+
+Title
+Author
+Date captured
+Connected notes
+Connected quotes
+
+Clicking a source opens the Source Detail panel.
+
+---
+
+# Source Detail View
+
+Displays the full context of a research source.
+
+Sections:
+
+Source metadata
+Citation preview
+Quotes extracted from the source
+Notes linked to the source
+Documents using the source
+
+This reinforces the research‑to‑writing workflow.
+
+---
+
+# Projects Interface
+
+Projects organize research collections.
+
+Project list view:
+
+Project name
+Color
+Last opened
+
+Project detail shows:
+
+Sources
+Notes
+Documents
+
+---
+
+# Insights Page
+
+The Insights page visualizes research patterns.
+
+Possible components:
+
+Top research domains
+Citation style breakdown
+Research activity heatmap
+Monthly research summary
+
+Charts should be simple and lightweight.
+
+---
+
+# Editor Workspace
+
+The editor is the **core product interface**.
+
+Layout:
+
+Research Explorer | Writing Editor | Context Panel
+
+---
+
+## Left Panel — Research Explorer
+
+Contains quick access to:
+
+Sources
+Quotes
+Notes
+Citations
+
+Selecting an item reveals related research data.
+
+---
+
+## Center Panel — Writing Editor
+
+Main document editing area.
+
+Features:
+
+Title field
+Rich text editing
+Inline citations
+Quote insertion
+Note references
+Autosave
+Checkpoints
+Outline navigation
+
+Editor must feel distraction free.
+
+---
+
+## Right Panel — Context Tools
+
+Dynamic panel responding to user actions.
+
+Examples:
+
+If text selected:
+
+Insert citation
+Insert quote
+Attach note
+Find related sources
+
+If cursor inside citation:
+
+Citation preview
+Edit citation
+Open source
+
+If nothing selected:
+
+Document outline
+Attached sources
+Attached notes
+Tags
+Export options
+
+---
+
+# Document Outline
+
+Auto generated from document headings.
+
+Allows quick navigation between sections.
+
+---
+
+# Citation Insertion UX
+
+Typing @ triggers citation search.
+
+Autocomplete list appears.
+
+Selecting a citation inserts formatted reference.
+
+---
+
+# Notes UX
+
+Notes act as side thoughts linked to research.
+
+Inline note markers may appear inside the editor.
+
+Hovering reveals full note content.
+
+---
+
+# Extension Integration
+
+Browser extension integrates directly with Lyra.
+
+When text is highlighted on a webpage, a capture pill appears:
+
+Save note
+Save quote
+Cite source
+Work in editor
+
+Selecting "Work in editor" should:
+
+Create source record
+Create citation instance
+Create document
+Open editor with inserted quote
+
+This workflow must feel instant.
+
+---
+
+# Performance Principles
+
+The UI must feel extremely responsive.
+
+Requirements:
+
+Lazy load heavy panels
+Avoid unnecessary re‑renders
+Use lightweight JS modules
+Prefer server driven UI updates
+
+---
+
+# Microinteractions
+
+Small UI touches improve perceived quality.
+
+Examples:
+
+Smooth panel transitions
+Autosave indicators
+Hover highlights
+Citation preview popovers
+Achievement notifications
+
+---
+
+# Accessibility
+
+Ensure:
+
+Keyboard navigation
+Readable contrast
+Clear focus states
+
+---
+
+# Implementation Order
+
+Phase 1
+
+Global layout
+Sidebar navigation
+Theme system
+
+Phase 2
+
+Dashboard UI
+Projects page
+Research explorer
+
+Phase 3
+
+Editor layout
+Outline system
+Context panel
+
+Phase 4
+
+Citation insertion
+Quote workflow
+Note linking
+
+Phase 5
+
+Extension capture integration
+Insights dashboards
+
+---
+
+# Expected Outcome
+
+The finished interface should feel:
+
+Fast
+Structured
+Calm
+Focused
+Research oriented
+
+The UI must guide users naturally from research collection to writing output.
+

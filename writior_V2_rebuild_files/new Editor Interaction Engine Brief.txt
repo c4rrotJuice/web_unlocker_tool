@@ -1,0 +1,1052 @@
+Editor Interaction Engine Brief
+Purpose
+Define the Editor Interaction Engine for Lyra v2: the runtime system that makes the editor feel fast, research-aware, and lightweight.
+
+This document covers:
+
+editor runtime architecture
+
+context rail behavior
+
+insert / attach / link / convert interactions
+
+research hydration flows
+
+panel logic
+
+keyboard model
+
+performance rules
+
+implementation order
+
+The goal is to make the editor feel like a composition workspace with nearby evidence, not a bloated all-in-one notes app.
+
+Product position
+The current product already has a real multi-surface workflow: editor, extension capture, notes, quotes, projects, tags, checkpoints, exports, and auth handoff. The audit makes clear that the editor is one surface inside a wider research system, not a standalone rich-text page. The v2 interaction engine should preserve that strength while removing the current route-heavy and state-fragmented feeling.
+
+The editor must express the canonical product pipeline:
+
+Sources → Citations → Quotes → Notes → Documents
+
+But the user should experience:
+
+Capture → Understand → Synthesize → Write
+
+Editor interaction philosophy
+The editor should behave like a calm writing center with research available on demand.
+
+It should not feel like:
+
+a dense PKM dashboard
+
+a modal-heavy citation manager
+
+a tab maze
+
+a heavy SPA
+
+It should feel like:
+
+focused when writing
+
+helpful when selecting
+
+rich when exploring evidence
+
+quiet when idle
+
+Core principle:
+
+The editor only becomes complex when the user asks more of it.
+
+High-level runtime model
+The Editor Interaction Engine should be split into small cooperating controllers rather than one giant file.
+
+Recommended runtime modules
+editor_runtime/
+  core/
+    editor_engine.js
+    event_bus.js
+    command_registry.js
+    keyboard.js
+    selection_state.js
+    context_state.js
+    workspace_state.js
+
+  document/
+    document_controller.js
+    autosave_controller.js
+    checkpoint_controller.js
+    outline_controller.js
+    export_controller.js
+
+  research/
+    research_hydrator.js
+    source_store.js
+    citation_store.js
+    quote_store.js
+    note_store.js
+    project_store.js
+    tag_store.js
+
+  ui/
+    left_rail.js
+    context_rail.js
+    inspector_panels.js
+    card_renderer.js
+    inline_menu.js
+    toast_system.js
+    loading_states.js
+
+  actions/
+This keeps the editor runtime small, composable, and testable.
+
+Canonical editor states
+The interaction engine should revolve around a small number of explicit states.
+
+1. Workspace State
+Tracks:
+
+active document id
+
+active project id
+
+attached research summaries
+
+current panel visibility
+
+editor access capability state
+
+2. Selection State
+Tracks:
+
+current selection range
+
+selected plain text
+
+whether selection is collapsed
+
+whether selection is inside citation/note/embed block
+
+current active entity under cursor
+
+3. Context State
+Tracks what the right rail should show:
+
+idle document context
+
+text selection context
+
+citation context
+
+quote context
+
+note context
+
+source context
+
+search/insert context
+
+4. Research State
+Tracks lightweight cached lists and hydration status for:
+
+sources
+
+citations
+
+quotes
+
+notes
+
+projects
+
+tags
+
+5. UI State
+Tracks ephemeral interface details:
+
+rail collapsed/expanded
+
+open detail panel
+
+open command menu
+
+hovered card/preview
+
+loading state
+
+Keep these states separate. Do not build one giant mutable editor object.
+
+Layout behavior
+The editor layout remains three-panel:
+
+Research Explorer | Writing Surface | Context Rail
+
+Left Rail
+Purpose:
+
+browse nearby research
+
+switch between Sources / Citations / Quotes / Notes
+
+show project-scoped research when relevant
+
+Center Surface
+Purpose:
+
+write
+
+see inline citations / notes / quotes
+
+stay mostly distraction-free
+
+Right Rail
+Purpose:
+
+react to context
+
+show relevant actions and nearby detail
+
+avoid large modals
+
+The rails must be collapsible, but the editor should remain fully usable with either rail closed.
+
+Context rail logic
+The right rail is the heart of the interaction engine.
+
+It should never be a generic static sidebar. It must adapt based on the user’s current context.
+
+Context rail modes
+1. Idle Document Mode
+Triggered when:
+
+no selection
+
+no entity focused
+
+no command palette open
+
+Show:
+
+document outline
+
+attached sources
+
+attached notes
+
+attached citations count
+
+tags
+
+export actions
+
+checkpoint status
+
+autosave state
+
+2. Empty Document Mode
+Triggered when document has little or no meaningful content.
+
+Show:
+
+recent notes
+
+recent quotes
+
+recent sources
+
+project research
+
+buttons:
+
+Insert recent note
+
+Insert recent quote
+
+Attach project sources
+
+This is the anti-blank-page mode.
+
+3. Text Selection Mode
+Triggered when user selects text in editor.
+
+Show:
+
+Insert citation
+
+Insert quote
+
+Attach note
+
+Link source
+
+Create note from selection
+
+Convert selection to quote
+
+This should be the most action-oriented state.
+
+4. Citation Focus Mode
+Triggered when cursor is inside or adjacent to an inline citation token.
+
+Show:
+
+citation preview
+
+source title
+
+style info
+
+open source
+
+edit citation placement if supported
+
+show related quotes/notes
+
+5. Quote Focus Mode
+Triggered when user clicks a quote card or quote block.
+
+Show:
+
+quote text
+
+source + locator
+
+Insert quote
+
+Insert quote + citation
+
+Create note from quote
+
+Attach to document
+
+6. Note Focus Mode
+Triggered when user clicks a note card or inline note reference.
+
+Show:
+
+note title/body preview
+
+linked source or quote
+
+tags
+
+related notes
+
+Insert into document
+
+Attach to document
+
+Open full note
+
+7. Source Focus Mode
+Triggered when user opens a source from the left rail or inline preview.
+
+Show:
+
+source metadata
+
+citation preview
+
+quotes from source
+
+notes from source
+
+documents using source
+
+Attach source citation to document
+
+8. Search/Insert Mode
+Triggered by @ or command search.
+
+Show:
+
+search results grouped by entity type
+
+keyboard navigation hints
+
+recent insertables
+
+filters: citations / quotes / notes / sources
+
+Switching among these modes must be instant and not force a full panel rerender.
+
+Left rail behavior
+The left rail is the Research Explorer inside the editor.
+
+Sections
+Sources
+
+Citations
+
+Quotes
+
+Notes
+
+These should be tabs or segmented filters within one explorer, not isolated feature silos.
+
+Left rail responsibilities
+list nearby research objects
+
+allow quick open of details
+
+allow quick insert/attach actions
+
+show lightweight relationship context
+
+respect current document/project filtering
+
+Default sorting
+attached to current document first
+
+then recently updated
+
+then project relevance
+
+Search
+The left rail needs lightweight local/remote search:
+
+instant client-side filter on already-hydrated lists
+
+remote search when query expands beyond current cache
+
+Object card design inside editor
+All research items in rails and insert menus should use one shared card system.
+
+Source card
+Display:
+
+source title
+
+author/publication
+
+domain or type
+
+quote count
+
+note count
+
+Actions:
+
+Open
+
+Attach citation
+
+View quotes
+
+Citation card
+Display:
+
+rendered citation preview
+
+source title
+
+style badge
+
+Actions:
+
+Insert citation
+
+Attach citation
+
+Open source
+
+Quote card
+Display:
+
+quote excerpt
+
+source title
+
+locator if available
+
+note count
+
+Actions:
+
+Insert quote
+
+Insert quote + citation
+
+Create note
+
+Attach
+
+Note card
+Display:
+
+note title or first line
+
+note body preview
+
+linked source/quote badge
+
+tags
+
+Actions:
+
+Insert note
+
+Attach note
+
+Link note
+
+Open
+
+Cards must support:
+
+hover preview
+
+keyboard focus
+
+compact layout
+
+non-blocking actions
+
+Universal action engine
+All interactions should reduce to five verbs:
+
+Open
+Open full detail in the context rail or slide-over panel.
+
+Insert
+Place research content into the document at cursor.
+
+Attach
+Link an entity to the current document/project without inserting visible text.
+
+Link
+Create a relationship between two research objects.
+
+Convert
+Transform one object into another.
+
+The runtime should implement these as shared action handlers rather than ad hoc button logic everywhere.
+
+Insert actions
+Insert actions are the editor’s signature behavior.
+
+Insert citation
+Input:
+
+citation instance id
+
+insertion mode
+
+Output:
+
+inline citation inserted at cursor
+
+citation attached to document if not already attached
+
+Modes:
+
+inline parenthetical
+
+bibliography-only attach
+
+footnote style later if supported
+
+Insert quote
+Input:
+
+quote id
+
+insertion mode
+
+Modes:
+
+quote only
+
+quote + citation
+
+citation only
+
+Output:
+
+quote text inserted with optional formatting
+
+linked citation attached to document if needed
+
+Insert note
+Input:
+
+note id
+
+insertion mode
+
+Modes:
+
+inline note excerpt
+
+block note
+
+summarized insert later if supported
+
+Output:
+
+note content inserted into document
+
+note optionally attached if not already attached
+
+Insert source-derived research
+For sources, insert flow should first branch into:
+
+citation
+
+quote from that source
+
+note from that source
+
+Do not insert raw source cards directly into body text.
+
+Attach actions
+Attach creates document relationships without cluttering the page text.
+
+Attach citation
+writes canonical document_citations relation
+
+updates attached research summary in UI
+
+Attach note
+writes canonical document_notes relation
+
+keeps note available in attached notes rail
+
+Attach tag
+writes canonical document_tags relation
+
+updates doc metadata immediately
+
+Attach should feel invisible and fast.
+
+UI response:
+
+subtle toast
+
+attached item appears in document context section
+
+Link actions
+Link is for graph-building, not text insertion.
+
+Link note to note
+Use for synthesis chains.
+
+Link note to source/citation through canonical fields
+If note already grounded, surface relationship cleanly.
+
+Link selection to note
+Create a note anchored to selected text in the current doc.
+
+Do not overbuild generic arbitrary linking. Keep it purposeful.
+
+Convert actions
+Convert is how Lyra turns capture into writing intelligence.
+
+Supported conversions
+Selection → Note
+
+Selection → Quote
+
+Quote → Note
+
+Note → Insertable block
+
+Source → Citation attach flow
+
+Important behavior
+Conversions should preserve lineage.
+
+Examples:
+
+Quote → Note keeps quote_id and citation_id
+
+Selection → Quote inside editor should preserve current document context when useful
+
+Selection → Note should allow optional source/citation association if current cursor is near one
+
+Inline interaction model
+The editor body should support lightweight inline intelligence.
+
+Inline citation chips
+Behavior:
+
+visually distinct but subtle
+
+hover shows citation preview
+
+click focuses Citation Context Mode
+
+Inline note markers
+Behavior:
+
+small marker or icon, not large callout by default
+
+hover previews note
+
+click focuses Note Context Mode
+
+Quote blocks
+Behavior:
+
+styled as evidence blocks when inserted as block quote
+
+hover actions: cite, open source, create note
+
+Keep inline affordances small so writing remains clean.
+
+Command system
+The command system should make the editor feel fast.
+
+@ Insert menu
+Opens insert search for:
+
+citations
+
+quotes
+
+notes
+
+recent sources
+
+Result groups should be visually separated.
+
+/ Command menu
+Used for editor/document actions:
+
+checkpoint
+
+export
+
+attach tag
+
+attach note
+
+open outline
+
+insert bibliography
+
+Cmd/Ctrl + K
+Global quick switcher:
+
+switch documents
+
+open projects
+
+jump to notes/sources/quotes
+
+Cmd/Ctrl + Shift + F
+Research search:
+
+full search across notes, quotes, sources, citations
+
+Cmd/Ctrl + Enter
+Insert currently focused research object
+
+The command engine should be registry-driven so new actions can be added without branching logic everywhere.
+
+Research hydration model
+This is where current editor implementations often get bloated.
+
+Lyra should hydrate research in layers.
+
+Layer 1: Document summary hydration
+On document open, fetch only:
+
+document core payload
+
+attached_citation_ids
+
+attached_note_ids
+
+tag summaries
+
+lightweight capability state
+
+Layer 2: Attached object hydration
+Then fetch compact summaries for attached citations/notes.
+
+Layer 3: Explorer hydration
+When user opens a rail section, fetch the first relevant page of:
+
+sources
+
+citations
+
+quotes
+
+notes
+
+Layer 4: Detail hydration
+Only when an object is opened, fetch rich detail/neighborhood data.
+
+This prevents heavy boot cost and keeps the editor feeling quick.
+
+Recommended boot sequence
+First paint
+Render:
+
+shell
+
+current doc title/body
+
+autosave status placeholder
+
+empty rails skeletons
+
+Second step
+Hydrate:
+
+attached research summaries
+
+outline
+
+capability state
+
+Third step
+Hydrate on demand:
+
+explorer sections
+
+context details
+
+recent insertables
+
+The user should be able to write before all research panels finish hydrating.
+
+Autosave and checkpoint engine
+The editor interaction engine must make saves feel trustworthy but unobtrusive.
+
+Autosave states
+Saved
+
+Saving…
+
+Offline/local only
+
+Save failed
+
+Display this in a tiny persistent status area.
+
+Save behavior
+debounce document writes
+
+coalesce repeated edits
+
+do not refetch full document after every save
+
+Checkpoints
+manual checkpoint from command menu
+
+optional lightweight auto-checkpoints at sensible intervals
+
+restore opens confirmation flow in context rail, not giant modal
+
+Outline engine
+The outline is the editor’s structural navigator.
+
+Requirements
+derive headings from document body
+
+update incrementally
+
+click jumps to section
+
+highlight current section while scrolling
+
+Placement
+Show in Idle Document Mode and optionally in collapsible block.
+
+Keep it lightweight. No complex tree editor needed.
+
+Bibliography behavior
+Bibliography should feel almost automatic.
+
+Rules
+attached citations are the bibliography source of truth
+
+inserting a quote + citation should attach the citation automatically
+
+bibliography insert command generates from attached citations
+
+duplicates should be deduped by citation instance id
+
+UX
+Use /bibliography or command palette action rather than a giant separate manager.
+
+Project-aware editor behavior
+If a document belongs to a project, the interaction engine should bias suggestions toward that project.
+
+Examples:
+
+show project notes first in empty-state assistance
+
+show project sources first in left rail
+
+prioritize project quotes in insert search
+
+This makes the editor feel context-aware without being noisy.
+
+Extension-to-editor seeded workflow
+This workflow is too important to treat like a side feature.
+
+When the extension opens the editor from a web selection, the editor should start in a special seeded state.
+
+Seeded editor state
+active document already created
+
+source attached
+
+citation instance attached
+
+quote inserted or available to insert immediately
+
+starter note optionally created
+
+context rail opens in Quote Focus or Seed Review mode
+
+Seed Review mode
+On first open from extension handoff, right rail should show:
+
+captured source
+
+captured quote
+
+attached citation
+
+quick actions:
+
+Insert quote now
+
+Create note from quote
+
+Start outline
+
+Continue writing
+
+This makes the handoff feel magical.
+
+Performance rules
+The editor interaction engine must stay lightweight.
+
+Must do
+lazy hydrate non-critical panels
+
+memoize card rendering where sensible
+
+avoid full rail rerenders on small state changes
+
+use event-driven updates instead of polling
+
+keep network payloads compact
+
+keep editor usable during background hydration
+
+Must not do
+no SPA-scale global state manager
+
+no giant modal workflows
+
+no fetching every research entity on boot
+
+no repeated recomputation of outline/research neighborhood on every keystroke
+
+Accessibility rules
+The interaction engine must support:
+
+full keyboard navigation across rails and cards
+
+visible focus states
+
+searchable command menus
+
+non-color-only status indication
+
+screen-reader-friendly action labels where possible
+
+Implementation order
+Phase 1 — Runtime foundation
+create event bus
+
+create command registry
+
+split current editor runtime into controllers
+
+define workspace/selection/context state stores
+
+Phase 2 — Context rail engine
+implement mode switching
+
+implement Idle / Empty / Selection / Citation / Quote / Note / Source modes
+
+add rail renderer with partial updates
+
+Phase 3 — Universal actions
+implement shared insert handlers
+
+implement shared attach handlers
+
+implement convert handlers
+
+standardize toast/status updates
+
+Phase 4 — Research hydration
+document summary hydration
+
+attached object hydration
+
+explorer section loading
+
+detail panel hydration
+
+Phase 5 — Inline intelligence
+citation chips
+
+note markers
+
+quote block actions
+
+hover previews
+
+Phase 6 — Command system
+@ insert menu
+
+/ command menu
+
+global quick switcher
+
+keyboard shortcuts
+
+Phase 7 — Seeded workflows
+extension-to-editor seed review state
+
+project-aware suggestions
+
+bibliography and export commands
+
+Acceptance criteria
+The Editor Interaction Engine is successful if:
+
+the editor feels usable within the first paint + immediate hydration window
+
+research is accessible without leaving the writing surface
+
+the right rail always feels relevant to the current user context
+
+insert / attach / convert actions are consistent across all research objects
+
+extension-to-editor handoff opens into a coherent seeded writing flow
+
+the editor remains lightweight and calm even with rich research features
+
+runtime responsibilities are modular instead of buried in one giant orchestration file
+
+the system clearly supports the canonical v2 model of sources, citations, quotes, notes, and documents
+
+Final instruction to implementers
+Build the Editor Interaction Engine as the operating layer between the canonical backend and the writing UI.
+
+It should not own business truth that belongs in the backend. It should not turn the editor into a noisy knowledge-management maze. It should make research feel close, useful, and immediate while keeping writing at the center.
+
+

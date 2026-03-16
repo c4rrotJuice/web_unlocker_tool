@@ -1,0 +1,459 @@
+Unified Toast & Status Feedback System
+Implementation Brief
+
+Objective
+Implement a centralized user feedback system that provides clear, non-intrusive notifications for product events across the Writior application.
+
+The system must provide:
+
+Color-coded toast notifications for discrete events
+
+Persistent status indicators for ongoing states
+
+A unified API for emitting feedback from anywhere in the application
+
+Accessibility-compliant visual feedback
+
+Minimal performance overhead
+
+This system will be used throughout:
+
+Editor
+
+Dashboard
+
+Research panels
+
+Citation interactions
+
+Note/quote workflows
+
+Extension handoffs
+
+Clipboard actions
+
+Authentication states
+
+The goal is to ensure users always receive immediate confirmation when an action occurs.
+
+1. System Architecture
+The feedback system consists of two layers:
+
+Layer A — Toast Notifications
+Short-lived visual notifications for completed or failed actions.
+
+Examples:
+
+Copied
+
+Citation saved
+
+Quote attached
+
+Export completed
+
+Save failed
+
+Permission denied
+
+Layer B — Persistent Status Indicators
+Used for ongoing states.
+
+Examples:
+
+Saving…
+
+Saved
+
+Offline
+
+Syncing
+
+Restore in progress
+
+These must be separate from toast notifications to avoid excessive notifications.
+
+2. File Structure
+Create a shared feedback module usable by the entire app.
+
+
+/static/js/shared/feedback/
+
+toast_system.js
+status_store.js
+feedback_tokens.js
+feedback_bus.js
+toast_renderer.js
+Responsibilities
+toast_system.js
+Primary public API.
+
+status_store.js
+Handles persistent status indicators.
+
+feedback_tokens.js
+Defines colors, icons, durations.
+
+feedback_bus.js
+Internal event emitter.
+
+toast_renderer.js
+Handles DOM rendering and animation.
+
+3. Toast Notification System
+3.1 Placement
+Toast stack must render in:
+
+
+Top-right of application shell
+Constraints:
+
+
+position: fixed
+top: 20px
+right: 20px
+z-index: very high
+max-width: 360px
+pointer-events: none
+Each toast:
+
+
+pointer-events: auto
+margin-bottom: 8px
+4. Toast Types
+Four types are required.
+
+SUCCESS
+Used when an action completes successfully.
+
+Examples:
+
+
+Citation saved
+Quote attached
+Note created
+Export completed
+Checkpoint created
+Visual design:
+
+
+background: #123222
+border-left: 4px solid #22c55e
+icon: check-circle
+Duration:
+
+
+2000ms
+ERROR
+Used when an action fails.
+
+Examples:
+
+
+Save failed
+Network error
+Permission denied
+Export failed
+Visual design:
+
+
+background: #34161a
+border-left: 4px solid #ef4444
+icon: alert-circle
+Duration:
+
+
+5000ms
+INFO
+Used for neutral confirmations.
+
+Examples:
+
+
+Copied
+Draft restored
+Bibliography inserted
+Citation linked
+Visual design:
+
+
+background: #142534
+border-left: 4px solid #5b8cff
+icon: info
+Duration:
+
+
+2000ms
+WARNING
+Used when attention is required.
+
+Examples:
+
+
+Saved locally only
+Offline mode active
+Partial sync completed
+Duplicate citation skipped
+Visual design:
+
+
+background: #3a2a10
+border-left: 4px solid #f59e0b
+icon: alert-triangle
+Duration:
+
+
+4000ms
+5. Toast Layout
+Each toast must include:
+
+
+[icon]  Title
+        Optional description text
+        Optional action button
+        Close button
+Example structure:
+
+
+----------------------------------
+✔ Citation saved
+Added to your library
+----------------------------------
+Optional action:
+
+
+[Undo]
+[Retry]
+[Open]
+6. Toast Behavior
+Maximum Visible
+
+3 toasts at once
+Additional toasts queue.
+
+Stacking
+Newest toast appears on top.
+
+
+[Toast 3]
+[Toast 2]
+[Toast 1]
+Deduplication
+If the same toast occurs repeatedly within 1 second, merge them.
+
+Example:
+
+
+Copied ×3
+Priority
+Toast display priority:
+
+
+Error > Warning > Success > Info
+Errors should never be hidden behind info notifications.
+
+Animation
+Entrance animation:
+
+
+opacity: 0 → 1
+translateX: 20px → 0
+duration: 120ms
+Exit animation:
+
+
+opacity: 1 → 0
+translateX: 0 → 20px
+duration: 100ms
+Respect:
+
+
+prefers-reduced-motion
+7. Persistent Status Indicator
+The editor must include a small persistent status indicator.
+
+Location:
+
+
+Editor footer or toolbar
+States supported:
+
+
+saving
+saved
+offline
+syncing
+error
+Examples:
+
+
+Saving…
+Saved
+Offline — working locally
+Sync failed
+The status indicator must update without showing toasts.
+
+8. Public API
+The system must expose a simple API.
+
+Toast API
+
+toast.success(message)
+toast.info(message)
+toast.warning(message)
+toast.error(message)
+Optional parameters:
+
+
+{
+  description: "",
+  actionLabel: "",
+  onAction: function,
+  duration: number
+}
+Example usage:
+
+
+toast.success("Citation saved")
+
+toast.info("Copied")
+
+toast.error("Save failed", {
+  actionLabel: "Retry",
+  onAction: retrySave
+})
+Status API
+
+status.set("saving")
+status.set("saved")
+status.set("offline")
+status.set("error")
+9. Event Integration
+The following events must trigger feedback.
+
+Editor
+
+doc.save.started
+doc.save.succeeded
+doc.save.failed
+checkpoint.created
+citation.inserted
+citation.saved
+note.created
+note.linked
+quote.inserted
+bibliography.inserted
+restore.completed
+Clipboard
+
+copy.success
+copy.failed
+Example:
+
+
+toast.info("Copied")
+Research Panel
+
+citation.saved
+quote.saved
+note.created
+note.attached
+tag.added
+Extension Handoff
+
+handoff.started
+handoff.completed
+handoff.failed
+capture.synced
+Account / Auth
+
+session.expired
+permission.denied
+upgrade.required
+10. Accessibility Requirements
+Toasts must support:
+
+
+aria-live="polite"
+Errors must support:
+
+
+aria-live="assertive"
+Additional requirements:
+
+
+keyboard dismiss via ESC
+focusable action buttons
+screen reader friendly labels
+icons + text (not color only)
+11. Performance Requirements
+The system must:
+
+Render using one container node
+
+Avoid layout thrashing
+
+Use requestAnimationFrame
+
+Maintain max 3 DOM toast nodes
+
+Avoid memory leaks
+
+Target:
+
+
+< 1ms runtime overhead
+12. Styling Guidelines
+Toasts must match Writior's design language:
+
+
+dark UI
+soft card backgrounds
+subtle shadows
+rounded corners
+Recommended:
+
+
+border-radius: 6px
+padding: 10px 14px
+font-size: 13px
+box-shadow: subtle elevation
+13. Future Extension (Optional)
+Design the system so it can support later additions:
+
+
+achievement notifications
+usage milestones
+research insights
+upgrade prompts
+14. Testing Requirements
+Verify:
+
+Maximum 3 toast stack works
+
+Deduplication functions
+
+Priority ordering works
+
+Accessibility announcements fire
+
+Status indicator updates correctly
+
+Toast queue processes correctly
+
+No layout shift in editor
+
+Final Outcome
+The result should be a central feedback system that:
+
+clearly communicates user actions
+
+prevents silent failures
+
+improves user trust
+
+keeps the UI calm and non-intrusive
+
+integrates seamlessly with editor workflows
+
+This system becomes the standard feedback mechanism across Writior v2.

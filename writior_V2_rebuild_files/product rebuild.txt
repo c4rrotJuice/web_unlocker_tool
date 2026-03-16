@@ -1,0 +1,923 @@
+My recommendation in one line
+Build Writior Core v2 on the same stack, but with:
+
+one canonical auth/account model
+
+one canonical research schema
+
+one centralized entitlement service
+
+one clean API/service/repository structure
+
+one slimmer editor runtime
+
+one thinner extension sync layer
+
+That gets you a stronger product without starting from scratch.
+
+The product should be organized into 6 bounded modules
+1. Identity and Access
+This module should own:
+
+guest behavior
+
+web auth
+
+extension auth
+
+auth handoff
+
+session resolution
+
+user profile
+
+account tier
+
+billing state
+
+Why first: the audits show auth works, but the current web session boundary is weak and the extension/web split is real. Extension-to-web auth handoff is one of the strongest capabilities you already have and absolutely should stay. 
+system audit
+
+ 
+system audit
+
+ 
+product features
+
+
+2. Unlock Engine
+This module should own:
+
+URL submission
+
+cleaned-page fetch/render
+
+guest unlock limits
+
+paid unlock limits
+
+queue priority
+
+cloudscraper eligibility
+
+unlock history
+
+bookmarks/history search
+
+This should become a proper product area, not just some routes around /view. The current unlock product is real, but it has duplicate surfaces and inconsistent quota logic between legacy web paths and newer entitlement-based checks. 
+product features
+
+ 
+product features
+
+
+3. Research Graph
+This is your canonical domain core:
+
+citations
+
+citation renders
+
+templates
+
+quotes
+
+notes
+
+note sources
+
+note links
+
+projects
+
+tags
+
+document-note/citation/tag links
+
+This is the heart of the product. The audits make clear that these capabilities are already rich and worth preserving, but they need to be fully canonical and freed from compatibility logic and route-local persistence. 
+product features
+
+ 
+system audit
+
+
+4. Writing Workspace
+This module should own:
+
+documents
+
+checkpoints
+
+restore
+
+export
+
+archive/freeze policy
+
+editor access
+
+document switching
+
+citation insertion
+
+note attachment
+
+quote usage
+
+The editor should consume the research graph, not secretly implement parts of it. Right now it depends on too many backend surfaces and degrades when schema pieces are missing. That should end in v2. 
+system audit
+
+ 
+product features
+
+
+5. Extension Platform
+This should own:
+
+content-script capture
+
+local note/citation cache
+
+sync queue
+
+unlock permits
+
+usage events
+
+work-in-editor handoff
+
+But it should not own tier truth or deep business rules. The current extension duplicates too much server knowledge around note normalization, tag/project resolution, and local tier cache behavior. 
+system audit
+
+ 
+system audit
+
+
+6. Insights and Monetization
+This should own:
+
+dashboard bootstrap
+
+momentum
+
+reports
+
+usage summaries
+
+billing checkout/webhooks
+
+upgrade prompts
+
+This matters because your dashboard/reporting is a real surface, but monthly reporting still partly depends on legacy citation assumptions. 
+product features
+
+ 
+product features
+
+
+The architecture I’d use
+Keep FastAPI, Supabase/Postgres, Redis, static pages + JS, Quill, and the MV3 extension. But change the app layout to this:
+
+
+app/
+  main.py
+
+  core/
+    config.py
+    logging.py
+    errors.py
+    auth.py
+    entitlements.py
+    redis.py
+    db.py
+
+  modules/
+    identity/
+      routes.py
+      service.py
+      repo.py
+      models.py
+
+    unlock/
+      routes.py
+      service.py
+      repo.py
+      policies.py
+
+    research/
+      citations/
+      quotes/
+      notes/
+      taxonomy/   # projects + tags
+      links/      # note_links, note_sources, doc links
+
+    workspace/
+      routes.py
+      service.py
+      repo.py
+      export_service.py
+      checkpoint_service.py
+
+    insights/
+      routes.py
+      service.py
+      repo.py
+
+    billing/
+      routes.py
+      service.py
+      repo.py
+
+    extension/
+      routes.py
+      service.py
+      repo.py
+
+  web/
+    templates/
+    static/js/
+      auth/
+      dashboard/
+      unlock/
+      editor/
+Why this is better
+It fixes the biggest audit problems:
+
+routes stop doing repository work
+
+DB access becomes uniform
+
+entitlement logic moves out of random handlers
+
+extension stops carrying server policy
+
+research entities become one proper domain instead of being split awkwardly across editor.py, citations.py, and extension.py 
+system audit
+
+ 
+system audit
+
+
+Auth and tiering should be redesigned first
+You were right to call this out.
+
+Current tier set to preserve
+guest
+
+free authenticated
+
+standard
+
+pro
+
+That needs to become a single entitlement engine with one source of truth, because today checks are scattered across backend routes, Redis counters, and extension-local heuristics. 
+product features
+
+ 
+product features
+
+
+What I’d do
+Create one AccountCapabilities object returned by the backend:
+
+
+{
+  tier: "free",
+  unlocks: {
+    window: "week",
+    limit: 10,
+    used: 4
+  },
+  documents: {
+    window: "week",
+    limit: 3,
+    can_delete: false,
+    freeze_old: true
+  },
+  exports: ["pdf", "html"],
+  citation_styles: ["apa", "mla"],
+  bookmarks_enabled: false,
+  history_search_enabled: false,
+  monthly_reports_enabled: false,
+  custom_templates_enabled: false,
+  zip_export_enabled: false
+}
+Then both:
+
+the web app
+
+the extension
+
+consume that instead of inventing local policy.
+
+Product structure by user journey
+This is how I think the product should feel structurally:
+
+Guest
+land on home
+
+paste URL
+
+get limited unlock
+
+install extension
+
+sign up when they want history/workspace power
+
+Free authenticated
+unlock with quota
+
+save citations
+
+create notes
+
+work in editor
+
+basic dashboard
+
+basic exports
+
+basic citation styles
+
+Standard
+stronger unlock
+
+richer exports
+
+bookmarks/history search
+
+monthly reports
+
+longer document window
+
+richer citation styles
+
+Pro
+unlimited unlock
+
+no document freeze
+
+document delete
+
+ZIP export
+
+custom citation templates
+
+full workspace freedom
+
+That matches your current feature reality while removing the scattered enforcement mess. 
+product features
+
+
+What I would preserve exactly
+These are strong enough to keep as product-defining features:
+
+extension-to-web auth handoff
+
+unlock history with web vs extension source attribution
+
+queue-prioritized unlocking
+
+local-first extension capture and sync
+
+quote-to-note and note-to-citation flows
+
+document exports including ZIP for Pro
+
+momentum and monthly reporting as product concepts
+
+archive/freeze semantics if you still want time-window tiers. 
+product features
+
+
+What I would redesign hard
+These are the destabilized parts:
+
+1. Session strategy
+Stop mirroring auth into a JS-readable weak cookie as the main server trust boundary. Keep handoff, but tighten the browser auth model. The current audit flags this as a top risk. 
+system audit
+
+
+2. Route ownership
+Notes/projects/tags should not live under extension.py when they are core product APIs. Citations, editor, and extension should call shared services, not each own persistence rules. 
+system audit
+
+
+3. Entitlements
+No more extension tier cache as product truth. It can cache UI state, but the backend must own policy. 
+product features
+
+
+4. Unlock surface
+Merge /view and /fetch_and_clean_page into one canonical unlock flow. The iframe/postMessage legacy path should go. 
+product features
+
+
+5. Reporting data
+Rebuild reporting on canonical citation tables and canonical research entities only. No legacy citation counting. 
+product features
+
+
+6. Transaction boundaries
+Relation-heavy writes should all use atomic RPC-backed or transaction-backed service methods. The audit is very clear that outside selected RPCs, many writes are still multi-step best effort. 
+system audit
+
+
+How I’d structure the database conceptually
+Since you’re discarding legacy data, I’d make the DB center around these groups:
+
+Identity
+user_meta
+
+auth_handoff_codes
+
+Unlock
+unlock_history
+
+bookmarks
+
+maybe unlock_requests or unlock_events if you want cleaner analytics later
+
+Workspace
+documents
+
+doc_checkpoints
+
+Research graph
+citation_sources
+
+citation_instances
+
+citation_renders
+
+citation_templates
+
+quotes
+
+notes
+
+note_sources
+
+note_links
+
+projects
+
+tags
+
+note_tag_links
+
+document_citations
+
+document_tags
+
+document_notes
+
+Insights / account growth
+user_milestones
+
+That lines up with the capabilities already confirmed in the audit and removes the need for compatibility tables/views. 
+product features
+
+
+Editor architecture: keep Quill, shrink the shell
+I would keep Quill for v2.
+
+The audits do not point to Quill as the main failure. They point to state sprawl, route coupling, and mixed contracts. So I’d rebuild the editor runtime around:
+
+document controller
+
+autosave controller
+
+citations store
+
+notes store
+
+export controller
+
+UI shell
+
+And make all nonessential panels lazy. The current editor is event-driven and imperative, with many dependencies across docs, notes, projects, tags, citations, and quotes; that’s what needs taming. 
+system audit
+
+
+Extension architecture: keep local-first, remove policy ownership
+The extension should still:
+
+capture selections
+
+save local notes/citations
+
+queue sync
+
+log usage events
+
+open editor/dashboard via handoff
+
+But it should stop deciding product rules. Its job should be:
+
+collect
+
+cache
+
+sync
+
+hand off
+
+Not:
+
+define tier policy
+
+infer canonical relations
+
+duplicate business logic unnecessarily. 
+system audit
+
+ 
+product features
+
+
+My suggested reconstruction phases
+Phase 1 — Canonical backend spine
+finalize new schema
+
+drop legacy compatibility
+
+define repository layer
+
+define service layer
+
+centralize entitlement engine
+
+tighten auth/session handling
+
+Phase 2 — Unlock + account surfaces
+rebuild home unlock flow
+
+unify quotas
+
+rebuild dashboard bootstrap/reporting on canonical data
+
+keep billing and handoff
+
+Phase 3 — Research graph APIs
+notes, citations, quotes, projects, tags, links
+
+transactional relation writes only
+
+clean request/response contracts
+
+Phase 4 — Workspace reconstruction
+rebuild /editor shell on stable APIs
+
+keep Quill
+
+simplify boot and panel hydration
+
+preserve exports/checkpoints/restore
+
+Phase 5 — Extension alignment
+rewire sync against canonical APIs
+
+kill local policy drift
+
+preserve local-first behavior and handoff
+
+My blunt suggestion
+Don’t start coding the new editor first.
+
+Start with:
+
+canonical schema
+
+entitlement model
+
+service boundaries
+
+auth/session cleanup
+
+Because once those are right, the rest of the product becomes much easier to rebuild cleanly.
+
+The next best artifact to create is a Writior v2 architecture spec with:
+
+module boundaries
+
+schema targets
+
+tier matrix
+
+API surface map
+
+extension contract
+
+phased implementation plan
+
+===========================================
+Phase 0 — Reconstruction spec
+Before code, the agent should produce the blueprint.
+
+Deliverables:
+
+canonical product architecture
+
+module boundaries
+
+DB schema
+
+tier matrix
+
+API contract map
+
+extension contract
+
+editor runtime boundaries
+
+migration/cutover plan
+
+This is the “build sheet.”
+
+Without this, the agent will improvise.
+
+Phase 1 — New database foundation
+Agent tasks:
+
+remove legacy DB assumptions from the new design
+
+create brand new canonical schema
+
+create migrations
+
+define indexes, constraints, foreign keys
+
+define RPCs only where truly needed
+
+define seed/reference data if needed
+
+keep auth credentials/secrets untouched
+
+Deliverables:
+
+sql/ or migration files
+
+schema docs
+
+entity relationship map
+
+This phase should finish before route reconstruction.
+
+Phase 2 — Core backend spine
+Agent tasks:
+
+create new module structure
+
+implement config/db/auth/redis core
+
+implement repository layer
+
+implement service layer
+
+centralize entitlement logic
+
+centralize current-user resolution
+
+centralize permission checks
+
+Deliverables:
+
+stable app skeleton
+
+no feature-rich editor yet
+
+no old route spaghetti
+
+This is the frame of the building.
+
+Phase 3 — Core product surfaces
+Rebuild in this order:
+
+3A. Identity + auth handoff
+web auth
+
+extension auth handoff
+
+account capability resolution
+
+3B. Unlock engine
+URL submission
+
+unlock fetch/clean
+
+usage recording
+
+bookmarks/history
+
+queueing rules
+
+3C. Research graph
+citations
+
+quotes
+
+notes
+
+projects
+
+tags
+
+relation tables
+
+3D. Billing/usage/reporting
+tier resolution
+
+usage summaries
+
+dashboard bootstrap
+
+This makes the product usable before the editor is fully rebuilt.
+
+Phase 4 — Workspace/editor reconstruction
+Now the agent rebuilds:
+
+/editor shell
+
+document lifecycle
+
+autosave
+
+checkpoints
+
+restore
+
+note/citation/quote integration
+
+export
+
+archive/freeze semantics if retained
+
+Keep Quill first.
+
+Do not add engine migration at the same time.
+
+Phase 5 — Extension alignment
+Then update the extension to the new canonical APIs:
+
+capture
+
+queue
+
+note creation
+
+citation creation
+
+unlock assists
+
+work-in-editor handoff
+
+The extension should be adapted after backend truth is stable.
+
+Phase 6 — Cutover and cleanup
+Finally:
+
+remove dead old routes
+
+remove dead scripts
+
+remove compatibility code
+
+remove poisoned tables
+
+verify environment variables/secrets still align
+
+run full acceptance checks
+
+So what does “fresh” actually mean here?
+For your case, “fresh” should mean:
+
+fresh schema
+
+fresh service boundaries
+
+fresh API contracts
+
+fresh editor runtime
+
+fresh extension contracts
+
+But not:
+
+new auth provider
+
+new deployment stack
+
+new secrets
+
+unnecessary stack replacement
+
+That’s the best balance.
+
+My recommendation on execution style
+Do not ask Codex:
+“Rebuild the entire app from scratch in one go.”
+
+Do ask Codex:
+“Implement Phase 1 only, exactly to spec.”
+Then:
+“Implement Phase 2 only.”
+Then:
+“Implement Phase 3A–3D.”
+And so on.
+
+That gives you:
+
+inspectable progress
+
+easier rollback
+
+cleaner diffs
+
+fewer hallucinated assumptions
+
+better quality
+
+Best practical setup
+Use the agent in separate high-discipline prompts, each with:
+
+exact scope
+
+exact files/modules expected
+
+explicit non-goals
+
+acceptance criteria
+
+“do not touch” constraints
+
+For example:
+
+Prompt 1: schema + migrations
+
+Prompt 2: app core + auth + entitlements
+
+Prompt 3: unlock module
+
+Prompt 4: research graph module
+
+Prompt 5: workspace module
+
+Prompt 6: extension adaptation
+
+Prompt 7: cleanup + dead-code removal
+
+That is much safer than one mega-prompt.
+
+The good news
+Because you are:
+
+dropping legacy data
+
+keeping the stack
+
+keeping secrets/auth credentials
+
+preserving features but not compatibility
+
+this project is actually more achievable than a live backward-compatible refactor
+
+For the extension, I’d use this rule:
+
+Preserve
+interaction model
+
+layout
+
+entrypoints
+
+wording where it already works
+
+the “fast utility” feel
+
+Rebuild
+state ownership
+
+business logic
+
+server communication
+
+local storage model where needed
+
+policy enforcement
+
+schema assumptions
+
+How to instruct the agent
+When we get to extension reconstruction, the prompt should explicitly say something like:
+
+Preserve the current extension UX patterns and visual interaction model wherever they are already effective. Rebuild internals, contracts, and data flow to align with the new canonical backend, but do not redesign the extension UI unless required by a clearly identified product or usability problem.
+
+That line matters a lot, because otherwise the agent may “improve” things you actually like.
+
+My recommendation
+Treat the extension as:
+
+UI stable
+
+internals replaceable

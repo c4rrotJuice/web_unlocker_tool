@@ -1,0 +1,481 @@
+Research Graph + Writing Workflow Implementation Brief
+
+## Purpose
+
+This document defines how the **Research Graph** and **Writing Workflow** operate inside Lyra v2.
+
+The goal is to create a **lightweight but powerful workflow system** that guides users from research collection to writing output.
+
+Lyra must not behave like a generic PKM system. The interface should reinforce a structured knowledge pipeline:
+
+Sources → Citations → Quotes → Notes → Documents
+
+However the user-facing experience should feel like:
+
+Capture → Understand → Synthesize → Write
+
+This workflow layer sits on top of the canonical backend model.
+
+---
+
+# Core UX Philosophy
+
+The research graph exists in the data model, but the UI should present it as **connected cards and contextual panels**, not a heavy node graph visualization.
+
+Principles:
+
+* Lightweight interactions
+* Minimal modals
+* Context-aware side panels
+* Reusable object cards
+* Command-driven actions
+
+Avoid building a complex visual graph interface.
+
+---
+
+# Canonical Object Types
+
+The workflow revolves around five object types.
+
+## Source
+
+Represents the origin of knowledge.
+
+Contains:
+
+* title
+* author
+* publication
+* URL
+* captured_at
+
+Relationships:
+
+* citation_instances
+* quotes
+* notes
+* documents
+
+---
+
+## Citation
+
+Represents a properly formatted reference for a source.
+
+Contains:
+
+* citation_instance_id
+* source_id
+* citation style renders
+
+Relationships:
+
+* quotes
+* notes
+* documents
+
+---
+
+## Quote
+
+Represents an evidence excerpt captured from a source.
+
+Contains:
+
+* quote_text
+* locator or context
+* citation_instance_id
+
+Relationships:
+
+* source
+* citation
+* notes
+* documents
+
+---
+
+## Note
+
+Represents synthesis or interpretation.
+
+Contains:
+
+* title
+* note_body
+* linked_quote_id (optional)
+* linked_source_id (optional)
+
+Relationships:
+
+* sources
+* quotes
+* notes
+* documents
+
+---
+
+## Document
+
+Represents writing output.
+
+Contains:
+
+* title
+* content
+* project
+
+Relationships:
+
+* citations
+* notes
+* quotes
+
+---
+
+# Canonical Object Card System
+
+All research objects should render as **reusable cards**.
+
+Each card must include:
+
+Header:
+
+* title or main text preview
+
+Metadata:
+
+* source/domain
+* author or citation info
+* relationship counts
+
+Actions:
+
+* Open
+* Insert
+* Attach
+* Link
+
+Cards should support hover previews and quick actions.
+
+---
+
+# Research Explorer
+
+The Research Explorer is the primary interface for navigating the research graph.
+
+Sections:
+
+Sources
+Citations
+Quotes
+Notes
+
+These are **filters on the same graph**, not separate systems.
+
+Selecting any object reveals its neighborhood.
+
+Example behavior:
+
+Opening a Source shows:
+
+* citation preview
+* quotes extracted
+* notes derived
+* documents using this source
+
+Opening a Quote shows:
+
+* parent source
+* citation
+* notes derived from quote
+* option to insert quote into document
+
+Opening a Note shows:
+
+* linked quote
+* linked source
+* related notes
+* documents using this note
+
+---
+
+# Writing Workflow States
+
+The editor operates in three states.
+
+## Empty Document State
+
+Right panel should help user begin writing.
+
+Suggestions:
+
+* recent sources
+* recent notes
+* recent quotes
+* project research
+
+User can insert any of these into the document.
+
+---
+
+## Active Writing State
+
+Normal writing mode.
+
+Right panel displays:
+
+* document outline
+* attached research
+* insert search
+
+Autosave and checkpoint status must be visible.
+
+---
+
+## Selection State
+
+Triggered when user selects text in the editor.
+
+Context panel shows:
+
+* Insert citation
+* Insert quote
+* Attach note
+* Link source
+* Create note from selection
+
+This keeps research actions near the cursor.
+
+---
+
+# Universal Workflow Actions
+
+Five verbs define interactions across the system.
+
+Open
+View object details.
+
+Insert
+Insert object into document at cursor.
+
+Attach
+Attach object to document/project without inserting text.
+
+Link
+Create relationship between objects.
+
+Convert
+Transform objects:
+
+Quote → Note
+Selection → Quote
+Selection → Note
+Note → Insertable evidence block
+
+These actions must appear consistently across the UI.
+
+---
+
+# Extension → Editor Workflow
+
+The browser extension is the entry point for research capture.
+
+Highlighting text on a webpage should show a capture pill with actions:
+
+Save Note
+Save Quote
+Cite Source
+Work in Editor
+
+Selecting "Work in Editor" performs the following sequence:
+
+1. Resolve or create Source
+2. Create Citation Instance
+3. Create Quote from highlighted text
+4. Create Note if user adds commentary
+5. Create new Document if none exists
+6. Open editor with inserted quote
+
+This workflow must feel instantaneous.
+
+---
+
+# Research-to-Writing Flow
+
+The intended user flow:
+
+1. Capture evidence from the web
+2. Review captured research in Research Explorer
+3. Convert quotes into notes
+4. Organize notes by project
+5. Insert notes and quotes into documents
+6. Cite sources automatically
+
+The system should reduce friction at every step.
+
+---
+
+# Lightweight Interaction Patterns
+
+Use the following UI patterns.
+
+Slide-over panels for detail views.
+
+Hover previews for citations and notes.
+
+Inline command menus using:
+
+@ for inserting citations, quotes, notes
+
+/ for editor commands
+
+Compact chips for projects and tags.
+
+Persistent right-side context panel instead of many modals.
+
+---
+
+# Keyboard Interaction Model
+
+Keyboard shortcuts must support fast research workflows.
+
+@ → Insert citation/quote/note
+
+/ → Editor command menu
+
+Ctrl/Cmd + K → Global search
+
+Ctrl/Cmd + Enter → Insert selected research object
+
+Ctrl/Cmd + Shift + F → Research search
+
+---
+
+# Project Workflow
+
+Projects act as containers for related research and writing.
+
+Project view should show:
+
+Sources
+Notes
+Documents
+
+Users can start a new document directly inside a project.
+
+Projects should remain lightweight organizational tools.
+
+---
+
+# Notes Workflow
+
+Notes represent synthesis.
+
+Notes may originate from:
+
+* manual creation
+* quote conversion
+* web highlight
+
+All notes should behave identically after creation.
+
+Note cards should display:
+
+* title
+* body preview
+* linked source
+* quote linkage
+* tags
+
+Users can insert notes into documents.
+
+---
+
+# Quote Workflow
+
+Quotes represent evidence blocks.
+
+Quote cards should display:
+
+* quote text preview
+* source
+* locator
+
+Actions:
+
+Insert quote
+Create note from quote
+Attach quote to document
+
+When inserted into editor the user may choose:
+
+Insert quote
+Insert quote + citation
+Insert citation only
+
+---
+
+# Citation Workflow
+
+Citation management should be mostly automatic.
+
+When a source is captured:
+
+* create source record
+* create citation instance
+
+When quote inserted:
+
+* suggest citation
+
+Bibliography generation should occur automatically from attached citations.
+
+---
+
+# Lightweight State Model
+
+Frontend state should remain minimal.
+
+State groups:
+
+Navigation state
+Workspace state
+Selection state
+Context panel state
+Local UI state
+
+Avoid large client-side state management systems.
+
+---
+
+# Implementation Requirements
+
+Do not introduce heavy SPA frameworks.
+
+Preferred technologies:
+
+HTML templates
+Vanilla JS modules
+AlpineJS
+HTMX
+
+Lazy load heavy panels when possible.
+
+---
+
+# Acceptance Criteria
+
+The system is considered successfully implemented if:
+
+Users can capture research from the web and begin writing within seconds.
+
+Research objects remain clearly separated in purpose.
+
+The editor integrates research without leaving the writing context.
+
+The UI remains fast and uncluttered.
+
+The workflow feels natural from capture to final writing output.
+

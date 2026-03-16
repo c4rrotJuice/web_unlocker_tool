@@ -1,0 +1,569 @@
+Retained Features & System Implementation Brief
+Purpose
+This brief instructs the agent how to rebuild Writior v2 while preserving the valuable capabilities of the old product and adapting them to the new architecture, database, and extension-first workflow.
+
+The previous database tables and legacy implementation patterns are not to be reused.
+All features must be rebuilt against the new canonical schema and modernized flows.
+
+The rebuild must produce a clean production-grade system that preserves functionality but removes:
+
+legacy database coupling
+
+duplicate logic between extension and backend
+
+old unlock web interface
+
+fragmented research entities
+
+weak authentication boundaries
+
+The final product must operate as a coherent research → writing system centered around:
+
+extension capture
+
+canonical research graph
+
+editor composition workspace
+
+Core Architectural Principles
+1. Extension-first system
+The browser extension becomes the primary entry point into Writior.
+
+All research capture flows originate from the extension:
+
+highlight text
+
+capture quote
+
+capture citation
+
+create note
+
+send to editor
+
+The old web-based URL fetch unlock interface is removed.
+
+Useful concepts from that system remain but are adapted to:
+
+copy assist
+
+selection capture
+
+research attribution
+
+unlock analytics
+
+2. Canonical research graph
+All research entities must exist in a single normalized graph:
+
+
+Source
+   ↓
+Citation Instance
+   ↓
+Quote
+   ↓
+Note
+   ↓
+Document
+Each entity has a clear responsibility:
+
+Entity	Meaning
+Source	origin webpage/book/article
+Citation Instance	user-owned formatted citation
+Quote	captured evidence
+Note	synthesis / commentary
+Document	final composition
+
+Extension and editor must write to the same graph services.
+
+3. Canonical backend authority
+The backend must be the single authority for:
+
+entitlements
+
+research entities
+
+documents
+
+relations
+
+analytics
+
+billing capability checks
+
+The extension must never be the source of truth.
+
+4. New database schema
+All features must use the new canonical schema only.
+
+Key tables:
+
+Identity
+
+user_profiles
+user_preferences
+user_entitlements
+billing_customers
+billing_subscriptions
+auth_handoff_codes
+Research graph
+
+sources
+citation_instances
+citation_renders
+citation_templates
+quotes
+notes
+note_sources
+note_links
+note_tag_links
+Workspace
+
+documents
+document_checkpoints
+document_citations
+document_notes
+document_tags
+Organization
+
+projects
+tags
+Activity & insights
+
+unlock_events
+guest_unlock_usage
+user_milestones
+bookmarks
+Feature Implementation
+The following sections describe all retained features and their v2 implementation flows.
+
+1. Authentication & Identity
+Features retained
+email/password login
+
+Google OAuth capability
+
+Supabase auth integration
+
+account profiles
+
+preferences
+
+plan entitlements
+
+extension↔web auth handoff
+
+Implementation
+Auth flow
+
+Supabase Auth
+      ↓
+JWT token issued
+      ↓
+API routes validate JWT
+      ↓
+Backend resolves profile + entitlements
+Entitlement resolution
+Entitlements must be resolved through:
+
+
+user_entitlements
+billing_subscriptions
+The backend must produce a capability object:
+
+
+{
+  tier,
+  export_formats,
+  citation_templates_allowed,
+  unlock_priority,
+  document_limit,
+  zip_export
+}
+The UI must not guess plan behavior.
+
+Extension handoff
+When the extension launches the editor:
+
+Extension requests a handoff code
+
+Backend creates entry in
+
+
+auth_handoff_codes
+Editor exchanges code for authenticated session.
+
+This prevents token leakage.
+
+2. Extension Unlock & Capture System
+Retained concepts
+copy assist
+
+unlock detection
+
+capture events
+
+usage limits
+
+plan-based behavior
+
+The old URL fetch unlock interface is removed.
+
+New extension flow
+User highlights page content.
+
+Extension injects capture pill.
+
+Available actions:
+
+
+Copy Assist
+Capture Quote
+Create Note
+Work in Editor
+Capture pipeline
+
+highlight selection
+     ↓
+extension parses metadata
+     ↓
+backend resolves source
+     ↓
+citation instance created
+     ↓
+quote created
+     ↓
+optional note created
+Activity logging
+Every action writes to:
+
+
+unlock_events
+Event types:
+
+
+unlock
+copy_assist
+selection_capture
+note_capture
+citation_capture
+Guest limits
+Guest usage stored in:
+
+
+guest_unlock_usage
+Backend enforces limits.
+
+3. Research Graph
+This is the core of the system.
+
+Sources
+Purpose
+Represents a unique research origin.
+
+Example fields
+
+
+url
+domain
+title
+author
+published_at
+Source resolution
+When extension captures research:
+
+
+lookup source by URL
+if exists → reuse
+else → create
+Sources must be deduplicated by URL.
+
+Citation Instances
+User-owned formatted citations.
+
+Each citation:
+
+
+belongs to user
+references a source
+has rendered formats
+Render formats stored in:
+
+
+citation_renders
+Quotes
+Quotes represent captured evidence.
+
+Fields:
+
+
+text
+citation_instance_id
+selection_context
+created_at
+Quotes must always reference a citation instance.
+
+Notes
+Notes represent synthesis or commentary.
+
+A note may link to:
+
+
+quote_id
+citation_instance_id
+project_id
+Notes also support:
+
+
+sources
+links
+tags
+Relations stored in:
+
+
+note_sources
+note_links
+note_tag_links
+4. Projects & Tags
+Retained features
+projects
+
+tags
+
+note tagging
+
+document tagging
+
+Implementation
+Projects organize research and writing.
+
+Tags act as reusable taxonomy.
+
+Extension may submit:
+
+
+project_name
+tag_names
+Backend resolves them to canonical IDs.
+
+5. Document Workspace
+Documents represent final composition.
+
+Retained editor capabilities
+document creation
+
+autosave
+
+checkpoints
+
+restore
+
+citation insertion
+
+quote insertion
+
+note insertion
+
+tagging
+
+project assignment
+
+exports
+
+Document relations
+Documents do not embed research objects.
+
+Instead they link through relation tables.
+
+
+document_citations
+document_notes
+document_tags
+Editor hydration flow
+When editor opens:
+
+Step 1
+Load document summary.
+
+Step 2
+Load attached citations/notes summary.
+
+Step 3
+Load explorer panels.
+
+Step 4
+Load detailed research panels.
+
+This staged loading prevents slow boot.
+
+6. Checkpoints & Restore
+Documents support restore points.
+
+Stored in:
+
+
+document_checkpoints
+Checkpoint contains:
+
+
+document_id
+content_delta
+created_at
+Restore replaces document content.
+
+7. Export System
+Retained capabilities
+PDF export
+
+HTML export
+
+advanced export for paid tiers
+
+Pro ZIP export
+
+Export flow
+
+document
+   ↓
+hydrate attached citations
+   ↓
+generate bibliography
+   ↓
+render export
+Bibliography built from:
+
+
+document_citations
+8. History, Momentum & Insights
+Retained features
+unlock history
+
+bookmarks
+
+research momentum
+
+monthly insights
+
+Activity data
+All actions recorded in:
+
+
+unlock_events
+Fields include
+
+
+user_id
+domain
+action_type
+created_at
+Momentum
+Streak calculations read from unlock events.
+
+Milestones stored in:
+
+
+user_milestones
+Bookmarks
+User bookmarks stored in:
+
+
+bookmarks
+9. Extension Local-First Workspace
+The extension remains local-first for UX.
+
+Local storage may contain:
+
+
+pending notes
+pending citations
+pending quotes
+But canonical entities must always be created through backend APIs.
+
+Local storage exists only for:
+
+
+queue
+offline capture
+retry sync
+10. Work-in-Editor Flow
+This is the most important v2 workflow.
+
+Flow
+User highlights text.
+
+Extension actions:
+
+
+Capture Quote
+Create Note
+Work in Editor
+Work-in-editor pipeline
+
+resolve source
+create citation instance
+create quote
+create starter note (optional)
+create document
+open editor
+Editor opens in Seed Review Mode where captured research is visible.
+
+11. Custom Citation Templates
+Pro users can create citation templates.
+
+Stored in:
+
+
+citation_templates
+Templates integrate with citation renderer.
+
+Features Removed
+The following must not be rebuilt:
+
+URL Fetch Unlock System
+Removed components:
+
+
+fetch_and_clean_page
+iframe unlock view
+postMessage bridge
+homepage unlock tool
+All unlock capabilities now exist only through the extension.
+
+Legacy data structures
+Do not recreate:
+
+
+citations table
+unlock_history table
+user_meta
+schema fallback logic
+JS-readable cookies
+All logic must use the new schema only.
+
+Final Product Capabilities
+The rebuilt system must support:
+
+extension-first research capture
+
+canonical citation graph
+
+quote capture
+
+note synthesis
+
+document composition
+
+citation-driven bibliography
+
+research momentum analytics
+
+project organization
+
+tagging
+
+export workflows
+
+extension → editor seeded writing sessions
+
+The result must be a clean, cohesive research-to-writing platform.

@@ -1,0 +1,1115 @@
+Lyra / Writior v2 migration pack
+
+Run order in Supabase SQL editor:
+1. 001_extensions_and_utils.sql
+2. 002_accounts_and_billing.sql
+3. 003_growth_and_unlocks.sql
+4. 004_taxonomy.sql
+5. 005_sources_citations_quotes.sql
+6. 006_notes.sql
+7. 007_documents.sql
+8. 008_rpc_functions.sql
+9. 009_triggers_rls.sql
+
+Assumptions:
+- Existing database objects from the legacy app are gone.
+- auth.users already exists (Supabase auth).
+- You want a fresh canonical v2 schema with no backward-compatibility tables.
+
+Important:
+- The SQL is designed for a clean database.
+- If you rerun the files, some CREATE POLICY / CREATE TRIGGER statements will fail unless you drop the existing objects first.
+
+==============================================================
+begin;
+
+create extension if not exists pgcrypto;
+create extension if not exists pg_trgm;
+
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+create or replace function public.normalize_trimmed_text(input_text text)
+returns text
+language sql
+immutable
+as $$
+  select nullif(regexp_replace(trim(coalesce(input_text, '')), '\s+', ' ', 'g'), '');
+$$;
+
+create or replace function public.notes_search_document(
+  p_title text,
+  p_note_body text,
+  p_highlight_text text,
+  p_source_title text,
+  p_source_author text
+)
+returns tsvector
+language sql
+immutable
+as $$
+  select
+    setweight(to_tsvector('simple', coalesce(p_title, '')), 'A') ||
+    setweight(to_tsvector('simple', coalesce(p_note_body, '')), 'B') ||
+    setweight(to_tsvector('simple', coalesce(p_highlight_text, '')), 'B') ||
+    setweight(to_tsvector('simple', coalesce(p_source_title, '')), 'C') ||
+    setweight(to_tsvector('simple', coalesce(p_source_author, '')), 'D');
+$$;
+
+create or replace function public.notes_search_vector_refresh()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.search_vector := public.notes_search_document(
+    new.title,
+    new.note_body,
+    new.highlight_text,
+    new.source_title,
+    new.source_author
+  );
+  return new;
+end;
+$$;
+
+commit;
+=============================================================================
+begin;
+
+create table if not exists public.user_profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  display_name text not null check (char_length(trim(display_name)) between 1 and 120),
+  use_case text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.user_preferences (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  theme text not null default 'system'
+    check (theme in ('light', 'dark', 'system')),
+  editor_density text not null default 'comfortable'
+    check (editor_density in ('compact', 'comfortable', 'spacious')),
+  default_citation_style text not null default 'apa'
+    check (default_citation_style in ('apa', 'mla', 'chicago', 'harvard', 'custom')),
+  sidebar_collapsed boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.user_entitlements (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  tier text not null default 'free'
+    check (tier in ('free', 'standard', 'pro', 'dev')),
+  status text not null default 'active'
+    check (status in ('active', 'grace_period', 'expired', 'canceled')),
+  paid_until timestamptz,
+  auto_renew boolean not null default false,
+  source text not null default 'system'
+    check (source in ('system', 'paddle', 'admin')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.billing_customers (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null unique references auth.users(id) on delete cascade,
+  provider text not null default 'paddle' check (provider in ('paddle')),
+  provider_customer_id text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.billing_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  provider text not null default 'paddle' check (provider in ('paddle')),
+  provider_subscription_id text not null unique,
+  provider_price_id text,
+  tier text not null check (tier in ('standard', 'pro')),
+  status text not null,
+  current_period_end timestamptz,
+  cancel_at_period_end boolean not null default false,
+  payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.auth_handoff_codes (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  redirect_path text,
+  session_payload jsonb not null default '{}'::jsonb,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now(),
+  constraint auth_handoff_codes_unused_or_used_once check (used_at is null or used_at >= created_at)
+);
+
+create index if not exists idx_auth_handoff_codes_user_id on public.auth_handoff_codes(user_id);
+create index if not exists idx_auth_handoff_codes_expires_at on public.auth_handoff_codes(expires_at);
+
+create or replace function public.bootstrap_new_user(p_user_id uuid, p_display_name text, p_use_case text default null)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.user_profiles(user_id, display_name, use_case)
+  values (p_user_id, coalesce(nullif(trim(p_display_name), ''), 'User'), p_use_case)
+  on conflict (user_id) do nothing;
+
+  insert into public.user_preferences(user_id)
+  values (p_user_id)
+  on conflict (user_id) do nothing;
+
+  insert into public.user_entitlements(user_id, tier, status, source)
+  values (p_user_id, 'free', 'active', 'system')
+  on conflict (user_id) do nothing;
+end;
+$$;
+
+create or replace view public.v_user_account_state as
+select
+  p.user_id,
+  p.display_name,
+  p.use_case,
+  e.tier,
+  e.status,
+  e.paid_until,
+  e.auto_renew,
+  e.source as entitlement_source
+from public.user_profiles p
+join public.user_entitlements e on e.user_id = p.user_id;
+
+commit;
+==========================================================================
+begin;
+
+create table if not exists public.unlock_events (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete cascade,
+  anon_fingerprint text,
+  url text not null,
+  domain text not null,
+  source text not null check (source in ('web', 'extension')),
+  event_type text not null default 'unlock' check (event_type in ('unlock', 'copy_assist', 'selection_capture')),
+  event_id uuid,
+  was_cleaned boolean not null default true,
+  created_at timestamptz not null default now(),
+  constraint unlock_events_user_or_anon_required check (user_id is not null or anon_fingerprint is not null)
+);
+
+create unique index if not exists uq_unlock_events_user_event
+  on public.unlock_events(user_id, event_id)
+  where user_id is not null and event_id is not null;
+
+create index if not exists idx_unlock_events_user_created_at
+  on public.unlock_events(user_id, created_at desc);
+
+create index if not exists idx_unlock_events_domain_created_at
+  on public.unlock_events(domain, created_at desc);
+
+create table if not exists public.guest_unlock_usage (
+  id uuid primary key default gen_random_uuid(),
+  usage_key text not null,
+  usage_date date not null,
+  usage_count integer not null default 1 check (usage_count >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (usage_key, usage_date)
+);
+
+create table if not exists public.bookmarks (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  url text not null,
+  domain text not null,
+  title text,
+  saved_from text not null default 'web' check (saved_from in ('web', 'extension')),
+  created_at timestamptz not null default now(),
+  unique (user_id, url)
+);
+
+create index if not exists idx_bookmarks_user_created_at
+  on public.bookmarks(user_id, created_at desc);
+
+create table if not exists public.user_milestones (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  milestone_key text not null,
+  awarded_at timestamptz not null default now(),
+  metadata jsonb not null default '{}'::jsonb,
+  unique (user_id, milestone_key)
+);
+
+create index if not exists idx_user_milestones_user_awarded_at
+  on public.user_milestones(user_id, awarded_at desc);
+
+create or replace function public.get_unlock_days(
+  p_user_id uuid,
+  p_start_date date,
+  p_end_date date
+)
+returns table(unlock_day date)
+language sql
+security definer
+set search_path = public
+as $$
+  select distinct date(ue.created_at) as unlock_day
+  from public.unlock_events ue
+  where ue.user_id = p_user_id
+    and date(ue.created_at) between p_start_date and p_end_date
+  order by unlock_day;
+$$;
+
+create or replace function public.get_monthly_domain_counts(
+  p_user_id uuid,
+  p_month_start date,
+  p_month_end date
+)
+returns table(domain text, unlock_count bigint)
+language sql
+security definer
+set search_path = public
+as $$
+  select ue.domain, count(*)::bigint as unlock_count
+  from public.unlock_events ue
+  where ue.user_id = p_user_id
+    and date(ue.created_at) between p_month_start and p_month_end
+  group by ue.domain
+  order by unlock_count desc, ue.domain asc;
+$$;
+
+commit;
+====================================================================
+begin;
+
+create table if not exists public.projects (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null check (char_length(trim(name)) between 1 and 120),
+  color text,
+  description text,
+  status text not null default 'active' check (status in ('active', 'archived')),
+  icon text check (icon is null or char_length(trim(icon)) <= 32),
+  last_opened_at timestamptz,
+  archived_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists uq_projects_user_name_ci
+  on public.projects(user_id, lower(name));
+
+create index if not exists idx_projects_user_status_updated
+  on public.projects(user_id, status, updated_at desc);
+
+create table if not exists public.tags (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null check (char_length(trim(name)) between 1 and 80),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists uq_tags_user_name_ci
+  on public.tags(user_id, lower(name));
+
+commit;
+===================================================================
+begin;
+
+create table if not exists public.sources (
+  id uuid primary key default gen_random_uuid(),
+  fingerprint text not null unique,
+  source_type text not null default 'webpage'
+    check (source_type in ('webpage', 'article', 'book', 'journal', 'video', 'report', 'other')),
+  title text not null,
+  authors jsonb not null default '[]'::jsonb,
+  container_title text,
+  publisher text,
+  issued_date jsonb not null default '{}'::jsonb,
+  identifiers jsonb not null default '{}'::jsonb,
+  canonical_url text,
+  page_url text,
+  hostname text,
+  language_code text,
+  metadata jsonb not null default '{}'::jsonb,
+  raw_extraction jsonb not null default '{}'::jsonb,
+  normalization_version integer not null default 1 check (normalization_version >= 1),
+  source_version text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_sources_hostname on public.sources(hostname);
+create index if not exists idx_sources_source_type on public.sources(source_type);
+
+create table if not exists public.citation_instances (
+  id uuid primary key default gen_random_uuid(),
+  source_id uuid not null references public.sources(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  locator jsonb not null default '{}'::jsonb,
+  quote_text text,
+  excerpt text,
+  annotation text,
+  citation_version text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_citation_instances_user_created_at
+  on public.citation_instances(user_id, created_at desc);
+
+create index if not exists idx_citation_instances_user_source
+  on public.citation_instances(user_id, source_id);
+
+create table if not exists public.citation_renders (
+  id uuid primary key default gen_random_uuid(),
+  citation_instance_id uuid not null references public.citation_instances(id) on delete cascade,
+  source_id uuid not null references public.sources(id) on delete cascade,
+  style text not null check (style in ('apa', 'mla', 'chicago', 'harvard', 'custom')),
+  render_kind text not null check (render_kind in ('inline', 'full', 'bibliography')),
+  rendered_text text not null,
+  cache_key text not null unique,
+  source_version text not null,
+  citation_version text not null,
+  render_version integer not null default 1 check (render_version >= 1),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_citation_renders_instance_style_kind
+  on public.citation_renders(citation_instance_id, style, render_kind);
+
+create table if not exists public.citation_templates (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null check (char_length(trim(name)) between 1 and 120),
+  template_body text not null check (char_length(trim(template_body)) >= 1),
+  is_default boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists uq_citation_templates_user_name_ci
+  on public.citation_templates(user_id, lower(name));
+
+create unique index if not exists uq_citation_templates_one_default
+  on public.citation_templates(user_id)
+  where is_default = true;
+
+create table if not exists public.quotes (
+  id uuid primary key default gen_random_uuid(),
+  citation_id uuid not null references public.citation_instances(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  excerpt text not null check (char_length(trim(excerpt)) between 1 and 50000),
+  locator jsonb not null default '{}'::jsonb,
+  annotation text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_quotes_citation_created_at
+  on public.quotes(citation_id, created_at desc);
+
+create index if not exists idx_quotes_user_created_at
+  on public.quotes(user_id, created_at desc);
+
+create or replace function public.get_monthly_citation_breakdown(
+  p_user_id uuid,
+  p_month_start date,
+  p_month_end date
+)
+returns table(style text, citation_count bigint)
+language sql
+security definer
+set search_path = public
+as $$
+  select cr.style, count(distinct cr.citation_instance_id)::bigint as citation_count
+  from public.citation_renders cr
+  join public.citation_instances ci
+    on ci.id = cr.citation_instance_id
+  where ci.user_id = p_user_id
+    and date(ci.created_at) between p_month_start and p_month_end
+  group by cr.style
+  order by citation_count desc, cr.style asc;
+$$;
+
+commit;
+=======================================================================
+begin;
+
+create table if not exists public.notes (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  project_id uuid references public.projects(id) on delete set null,
+  citation_id uuid references public.citation_instances(id) on delete set null,
+  quote_id uuid references public.quotes(id) on delete set null,
+  title text check (title is null or char_length(trim(title)) <= 200),
+  highlight_text text,
+  note_body text not null check (char_length(note_body) between 1 and 50000),
+  source_url text,
+  source_domain text,
+  source_title text check (source_title is null or char_length(trim(source_title)) <= 400),
+  source_author text check (source_author is null or char_length(trim(source_author)) <= 300),
+  source_published_at timestamptz,
+  status text not null default 'active' check (status in ('active', 'archived')),
+  archived_at timestamptz,
+  search_vector tsvector,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_notes_user_updated_at
+  on public.notes(user_id, updated_at desc);
+
+create index if not exists idx_notes_user_project_updated_at
+  on public.notes(user_id, project_id, updated_at desc);
+
+create index if not exists idx_notes_status_archived_at
+  on public.notes(user_id, status, archived_at desc nulls last);
+
+create index if not exists idx_notes_search_vector
+  on public.notes using gin(search_vector);
+
+create table if not exists public.note_sources (
+  id uuid primary key default gen_random_uuid(),
+  note_id uuid not null references public.notes(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  url text not null,
+  hostname text,
+  title text,
+  source_author text,
+  source_published_at timestamptz,
+  attached_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_note_sources_note_attached_at
+  on public.note_sources(note_id, attached_at desc);
+
+create table if not exists public.note_links (
+  note_id uuid not null references public.notes(id) on delete cascade,
+  linked_note_id uuid not null references public.notes(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (note_id, linked_note_id),
+  constraint note_links_not_self check (note_id <> linked_note_id)
+);
+
+create index if not exists idx_note_links_linked_note_id
+  on public.note_links(linked_note_id);
+
+create table if not exists public.note_tag_links (
+  note_id uuid not null references public.notes(id) on delete cascade,
+  tag_id uuid not null references public.tags(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (note_id, tag_id)
+);
+
+create index if not exists idx_note_tag_links_tag_id
+  on public.note_tag_links(tag_id);
+
+commit;
+===================================================================
+begin;
+
+create table if not exists public.documents (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  project_id uuid references public.projects(id) on delete set null,
+  title text not null default 'Untitled' check (char_length(trim(title)) between 1 and 200),
+  content_delta jsonb not null default '{"ops":[{"insert":"\\n"}]}'::jsonb,
+  content_html text,
+  status text not null default 'active' check (status in ('active', 'archived', 'deleted')),
+  archived_at timestamptz,
+  last_opened_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_documents_user_updated_at
+  on public.documents(user_id, updated_at desc);
+
+create index if not exists idx_documents_user_project_updated_at
+  on public.documents(user_id, project_id, updated_at desc);
+
+create index if not exists idx_documents_user_status_updated_at
+  on public.documents(user_id, status, updated_at desc);
+
+create table if not exists public.document_checkpoints (
+  id uuid primary key default gen_random_uuid(),
+  document_id uuid not null references public.documents(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  label text,
+  content_delta jsonb not null,
+  content_html text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_document_checkpoints_document_created_at
+  on public.document_checkpoints(document_id, created_at desc);
+
+create table if not exists public.document_citations (
+  document_id uuid not null references public.documents(id) on delete cascade,
+  citation_id uuid not null references public.citation_instances(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  attached_at timestamptz not null default now(),
+  primary key (document_id, citation_id)
+);
+
+create index if not exists idx_document_citations_citation_id
+  on public.document_citations(citation_id);
+
+create table if not exists public.document_notes (
+  document_id uuid not null references public.documents(id) on delete cascade,
+  note_id uuid not null references public.notes(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  attached_at timestamptz not null default now(),
+  primary key (document_id, note_id)
+);
+
+create index if not exists idx_document_notes_note_id
+  on public.document_notes(note_id);
+
+create table if not exists public.document_tags (
+  document_id uuid not null references public.documents(id) on delete cascade,
+  tag_id uuid not null references public.tags(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (document_id, tag_id)
+);
+
+create index if not exists idx_document_tags_tag_id
+  on public.document_tags(tag_id);
+
+commit;
+================================================================
+begin;
+
+create or replace function public.assert_document_owner(p_document_id uuid, p_user_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not exists (
+    select 1 from public.documents d where d.id = p_document_id and d.user_id = p_user_id
+  ) then
+    raise exception 'document_not_found_or_not_owned';
+  end if;
+end;
+$$;
+
+create or replace function public.assert_note_owner(p_note_id uuid, p_user_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not exists (
+    select 1 from public.notes n where n.id = p_note_id and n.user_id = p_user_id
+  ) then
+    raise exception 'note_not_found_or_not_owned';
+  end if;
+end;
+$$;
+
+create or replace function public.replace_document_citations_atomic(
+  p_user_id uuid,
+  p_document_id uuid,
+  p_citation_ids uuid[]
+)
+returns uuid[]
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_ids uuid[] := coalesce(p_citation_ids, '{}'::uuid[]);
+begin
+  perform public.assert_document_owner(p_document_id, p_user_id);
+
+  if exists (
+    select 1
+    from unnest(v_ids) as x(id)
+    left join public.citation_instances c
+      on c.id = x.id and c.user_id = p_user_id
+    where c.id is null
+  ) then
+    raise exception 'one_or_more_citations_not_owned';
+  end if;
+
+  delete from public.document_citations
+  where document_id = p_document_id and user_id = p_user_id;
+
+  insert into public.document_citations(document_id, citation_id, user_id)
+  select p_document_id, x.id, p_user_id
+  from unnest(v_ids) as x(id)
+  on conflict do nothing;
+
+  return (
+    select coalesce(array_agg(citation_id order by attached_at, citation_id), '{}'::uuid[])
+    from public.document_citations
+    where document_id = p_document_id and user_id = p_user_id
+  );
+end;
+$$;
+
+create or replace function public.replace_document_tags_atomic(
+  p_user_id uuid,
+  p_document_id uuid,
+  p_tag_ids uuid[]
+)
+returns uuid[]
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_ids uuid[] := coalesce(p_tag_ids, '{}'::uuid[]);
+begin
+  perform public.assert_document_owner(p_document_id, p_user_id);
+
+  if exists (
+    select 1
+    from unnest(v_ids) as x(id)
+    left join public.tags t
+      on t.id = x.id and t.user_id = p_user_id
+    where t.id is null
+  ) then
+    raise exception 'one_or_more_tags_not_owned';
+  end if;
+
+  delete from public.document_tags
+  where document_id = p_document_id and user_id = p_user_id;
+
+  insert into public.document_tags(document_id, tag_id, user_id)
+  select p_document_id, x.id, p_user_id
+  from unnest(v_ids) as x(id)
+  on conflict do nothing;
+
+  return (
+    select coalesce(array_agg(tag_id order by created_at, tag_id), '{}'::uuid[])
+    from public.document_tags
+    where document_id = p_document_id and user_id = p_user_id
+  );
+end;
+$$;
+
+create or replace function public.replace_document_notes_atomic(
+  p_user_id uuid,
+  p_document_id uuid,
+  p_note_ids uuid[]
+)
+returns uuid[]
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_ids uuid[] := coalesce(p_note_ids, '{}'::uuid[]);
+begin
+  perform public.assert_document_owner(p_document_id, p_user_id);
+
+  if exists (
+    select 1
+    from unnest(v_ids) as x(id)
+    left join public.notes n
+      on n.id = x.id and n.user_id = p_user_id
+    where n.id is null
+  ) then
+    raise exception 'one_or_more_notes_not_owned';
+  end if;
+
+  delete from public.document_notes
+  where document_id = p_document_id and user_id = p_user_id;
+
+  insert into public.document_notes(document_id, note_id, user_id)
+  select p_document_id, x.id, p_user_id
+  from unnest(v_ids) as x(id)
+  on conflict do nothing;
+
+  return (
+    select coalesce(array_agg(note_id order by attached_at, note_id), '{}'::uuid[])
+    from public.document_notes
+    where document_id = p_document_id and user_id = p_user_id
+  );
+end;
+$$;
+
+create or replace function public.replace_note_tag_links_atomic(
+  p_user_id uuid,
+  p_note_id uuid,
+  p_tag_ids uuid[]
+)
+returns uuid[]
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_ids uuid[] := coalesce(p_tag_ids, '{}'::uuid[]);
+begin
+  perform public.assert_note_owner(p_note_id, p_user_id);
+
+  if exists (
+    select 1
+    from unnest(v_ids) as x(id)
+    left join public.tags t
+      on t.id = x.id and t.user_id = p_user_id
+    where t.id is null
+  ) then
+    raise exception 'one_or_more_tags_not_owned';
+  end if;
+
+  delete from public.note_tag_links
+  where note_id = p_note_id and user_id = p_user_id;
+
+  insert into public.note_tag_links(note_id, tag_id, user_id)
+  select p_note_id, x.id, p_user_id
+  from unnest(v_ids) as x(id)
+  on conflict do nothing;
+
+  return (
+    select coalesce(array_agg(tag_id order by created_at, tag_id), '{}'::uuid[])
+    from public.note_tag_links
+    where note_id = p_note_id and user_id = p_user_id
+  );
+end;
+$$;
+
+create or replace function public.replace_note_sources_atomic(
+  p_user_id uuid,
+  p_note_id uuid,
+  p_sources jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_item jsonb;
+begin
+  perform public.assert_note_owner(p_note_id, p_user_id);
+
+  delete from public.note_sources
+  where note_id = p_note_id and user_id = p_user_id;
+
+  for v_item in
+    select value from jsonb_array_elements(coalesce(p_sources, '[]'::jsonb))
+  loop
+    insert into public.note_sources(
+      note_id, user_id, url, hostname, title, source_author, source_published_at
+    )
+    values (
+      p_note_id,
+      p_user_id,
+      coalesce(v_item->>'url', ''),
+      nullif(v_item->>'hostname', ''),
+      nullif(v_item->>'title', ''),
+      nullif(v_item->>'source_author', ''),
+      case when nullif(v_item->>'source_published_at', '') is null then null
+           else (v_item->>'source_published_at')::timestamptz end
+    );
+  end loop;
+
+  return (
+    select coalesce(
+      jsonb_agg(
+        jsonb_build_object(
+          'id', ns.id,
+          'url', ns.url,
+          'hostname', ns.hostname,
+          'title', ns.title,
+          'source_author', ns.source_author,
+          'source_published_at', ns.source_published_at,
+          'attached_at', ns.attached_at
+        ) order by ns.attached_at, ns.id
+      ),
+      '[]'::jsonb
+    )
+    from public.note_sources ns
+    where ns.note_id = p_note_id and ns.user_id = p_user_id
+  );
+end;
+$$;
+
+create or replace function public.replace_note_links_atomic(
+  p_user_id uuid,
+  p_note_id uuid,
+  p_linked_note_ids uuid[]
+)
+returns uuid[]
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_ids uuid[] := coalesce(p_linked_note_ids, '{}'::uuid[]);
+begin
+  perform public.assert_note_owner(p_note_id, p_user_id);
+
+  if exists (
+    select 1
+    from unnest(v_ids) as x(id)
+    left join public.notes n
+      on n.id = x.id and n.user_id = p_user_id
+    where n.id is null
+  ) then
+    raise exception 'one_or_more_linked_notes_not_owned';
+  end if;
+
+  if exists (select 1 from unnest(v_ids) as x(id) where x.id = p_note_id) then
+    raise exception 'note_cannot_link_to_itself';
+  end if;
+
+  delete from public.note_links
+  where note_id = p_note_id and user_id = p_user_id;
+
+  insert into public.note_links(note_id, linked_note_id, user_id)
+  select p_note_id, x.id, p_user_id
+  from unnest(v_ids) as x(id)
+  on conflict do nothing;
+
+  return (
+    select coalesce(array_agg(linked_note_id order by created_at, linked_note_id), '{}'::uuid[])
+    from public.note_links
+    where note_id = p_note_id and user_id = p_user_id
+  );
+end;
+$$;
+
+commit;
+==================================================
+begin;
+
+-- Triggers
+create trigger trg_user_profiles_updated_at
+before update on public.user_profiles
+for each row execute function public.set_updated_at();
+
+create trigger trg_user_preferences_updated_at
+before update on public.user_preferences
+for each row execute function public.set_updated_at();
+
+create trigger trg_user_entitlements_updated_at
+before update on public.user_entitlements
+for each row execute function public.set_updated_at();
+
+create trigger trg_billing_customers_updated_at
+before update on public.billing_customers
+for each row execute function public.set_updated_at();
+
+create trigger trg_billing_subscriptions_updated_at
+before update on public.billing_subscriptions
+for each row execute function public.set_updated_at();
+
+create trigger trg_guest_unlock_usage_updated_at
+before update on public.guest_unlock_usage
+for each row execute function public.set_updated_at();
+
+create trigger trg_projects_updated_at
+before update on public.projects
+for each row execute function public.set_updated_at();
+
+create trigger trg_tags_updated_at
+before update on public.tags
+for each row execute function public.set_updated_at();
+
+create trigger trg_sources_updated_at
+before update on public.sources
+for each row execute function public.set_updated_at();
+
+create trigger trg_citation_instances_updated_at
+before update on public.citation_instances
+for each row execute function public.set_updated_at();
+
+create trigger trg_citation_templates_updated_at
+before update on public.citation_templates
+for each row execute function public.set_updated_at();
+
+create trigger trg_quotes_updated_at
+before update on public.quotes
+for each row execute function public.set_updated_at();
+
+create trigger trg_notes_updated_at
+before update on public.notes
+for each row execute function public.set_updated_at();
+
+create trigger trg_notes_search_vector_refresh
+before insert or update of title, note_body, highlight_text, source_title, source_author
+on public.notes
+for each row execute function public.notes_search_vector_refresh();
+
+create trigger trg_documents_updated_at
+before update on public.documents
+for each row execute function public.set_updated_at();
+
+-- Enable RLS
+alter table public.user_profiles enable row level security;
+alter table public.user_preferences enable row level security;
+alter table public.user_entitlements enable row level security;
+alter table public.billing_customers enable row level security;
+alter table public.billing_subscriptions enable row level security;
+alter table public.auth_handoff_codes enable row level security;
+alter table public.unlock_events enable row level security;
+alter table public.guest_unlock_usage enable row level security;
+alter table public.bookmarks enable row level security;
+alter table public.user_milestones enable row level security;
+alter table public.projects enable row level security;
+alter table public.tags enable row level security;
+alter table public.sources enable row level security;
+alter table public.citation_instances enable row level security;
+alter table public.citation_renders enable row level security;
+alter table public.citation_templates enable row level security;
+alter table public.quotes enable row level security;
+alter table public.notes enable row level security;
+alter table public.note_sources enable row level security;
+alter table public.note_links enable row level security;
+alter table public.note_tag_links enable row level security;
+alter table public.documents enable row level security;
+alter table public.document_checkpoints enable row level security;
+alter table public.document_citations enable row level security;
+alter table public.document_notes enable row level security;
+alter table public.document_tags enable row level security;
+
+-- Policies
+create policy "user_profiles_select_own" on public.user_profiles for select using (auth.uid() = user_id);
+create policy "user_profiles_insert_own" on public.user_profiles for insert with check (auth.uid() = user_id);
+create policy "user_profiles_update_own" on public.user_profiles for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "user_preferences_select_own" on public.user_preferences for select using (auth.uid() = user_id);
+create policy "user_preferences_insert_own" on public.user_preferences for insert with check (auth.uid() = user_id);
+create policy "user_preferences_update_own" on public.user_preferences for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "user_entitlements_select_own" on public.user_entitlements for select using (auth.uid() = user_id);
+
+create policy "billing_customers_service_role_only" on public.billing_customers
+for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+create policy "billing_subscriptions_service_role_only" on public.billing_subscriptions
+for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+
+create policy "auth_handoff_codes_select_own" on public.auth_handoff_codes for select using (auth.uid() = user_id);
+create policy "auth_handoff_codes_insert_own" on public.auth_handoff_codes for insert with check (auth.uid() = user_id);
+create policy "auth_handoff_codes_update_own" on public.auth_handoff_codes for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "unlock_events_select_own" on public.unlock_events for select using (auth.uid() = user_id);
+create policy "unlock_events_insert_own_or_anon" on public.unlock_events
+for insert with check (((user_id is not null) and auth.uid() = user_id) or (user_id is null));
+
+create policy "guest_unlock_usage_service_role_only" on public.guest_unlock_usage
+for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+
+create policy "bookmarks_select_own" on public.bookmarks for select using (auth.uid() = user_id);
+create policy "bookmarks_insert_own" on public.bookmarks for insert with check (auth.uid() = user_id);
+create policy "bookmarks_update_own" on public.bookmarks for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "bookmarks_delete_own" on public.bookmarks for delete using (auth.uid() = user_id);
+
+create policy "user_milestones_select_own" on public.user_milestones for select using (auth.uid() = user_id);
+
+create policy "projects_select_own" on public.projects for select using (auth.uid() = user_id);
+create policy "projects_insert_own" on public.projects for insert with check (auth.uid() = user_id);
+create policy "projects_update_own" on public.projects for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "projects_delete_own" on public.projects for delete using (auth.uid() = user_id);
+
+create policy "tags_select_own" on public.tags for select using (auth.uid() = user_id);
+create policy "tags_insert_own" on public.tags for insert with check (auth.uid() = user_id);
+create policy "tags_update_own" on public.tags for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "tags_delete_own" on public.tags for delete using (auth.uid() = user_id);
+
+create policy "sources_select_authenticated" on public.sources
+for select using (auth.uid() is not null or auth.role() = 'service_role');
+create policy "sources_service_insert" on public.sources
+for insert with check (auth.role() = 'service_role');
+create policy "sources_service_update" on public.sources
+for update using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+
+create policy "citation_instances_select_own" on public.citation_instances for select using (auth.uid() = user_id);
+create policy "citation_instances_insert_own" on public.citation_instances for insert with check (auth.uid() = user_id);
+create policy "citation_instances_update_own" on public.citation_instances for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "citation_instances_delete_own" on public.citation_instances for delete using (auth.uid() = user_id);
+
+create policy "citation_renders_select_owned_instances" on public.citation_renders
+for select using (exists (select 1 from public.citation_instances ci where ci.id = citation_instance_id and ci.user_id = auth.uid()));
+create policy "citation_renders_insert_owned_instances" on public.citation_renders
+for insert with check (exists (select 1 from public.citation_instances ci where ci.id = citation_instance_id and ci.user_id = auth.uid()));
+create policy "citation_renders_delete_owned_instances" on public.citation_renders
+for delete using (exists (select 1 from public.citation_instances ci where ci.id = citation_instance_id and ci.user_id = auth.uid()));
+
+create policy "citation_templates_select_own" on public.citation_templates for select using (auth.uid() = user_id);
+create policy "citation_templates_insert_own" on public.citation_templates for insert with check (auth.uid() = user_id);
+create policy "citation_templates_update_own" on public.citation_templates for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "citation_templates_delete_own" on public.citation_templates for delete using (auth.uid() = user_id);
+
+create policy "quotes_select_own" on public.quotes for select using (auth.uid() = user_id);
+create policy "quotes_insert_own" on public.quotes for insert with check (auth.uid() = user_id);
+create policy "quotes_update_own" on public.quotes for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "quotes_delete_own" on public.quotes for delete using (auth.uid() = user_id);
+
+create policy "notes_select_own" on public.notes for select using (auth.uid() = user_id);
+create policy "notes_insert_own" on public.notes for insert with check (auth.uid() = user_id);
+create policy "notes_update_own" on public.notes for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "notes_delete_own" on public.notes for delete using (auth.uid() = user_id);
+
+create policy "note_sources_select_own" on public.note_sources for select using (auth.uid() = user_id);
+create policy "note_sources_insert_own" on public.note_sources for insert with check (auth.uid() = user_id);
+create policy "note_sources_update_own" on public.note_sources for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "note_sources_delete_own" on public.note_sources for delete using (auth.uid() = user_id);
+
+create policy "note_links_select_own" on public.note_links for select using (auth.uid() = user_id);
+create policy "note_links_insert_own" on public.note_links for insert with check (auth.uid() = user_id);
+create policy "note_links_delete_own" on public.note_links for delete using (auth.uid() = user_id);
+
+create policy "note_tag_links_select_own" on public.note_tag_links for select using (auth.uid() = user_id);
+create policy "note_tag_links_insert_own" on public.note_tag_links for insert with check (auth.uid() = user_id);
+create policy "note_tag_links_delete_own" on public.note_tag_links for delete using (auth.uid() = user_id);
+
+create policy "documents_select_own" on public.documents for select using (auth.uid() = user_id);
+create policy "documents_insert_own" on public.documents for insert with check (auth.uid() = user_id);
+create policy "documents_update_own" on public.documents for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "documents_delete_own" on public.documents for delete using (auth.uid() = user_id);
+
+create policy "document_checkpoints_select_own" on public.document_checkpoints for select using (auth.uid() = user_id);
+create policy "document_checkpoints_insert_own" on public.document_checkpoints for insert with check (auth.uid() = user_id);
+create policy "document_checkpoints_delete_own" on public.document_checkpoints for delete using (auth.uid() = user_id);
+
+create policy "document_citations_select_own" on public.document_citations for select using (auth.uid() = user_id);
+create policy "document_citations_insert_own" on public.document_citations for insert with check (auth.uid() = user_id);
+create policy "document_citations_delete_own" on public.document_citations for delete using (auth.uid() = user_id);
+
+create policy "document_notes_select_own" on public.document_notes for select using (auth.uid() = user_id);
+create policy "document_notes_insert_own" on public.document_notes for insert with check (auth.uid() = user_id);
+create policy "document_notes_delete_own" on public.document_notes for delete using (auth.uid() = user_id);
+
+create policy "document_tags_select_own" on public.document_tags for select using (auth.uid() = user_id);
+create policy "document_tags_insert_own" on public.document_tags for insert with check (auth.uid() = user_id);
+create policy "document_tags_delete_own" on public.document_tags for delete using (auth.uid() = user_id);
+
+grant usage on schema public to authenticated, anon;
+grant execute on function public.replace_document_citations_atomic(uuid, uuid, uuid[]) to authenticated;
+grant execute on function public.replace_document_tags_atomic(uuid, uuid, uuid[]) to authenticated;
+grant execute on function public.replace_document_notes_atomic(uuid, uuid, uuid[]) to authenticated;
+grant execute on function public.replace_note_tag_links_atomic(uuid, uuid, uuid[]) to authenticated;
+grant execute on function public.replace_note_sources_atomic(uuid, uuid, jsonb) to authenticated;
+grant execute on function public.replace_note_links_atomic(uuid, uuid, uuid[]) to authenticated;
+grant execute on function public.get_unlock_days(uuid, date, date) to authenticated;
+grant execute on function public.get_monthly_domain_counts(uuid, date, date) to authenticated;
+grant execute on function public.get_monthly_citation_breakdown(uuid, date, date) to authenticated;
+grant execute on function public.bootstrap_new_user(uuid, text, text) to service_role;
+
+commit;

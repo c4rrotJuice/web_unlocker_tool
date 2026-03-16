@@ -19,6 +19,7 @@ class RequestAuthContext:
     user_id: str
     supabase_subject: str | None
     email: str | None
+    access_token: str | None
     token_claims: dict[str, object]
     account_state: AccountState | None = None
     capability_state: CapabilityState | None = None
@@ -74,6 +75,7 @@ class SupabaseTokenVerifier:
             user_id=str(user.id),
             supabase_subject=str(user.id),
             email=getattr(user, "email", None),
+            access_token=token,
             token_claims=_safe_claims(user),
         )
 

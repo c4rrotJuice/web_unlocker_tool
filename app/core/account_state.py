@@ -129,8 +129,9 @@ class AccountStateService:
 
     async def load(self, user_id: str) -> AccountState:
         profile_row = await self.repository.fetch_profile(user_id)
+        preferences_row = await self.repository.fetch_preferences(user_id)
         entitlement_row = await self.repository.fetch_entitlement(user_id)
-        if not profile_row or not entitlement_row:
+        if not profile_row or not preferences_row or not entitlement_row:
             raise AccountNotFoundError()
 
         profile = UserProfile(
@@ -149,7 +150,7 @@ class AccountStateService:
             created_at=entitlement_row.get("created_at") if isinstance(entitlement_row.get("created_at"), str) else None,
             updated_at=entitlement_row.get("updated_at") if isinstance(entitlement_row.get("updated_at"), str) else None,
         )
-        preferences = _normalize_preferences(await self.repository.fetch_preferences(user_id))
+        preferences = _normalize_preferences(preferences_row)
         billing_customer = _normalize_billing_customer(await self.repository.fetch_billing_customer(user_id))
         billing_subscription = _normalize_billing_subscription(await self.repository.fetch_billing_subscription(user_id))
         return AccountState(

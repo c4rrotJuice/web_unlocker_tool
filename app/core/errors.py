@@ -39,6 +39,11 @@ class AccountNotFoundError(AppError):
         super().__init__("account_not_found", message, 404)
 
 
+class AccountBootstrapFailedError(AppError):
+    def __init__(self, message: str = "Canonical account bootstrap failed.") -> None:
+        super().__init__("account_bootstrap_failed", message, 500)
+
+
 class EntitlementInactiveError(AppError):
     def __init__(self, message: str = "Entitlement is not active.") -> None:
         super().__init__("entitlement_inactive", message, 403)

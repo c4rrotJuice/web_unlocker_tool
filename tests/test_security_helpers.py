@@ -40,15 +40,10 @@ class MissingRequiredRowsRepository(MissingRowsRepository):
 
 
 @pytest.mark.anyio
-async def test_missing_optional_rows_normalize_to_safe_defaults():
+async def test_missing_any_required_canonical_row_fails_cleanly():
     service = AccountStateService(MissingRowsRepository())
-    account_state = await service.load("user-1")
-
-    assert account_state.preferences.theme == "system"
-    assert account_state.preferences.default_citation_style == "apa"
-    assert account_state.preferences.defaults_applied is True
-    assert account_state.billing_customer is None
-    assert account_state.billing_subscription is None
+    with pytest.raises(AccountNotFoundError):
+        await service.load("user-1")
 
 
 @pytest.mark.anyio
@@ -62,7 +57,7 @@ def test_route_classifier_is_authoritative_for_mounted_v2_routes():
     classifier = get_route_classifier()
 
     assert classifier.classify("/api/public-config") == RouteAccess.PUBLIC
-    assert classifier.classify("/api/identity/me") == RouteAccess.AUTH_REQUIRED
+    assert classifier.classify("/api/me") == RouteAccess.AUTH_REQUIRED
     assert classifier.classify("/api/unknown") == RouteAccess.PUBLIC
 
 
@@ -86,7 +81,7 @@ def test_rate_limit_key_derivation_prefers_verified_user_and_else_ip():
     base_scope = {
         "type": "http",
         "method": "GET",
-        "path": "/api/identity/me",
+        "path": "/api/me",
         "headers": [],
         "query_string": b"",
         "client": ("10.0.0.1", 1234),
@@ -140,6 +135,7 @@ def test_logging_redaction_removes_tokens_and_secrets():
 
 
 def test_auth_logging_redacts_tokens(caplog):
+    caplog.set_level("INFO")
     log_auth_event(token="Bearer abc.def.ghi", refresh_token="refresh123")
 
     assert caplog.records
@@ -149,7 +145,7 @@ def test_auth_logging_redacts_tokens(caplog):
 
 
 def test_route_classifier_identity_endpoint():
-    assert classify_route("/api/identity/me") == "auth_required"
+    assert classify_route("/api/me") == "auth_required"
 
 
 def test_route_classifier_public_status():

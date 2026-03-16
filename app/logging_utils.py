@@ -20,12 +20,16 @@ SENSITIVE_KEY_PARTS = (
     "apikey",
     "password",
     "cookie",
+    "handoff_code",
+    "code",
 )
 
 SENSITIVE_VALUE_PATTERNS = [
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-~+/]+=*"),
     re.compile(r"(?i)(token=)[^\s&]+"),
+    re.compile(r"(?i)(refresh[_-]?token=)[^\s&]+"),
     re.compile(r"(?i)(secret=)[^\s&]+"),
+    re.compile(r"(?i)(code=)[^\s&]+"),
 ]
 
 
@@ -141,3 +145,12 @@ def set_request_context(**kwargs: Any) -> None:
 
 def clear_request_context() -> None:
     _request_context.set({})
+
+
+def log_auth_event(*, token: str | None = None, refresh_token: str | None = None, logger: logging.Logger | None = None) -> None:
+    auth_logger = logger or logging.getLogger("app.auth")
+    auth_logger.info(
+        "auth.event token=%s refresh_token=%s",
+        redact_value(token, key="token"),
+        redact_value(refresh_token, key="refresh_token"),
+    )

@@ -1,213 +1,140 @@
-import asyncio
-from datetime import datetime, timezone
+import importlib
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
-
-from app.routes import citations, extension
+import supabase
 
 
-class DummyResponse:
-    def __init__(self, status_code, payload):
-        self.status_code = status_code
-        self._payload = payload
+FORBIDDEN_CODE_PATTERNS = (
+    "user" + "_meta",
+    "unlock_" + "history",
+    "ip_" + "usage",
+    "wu_" + "access_token",
+    "documents" + ".citation_ids",
+    "citation_instances" + ".document_id",
+)
 
-    def json(self):
-        return self._payload
+FORBIDDEN_ENDPOINT_PATTERNS = (
+    '"/api' + '/unlocks"',
+    '"/api' + '/bookmarks"',
+    '"/api' + '/dashboard/momentum"',
+    '"/api' + '/activity/history"',
+    '"/api' + '/extension/selection"',
+    '"/api' + '/extension/usage-event"',
+    '"/api' + '/extension/handoff/issue"',
+    '"/api' + '/extension/handoff/exchange"',
+    '"/api' + '/citations/by_ids"',
+)
 
-
-def test_follow_up_migration_makes_compatibility_views_read_only():
-    source = Path("sql/20260322_enforce_canonical_runtime_contracts.sql").read_text()
-
-    assert "alter table public.note_tags rename to note_tag_links" in source
-    assert 'create view public.note_tags as' in source
-    assert 'from public.tags;' in source
-    assert 'create trigger note_projects_read_only' in source
-    assert 'create trigger note_tags_read_only' in source
-    assert 'create trigger note_note_tags_read_only' in source
-
-
-def test_list_citation_records_no_longer_falls_back_to_public_citations(monkeypatch):
-    class MissingCanonicalRepo:
-        def headers(self, **_kwargs):
-            return {}
-
-        async def get(self, resource, **_kwargs):
-            if resource == "citation_instances":
-                return DummyResponse(404, {"message": 'relation "citation_instances" does not exist'})
-            raise AssertionError(f"unexpected repo resource: {resource}")
-
-    class NoLegacyHttpClient:
-        async def get(self, *_args, **_kwargs):
-            raise AssertionError("legacy public.citations fallback should not be used")
-
-    monkeypatch.setattr(citations, "supabase_repo", MissingCanonicalRepo())
-    monkeypatch.setattr(citations, "http_client", NoLegacyHttpClient())
-
-    with pytest.raises(HTTPException) as excinfo:
-        asyncio.run(citations.list_citation_records("user-1", limit=5))
-
-    assert excinfo.value.status_code == 503
-
-
-def test_delete_citation_no_longer_falls_back_to_public_citations(monkeypatch):
-    class MissingCanonicalRepo:
-        def headers(self, **_kwargs):
-            return {}
-
-        async def delete(self, resource, **_kwargs):
-            assert resource == "citation_instances"
-            return DummyResponse(404, {"message": 'relation "citation_instances" does not exist'})
-
-    class NoLegacyHttpClient:
-        async def delete(self, *_args, **_kwargs):
-            raise AssertionError("legacy public.citations fallback should not be used")
-
-    request = SimpleNamespace(state=SimpleNamespace(user_id="user-1"))
-    monkeypatch.setattr(citations, "supabase_repo", MissingCanonicalRepo())
-    monkeypatch.setattr(citations, "http_client", NoLegacyHttpClient())
-
-    with pytest.raises(HTTPException) as excinfo:
-        asyncio.run(citations.delete_citation(request, "citation-1"))
-
-    assert excinfo.value.status_code == 503
+ACTIVE_RUNTIME_GLOBS = (
+    "app/main.py",
+    "app/core/**/*.py",
+    "app/modules/**/*.py",
+    "app/routes/shell.py",
+    "app/static/js/app_shell/**/*.js",
+    "app/static/js/editor_v2/**/*.js",
+    "app/static/js/shared/**/*.js",
+    "app/static/js/auth.js",
+    "app/static/js/theme.js",
+    "app/static/js/ui_feedback.js",
+    "extension/background/**/*.js",
+    "extension/content/**/*.js",
+    "extension/sidepanel/**/*.js",
+    "extension/popup/**/*.js",
+    "extension/shared/**/*.js",
+    "extension/storage/**/*.js",
+    "extension/auth/**/*.js",
+    "extension/config.js",
+    "extension/manifest.json",
+)
 
 
-def test_extension_selection_writes_document_citations_only(monkeypatch):
-    document_posts = []
-    document_citation_writes = []
+class DummyClient:
+    def __init__(self):
+        self.auth = type("DummyAuth", (), {"get_user": lambda self, token: type("Resp", (), {"user": None})()})()
 
-    class Repo:
-        def headers(self, **_kwargs):
-            return {}
 
-        async def get(self, resource, **_kwargs):
-            assert resource == "user_meta"
-            return DummyResponse(200, [{"paid_until": "2026-04-01T00:00:00+00:00"}])
+def _iter_paths():
+    seen: set[Path] = set()
+    for pattern in ACTIVE_RUNTIME_GLOBS:
+        for path in Path(".").glob(pattern):
+            if path.is_file():
+                seen.add(path)
+    for path in Path("tests").glob("test_*.py"):
+        if path.is_file():
+            seen.add(path)
+    return sorted(seen)
 
-        async def post(self, resource, **kwargs):
-            assert resource == "documents"
-            document_posts.append(kwargs.get("json") or {})
-            return DummyResponse(201, [{"id": "doc-1"}])
 
-    async def fake_create_citation(*_args, **_kwargs):
-        return "citation-1"
+def test_forbidden_identifiers_are_absent_from_active_runtime_and_tests():
+    offenders: list[str] = []
+    for path in _iter_paths():
+        text = path.read_text(encoding="utf-8")
+        for pattern in FORBIDDEN_CODE_PATTERNS + FORBIDDEN_ENDPOINT_PATTERNS:
+            if pattern in text:
+                offenders.append(f"{path}:{pattern}")
+    assert offenders == []
 
-    async def fake_replace_document_citations(user_id, document_id, citation_ids):
-        document_citation_writes.append((user_id, document_id, citation_ids))
-        return citation_ids
 
-    async def redis_get(_key):
-        return 0
-
-    async def redis_incr(_key):
-        return 1
-
-    async def redis_expire(_key, _seconds):
-        return True
-
-    request = SimpleNamespace(
-        state=SimpleNamespace(user_id="user-1", account_type="pro"),
-        app=SimpleNamespace(state=SimpleNamespace(redis_get=redis_get, redis_incr=redis_incr, redis_expire=redis_expire)),
+def test_legacy_runtime_files_are_deleted():
+    deleted_paths = (
+        "app/routes/editor.py",
+        "app/routes/extension.py",
+        "app/routes/payments.py",
+        "app/routes/render.py",
+        "app/templates/editor.html",
+        "app/templates/dashboard.html",
+        "app/static/js/editor.js",
+        "app/static/unlock.js",
     )
-    payload = extension.ExtensionSelectionRequest(
-        url="https://example.com/article",
-        title="Example",
-        selected_text="Selected source text",
-        citation_format="mla",
-        citation_text="Selected source text",
-    )
-
-    monkeypatch.setattr(extension, "supabase_repo", Repo())
-    monkeypatch.setattr(extension, "create_citation", fake_create_citation)
-    monkeypatch.setattr(extension, "replace_document_citations", fake_replace_document_citations)
-
-    response = asyncio.run(extension.extension_selection(request, payload))
-
-    assert response["doc_id"] == "doc-1"
-    assert len(document_posts) == 1
-    assert document_posts[0]["user_id"] == "user-1"
-    assert document_posts[0]["title"] == "Example"
-    assert document_posts[0]["content_delta"] == {"ops": [{"insert": "Selected source text\n"}]}
-    assert document_posts[0]["expires_at"] == "2026-04-01T00:00:00+00:00"
-    assert "citation_ids" not in document_posts[0]
-    assert document_citation_writes == [("user-1", "doc-1", ["citation-1"])]
+    for path in deleted_paths:
+        assert not Path(path).exists(), path
 
 
-def test_extension_selection_falls_back_to_bounded_paid_expiry(monkeypatch):
-    document_posts = []
+@pytest.mark.anyio
+async def test_only_canonical_routes_are_mounted(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "http://example.com")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("CORS_ORIGINS", "https://app.writior.com")
+    monkeypatch.setattr(supabase, "create_client", lambda url, key: DummyClient())
 
-    class Repo:
-        def headers(self, **_kwargs):
-            return {}
+    import app.core.auth as core_auth
+    import app.core.config as core_config
+    from app import main
 
-        async def get(self, resource, **_kwargs):
-            assert resource == "user_meta"
-            return DummyResponse(200, [{"paid_until": None}])
+    importlib.reload(core_auth)
+    importlib.reload(core_config)
+    core_config.get_settings.cache_clear()
+    core_auth.get_token_verifier.cache_clear()
+    main = importlib.reload(main)
 
-        async def post(self, resource, **kwargs):
-            assert resource == "documents"
-            document_posts.append(kwargs.get("json") or {})
-            return DummyResponse(201, [{"id": "doc-1"}])
+    mounted = {route.path for route in main.app.routes}
 
-    async def redis_get(_key):
-        return 0
+    for forbidden in (
+        "/api" + "/unlocks",
+        "/api" + "/bookmarks",
+        "/api" + "/dashboard/momentum",
+        "/api" + "/activity/history",
+        "/api" + "/extension/selection",
+        "/api" + "/extension/usage-event",
+        "/api" + "/extension/handoff/issue",
+        "/api" + "/extension/handoff/exchange",
+        "/api" + "/citations/by_ids",
+    ):
+        assert forbidden not in mounted
 
-    async def redis_incr(_key):
-        return 1
-
-    async def redis_expire(_key, _seconds):
-        return True
-
-    request = SimpleNamespace(
-        state=SimpleNamespace(user_id="user-1", account_type="pro"),
-        app=SimpleNamespace(state=SimpleNamespace(redis_get=redis_get, redis_incr=redis_incr, redis_expire=redis_expire)),
-    )
-    payload = extension.ExtensionSelectionRequest(
-        url="https://example.com/article",
-        title="Example",
-        selected_text="Selected source text",
-    )
-
-    monkeypatch.setattr(extension, "supabase_repo", Repo())
-
-    response = asyncio.run(extension.extension_selection(request, payload))
-
-    assert response["doc_id"] == "doc-1"
-    expires_at = document_posts[0]["expires_at"]
-    assert expires_at is not None
-    parsed = datetime.fromisoformat(expires_at)
-    assert parsed.tzinfo is not None
-    assert parsed > datetime.now(timezone.utc)
-
-
-def test_note_project_alias_routes_delegate_to_canonical_wrappers(monkeypatch):
-    request = SimpleNamespace()
-    payload = extension.NoteProjectPayload(name="Project")
-
-    async def fake_list_projects(_request):
-        return ["projects"]
-
-    async def fake_create_project(_request, _payload):
-        return {"id": "project-1"}
-
-    async def fake_delete_project(_request, project_id):
-        return {"ok": True, "id": project_id}
-
-    monkeypatch.setattr(extension, "list_projects", fake_list_projects)
-    monkeypatch.setattr(extension, "create_project", fake_create_project)
-    monkeypatch.setattr(extension, "delete_project", fake_delete_project)
-
-    assert asyncio.run(extension.list_note_projects(request)) == ["projects"]
-    assert asyncio.run(extension.create_note_project(request, payload)) == {"id": "project-1"}
-    assert asyncio.run(extension.delete_note_project(request, "project-1")) == {"ok": True, "id": "project-1"}
-
-
-def test_editor_client_no_longer_reads_citation_ids_fallback():
-    source = Path("app/static/js/editor.js").read_text()
-
-    assert "serverDoc.citation_ids" not in source
-    assert "doc.citation_ids" not in source
-    assert "effective.citation_ids" not in source
+    for expected in (
+        "/auth",
+        "/api/auth/handoff",
+        "/api/auth/handoff/exchange",
+        "/api/activity/unlocks",
+        "/api/activity/bookmarks",
+        "/api/insights/momentum",
+        "/api/reports/monthly",
+        "/api/extension/work-in-editor",
+        "/api/extension/usage-events",
+        "/api/webhooks/paddle",
+    ):
+        assert expected in mounted

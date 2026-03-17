@@ -1,0 +1,319 @@
+.editor-v2-page {
+  min-height: 100%;
+}
+
+.editor-v2-shell {
+  display: grid;
+  grid-template-columns: minmax(18rem, 24rem) minmax(0, 1fr) minmax(18rem, 24rem);
+  gap: 1rem;
+  min-height: calc(100vh - 12rem);
+}
+
+.editor-v2-panel {
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 1.25rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.98));
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
+  padding: 1rem;
+  min-height: 0;
+}
+
+html.dark .editor-v2-panel {
+  border-color: rgba(148, 163, 184, 0.2);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.98));
+  box-shadow: 0 18px 40px rgba(2, 6, 23, 0.35);
+}
+
+.editor-v2-panel,
+.editor-v2-surface,
+.editor-v2-context,
+.editor-v2-explorer {
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-v2-panel-head,
+.editor-v2-subhead,
+.editor-v2-surface-head,
+.editor-v2-status-row,
+.editor-v2-search-row,
+.editor-v2-tablist,
+.editor-v2-head-actions,
+.editor-v2-empty-actions,
+.editor-v2-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.editor-v2-panel-head,
+.editor-v2-surface-head,
+.editor-v2-subhead {
+  justify-content: space-between;
+}
+
+.editor-v2-subhead {
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.editor-v2-kicker {
+  margin: 0;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #b45309;
+}
+
+html.dark .editor-v2-kicker {
+  color: #f59e0b;
+}
+
+.editor-v2-title {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: 600 1.6rem/1.2 Georgia, "Times New Roman", serif;
+  color: inherit;
+  padding: 0;
+}
+
+.editor-v2-title:focus,
+.editor-v2-action:focus,
+.editor-v2-link:focus,
+.editor-v2-tab:focus,
+.editor-v2-card:focus,
+.editor-v2-chip:focus {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+}
+
+.editor-v2-search-row input,
+.editor-v2-title,
+.editor-v2-popover input {
+  width: 100%;
+}
+
+.editor-v2-search-row input {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 999px;
+  padding: 0.7rem 0.95rem;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+html.dark .editor-v2-search-row input {
+  border-color: rgba(148, 163, 184, 0.24);
+  background: rgba(15, 23, 42, 0.72);
+  color: #e2e8f0;
+}
+
+.editor-v2-tablist {
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.editor-v2-tab,
+.editor-v2-action,
+.editor-v2-link {
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.editor-v2-tab,
+.editor-v2-action {
+  padding: 0.55rem 0.85rem;
+  background: rgba(15, 23, 42, 0.06);
+  color: inherit;
+}
+
+.editor-v2-action-primary,
+.editor-v2-tab.is-active {
+  background: #0f766e;
+  color: #f8fafc;
+}
+
+.editor-v2-link {
+  padding: 0;
+  background: transparent;
+  color: #0f766e;
+}
+
+.editor-v2-scroll,
+.editor-v2-outline,
+.editor-v2-checkpoints,
+.editor-v2-context {
+  min-height: 0;
+}
+
+.editor-v2-scroll,
+.editor-v2-outline,
+.editor-v2-checkpoints {
+  overflow: auto;
+}
+
+.editor-v2-documents,
+.editor-v2-results,
+.editor-v2-side-section {
+  min-height: 0;
+}
+
+.editor-v2-documents {
+  flex: 0 1 18rem;
+}
+
+.editor-v2-results,
+.editor-v2-context {
+  flex: 1 1 auto;
+}
+
+.editor-v2-writing-surface {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor-v2-toolbar {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 1rem 1rem 0 0;
+  border-bottom: 0;
+  padding: 0.4rem;
+}
+
+.editor-v2-quill {
+  min-height: 22rem;
+  flex: 1 1 auto;
+}
+
+.editor-v2-quill .ql-toolbar.ql-snow {
+  display: none;
+}
+
+.editor-v2-quill .ql-container.ql-snow {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 0 0 1rem 1rem;
+  font-size: 1rem;
+}
+
+.editor-v2-quill .ql-editor {
+  min-height: 22rem;
+  font: 1.05rem/1.65 Georgia, "Times New Roman", serif;
+}
+
+.editor-v2-empty-state {
+  display: grid;
+  place-items: center;
+  gap: 0.75rem;
+  min-height: 24rem;
+  text-align: center;
+}
+
+.editor-v2-popover {
+  position: absolute;
+  top: 8rem;
+  right: 2rem;
+  z-index: 15;
+  width: min(24rem, calc(100vw - 4rem));
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
+  padding: 0.75rem;
+}
+
+html.dark .editor-v2-popover {
+  border-color: rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.98);
+}
+
+.editor-v2-command-results,
+.editor-v2-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.editor-v2-card {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 1rem;
+  padding: 0.8rem;
+  background: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+}
+
+html.dark .editor-v2-card {
+  border-color: rgba(148, 163, 184, 0.14);
+  background: rgba(30, 41, 59, 0.45);
+}
+
+.editor-v2-card.is-active {
+  border-color: #0f766e;
+  box-shadow: 0 0 0 1px #0f766e inset;
+}
+
+.editor-v2-meta {
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.editor-v2-status-bar {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.editor-v2-status-signal {
+  display: inline-flex;
+  align-items: center;
+  min-width: 11rem;
+  font-weight: 600;
+  color: #0f766e;
+}
+
+html.dark .editor-v2-status-signal {
+  color: #5eead4;
+}
+
+.editor-v2-chip,
+.editor-v2-chip-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.14);
+  color: #115e59;
+}
+
+.editor-v2-chip-note {
+  background: rgba(180, 83, 9, 0.14);
+  color: #92400e;
+}
+
+.editor-v2-context-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.editor-v2-outline button,
+.editor-v2-checkpoint-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 0.5rem;
+}
+
+.editor-v2-checkpoint-item {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 0.9rem;
+  background: transparent;
+  padding: 0.7rem;
+}
+
+@media (max-width: 1200px) {
+  .editor-v2-shell {
+    grid-template-columns: 1fr;
+  }
+}

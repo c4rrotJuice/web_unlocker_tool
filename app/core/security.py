@@ -200,7 +200,7 @@ def install_cors(app: FastAPI, settings: Settings | None = None) -> None:
         allow_origins=list(settings.cors_origins),
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
+        allow_headers=["Authorization", "Content-Type", "X-Request-Id", "X-User-Timezone"],
         expose_headers=["X-Request-Id"],
     )
 

@@ -66,3 +66,5 @@ Use these as conservative initial guardrails for staging/prod while running the 
   - `perf/profiles/unlock-heavy-burst.json`
   - `perf/profiles/dependency-latency-injection.json`
 - Local run output: `perf/results/staging-soak-sample.json`
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.

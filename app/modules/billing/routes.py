@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from app.core.auth import RequestAuthContext, require_request_auth_context
 from app.core.config import get_settings
@@ -33,3 +33,10 @@ async def get_billing_subscription(
     auth_context: RequestAuthContext = Depends(require_request_auth_context),
 ) -> dict[str, object]:
     return await service.subscription(auth_context.user_id)
+
+
+@router.post("/api/webhooks/paddle")
+async def paddle_webhook(request: Request) -> dict[str, object]:
+    raw_body = await request.body()
+    signature_header = request.headers.get("Paddle-Signature")
+    return await service.handle_paddle_webhook(request, raw_body, signature_header)

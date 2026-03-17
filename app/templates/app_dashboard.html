@@ -1,0 +1,51 @@
+{% extends "app_shell_base.html" %}
+
+{% block main %}
+<section class="page-stack">
+  <section class="hero-card" id="dashboard-greeting">
+    <div>
+      <p class="hero-kicker">Research command center</p>
+      <h2 class="hero-title">Loading your workspace</h2>
+      <p class="hero-copy">Recent research, documents, and milestones will appear here after boot.</p>
+    </div>
+    <div class="hero-meta" id="dashboard-greeting-meta"></div>
+  </section>
+
+  <section class="stats-grid" id="dashboard-stats" aria-label="Research activity summary"></section>
+
+  <section class="split-grid">
+    <section class="surface-card">
+      <div class="surface-head">
+        <div>
+          <p class="section-kicker">Recent research</p>
+          <h2>Sources captured recently</h2>
+        </div>
+        <a class="section-link" href="/research?tab=sources">Open research</a>
+      </div>
+      <div id="dashboard-recent-research"></div>
+    </section>
+
+    <section class="surface-card">
+      <div class="surface-head">
+        <div>
+          <p class="section-kicker">Recent documents</p>
+          <h2>Continue writing</h2>
+        </div>
+        <a class="section-link" href="/editor">Open editor</a>
+      </div>
+      <div id="dashboard-recent-documents"></div>
+    </section>
+  </section>
+
+  <section class="surface-card">
+    <div class="surface-head">
+      <div>
+        <p class="section-kicker">Milestones</p>
+        <h2>Momentum this month</h2>
+      </div>
+      <a class="section-link" href="/insights">Open insights</a>
+    </div>
+    <div id="dashboard-milestones"></div>
+  </section>
+</section>
+{% endblock %}

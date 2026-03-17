@@ -43,10 +43,10 @@ async def test_request_builds_rest_v1_resource_url(monkeypatch):
 
     monkeypatch.setattr(supabase_rest, "http_client", fake_client)
 
-    response = await repo.get("user_meta", params={"limit": 1}, headers=repo.headers())
+    response = await repo.get("user_profiles", params={"limit": 1}, headers=repo.headers())
 
     assert response.status_code == 200
-    assert fake_client.calls[0][1] == "https://demo.supabase.co/rest/v1/user_meta"
+    assert fake_client.calls[0][1] == "https://demo.supabase.co/rest/v1/user_profiles"
 
 
 @pytest.mark.anyio

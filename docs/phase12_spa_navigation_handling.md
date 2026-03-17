@@ -35,3 +35,5 @@ All channels converge to `checkRouteChange()` and compare against tracked `curre
 ## Result
 
 The extension now stays stable on SPA sites, refreshes route-specific state on URL transitions, and preserves persistent UI elements while avoiding duplicated mounts and leaked listeners.
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.

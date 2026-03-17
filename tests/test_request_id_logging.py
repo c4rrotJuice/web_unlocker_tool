@@ -18,10 +18,11 @@ class DummyClient:
 
 def _load_main(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "http://example.com")
-    monkeypatch.setenv("SUPABASE_KEY", "anon")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
     monkeypatch.setenv("ENV", "prod")
     monkeypatch.setenv("CORS_ORIGINS", "https://app.writior.com")
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "whsec_test")
 
     monkeypatch.setattr(supabase, "create_client", lambda url, key: DummyClient())
 

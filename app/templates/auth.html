@@ -210,7 +210,7 @@
           <li><a href="/">Home</a></li>
           <li><a href="/dashboard" id="dashboardLink">Dashboard</a></li>
           <li><a href="/editor" id="editorLink">Editor</a></li>
-          <li><a href="/static/pricing.html">Pricing</a></li>
+          <li><a href="/pricing">Pricing</a></li>
           <li><a href="https://writior.com/blog/">Blog</a></li>
           <li><a href="https://writior.com/terms-conditions/">Terms & Policies</a></li>
           <li><a href="/auth" class="active" id="authButton">Sign in/Up</a></li>
@@ -267,7 +267,7 @@
     const signupMsg = document.getElementById("signup-msg");
     const loginMsg = document.getElementById("login-msg");
     const toast = window.webUnlockerUI?.createToastManager?.();
-    const nextPath = new URLSearchParams(window.location.search).get("next") || "/dashboard";
+    const nextPath = {{ next_path | tojson }};
     const loginContainer = document.getElementById("login-container");
     const signupContainer = document.getElementById("signup-container");
 
@@ -308,10 +308,10 @@
       }
 
       try {
-        const res = await fetch("/api/signup", {
+        const res = await fetch("/api/auth/signup", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, email, password, use_case: useCase })
+          body: JSON.stringify({ display_name: name, email, password, use_case: useCase })
         });
 
         const data = await res.json().catch(() => ({}));
@@ -334,25 +334,21 @@
       const password = document.getElementById("login-password").value;
 
       try {
-        const res = await fetch("/api/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password })
-        });
-
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          const mapped = window.webUnlockerUI?.mapApiError?.(data) || { message: data?.detail || data?.message || "Login failed" };
-          throw new Error(mapped.message);
+        const client = window.webUnlockerAuth?.client;
+        if (!client?.auth?.signInWithPassword) {
+          throw new Error("Sign-in is unavailable.");
+        }
+        const { data, error } = await client.auth.signInWithPassword({ email, password });
+        if (error) {
+          throw new Error(error.message || "Login failed");
         }
 
-        if (data?.access_token && window.webUnlockerAuth?.setSession) {
+        if (data?.session?.access_token && window.webUnlockerAuth?.setSession) {
           await window.webUnlockerAuth.setSession({
-            access_token: data.access_token,
-            refresh_token: data.refresh_token,
+            access_token: data.session.access_token,
+            refresh_token: data.session.refresh_token,
           });
         }
-        await window.webUnlockerAuth?.syncLegacyTokenFromSession?.();
 
         const successMessage = window.webUnlockerUI?.COPY?.success?.LOGIN_SUCCESS || "Signed in successfully.";
         showInlineMessage(loginMsg, successMessage);
@@ -366,8 +362,8 @@
     });
   </script>
   <script>
-    window.WEB_UNLOCKER_SUPABASE_URL = {{ supabase_url | tojson }};
-    window.WEB_UNLOCKER_SUPABASE_ANON_KEY = {{ supabase_key | tojson }};
+    window.WRITIOR_SUPABASE_URL = {{ supabase_url | tojson }};
+    window.WRITIOR_SUPABASE_ANON_KEY = {{ supabase_key | tojson }};
   </script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="/static/js/ui_feedback.js"></script>

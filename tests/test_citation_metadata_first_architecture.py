@@ -2,21 +2,26 @@ from pathlib import Path
 
 
 def test_backend_exposes_metadata_first_render_endpoint_and_render_cache_payload():
-    source = Path("app/routes/citations.py").read_text(encoding="utf-8")
+    source = Path("app/modules/research/routes.py").read_text(encoding="utf-8")
+    service_source = Path("app/modules/research/citations/service.py").read_text(encoding="utf-8")
+    repo_source = Path("app/modules/research/citations/repo.py").read_text(encoding="utf-8")
 
     assert "@router.post(\"/api/citations/render\")" in source
-    assert "citation_instances" in source
-    assert "citation_renders" in source
-    assert "source_fingerprint" in source
-    assert "source_version" in source
+    assert "@router.post(\"/api/citations/by-ids\")" in source
+    assert "citation_renders" in repo_source
+    assert "source_version" in source or "source_version" in service_source
+    assert "citation_version" in service_source
 
 
-def test_clients_delegate_standard_rendering_to_backend():
-    extension_source = Path("extension/content/unlock_content.js").read_text(encoding="utf-8")
-    webapp_source = Path("app/static/unlock.js").read_text(encoding="utf-8")
+def test_extension_capture_runtime_delegates_network_to_background_router():
+    content_bridge = Path("extension/content/runtime_bridge.js").read_text(encoding="utf-8")
+    background_router = Path("extension/background/router.js").read_text(encoding="utf-8")
 
-    assert 'sendMessage("RENDER_CITATION"' in extension_source
-    assert "fetch('/api/citations/render'" in webapp_source
+    assert "chrome.runtime.sendMessage" in content_bridge
+    assert "MESSAGE_TYPES.CAPTURE_CITATION" in background_router
+    assert "MESSAGE_TYPES.CAPTURE_QUOTE" in background_router
+    assert "MESSAGE_TYPES.CAPTURE_NOTE" in background_router
+    assert "MESSAGE_TYPES.WORK_IN_EDITOR" in background_router
 
 
 def test_sql_schema_supports_source_identity_and_render_cache():

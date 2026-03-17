@@ -12,12 +12,13 @@
   },
   "permissions": [
     "activeTab",
+    "alarms",
     "scripting",
     "sidePanel",
     "storage"
   ],
   "host_permissions": [
-    "https://web-unlocker-tool.onrender.com/*",
+    "https://app.writior.com/*",
     "https://lrdpstewxrufbbgxfcgk.supabase.co/*"
   ],
   "content_scripts": [
@@ -46,3 +47,4 @@
     }
   ]
 }
+

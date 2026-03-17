@@ -45,3 +45,5 @@ The pill remains independent from side panel visibility and can be used without 
 - Persistence events:
   - `SAVE_CITATION` (citation capture)
   - `NOTE_SAVE` (note capture)
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.

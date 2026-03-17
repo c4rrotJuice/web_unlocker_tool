@@ -64,23 +64,14 @@
     if (!session?.user?.id) {
       return;
     }
-
-    const client = window.webUnlockerAuth?.client || (await window.webUnlockerAuth?.ready?.());
-    if (!client) {
-      return;
-    }
-
-    await client
-      .from("user_preferences")
-      .upsert(
-        {
-          user_id: session.user.id,
-          theme: mode,
-        },
-        {
-          onConflict: "user_id",
-        },
-      );
+    await window.webUnlockerAuth?.authFetch?.("/api/preferences", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ theme: mode }),
+    });
   }
 
   async function setTheme(mode, options = {}) {
@@ -120,24 +111,15 @@
       return;
     }
 
-    const client = window.webUnlockerAuth?.client || (await window.webUnlockerAuth?.ready?.());
-    if (!client) {
-      return;
-    }
-
     const localTheme = getStoredTheme();
 
     try {
-      const { data: row, error } = await client
-        .from("user_preferences")
-        .select("theme")
-        .eq("user_id", session.user.id)
-        .maybeSingle();
-
-      if (error) {
-        throw error;
-      }
-
+      const payload = await window.webUnlockerAuth?.authFetch?.("/api/preferences", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+      const body = await payload?.json?.();
+      const row = body?.data || {};
       if (row?.theme && isValidTheme(row.theme)) {
         try {
           window.localStorage.setItem(STORAGE_KEY, row.theme);

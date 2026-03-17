@@ -47,3 +47,5 @@ This report captures the final validation pass against the rollout success crite
 
 ## Notes
 - Warnings observed in test output were dependency/deprecation warnings and did not indicate test failures.
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.

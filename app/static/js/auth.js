@@ -1,26 +1,11 @@
 (function () {
   let supabaseClient = null;
   let bootPromise = null;
-  const ACCESS_COOKIE_NAME = "wu_access_token";
-
-  function writeAccessTokenCookie(token) {
-    if (typeof document === "undefined") {
-      return;
-    }
-
-    if (!token) {
-      document.cookie = `${ACCESS_COOKIE_NAME}=; Max-Age=0; Path=/; SameSite=Lax`;
-      return;
-    }
-
-    const encoded = encodeURIComponent(token);
-    document.cookie = `${ACCESS_COOKIE_NAME}=${encoded}; Path=/; SameSite=Lax`;
-  }
 
   function readConfigFromWindow() {
     return {
-      url: window.WEB_UNLOCKER_SUPABASE_URL || null,
-      key: window.WEB_UNLOCKER_SUPABASE_ANON_KEY || null,
+      url: window.WRITIOR_SUPABASE_URL || null,
+      key: window.WRITIOR_SUPABASE_ANON_KEY || null,
     };
   }
 
@@ -37,8 +22,8 @@
 
       const data = await res.json();
       return {
-        url: data?.WEB_UNLOCKER_SUPABASE_URL || null,
-        key: data?.WEB_UNLOCKER_SUPABASE_ANON_KEY || null,
+        url: data?.supabase_url || null,
+        key: data?.supabase_anon_key || null,
       };
     } catch (_err) {
       return null;
@@ -72,8 +57,8 @@
           config.url &&
           config.key
         ) {
-          window.WEB_UNLOCKER_SUPABASE_URL = config.url;
-          window.WEB_UNLOCKER_SUPABASE_ANON_KEY = config.key;
+          window.WRITIOR_SUPABASE_URL = config.url;
+          window.WRITIOR_SUPABASE_ANON_KEY = config.key;
           supabaseClient = window.supabase.createClient(config.url, config.key);
         }
 
@@ -128,18 +113,15 @@
     return fetch(url, { ...options, headers });
   }
 
-  async function syncLegacyTokenFromSession() {
-    const token = await getAccessToken();
-    writeAccessTokenCookie(token);
-    return token;
-  }
-
   async function writeLegacyToken(token) {
-    writeAccessTokenCookie(token);
     const client = await ensureSupabaseClient();
     if (!token && client) {
       client.auth.signOut().catch(() => {});
     }
+  }
+
+  async function syncLegacyTokenFromSession() {
+    return getAccessToken();
   }
 
   window.webUnlockerAuth = {
@@ -156,14 +138,5 @@
     writeLegacyToken,
   };
 
-  ensureSupabaseClient()
-    .then(async (client) => {
-      await syncLegacyTokenFromSession();
-      if (client?.auth?.onAuthStateChange) {
-        client.auth.onAuthStateChange((_event, session) => {
-          writeAccessTokenCookie(session?.access_token || null);
-        });
-      }
-    })
-    .catch(() => {});
+  ensureSupabaseClient().catch(() => {});
 })();

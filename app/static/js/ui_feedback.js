@@ -15,23 +15,24 @@
     },
     success: {
       UNLOCK_SUCCESS: "Page unlocked successfully.",
-      DOCUMENT_SAVED: "Document saved.",
-      LOGIN_SUCCESS: "Signed in successfully.",
-      LOGOUT_SUCCESS: "Signed out successfully.",
-      PAYMENT_SUCCESS: "Payment completed.",
-      BOOKMARK_ADDED: "Bookmark added.",
     },
     info: {
       UNLOCK_STARTED: "Starting unlock…",
       PROCESSING_REQUEST: "Processing request…",
-      VERIFYING_AUTH: "Verifying session…",
       FETCHING_CONTENT: "Fetching content…",
       CLEANING_CONTENT: "Cleaning content…",
-      SAVING_DOCUMENT: "Saving document…",
-      RETRYING_FETCH: "Retrying fetch…",
-      COMPLETE: "Completed.",
     },
   };
+
+  let runtimePromise = null;
+
+  function loadRuntime() {
+    if (!runtimePromise) {
+      runtimePromise = import("/static/js/shared/feedback/feedback_bus_singleton.js")
+        .then(({ ensureFeedbackRuntime }) => ensureFeedbackRuntime({ mountTarget: document.body }));
+    }
+    return runtimePromise;
+  }
 
   function mapApiError(payload) {
     const nested = payload?.error || {};
@@ -56,85 +57,36 @@
   }
 
   function createToastManager() {
-    let root = document.getElementById("wu-toast-root");
-    if (!root) {
-      root = document.createElement("div");
-      root.id = "wu-toast-root";
-      root.setAttribute("aria-live", "polite");
-      root.setAttribute("aria-atomic", "true");
-      root.style.cssText = "position:fixed;top:16px;right:16px;z-index:99999;display:flex;flex-direction:column;gap:8px;max-width:320px;";
-      document.body.appendChild(root);
-    }
-
-    const active = new Map();
-
-    function dismiss(id) {
-      const item = active.get(id);
-      if (!item) return;
-      item.el.remove();
-      active.delete(id);
-    }
-
-    function show({ id, type = "info", message, duration = 4000, cta, loading = false }) {
-      const key = id || `${type}:${message}`;
-      if (active.has(key)) {
-        const existing = active.get(key);
-        existing.messageEl.textContent = message;
-        return key;
-      }
-
-      const el = document.createElement("div");
-      el.className = "wu-toast";
-      el.setAttribute("role", type === "error" ? "alert" : "status");
-      el.tabIndex = 0;
-      el.style.cssText = "background:#111827;color:#fff;border:1px solid #374151;border-left:4px solid #60a5fa;border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.3);font-size:14px;";
-      if (type === "error") el.style.borderLeftColor = "#ef4444";
-      if (type === "success") el.style.borderLeftColor = "#22c55e";
-      if (type === "warning") el.style.borderLeftColor = "#f59e0b";
-
-      const row = document.createElement("div");
-      row.style.cssText = "display:flex;align-items:flex-start;gap:8px;";
-      const messageEl = document.createElement("div");
-      messageEl.style.flex = "1";
-      messageEl.textContent = loading ? `⏳ ${message}` : message;
-      row.appendChild(messageEl);
-
-      if (cta?.label && cta?.href) {
-        const ctaBtn = document.createElement("a");
-        ctaBtn.href = cta.href;
-        ctaBtn.textContent = cta.label;
-        ctaBtn.style.cssText = "color:#93c5fd;font-weight:600;";
-        row.appendChild(ctaBtn);
-      }
-
-      const closeBtn = document.createElement("button");
-      closeBtn.type = "button";
-      closeBtn.setAttribute("aria-label", "Dismiss notification");
-      closeBtn.textContent = "✕";
-      closeBtn.style.cssText = "background:transparent;color:#fff;border:none;cursor:pointer;";
-      closeBtn.addEventListener("click", () => dismiss(key));
-      row.appendChild(closeBtn);
-
-      el.appendChild(row);
-      root.appendChild(el);
-
-      const state = { el, messageEl };
-      active.set(key, state);
-
-      if (!loading && duration > 0) {
-        state.timeout = setTimeout(() => dismiss(key), duration);
-      }
-      return key;
-    }
-
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        const keys = [...active.keys()];
-        if (keys.length) dismiss(keys[keys.length - 1]);
-      }
-    });
-
-    return { show, dismiss, clearAll: () => [...active.keys()].forEach(dismiss) };
+    const legacyIds = new Map();
+    return {
+      async show({ id, type = "info", message, duration = 4000, cta }) {
+        const runtime = await loadRuntime();
+        const previousId = id ? legacyIds.get(id) : null;
+        if (previousId) {
+          runtime.toast.dismiss(previousId);
+        }
+        const runtimeId = runtime.toast[type]?.(message, {
+          duration,
+          actionLabel: cta?.label || "",
+          onAction: cta?.href ? () => { window.location.href = cta.href; } : null,
+          dedupeKey: id || `${type}:${message}`,
+        });
+        if (id && runtimeId) {
+          legacyIds.set(id, runtimeId);
+        }
+        return runtimeId;
+      },
+      async dismiss(id) {
+        const runtime = await loadRuntime();
+        runtime.toast.dismiss(legacyIds.get(id) || id);
+        legacyIds.delete(id);
+      },
+      async clearAll() {
+        const runtime = await loadRuntime();
+        runtime.toast.clear();
+        legacyIds.clear();
+      },
+    };
   }
 
   function createUnlockStatusManager(toastManager) {
@@ -145,33 +97,33 @@
       if (!stages.includes(stage)) return;
       if (stage === "COMPLETE") {
         if (activeToastId) {
-          toastManager.dismiss(activeToastId);
+          void toastManager.dismiss(activeToastId);
           activeToastId = null;
         }
-        toastManager.show({ type: "success", message: COPY.success.UNLOCK_SUCCESS, duration: 2200 });
+        void toastManager.show({ type: "success", message: COPY.success.UNLOCK_SUCCESS, duration: 2200 });
         return;
       }
 
-      activeToastId = toastManager.show({
-        id: "unlock-progress",
+      void toastManager.show({
         type: "info",
-        loading: true,
         message: COPY.info[stage] || COPY.info.PROCESSING_REQUEST,
         duration: 0,
+      }).then((id) => {
+        activeToastId = id;
       });
     }
 
     function fail(message) {
       if (activeToastId) {
-        toastManager.dismiss(activeToastId);
+        void toastManager.dismiss(activeToastId);
         activeToastId = null;
       }
-      toastManager.show({ type: "error", message });
+      void toastManager.show({ type: "error", message });
     }
 
     function clear() {
       if (activeToastId) {
-        toastManager.dismiss(activeToastId);
+        void toastManager.dismiss(activeToastId);
         activeToastId = null;
       }
     }

@@ -1,0 +1,56 @@
+{% extends "app_shell_base.html" %}
+
+{% block main %}
+<section class="page-stack">
+  <section class="hero-card" id="projects-hero">
+    <div>
+      <p class="hero-kicker">Project workspace</p>
+      <h2 class="hero-title" id="projects-hero-title">Projects</h2>
+      <p class="hero-copy" id="projects-hero-copy">Organize research and move it toward notes and documents.</p>
+    </div>
+    <div class="hero-meta" id="projects-hero-meta"></div>
+  </section>
+
+  <section class="surface-card">
+    <div class="surface-head">
+      <div>
+        <p class="section-kicker">Projects</p>
+        <h2 id="projects-list-heading">Your active projects</h2>
+      </div>
+    </div>
+    <div id="projects-list"></div>
+  </section>
+
+  <section class="split-grid" id="project-detail-sections">
+    <section class="surface-card">
+      <div class="surface-head">
+        <div>
+          <p class="section-kicker">Notes</p>
+          <h2>Project notes</h2>
+        </div>
+      </div>
+      <div id="project-notes"></div>
+    </section>
+
+    <section class="surface-card">
+      <div class="surface-head">
+        <div>
+          <p class="section-kicker">Documents</p>
+          <h2>Project documents</h2>
+        </div>
+      </div>
+      <div id="project-documents"></div>
+    </section>
+  </section>
+
+  <section class="surface-card" id="project-sources-card">
+    <div class="surface-head">
+      <div>
+        <p class="section-kicker">Sources</p>
+        <h2>Project source visibility</h2>
+      </div>
+    </div>
+    <div id="project-sources"></div>
+  </section>
+</section>
+{% endblock %}

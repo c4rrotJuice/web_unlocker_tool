@@ -1,26 +1,21 @@
 from pathlib import Path
 
 
-def test_extension_copy_uses_popup_preview_text_to_avoid_missing_metadata():
-    source = Path("extension/content/unlock_content.js").read_text(encoding="utf-8")
+def test_content_copy_assist_stays_local_but_reports_usage_in_background():
+    source = Path("extension/content/capture_pill.js").read_text(encoding="utf-8")
+    router_source = Path("extension/background/router.js").read_text(encoding="utf-8")
 
-    assert "const citationPreview = popup.querySelector(`#cite-${format}`);" in source
-    assert "citationPreview?.textContent" in source
-
-
-def test_extension_fallback_formatter_uses_normalized_metadata_object():
-    source = Path("extension/content/unlock_content.js").read_text(encoding="utf-8")
-
-    assert "formatCitation(format, metadata);" in source
-    assert "validateCitationMetadata(getCitationMetadata(selectionText))" in source
-    assert "quote: metadata.selectionText || metadata.excerpt" in source
+    assert "navigator.clipboard.writeText" in source
+    assert "MESSAGE_TYPES.COPY_ASSIST" in source
+    assert 'await queueManager.enqueue("usage_event"' in router_source
+    assert 'event_type: "copy_assist"' in router_source
 
 
-def test_extension_metadata_extractor_includes_layered_fallback_strategies():
-    source = Path("extension/content/unlock_content.js").read_text(encoding="utf-8")
+def test_metadata_extraction_is_best_effort_and_not_blocking_capture():
+    source = Path("extension/content/metadata_extractor.js").read_text(encoding="utf-8")
+    pill_source = Path("extension/content/capture_pill.js").read_text(encoding="utf-8")
 
-    assert "script[type=\"application/ld+json\"]" in source
-    assert 'meta[property="og:title"]' in source
+    assert 'script[type="application/ld+json"]' in source
     assert 'meta[name="author"]' in source
-    assert '[itemprop="headline"]' in source
-    assert ".byline" in source
+    assert "canonical_url" in source
+    assert "context.metadata.author || null" in pill_source or "context.metadata" in pill_source

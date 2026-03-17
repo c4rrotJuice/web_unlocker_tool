@@ -1,3 +1,6 @@
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.
+
 # Writior Editor Runtime Audit
 
 ## Executive summary
@@ -675,4 +678,3 @@ Observed synchronous work with likely visible cost as data grows:
 - Rewriting all panel UIs and state models in one step.
 - Removing local-first dirty persistence before a replacement resilience path exists.
 - Changing citation token semantics in document text before the current attachment/render coupling is isolated.
-

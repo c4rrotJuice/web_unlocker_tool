@@ -48,3 +48,5 @@
 - Backend precomputes a lightweight `render_cache` map (style + output + source version) while treating metadata as canonical.
 - New `POST /api/citations/render` endpoint supports deterministic citation regeneration from stored metadata for style switching.
 - Extension and web app now request server-rendered citations for standard styles, reducing formatter divergence across clients.
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.

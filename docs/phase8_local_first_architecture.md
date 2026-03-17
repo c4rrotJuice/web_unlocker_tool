@@ -29,3 +29,5 @@ Ensure extension interactions execute locally first and never block UI on server
 
 ## Result
 UI actions are now resilient and responsive even during backend latency/intermittent failures because core interaction paths complete locally first.
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.

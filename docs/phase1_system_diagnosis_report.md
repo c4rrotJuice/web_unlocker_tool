@@ -97,3 +97,5 @@ Extension sync queue flushes sequentially and requeues failures, but lacks riche
 The platform’s instability is primarily caused by **incomplete async lifecycle control at UI boundaries** and **inconsistent state/sync models across editor vs extension**. Backend resilience primitives exist, but they are not matched by equivalent client-side lifecycle guarantees. As a result, slow networks, validation edge-cases, and partial failures present as random or frozen behavior rather than recoverable states.
 
 This concludes **Phase 1 diagnosis**. No Phase 2+ implementation changes are included in this deliverable.
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.

@@ -115,7 +115,7 @@ async def test_protected_route_rejects_invalid_and_cookie_only_auth(monkeypatch)
     main = _load_main(monkeypatch, auth_impl=InvalidAuth())
     async with async_test_client(main.app) as client:
         invalid = await client.get("/api/me", headers={"Authorization": "Bearer invalid-token"})
-        cookie_only = await client.get("/api/me", headers={"Cookie": "wu_access_token=legacy"})
+        cookie_only = await client.get("/api/me", headers={"Cookie": "legacy_session=legacy"})
 
     assert invalid.status_code == 401
     assert invalid.json()["error"]["code"] == "invalid_token"

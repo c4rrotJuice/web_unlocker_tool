@@ -1,0 +1,353 @@
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import HTTPException
+
+from app.core.serialization import serialize_citation, serialize_citation_template, serialize_source_summary
+from app.modules.research.citations.repo import CitationsRepository
+from app.modules.research.sources.service import SourcesService
+from app.services.citation_domain import RENDER_VERSION, SUPPORTED_STYLES, compute_citation_version, generate_render_bundle
+from app.services.citation_templates import validate_template
+from app.services.free_tier_gating import allowed_citation_formats
+
+
+class CitationsService:
+    def __init__(self, *, repository: CitationsRepository, sources_service: SourcesService):
+        self.repository = repository
+        self.sources_service = sources_service
+
+    def _ensure_style_allowed(self, *, account_type: str, style: str | None) -> str:
+        selected_style = (style or "mla").strip().lower()
+        if selected_style not in allowed_citation_formats(account_type):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "CITATION_FORMAT_LOCKED",
+                    "message": "Citation format not available on your plan.",
+                    "toast": "Upgrade to unlock this citation format.",
+                },
+            )
+        if selected_style == "custom":
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "CITATION_FORMAT_DEPRECATED",
+                    "message": "Custom citation templates are managed separately from citation instance rendering.",
+                },
+            )
+        return selected_style
+
+    async def _build_render_rows(self, *, citation_id: str, source_id: str, source_row: dict[str, Any], citation_row: dict[str, Any]) -> list[dict[str, Any]]:
+        source_payload = {
+            "id": source_row.get("id"),
+            "title": source_row.get("title"),
+            "source_type": source_row.get("source_type"),
+            "authors": source_row.get("authors") or [],
+            "container_title": source_row.get("container_title"),
+            "publisher": source_row.get("publisher"),
+            "issued": source_row.get("issued_date") or {},
+            "identifiers": source_row.get("identifiers") or {},
+            "canonical_url": source_row.get("canonical_url"),
+            "page_url": source_row.get("page_url"),
+            "metadata": source_row.get("metadata") or {},
+            "raw_extraction": source_row.get("raw_extraction") or {},
+            "normalization_version": source_row.get("normalization_version"),
+            "source_version": source_row.get("source_version"),
+            "fingerprint": source_row.get("fingerprint"),
+        }
+        context_payload = {
+            "locator": citation_row.get("locator") or {},
+            "annotation": citation_row.get("annotation") or "",
+            "excerpt": citation_row.get("excerpt") or "",
+            "quote": citation_row.get("quote_text") or citation_row.get("excerpt") or "",
+            "citation_version": citation_row.get("citation_version") or "",
+        }
+        bundle = generate_render_bundle(source_payload, context_payload)
+        rows: list[dict[str, Any]] = []
+        for style, outputs in bundle["renders"].items():
+            for render_kind, rendered_text in outputs.items():
+                rows.append(
+                    {
+                        "citation_instance_id": citation_id,
+                        "source_id": source_id,
+                        "style": style,
+                        "render_kind": render_kind,
+                        "rendered_text": rendered_text,
+                        "cache_key": f"{bundle['source_version']}:{bundle['citation_version']}:{RENDER_VERSION}:{style}:{render_kind}",
+                        "source_version": bundle["source_version"],
+                        "citation_version": bundle["citation_version"],
+                        "render_version": RENDER_VERSION,
+                    }
+                )
+        return rows
+
+    def _source_detail_to_row(self, source: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": source.get("id"),
+            "fingerprint": source.get("fingerprint"),
+            "title": source.get("title"),
+            "source_type": source.get("source_type"),
+            "authors": source.get("authors") or [],
+            "container_title": source.get("container_title"),
+            "publisher": source.get("publisher"),
+            "issued_date": source.get("issued_date") or {},
+            "identifiers": source.get("identifiers") or {},
+            "canonical_url": source.get("canonical_url"),
+            "page_url": source.get("page_url"),
+            "metadata": source.get("metadata") or {},
+            "raw_extraction": source.get("raw_extraction") or {},
+            "normalization_version": source.get("normalization_version"),
+            "source_version": source.get("source_version"),
+            "hostname": source.get("hostname"),
+            "language_code": source.get("language_code"),
+            "created_at": source.get("created_at"),
+            "updated_at": source.get("updated_at"),
+        }
+
+    async def refresh_renders(self, *, access_token: str | None, citation_row: dict[str, Any], source_row: dict[str, Any]) -> None:
+        rows = await self._build_render_rows(
+            citation_id=str(citation_row["id"]),
+            source_id=str(source_row["id"]),
+            source_row=source_row,
+            citation_row=citation_row,
+        )
+        await self.repository.replace_renders(citation_id=str(citation_row["id"]), source_id=str(source_row["id"]), rows=rows)
+
+    async def _hydrate(self, *, user_id: str, access_token: str | None, rows: list[dict], preserve_order_ids: list[str] | None = None) -> list[dict]:
+        if not rows:
+            return []
+        source_ids: list[str] = []
+        seen_source_ids: set[str] = set()
+        for row in rows:
+            source_id = row.get("source_id")
+            if source_id and source_id not in seen_source_ids:
+                seen_source_ids.add(source_id)
+                source_ids.append(source_id)
+        sources = await self.sources_service.repository.get_sources_by_ids(source_ids=source_ids, access_token=access_token)
+        source_map = {row["id"]: row for row in sources if row.get("id")}
+        citation_ids = [row["id"] for row in rows if row.get("id")]
+        render_rows = await self.repository.list_renders(citation_ids=citation_ids, access_token=access_token)
+        quote_counts = await self.repository.list_quote_counts(user_id=user_id, access_token=access_token, citation_ids=citation_ids)
+
+        render_map: dict[str, dict[str, dict[str, str]]] = {}
+        render_versions: dict[str, tuple[str, str]] = {}
+        for render_row in render_rows:
+            citation_id = render_row.get("citation_instance_id")
+            style = render_row.get("style")
+            render_kind = render_row.get("render_kind")
+            if not citation_id or not style or not render_kind:
+                continue
+            render_map.setdefault(citation_id, {}).setdefault(style, {})[render_kind] = render_row.get("rendered_text") or ""
+            render_versions[citation_id] = (
+                str(render_row.get("source_version") or ""),
+                str(render_row.get("citation_version") or ""),
+            )
+
+        stale_rows: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for row in rows:
+            source_row = source_map.get(row.get("source_id"))
+            if source_row is None:
+                continue
+            expected_versions = (str(source_row.get("source_version") or ""), str(row.get("citation_version") or ""))
+            if row.get("id") not in render_map or render_versions.get(row.get("id")) != expected_versions:
+                stale_rows.append((row, source_row))
+        if stale_rows:
+            for row, source_row in stale_rows:
+                await self.refresh_renders(access_token=access_token, citation_row=row, source_row=source_row)
+            refreshed_ids = [str(row["id"]) for row, _source_row in stale_rows if row.get("id")]
+            refreshed_render_rows = await self.repository.list_renders(citation_ids=refreshed_ids, access_token=access_token)
+            for citation_id in refreshed_ids:
+                render_map[citation_id] = {}
+            for render_row in refreshed_render_rows:
+                citation_id = render_row.get("citation_instance_id")
+                style = render_row.get("style")
+                render_kind = render_row.get("render_kind")
+                if not citation_id or not style or not render_kind:
+                    continue
+                render_map.setdefault(citation_id, {}).setdefault(style, {})[render_kind] = render_row.get("rendered_text") or ""
+
+        hydrated: list[dict] = []
+        for row in rows:
+            source_row = source_map.get(row.get("source_id"))
+            if source_row is None:
+                continue
+            hydrated.append(
+                serialize_citation(
+                    row,
+                    source=serialize_source_summary(source_row, relationship_counts={}),
+                    renders=render_map.get(row["id"], {}),
+                    relationship_counts={"quote_count": quote_counts.get(row["id"], 0)},
+                )
+            )
+        if preserve_order_ids:
+            by_id = {row["id"]: row for row in hydrated if row.get("id")}
+            return [by_id[citation_id] for citation_id in preserve_order_ids if citation_id in by_id]
+        return hydrated
+
+    async def list_citations(
+        self,
+        *,
+        user_id: str,
+        access_token: str | None,
+        ids: list[str] | None = None,
+        source_id: str | None = None,
+        search: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        rows = await self.repository.list_citations(user_id=user_id, access_token=access_token, citation_ids=ids, source_id=source_id, limit=limit)
+        payload = await self._hydrate(user_id=user_id, access_token=access_token, rows=rows, preserve_order_ids=ids)
+        if search:
+            needle = search.strip().lower()
+            payload = [
+                item for item in payload
+                if needle in str(item.get("excerpt") or "").lower()
+                or needle in str((item.get("source") or {}).get("title") or "").lower()
+                or needle in str((item.get("source") or {}).get("canonical_url") or "").lower()
+            ]
+        return payload
+
+    async def get_citation(self, *, user_id: str, access_token: str | None, citation_id: str) -> dict:
+        rows = await self.list_citations(user_id=user_id, access_token=access_token, ids=[citation_id], limit=1)
+        if not rows:
+            raise HTTPException(status_code=404, detail="Citation not found")
+        return rows[0]
+
+    async def create_citation(
+        self,
+        *,
+        user_id: str,
+        access_token: str | None,
+        account_type: str,
+        payload: dict[str, Any],
+    ) -> dict:
+        self._ensure_style_allowed(account_type=account_type, style=payload.get("style"))
+        source = await self.sources_service.resolve_or_create_source(
+            access_token=access_token,
+            extraction_payload=payload.get("extraction_payload"),
+            url=payload.get("url"),
+            metadata=payload.get("metadata"),
+            excerpt=payload.get("excerpt"),
+            quote=payload.get("quote"),
+            locator=payload.get("locator"),
+        )
+        citation_context = {
+            "locator": payload.get("locator") or {},
+            "annotation": payload.get("annotation") or None,
+            "excerpt": payload.get("excerpt") or payload.get("quote") or "",
+            "quote_text": payload.get("quote") or None,
+        }
+        citation_context["citation_version"] = compute_citation_version(
+            {
+                "locator": citation_context["locator"],
+                "annotation": citation_context["annotation"] or "",
+                "excerpt": citation_context["excerpt"],
+                "quote": citation_context["quote_text"] or citation_context["excerpt"],
+            }
+        )
+        row = await self.repository.create_citation_instance(
+            user_id=user_id,
+            access_token=access_token,
+            payload={**citation_context, "source_id": source["id"]},
+        )
+        if row is None:
+            raise HTTPException(status_code=500, detail="Failed to create citation instance")
+        source_rows = await self.sources_service.repository.get_sources_by_ids(source_ids=[source["id"]], access_token=access_token)
+        source_row = source_rows[0] if source_rows else self._source_detail_to_row(source)
+        await self.refresh_renders(access_token=access_token, citation_row=row, source_row=source_row)
+        return await self.get_citation(user_id=user_id, access_token=access_token, citation_id=str(row["id"]))
+
+    async def update_citation(
+        self,
+        *,
+        user_id: str,
+        access_token: str | None,
+        citation_id: str,
+        payload: dict[str, Any],
+    ) -> dict:
+        existing = await self.repository.get_citation(user_id=user_id, access_token=access_token, citation_id=citation_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Citation not found")
+        next_row = {
+            "locator": payload.get("locator", existing.get("locator") or {}),
+            "annotation": payload.get("annotation", existing.get("annotation")),
+            "excerpt": payload.get("excerpt", existing.get("excerpt")),
+            "quote_text": payload.get("quote", existing.get("quote_text")),
+        }
+        next_row["citation_version"] = compute_citation_version(
+            {
+                "locator": next_row["locator"] or {},
+                "annotation": next_row.get("annotation") or "",
+                "excerpt": next_row.get("excerpt") or "",
+                "quote": next_row.get("quote_text") or next_row.get("excerpt") or "",
+            }
+        )
+        row = await self.repository.update_citation(
+            user_id=user_id,
+            access_token=access_token,
+            citation_id=citation_id,
+            payload=next_row,
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Citation not found")
+        source_row = (await self.sources_service.repository.get_sources_by_ids(source_ids=[row["source_id"]], access_token=access_token))[0]
+        await self.refresh_renders(access_token=access_token, citation_row=row, source_row=source_row)
+        return await self.get_citation(user_id=user_id, access_token=access_token, citation_id=citation_id)
+
+    async def delete_citation(self, *, user_id: str, access_token: str | None, citation_id: str) -> dict:
+        rows = await self.repository.delete_citation(user_id=user_id, access_token=access_token, citation_id=citation_id)
+        if not rows:
+            raise HTTPException(status_code=404, detail="Citation not found")
+        return {"ok": True, "id": citation_id}
+
+    async def render_citation(self, *, user_id: str, access_token: str | None, citation_id: str, style: str | None) -> dict:
+        citation = await self.get_citation(user_id=user_id, access_token=access_token, citation_id=citation_id)
+        if style:
+            normalized_style = style.strip().lower()
+            if normalized_style not in SUPPORTED_STYLES:
+                raise HTTPException(status_code=422, detail={"code": "CITATION_STYLE_UNSUPPORTED", "message": "Unsupported citation style."})
+        return citation
+
+    def _require_template_capability(self, account_type: str) -> None:
+        if "custom" not in allowed_citation_formats(account_type):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "CITATION_TEMPLATE_PRO_ONLY",
+                    "message": "Custom citation templates are available on Pro only.",
+                    "toast": "Upgrade to Pro to use custom citation templates.",
+                },
+            )
+
+    async def list_templates(self, *, user_id: str, access_token: str | None, account_type: str) -> list[dict]:
+        self._require_template_capability(account_type)
+        rows = await self.repository.list_templates(user_id=user_id, access_token=access_token)
+        return [serialize_citation_template(row) for row in rows]
+
+    async def create_template(self, *, user_id: str, access_token: str | None, account_type: str, payload: dict[str, Any]) -> dict:
+        self._require_template_capability(account_type)
+        ok, error = validate_template(str(payload.get("template_body") or ""))
+        if not ok:
+            raise HTTPException(status_code=422, detail=error)
+        row = await self.repository.create_template(user_id=user_id, access_token=access_token, payload=payload)
+        if row is None:
+            raise HTTPException(status_code=500, detail="Failed to create citation template")
+        return serialize_citation_template(row)
+
+    async def update_template(self, *, user_id: str, access_token: str | None, account_type: str, template_id: str, payload: dict[str, Any]) -> dict:
+        self._require_template_capability(account_type)
+        if payload.get("template_body") is not None:
+            ok, error = validate_template(str(payload.get("template_body") or ""))
+            if not ok:
+                raise HTTPException(status_code=422, detail=error)
+        row = await self.repository.update_template(user_id=user_id, access_token=access_token, template_id=template_id, payload=payload)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Template not found")
+        return serialize_citation_template(row)
+
+    async def delete_template(self, *, user_id: str, access_token: str | None, account_type: str, template_id: str) -> dict:
+        self._require_template_capability(account_type)
+        rows = await self.repository.delete_template(user_id=user_id, access_token=access_token, template_id=template_id)
+        if not rows:
+            raise HTTPException(status_code=404, detail="Template not found")
+        return {"ok": True, "id": template_id}

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ page_title }} · Writior</title>
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/app_shell.css" />
+  {% block head_assets %}{% endblock %}
+  <script>
+    (function () {
+      var key = "web_unlocker_theme";
+      var mode = "system";
+      try {
+        var stored = localStorage.getItem(key);
+        if (stored === "light" || stored === "dark" || stored === "system") mode = stored;
+      } catch (_error) {}
+      var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      var dark = mode === "dark" || (mode === "system" && prefersDark);
+      document.documentElement.classList.toggle("dark", !!dark);
+      document.documentElement.dataset.themeMode = mode;
+      document.documentElement.style.colorScheme = dark ? "dark" : "light";
+    })();
+  </script>
+</head>
+<body class="app-shell-body" data-page-id="{{ page_id }}">
+  <a class="app-skip-link" href="#app-main">Skip to content</a>
+
+  <div class="app-shell">
+    <aside class="app-sidebar" aria-label="Primary">
+      <div class="app-brand">
+        <a class="app-brand-link" href="/dashboard">
+          <span class="app-brand-mark">W</span>
+          <span class="app-brand-copy">
+            <strong>Writior</strong>
+            <span>Research to writing</span>
+          </span>
+        </a>
+      </div>
+
+      <nav class="app-nav" aria-label="Primary navigation">
+        <a href="/dashboard" class="app-nav-link{% if nav_key == 'dashboard' %} is-active{% endif %}" data-nav-key="dashboard">Dashboard</a>
+        <a href="/research" class="app-nav-link{% if nav_key == 'research' %} is-active{% endif %}" data-nav-key="research">Research</a>
+        <a href="/projects" class="app-nav-link{% if nav_key == 'projects' %} is-active{% endif %}" data-nav-key="projects">Projects</a>
+        <a href="/editor" class="app-nav-link{% if nav_key == 'documents' %} is-active{% endif %}" data-nav-key="documents">Documents</a>
+        <a href="/insights" class="app-nav-link{% if nav_key == 'insights' %} is-active{% endif %}" data-nav-key="insights">Insights</a>
+      </nav>
+
+      <div class="app-sidebar-footer">
+        <button id="themeToggle" class="app-theme-toggle" type="button" aria-live="polite">Theme</button>
+        <a href="/auth" class="app-auth-link" id="authButton">Sign in</a>
+      </div>
+    </aside>
+
+    <div class="app-workspace">
+      <header class="app-header">
+        <div>
+          <p class="app-eyebrow">Writior v2</p>
+          <h1 class="app-page-title">{{ page_title }}</h1>
+        </div>
+        <div class="app-header-actions" id="app-header-actions"></div>
+      </header>
+
+      <div class="app-content-frame{% block frame_class %}{% endblock %}">
+        <main id="app-main" class="app-main" tabindex="-1">
+          {% block main %}{% endblock %}
+        </main>
+        {% block context_panel %}{% endblock %}
+      </div>
+    </div>
+  </div>
+
+  <script id="app-boot" type="application/json">{{ boot_payload | safe }}</script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/static/js/ui_feedback.js"></script>
+  <script src="/static/js/auth.js"></script>
+  <script src="/static/js/theme.js"></script>
+  {% block body_assets %}{% endblock %}
+  <script type="module" src="/static/js/app_shell/boot.js"></script>
+</body>
+</html>

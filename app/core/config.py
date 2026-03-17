@@ -42,6 +42,7 @@ class Settings:
     supabase_url: str | None
     supabase_anon_key: str | None
     supabase_service_role_key: str | None
+    paddle_webhook_secret: str | None
     migration_pack_dir: Path
     schema_contract_source: str
     enable_docs: bool
@@ -51,6 +52,8 @@ class Settings:
     trusted_proxy_nets: tuple[ipaddress._BaseNetwork, ...]
     allow_proxy_headers: bool
     security_hsts_enabled: bool
+    auth_handoff_ttl_seconds: int
+    extension_idempotency_ttl_seconds: int
     rate_limits: RateLimitSettings
 
 
@@ -62,6 +65,8 @@ def _validate_settings(settings: Settings) -> Settings:
             raise RuntimeError("CORS_ORIGINS must be configured in staging/prod.")
         if any(origin == "*" for origin in settings.cors_origins):
             raise RuntimeError("CORS_ORIGINS cannot contain '*'.")
+    if settings.env == "prod" and not settings.paddle_webhook_secret:
+        raise RuntimeError("PADDLE_WEBHOOK_SECRET must be configured in prod.")
     return settings
 
 
@@ -76,6 +81,7 @@ def get_settings() -> Settings:
         supabase_url=(os.getenv("SUPABASE_URL") or "").strip() or None,
         supabase_anon_key=((os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY") or "").strip() or None),
         supabase_service_role_key=(os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip() or None,
+        paddle_webhook_secret=(os.getenv("PADDLE_WEBHOOK_SECRET") or "").strip() or None,
         migration_pack_dir=migration_pack_dir,
         schema_contract_source=str(migration_pack_dir),
         enable_docs=(os.getenv("ENABLE_DOCS") or "true").strip().lower() in {"1", "true", "yes"},
@@ -85,6 +91,8 @@ def get_settings() -> Settings:
         trusted_proxy_nets=trusted_proxy_nets,
         allow_proxy_headers=(os.getenv("ALLOW_PROXY_HEADERS") or "false").strip().lower() in {"1", "true", "yes"},
         security_hsts_enabled=(os.getenv("SECURITY_HSTS_ENABLED") or "true").strip().lower() in {"1", "true", "yes"},
+        auth_handoff_ttl_seconds=_parse_int_env("AUTH_HANDOFF_TTL_SECONDS", 60),
+        extension_idempotency_ttl_seconds=_parse_int_env("EXTENSION_IDEMPOTENCY_TTL_SECONDS", 900),
         rate_limits=RateLimitSettings(
             anonymous_public_limit=_parse_int_env("RATE_LIMIT_ANONYMOUS_PUBLIC", 60),
             anonymous_public_window_seconds=_parse_int_env("RATE_LIMIT_ANONYMOUS_PUBLIC_WINDOW_SECONDS", 60),

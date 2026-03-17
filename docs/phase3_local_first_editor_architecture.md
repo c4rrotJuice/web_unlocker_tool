@@ -88,3 +88,5 @@ Added in editor header:
 Also added:
 - **Sync now** (manual sync button)
 - **Last synced** timestamp
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.

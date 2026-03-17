@@ -1,28 +1,66 @@
 from pathlib import Path
 
 
-def test_editor_template_loads_runtime_modules_before_editor_js():
-    source = Path("app/templates/editor.html").read_text(encoding="utf-8")
+def test_editor_shell_route_uses_v2_template_and_runtime():
+    route_source = Path("app/routes/shell.py").read_text(encoding="utf-8")
+    template_source = Path("app/templates/app_editor.html").read_text(encoding="utf-8")
+    boot_source = Path("app/static/js/app_shell/pages/editor.js").read_text(encoding="utf-8")
 
-    assert '/static/js/editor_runtime/core.js' in source
-    assert '/static/js/editor_runtime/instrumentation.js' in source
-    assert '/static/js/editor_runtime/active_document.js' in source
-    assert '/static/js/editor_runtime/editor_session.js' in source
-    assert '/static/js/editor_runtime/notes_store.js' in source
-    assert '/static/js/editor_runtime/citations_store.js' in source
-    assert '/static/js/editor_runtime/renderers.js' in source
-    assert source.index('/static/js/editor_runtime/core.js') < source.index('/static/js/editor.js')
+    assert '"app_editor.html"' in route_source
+    assert "/static/css/editor_v2.css" in template_source
+    assert "editor-v2-shell" in template_source
+    assert "createEditorApp" in boot_source
+    assert "editor_v2/core/editor_app.js" in boot_source
 
 
-def test_editor_runtime_requires_window_runtime_modules_and_summary_docs_view():
-    source = Path("app/static/js/editor.js").read_text(encoding="utf-8")
+def test_editor_runtime_uses_modular_v2_modules_and_not_legacy_orchestration():
+    source = Path("app/static/js/editor_v2/core/editor_app.js").read_text(encoding="utf-8")
 
-    assert 'window.WritiorEditorRuntime' in source
-    assert 'runtime.require("instrumentation")' in source
-    assert 'runtime.require("activeDocument")' in source
-    assert 'runtime.require("editorSession")' in source
-    assert 'runtime.require("notesStore")' in source
-    assert 'runtime.require("citationsStore")' in source
-    assert 'runtime.require("renderers")' in source
-    assert '"/api/docs?view=summary"' in source
-    assert 'boot:first_active_document_ready' in source
+    assert "../document/document_controller.js" in source
+    assert "../document/autosave_controller.js" in source
+    assert "../document/checkpoint_controller.js" in source
+    assert "../document/outline_controller.js" in source
+    assert "../research/research_hydrator.js" in source
+    assert "../research/explorer_controller.js" in source
+    assert "../actions/insert_actions.js" in source
+    assert "../ui/quill_adapter.js" in source
+    assert "../api/workspace_api.js" in source
+    assert "../api/research_api.js" in source
+    assert "editor.js" not in source
+    assert "editor_runtime/" not in source
+
+
+def test_editor_runtime_uses_summary_boot_and_legacy_denylist():
+    workspace_api = Path("app/static/js/editor_v2/api/workspace_api.js").read_text(encoding="utf-8")
+    editor_source = Path("app/static/js/editor_v2/core/editor_app.js").read_text(encoding="utf-8")
+
+    assert "/api/docs?view=summary" in workspace_api
+    assert "/api/docs/${encodeURIComponent(documentId)}/hydrate" in workspace_api
+    assert "/api/auth/handoff" not in workspace_api
+    assert "WORK_IN_EDITOR" not in editor_source
+    assert "/api/editor/access" not in editor_source
+
+
+def test_quill_adapter_keeps_domain_logic_outside_adapter():
+    source = Path("app/static/js/editor_v2/ui/quill_adapter.js").read_text(encoding="utf-8")
+    assert "insertBibliography" not in source
+    assert "replaceDocumentCitations" not in source
+    assert "save_status" not in source
+    assert "seed_state" not in source
+
+
+def test_workspace_state_is_single_truth_and_context_state_is_pure():
+    workspace_source = Path("app/static/js/editor_v2/core/workspace_state.js").read_text(encoding="utf-8")
+    selection_source = Path("app/static/js/editor_v2/core/selection_state.js").read_text(encoding="utf-8")
+    context_source = Path("app/static/js/editor_v2/core/context_state.js").read_text(encoding="utf-8")
+    event_bus_source = Path("app/static/js/editor_v2/core/event_bus.js").read_text(encoding="utf-8")
+
+    assert "active_document_id" in workspace_source
+    assert "save_status" in workspace_source
+    assert "attached_relation_ids" in workspace_source
+    assert "seed_state" in workspace_source
+    assert "hydration" in workspace_source
+    assert "text" in selection_source
+    assert "composing" in selection_source
+    assert "deriveContextState" in context_source
+    assert "listeners = new Map()" in event_bus_source

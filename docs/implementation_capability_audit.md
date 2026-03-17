@@ -1,3 +1,6 @@
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.
+
 # Writior Implementation Capability Audit
 
 ## 1. Executive Summary

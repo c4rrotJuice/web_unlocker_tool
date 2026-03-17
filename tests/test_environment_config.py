@@ -17,23 +17,19 @@ def test_invalid_environment_fails_fast(monkeypatch):
 def test_validate_environment_requires_staging_vars(monkeypatch):
     monkeypatch.setenv("ENV", "staging")
     monkeypatch.setenv("SUPABASE_URL", "http://example.com")
-    monkeypatch.setenv("SUPABASE_KEY", "anon")
+    monkeypatch.delenv("SUPABASE_ANON_KEY", raising=False)
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
-    monkeypatch.delenv("WEB_UNLOCKER_SUPABASE_URL", raising=False)
-    monkeypatch.delenv("WEB_UNLOCKER_SUPABASE_ANON_KEY", raising=False)
     monkeypatch.delenv("CORS_ORIGINS", raising=False)
 
-    with pytest.raises(RuntimeError, match="WEB_UNLOCKER_SUPABASE_URL"):
+    with pytest.raises(RuntimeError, match="SUPABASE_ANON_KEY"):
         environment.validate_environment()
 
 
 def test_validate_environment_requires_prod_webhook_secret(monkeypatch):
     monkeypatch.setenv("ENV", "prod")
     monkeypatch.setenv("SUPABASE_URL", "http://example.com")
-    monkeypatch.setenv("SUPABASE_KEY", "anon")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
-    monkeypatch.setenv("WEB_UNLOCKER_SUPABASE_URL", "http://example.com")
-    monkeypatch.setenv("WEB_UNLOCKER_SUPABASE_ANON_KEY", "anon")
     monkeypatch.setenv("CORS_ORIGINS", "https://example.com")
     monkeypatch.delenv("PADDLE_WEBHOOK_SECRET", raising=False)
 

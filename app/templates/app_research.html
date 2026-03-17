@@ -1,0 +1,46 @@
+{% extends "app_shell_base.html" %}
+
+{% block context_panel %}
+<aside class="app-context-panel" id="research-context-panel" aria-label="Research detail panel">
+  <div class="context-panel-header">
+    <div>
+      <p class="section-kicker">Context</p>
+      <h2 id="research-context-title">Select an item</h2>
+    </div>
+    <button type="button" class="context-close-button" id="research-context-close">Close</button>
+  </div>
+  <div id="research-context-body"></div>
+</aside>
+{% endblock %}
+
+{% block main %}
+<section class="page-stack">
+  <section class="hero-card">
+    <div>
+      <p class="hero-kicker">Research explorer</p>
+      <h2 class="hero-title">Sources to notes, one workspace</h2>
+      <p class="hero-copy">Navigate one slice at a time. The right rail shows the currently selected object.</p>
+    </div>
+  </section>
+
+  <section class="surface-card">
+    <div class="research-toolbar">
+      <div class="app-tablist" role="tablist" aria-label="Research object types" id="research-tablist">
+        <button type="button" class="app-tab" data-tab="sources" role="tab" aria-controls="research-list-region">Sources</button>
+        <button type="button" class="app-tab" data-tab="citations" role="tab" aria-controls="research-list-region">Citations</button>
+        <button type="button" class="app-tab" data-tab="quotes" role="tab" aria-controls="research-list-region">Quotes</button>
+        <button type="button" class="app-tab" data-tab="notes" role="tab" aria-controls="research-list-region">Notes</button>
+      </div>
+
+      <form class="research-filters" id="research-filters">
+        <input type="search" name="q" id="research-query" placeholder="Search current tab" />
+        <input type="text" name="project" id="research-project-filter" placeholder="Project id" />
+        <input type="text" name="tag" id="research-tag-filter" placeholder="Tag id" />
+        <button type="submit" class="app-button-secondary">Apply</button>
+      </form>
+    </div>
+
+    <div id="research-list-region" aria-live="polite"></div>
+  </section>
+</section>
+{% endblock %}

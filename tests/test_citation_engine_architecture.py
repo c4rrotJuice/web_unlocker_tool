@@ -1,25 +1,24 @@
 from pathlib import Path
 
 
-def test_extension_implements_layered_metadata_pipeline_and_confidence():
-    source = Path("extension/content/unlock_content.js").read_text(encoding="utf-8")
+def test_extension_uses_modular_metadata_and_capture_components():
+    index_source = Path("extension/content/index.js").read_text(encoding="utf-8")
+    metadata_source = Path("extension/content/metadata_extractor.js").read_text(encoding="utf-8")
+    pill_source = Path("extension/content/capture_pill.js").read_text(encoding="utf-8")
 
-    assert "METADATA_SOURCE_CONFIDENCE" in source
-    assert 'meta[name="citation_title"]' in source
-    assert 'script[type="application/ld+json"]' in source
-    assert 'meta[name="DC.title"]' in source
-    assert 'meta[property="og:site_name"]' in source
-    assert "sourceField" in source
-    assert "classifySource" in source
+    assert "./metadata_extractor.js" in index_source
+    assert "./capture_pill.js" in index_source
+    assert "./note_composer.js" in index_source
+    assert "script[type=\"application/ld+json\"]" in metadata_source
+    assert "meta[name=\"author\"]" in metadata_source
+    assert "MESSAGE_TYPES.CAPTURE_CITATION" in pill_source
+    assert "MESSAGE_TYPES.CAPTURE_QUOTE" in pill_source
 
 
-def test_webapp_and_extension_include_domain_intelligence_and_doi_preference():
-    extension_source = Path("extension/content/unlock_content.js").read_text(encoding="utf-8")
-    webapp_source = Path("app/static/unlock.js").read_text(encoding="utf-8")
+def test_extension_overlay_css_isolated_in_shadow_root_assets():
+    overlay_source = Path("extension/content/overlay_root.js").read_text(encoding="utf-8")
+    style_source = Path("extension/styles/overlay.css.js").read_text(encoding="utf-8")
 
-    for source in (extension_source, webapp_source):
-        assert "DOMAIN_INTELLIGENCE" in source
-        assert "arxiv.org" in source
-        assert "journal_article" in source
-        assert "https://doi.org/" in source
-        assert "Available at:" in source
+    assert "attachShadow" in overlay_source
+    assert ".writior-overlay-root" in style_source
+    assert ".writior-pill" in style_source

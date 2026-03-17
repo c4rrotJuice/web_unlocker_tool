@@ -1,0 +1,116 @@
+{% extends "app_shell_base.html" %}
+
+{% block head_assets %}
+  <link rel="stylesheet" href="https://cdn.quilljs.com/1.3.7/quill.snow.css" />
+  <link rel="stylesheet" href="/static/css/editor_v2.css" />
+{% endblock %}
+
+{% block main %}
+<section class="editor-v2-page" aria-label="Editor workspace">
+  <div class="editor-v2-shell" id="editor-v2-shell">
+    <aside class="editor-v2-panel editor-v2-explorer" aria-label="Research Explorer">
+      <div class="editor-v2-panel-head">
+        <div>
+          <p class="editor-v2-kicker">Capture</p>
+          <h2>Research Explorer</h2>
+        </div>
+        <button class="app-theme-toggle editor-v2-action" id="editor-new-document" type="button">New document</button>
+      </div>
+      <div class="editor-v2-search-row">
+        <input id="editor-explorer-search" type="search" placeholder="Search sources, citations, quotes, notes" aria-label="Search research" />
+      </div>
+      <div class="editor-v2-tablist" role="tablist" aria-label="Research explorer">
+        <button class="editor-v2-tab is-active" data-explorer-tab="sources" role="tab" aria-selected="true">Sources</button>
+        <button class="editor-v2-tab" data-explorer-tab="citations" role="tab" aria-selected="false">Citations</button>
+        <button class="editor-v2-tab" data-explorer-tab="quotes" role="tab" aria-selected="false">Quotes</button>
+        <button class="editor-v2-tab" data-explorer-tab="notes" role="tab" aria-selected="false">Notes</button>
+      </div>
+      <section class="editor-v2-documents">
+        <div class="editor-v2-subhead">
+          <h3>Documents</h3>
+          <span id="editor-documents-status" class="editor-v2-meta">Summary</span>
+        </div>
+        <div id="editor-document-list" class="editor-v2-scroll" tabindex="0"></div>
+      </section>
+      <section class="editor-v2-results">
+        <div class="editor-v2-subhead">
+          <h3 id="editor-explorer-heading">Sources</h3>
+          <span id="editor-explorer-status" class="editor-v2-meta">On demand</span>
+        </div>
+        <div id="editor-explorer-list" class="editor-v2-scroll" tabindex="0"></div>
+      </section>
+    </aside>
+
+    <section class="editor-v2-panel editor-v2-surface" aria-label="Writing Surface">
+      <div class="editor-v2-surface-head">
+        <div class="editor-v2-title-wrap">
+          <p class="editor-v2-kicker">Write</p>
+          <input id="editor-document-title" class="editor-v2-title" type="text" placeholder="Untitled document" aria-label="Document title" />
+        </div>
+        <div class="editor-v2-head-actions">
+          <span id="editor-save-state" class="editor-v2-save-state" aria-live="polite">Saved</span>
+          <button class="editor-v2-action" id="editor-checkpoint-button" type="button">Checkpoint</button>
+          <button class="editor-v2-action" id="editor-command-button" type="button">Commands</button>
+          <button class="editor-v2-action" id="editor-export-button" type="button">Export</button>
+        </div>
+      </div>
+
+      <div id="editor-empty-state" class="editor-v2-empty-state" hidden>
+        <p class="editor-v2-kicker">Capture → Understand → Synthesize → Write</p>
+        <h2>Open a document or start a clean draft</h2>
+        <p>The editor stays idle until a canonical document is selected or explicitly created.</p>
+        <div class="editor-v2-empty-actions">
+          <button class="editor-v2-action editor-v2-action-primary" id="editor-empty-new-document" type="button">Create document</button>
+          <button class="editor-v2-action" id="editor-empty-focus-explorer" type="button">Browse research</button>
+        </div>
+      </div>
+
+      <div id="editor-writing-surface" class="editor-v2-writing-surface" hidden>
+        <div id="editor-command-menu" class="editor-v2-popover" hidden aria-label="Editor commands"></div>
+        <div id="editor-toolbar" class="editor-v2-toolbar">
+          <button class="ql-bold" aria-label="Bold"></button>
+          <button class="ql-italic" aria-label="Italic"></button>
+          <button class="ql-underline" aria-label="Underline"></button>
+          <button class="ql-blockquote" aria-label="Quote block"></button>
+          <button class="ql-list" value="ordered" aria-label="Ordered list"></button>
+          <button class="ql-list" value="bullet" aria-label="Bullet list"></button>
+        </div>
+        <div id="editor-quill" class="editor-v2-quill" aria-label="Document editor"></div>
+        <div class="editor-v2-status-row">
+          <div id="editor-status-bar" class="editor-v2-status-bar"></div>
+          <div class="editor-v2-status-actions">
+            <button class="editor-v2-link" id="editor-outline-refresh" type="button">Refresh outline</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="editor-v2-panel editor-v2-context" aria-label="Context Rail">
+      <div class="editor-v2-panel-head">
+        <div>
+          <p class="editor-v2-kicker">Understand</p>
+          <h2>Context Rail</h2>
+        </div>
+        <span id="editor-context-mode" class="editor-v2-meta">Idle</span>
+      </div>
+      <div id="editor-context-rail" class="editor-v2-scroll" tabindex="0"></div>
+      <section class="editor-v2-side-section">
+        <div class="editor-v2-subhead">
+          <h3>Outline</h3>
+        </div>
+        <div id="editor-outline-list" class="editor-v2-outline" tabindex="0"></div>
+      </section>
+      <section class="editor-v2-side-section">
+        <div class="editor-v2-subhead">
+          <h3>Checkpoints</h3>
+        </div>
+        <div id="editor-checkpoints-list" class="editor-v2-checkpoints" tabindex="0"></div>
+      </section>
+    </aside>
+  </div>
+</section>
+{% endblock %}
+
+{% block body_assets %}
+  <script src="https://cdn.quilljs.com/1.3.7/quill.js"></script>
+{% endblock %}

@@ -1,3 +1,6 @@
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.
+
 # Metrics dashboard + alert recommendations
 
 This service now exposes a Prometheus-style endpoint at `GET /metrics`.

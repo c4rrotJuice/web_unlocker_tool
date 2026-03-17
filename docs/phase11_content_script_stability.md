@@ -32,3 +32,5 @@ Injected components mounted in root include:
 ## Outcome
 
 Prevents duplicated mounts and reduces listener leaks by making content script initialization deterministic and singleton-safe.
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.

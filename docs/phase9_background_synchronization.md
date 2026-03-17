@@ -37,3 +37,5 @@ Ensure server communication happens asynchronously in the background service wor
 ## Security boundary
 - Content scripts continue to communicate via runtime messaging only.
 - Backend endpoints/tokens remain in background code paths; no backend secrets are embedded in content scripts.
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.

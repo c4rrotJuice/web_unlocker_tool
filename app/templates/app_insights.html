@@ -1,0 +1,47 @@
+{% extends "app_shell_base.html" %}
+
+{% block main %}
+<section class="page-stack">
+  <section class="hero-card">
+    <div>
+      <p class="hero-kicker">Insights</p>
+      <h2 class="hero-title">A lightweight monthly readout</h2>
+      <p class="hero-copy">Canonical summaries only: momentum, top domains, citation styles, and milestones.</p>
+    </div>
+  </section>
+
+  <section class="stats-grid" id="insights-stats"></section>
+
+  <section class="split-grid">
+    <section class="surface-card">
+      <div class="surface-head">
+        <div>
+          <p class="section-kicker">Domains</p>
+          <h2>Top research domains</h2>
+        </div>
+      </div>
+      <div id="insights-domains"></div>
+    </section>
+
+    <section class="surface-card">
+      <div class="surface-head">
+        <div>
+          <p class="section-kicker">Citation styles</p>
+          <h2>Style usage this month</h2>
+        </div>
+      </div>
+      <div id="insights-citation-styles"></div>
+    </section>
+  </section>
+
+  <section class="surface-card">
+    <div class="surface-head">
+      <div>
+        <p class="section-kicker">Milestones</p>
+        <h2>Recent progress</h2>
+      </div>
+    </div>
+    <div id="insights-milestones"></div>
+  </section>
+</section>
+{% endblock %}

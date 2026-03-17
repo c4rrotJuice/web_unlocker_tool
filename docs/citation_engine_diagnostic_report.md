@@ -66,3 +66,5 @@
 - Add cross-page fixture-based golden tests comparing generated citations vs manually verified references.
 - Expand domain translator coverage (major publishers/newspapers/repositories).
 - Introduce locale-aware date parsing for non-US date strings and stricter title capitalization stopword rules.
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.

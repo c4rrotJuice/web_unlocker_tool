@@ -7,116 +7,39 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main class="container writior-sidepanel">
-      <header>
-        <div class="sidepanel-header-row">
-          <h1>Writior Capture</h1>
-          <button id="panel-collapse" class="pill mini" type="button" title="Collapse panel">Collapse</button>
+    <main class="workspace-shell workspace-sidepanel">
+      <header class="workspace-header">
+        <div>
+          <p class="workspace-kicker">Writior Extension</p>
+          <h1>Research Workspace</h1>
         </div>
-        <p id="status" class="status">Checking session…</p>
-        <div id="toast" class="toast hidden" role="status" aria-live="polite" tabindex="0"></div>
+        <p id="status" class="workspace-status">Loading…</p>
       </header>
 
-      <section id="usage-info" class="tile usage hidden">
-        <p>Remaining usage: <strong id="remaining">--</strong></p>
-        <p>Resets: <strong id="reset-at">--</strong></p>
-      </section>
-
-      <section id="signed-out" class="tile panel hidden">
-        <div id="signup-extra-fields" class="panel hidden">
-          <label>Full name <input type="text" id="signup-name" placeholder="Jane Doe" /></label>
-          <label>
-            Use case
-            <select id="signup-use-case">
-              <option value="student">Student / Education / Citation</option>
-              <option value="research">Research / Writer / Citation</option>
-            </select>
-          </label>
+      <section class="workspace-toolbar">
+        <div class="workspace-summary">
+          <span id="auth-state">Signed out</span>
+          <span id="sync-state">0 queued</span>
         </div>
-
-        <label>Email <input type="email" id="email" placeholder="you@example.com" /></label>
-        <label>Password <input type="password" id="password" placeholder="••••••••" /></label>
-        <div class="actions">
-          <button id="login" class="pill pill-primary">Log in</button>
-          <button id="signup" class="pill">Sign up</button>
-        </div>
-        <p class="hint">Don’t have an account? Sign up to unlock weekly extension usage.</p>
-      </section>
-
-      <section id="signed-in" class="tile panel hidden">
-        <p class="meta">Signed in as <strong id="user-email">--</strong></p>
-        <p class="meta">Tier: <strong id="user-tier">--</strong></p>
-        <button id="enable-copy-cite" class="pill pill-primary full">Copy + Cite is Always Active</button>
-        <button id="upgrade" class="link">Upgrade plan</button>
-      </section>
-
-      <section class="tile action-tile">
-        <div class="actions actions-main">
-          <button id="open-editor" class="pill">Open Editor</button>
-          <button id="open-dashboard" class="pill">Open Dashboard</button>
-          <button id="logout" class="pill">Logout</button>
+        <div class="workspace-actions">
+          <button id="open-sign-in" type="button">Sign in</button>
+          <button id="open-editor" type="button">Work in editor</button>
+          <button id="open-dashboard" type="button">Dashboard</button>
+          <button id="sync-now" type="button">Retry sync</button>
         </div>
       </section>
 
-      <section class="tile nav-tile">
-        <div class="tab-pills" role="tablist" aria-label="Popup sections">
-          <button id="tab-citations" class="pill tab-pill is-active" data-tab="citations" role="tab" aria-selected="true">Citations</button>
-          <button id="tab-notes" class="pill tab-pill" data-tab="notes" role="tab" aria-selected="false">Notes</button>
-          <button id="tab-note" class="pill tab-pill" data-tab="note" role="tab" aria-selected="false">Note</button>
-        </div>
-      </section>
+      <nav class="workspace-tabs" aria-label="Sidepanel tabs">
+        <button type="button" class="is-active" data-tab="capture" aria-selected="true">Capture</button>
+        <button type="button" data-tab="notes" aria-selected="false">Notes</button>
+        <button type="button" data-tab="citations" aria-selected="false">Citations</button>
+        <button type="button" data-tab="activity" aria-selected="false">Activity</button>
+      </nav>
 
-      <section id="tab-content-citations" class="tile content-tile">
-        <div class="history-header">
-          <h2 class="history-title">Recent Citations</h2>
-          <span id="citations-sync-status" class="sync-status" aria-live="polite">Synced · Last updated --</span>
-        </div>
-        <ul id="citation-history" class="pill-list">
-          <li><p>Fetching ...</p></li>
-        </ul>
-      </section>
-
-      <section id="tab-content-notes" class="tile content-tile hidden">
-        <div class="history-header">
-          <h2 class="history-title">Notes</h2>
-          <span id="notes-sync-status" class="sync-status" aria-live="polite">Synced · Last updated --</span>
-        </div>
-        <div class="note-filters">
-          <input id="notes-filter-tag" type="text" placeholder="Filter by tag" />
-          <input id="notes-filter-project" type="text" placeholder="Filter by project" />
-          <input id="notes-filter-source" type="text" placeholder="Filter by source" />
-          <select id="notes-sort">
-            <option value="desc">Newest first</option>
-            <option value="asc">Oldest first</option>
-          </select>
-        </div>
-        <ul id="notes-list" class="pill-list"></ul>
-      </section>
-
-      <section id="tab-content-note" class="tile content-tile hidden">
-        <label>Title <input id="quick-note-title" type="text" placeholder="Quick note title" /></label>
-        <div class="format-toolbar">
-          <button type="button" class="pill mini" data-format="bold">B</button>
-          <button type="button" class="pill mini" data-format="italic">I</button>
-          <button type="button" class="pill mini" data-format="bullet">• List</button>
-          <button type="button" class="pill mini" data-format="link">Link</button>
-        </div>
-        <label>Note <textarea id="quick-note-body" rows="6" placeholder="Write your note..."></textarea></label>
-        <div class="actions">
-          <button id="quick-note-attach-source" class="pill mini" type="button">Attach Source (Current Tab)</button>
-        </div>
-        <ul id="quick-note-sources" class="pill-list mini-list"></ul>
-        <label>Link existing notes <input id="quick-note-link-search" type="search" placeholder="Search notes to link" /></label>
-        <ul id="quick-note-link-list" class="pill-list mini-list"></ul>
-        <label>Tags (optional) <input id="quick-note-tags" type="text" placeholder="tag1, tag2" /></label>
-        <label>Project (optional) <input id="quick-note-project" type="text" placeholder="Project name" /></label>
-        <div class="actions">
-          <button id="save-quick-note" class="pill pill-primary">Save</button>
-          <button id="cancel-quick-note" class="pill">Cancel</button>
-        </div>
-      </section>
+      <section id="workspace" class="workspace-content" aria-live="polite"></section>
     </main>
 
     <script type="module" src="sidepanel.js"></script>
   </body>
 </html>
+

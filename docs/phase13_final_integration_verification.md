@@ -74,3 +74,5 @@ This phase verifies the integrated extension behavior across all implemented pha
   - manifest always-active + side panel wiring
   - content script singleton/root/SPA markers
   - background shared-state/sync/tier-gating markers
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.

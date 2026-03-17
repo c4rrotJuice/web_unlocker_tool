@@ -45,3 +45,5 @@ tierCache = {
 
 ## Result
 Tier checks now happen locally before any server contact for gated actions, improving responsiveness and enforcing local-first behavior.
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.

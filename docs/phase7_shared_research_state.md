@@ -36,3 +36,5 @@ researchState = {
 ## Outcome
 
 Research data is now maintained in a background shared state and persisted with IndexedDB for structured records, enabling continuity across tabs and service worker restarts.
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.

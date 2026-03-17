@@ -12,6 +12,7 @@
   },
   "permissions": [
     "activeTab",
+    "alarms",
     "scripting",
     "sidePanel",
     "storage"

@@ -16,12 +16,13 @@ class DummyClient:
         self.auth = DummyAuth()
 
 
-def _load_main(monkeypatch, *, env="prod", cors_origins="https://app.writior.com,https://web-unlocker-tool.onrender.com"):
+def _load_main(monkeypatch, *, env="prod", cors_origins="https://app.writior.com,https://staging.app.writior.com"):
     monkeypatch.setenv("SUPABASE_URL", "http://example.com")
-    monkeypatch.setenv("SUPABASE_KEY", "anon")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
     monkeypatch.setenv("ENV", env)
     monkeypatch.setenv("CORS_ORIGINS", cors_origins)
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "whsec_test")
 
     monkeypatch.setattr(supabase, "create_client", lambda url, key: DummyClient())
 

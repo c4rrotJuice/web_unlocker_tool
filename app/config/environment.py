@@ -20,20 +20,16 @@ ENV_REQUIREMENTS: dict[str, EnvironmentRequirements] = {
     "staging": EnvironmentRequirements(
         required_vars=(
             "SUPABASE_URL",
-            "SUPABASE_KEY",
+            "SUPABASE_ANON_KEY",
             "SUPABASE_SERVICE_ROLE_KEY",
-            "WEB_UNLOCKER_SUPABASE_URL",
-            "WEB_UNLOCKER_SUPABASE_ANON_KEY",
             "CORS_ORIGINS",
         )
     ),
     "prod": EnvironmentRequirements(
         required_vars=(
             "SUPABASE_URL",
-            "SUPABASE_KEY",
+            "SUPABASE_ANON_KEY",
             "SUPABASE_SERVICE_ROLE_KEY",
-            "WEB_UNLOCKER_SUPABASE_URL",
-            "WEB_UNLOCKER_SUPABASE_ANON_KEY",
             "CORS_ORIGINS",
             "PADDLE_WEBHOOK_SECRET",
         )

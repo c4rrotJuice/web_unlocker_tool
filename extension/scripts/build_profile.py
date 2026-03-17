@@ -7,6 +7,8 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILES_DIR = ROOT / "profiles"
+APP_FEEDBACK_DIR = ROOT.parent / "app" / "static" / "js" / "shared" / "feedback"
+EXTENSION_FEEDBACK_DIR = ROOT / "shared" / "feedback"
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,6 +55,12 @@ def render_template(template_path: Path, values: dict[str, str]) -> str:
     return rendered
 
 
+def sync_feedback_mirror() -> None:
+    EXTENSION_FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
+    for path in sorted(APP_FEEDBACK_DIR.glob("*.js")):
+        (EXTENSION_FEEDBACK_DIR / path.name).write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+
+
 def main() -> None:
     args = parse_args()
     profile_name = args.profile or os.getenv("EXTENSION_BUILD_PROFILE", "prod")
@@ -77,6 +85,7 @@ def main() -> None:
 
     config = render_template(ROOT / "config.template.js", replacements)
     manifest = render_template(ROOT / "manifest.template.json", replacements)
+    sync_feedback_mirror()
 
     (ROOT / "config.js").write_text(config, encoding="utf-8")
     (ROOT / "manifest.json").write_text(manifest + "\n", encoding="utf-8")

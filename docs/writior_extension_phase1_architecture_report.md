@@ -95,3 +95,5 @@
 
 - Prefer **manifest `content_scripts`** over popup-driven `executeScript` so unlock + highlight stack becomes automatic on every supported page.
 - Keep popup button as compatibility affordance, but repurpose from injector to informational/validation action during transition.
+# Historical document — describes transitional rebuild state.
+# Do not use as operational or implementation guidance.

@@ -33,5 +33,12 @@ EXTENSION_BUILD_PROFILE=staging python extension/scripts/build_profile.py
 ```
 
 The script validates required profile keys and fails fast if a profile is missing required values.
+It also regenerates the content-script bundle (`extension/content/unlock_content.bundle.js`) so the MV3 manifest points at a classic-script-compatible artifact.
+
+You can regenerate only the content bundle with:
+
+```bash
+npm run build:extension:content
+```
 
 > Note: Do **not** use the Supabase service role key in the extension.

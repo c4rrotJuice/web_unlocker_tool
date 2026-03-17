@@ -10,7 +10,7 @@ def test_manifest_keeps_mv3_sidepanel_and_content_entrypoints():
     assert manifest["side_panel"]["default_path"] == "sidepanel.html"
     assert any(
         item.get("matches") == ["<all_urls>"]
-        and item.get("js") == ["content/unlock_content.js"]
+        and item.get("js") == ["content/unlock_content.bundle.js"]
         and item.get("run_at") == "document_idle"
         for item in manifest.get("content_scripts", [])
     )
@@ -51,12 +51,14 @@ def test_background_queue_and_sync_preserve_causal_ordering_and_background_auth(
 
 
 def test_content_runtime_uses_shadow_root_overlay_and_background_message_bridge():
-    shim_source = Path("extension/content/unlock_content.js").read_text(encoding="utf-8")
+    bundle_source = Path("extension/content/unlock_content.bundle.js").read_text(encoding="utf-8")
     index_source = Path("extension/content/index.js").read_text(encoding="utf-8")
     overlay_source = Path("extension/content/overlay_root.js").read_text(encoding="utf-8")
     bridge_source = Path("extension/content/runtime_bridge.js").read_text(encoding="utf-8")
 
-    assert 'import "./index.js"' in shim_source
+    assert "require(\"content/index.js\")" in bundle_source
+    assert "import " not in bundle_source
+    assert "export " not in bundle_source
     assert "WRITIOR_EXTENSION" in index_source
     assert "bootstrap()" in index_source
     assert "function cleanup()" in index_source
@@ -66,6 +68,18 @@ def test_content_runtime_uses_shadow_root_overlay_and_background_message_bridge(
     assert "attachShadow" in overlay_source
     assert "writior-root" in overlay_source
     assert "chrome.runtime.sendMessage" in bridge_source
+
+
+def test_manifest_content_script_points_to_classic_js_not_raw_esm_source():
+    manifest = json.loads(Path("extension/manifest.json").read_text(encoding="utf-8"))
+    content_scripts = manifest.get("content_scripts", [])
+    assert content_scripts, "Expected at least one content_scripts registration."
+
+    for entry in content_scripts:
+        for js_path in entry.get("js", []):
+            script_source = Path("extension", js_path).read_text(encoding="utf-8")
+            assert not any(line.lstrip().startswith("import ") for line in script_source.splitlines())
+            assert not any(line.lstrip().startswith("export ") for line in script_source.splitlines())
 
 
 def test_sidepanel_and_popup_are_modular_summary_clients():

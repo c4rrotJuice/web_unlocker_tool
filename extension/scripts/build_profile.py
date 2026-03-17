@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -89,8 +90,11 @@ def main() -> None:
 
     (ROOT / "config.js").write_text(config, encoding="utf-8")
     (ROOT / "manifest.json").write_text(manifest + "\n", encoding="utf-8")
+    subprocess.run(["node", str(ROOT / "scripts" / "build_content_bundle.mjs")], check=True)
 
-    print(f"✅ Generated extension/config.js and extension/manifest.json for '{profile_name}'")
+    print(
+        f"✅ Generated extension/config.js, extension/manifest.json, and bundled content runtime for '{profile_name}'"
+    )
 
 
 if __name__ == "__main__":

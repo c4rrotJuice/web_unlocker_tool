@@ -1,5 +1,8 @@
 {
   "name": "writior-web-unlocker-tool",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "build:extension:content": "node extension/scripts/build_content_bundle.mjs"
+  }
 }

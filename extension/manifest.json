@@ -27,7 +27,7 @@
         "<all_urls>"
       ],
       "js": [
-        "content/index.js"
+        "content/unlock_content.js"
       ],
       "run_at": "document_idle",
       "all_frames": true

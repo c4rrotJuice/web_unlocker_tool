@@ -44,15 +44,20 @@ def test_auth_restore_and_work_in_editor_flows_are_separate():
     handoff = _read("extension/background/handoff_manager.js")
     router = _read("extension/background/router.js")
     api = _read("extension/background/api_client.js")
+    content = _read("extension/content/index.js")
 
     assert "async restoreAuthSession" in handoff
     assert "exchangeHandoff" in handoff
+    assert "redirect_path" in handoff
+    assert "web_session" in handoff
     assert "async workInEditor" in handoff
     assert "issueHandoff" in handoff
     assert 'case MESSAGE_TYPES.AUTH_RESTORE' in router
     assert 'case MESSAGE_TYPES.WORK_IN_EDITOR' in router
     assert '"/api/auth/handoff/exchange"' in api
     assert '"/api/extension/work-in-editor"' in api
+    assert "writior:auth-handoff-request" in content
+    assert "writior:auth-handoff-result" in content
 
 
 def test_logout_and_unauthorized_paths_do_not_clear_unsynced_local_data():
@@ -88,6 +93,7 @@ def test_sidepanel_remains_compact_and_surfaces_local_editor_drafts():
     assert "GET_WORKSPACE_SUMMARY" in store
     assert "RESUME_EDITOR_DRAFT" in store
     assert "REMOVE_LOCAL_DRAFT" in store
+    assert "chrome.storage?.onChanged?.addListener" in sidepanel
     assert "Offline ·" in sidepanel
     assert "listRecords(\"captures\")" in summary
     assert "listRecords(\"quotes\")" in summary
@@ -103,6 +109,7 @@ def test_popup_remains_lightweight_and_message_routed_only():
 
     assert "renderStatusCard" in popup
     assert "chrome.runtime.sendMessage" in actions
+    assert "chrome.storage?.onChanged?.addListener" in popup
     assert "GET_STATUS" in actions
     assert "OPEN_SIDEPANEL" in actions
     assert "GET_WORKSPACE_SUMMARY" not in popup

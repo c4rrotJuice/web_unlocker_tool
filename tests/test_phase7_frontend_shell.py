@@ -92,8 +92,9 @@ async def test_route_surface_keeps_expected_public_and_shell_entries(monkeypatch
     assert editor.status_code == 200
     assert pricing.status_code == 307
     assert pricing.headers["location"] == "/static/pricing.html"
-    assert handoff.status_code == 307
-    assert handoff.headers["location"].endswith("/auth/handoff?code=handoff-1")
+    assert handoff.status_code == 200
+    assert "Completing secure sign-in" in handoff.text
+    assert "writior:auth-handoff-request" in handoff.text
 
 
 def test_app_root_shell_does_not_reference_legacy_unlock_endpoints():

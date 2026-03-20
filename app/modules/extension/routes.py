@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Header, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from supabase import create_client
 
 from app.core.auth import RequestAuthContext, require_request_auth_context
@@ -40,6 +41,7 @@ from app.services.supabase_rest import SupabaseRestRepository
 
 router = APIRouter(tags=["extension"])
 settings = get_settings()
+templates = Jinja2Templates(directory="app/templates")
 supabase_repo = SupabaseRestRepository(
     base_url=settings.supabase_url,
     service_role_key=settings.supabase_service_role_key,
@@ -139,9 +141,18 @@ async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
     return await service.exchange_handoff(request, payload)
 
 
-@router.get("/auth/handoff")
-async def handoff_landing(code: str = Query(..., min_length=1)):
-    return RedirectResponse(url=service.handoff_redirect_url(code), status_code=307)
+@router.get("/auth/handoff", response_class=HTMLResponse)
+async def handoff_landing(request: Request, code: str = Query(..., min_length=1)):
+    return templates.TemplateResponse(
+        request,
+        "auth_handoff.html",
+        {
+            "request": request,
+            "code": code.strip(),
+            "supabase_url": settings.supabase_url,
+            "supabase_key": settings.supabase_anon_key,
+        },
+    )
 
 
 @router.post("/api/extension/captures/citation")

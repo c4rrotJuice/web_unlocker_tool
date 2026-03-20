@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Secure Handoff</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "Segoe UI", sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+    }
+
+    .card {
+      width: min(560px, 92vw);
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+      background: rgba(15, 23, 42, 0.92);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      box-shadow: 0 10px 30px rgba(2, 6, 23, 0.45);
+    }
+
+    .title {
+      font-size: 1.1rem;
+      margin: 0 0 0.55rem 0;
+      color: #f8fafc;
+    }
+
+    .status {
+      margin: 0;
+      font-size: 0.95rem;
+      line-height: 1.4;
+      color: #cbd5e1;
+    }
+
+    .status.error {
+      color: #fca5a5;
+    }
+  </style>
+</head>
+<body>
+  <main class="card" role="status" aria-live="polite">
+    <h1 class="title">Completing secure sign-in…</h1>
+    <p id="status" class="status">Waiting for extension session restore.</p>
+  </main>
+
+  <script>
+    window.WRITIOR_SUPABASE_URL = {{ supabase_url | tojson }};
+    window.WRITIOR_SUPABASE_ANON_KEY = {{ supabase_key | tojson }};
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/static/js/auth.js"></script>
+  <script>
+    const handoffCode = {{ code | tojson }};
+    const statusEl = document.getElementById("status");
+    let settled = false;
+
+    function setStatus(text, isError = false) {
+      statusEl.textContent = text;
+      statusEl.classList.toggle("error", Boolean(isError));
+    }
+
+    async function applyWebSession(session) {
+      if (!session?.access_token || !session?.refresh_token) {
+        throw new Error("handoff_session_missing");
+      }
+      const auth = window.webUnlockerAuth;
+      if (!auth?.setSession) {
+        throw new Error("web_auth_client_missing");
+      }
+      const result = await auth.setSession({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+      });
+      if (result?.error) {
+        throw new Error(result.error?.message || "handoff_session_apply_failed");
+      }
+    }
+
+    async function completeRestore(detail) {
+      if (settled) return;
+      settled = true;
+      if (!detail?.ok) {
+        setStatus("Sign-in restore failed. Return to /auth and try again.", true);
+        return;
+      }
+
+      try {
+        const payload = detail.data || {};
+        await applyWebSession(payload.web_session || payload.session);
+        const redirectPath = payload.redirect_path || "/dashboard";
+        setStatus("Signed in. Redirecting…");
+        window.location.replace(redirectPath);
+      } catch (_error) {
+        setStatus("Sign-in restore failed while applying session. Please sign in again.", true);
+      }
+    }
+
+    window.addEventListener("writior:auth-handoff-result", (event) => {
+      void completeRestore(event.detail || {});
+    });
+
+    setStatus("Restoring extension and web session…");
+    window.dispatchEvent(
+      new CustomEvent("writior:auth-handoff-request", {
+        detail: { code: handoffCode },
+      }),
+    );
+
+    window.setTimeout(() => {
+      if (!settled) {
+        setStatus("Waiting for extension bridge timed out. Keep this tab open or retry from /auth.", true);
+      }
+    }, 5000);
+  </script>
+</body>
+</html>

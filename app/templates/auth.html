@@ -268,6 +268,7 @@
     const loginMsg = document.getElementById("login-msg");
     const toast = window.webUnlockerUI?.createToastManager?.();
     const nextPath = {{ next_path | tojson }};
+    const authSource = {{ auth_source | tojson }};
     const loginContainer = document.getElementById("login-container");
     const signupContainer = document.getElementById("signup-container");
 
@@ -291,6 +292,31 @@
     document.getElementById("show-signup")?.addEventListener("click", showSignup);
     document.getElementById("show-login")?.addEventListener("click", showLogin);
     document.getElementById("login-email")?.focus();
+
+    async function issueExtensionRestoreHandoff(session) {
+      if (!session?.access_token || !session?.refresh_token) {
+        return null;
+      }
+      const response = await fetch("/api/auth/handoff", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          refresh_token: session.refresh_token,
+          expires_in: Number.isFinite(session.expires_in) ? session.expires_in : null,
+          token_type: session.token_type || "bearer",
+          redirect_path: nextPath || "/dashboard",
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message = payload?.detail || payload?.error || payload?.message || "Failed to issue secure handoff.";
+        throw new Error(message);
+      }
+      return payload?.data?.code || payload?.code || null;
+    }
 
     document.getElementById("signup-form").addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -353,8 +379,17 @@
         const successMessage = window.webUnlockerUI?.COPY?.success?.LOGIN_SUCCESS || "Signed in successfully.";
         showInlineMessage(loginMsg, successMessage);
         toast?.show({ type: "success", message: successMessage });
+        let redirectPath = nextPath;
+        if (authSource === "extension") {
+          const handoffCode = await issueExtensionRestoreHandoff(data?.session || null);
+          if (!handoffCode) {
+            throw new Error("Failed to issue secure extension restore code.");
+          }
+          redirectPath = `/auth/handoff?code=${encodeURIComponent(handoffCode)}`;
+        }
+
         setTimeout(() => {
-          window.location.href = nextPath;
+          window.location.href = redirectPath;
         }, 450);
       } catch (err) {
         showInlineMessage(loginMsg, err.message || "Login failed", true);

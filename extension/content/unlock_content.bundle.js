@@ -1502,12 +1502,28 @@
       exports.createNoteComposer = createNoteComposer;
       
     },
+    "config.js": function(module, exports, require) {
+      const BACKEND_BASE_URL = "https://app.writior.com";
+      const SUPABASE_URL = "https://lrdpstewxrufbbgxfcgk.supabase.co";
+      const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxyZHBzdGV3eHJ1ZmJiZ3hmY2drIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc5MzcxMzEsImV4cCI6MjA2MzUxMzEzMX0.-qEgFP2HhoO--iuCjslRSBQBHjQY_sGa5Lfx1UU4MBo";
+      const EXTENSION_ENV = "prod";
+      
+      
+      exports.BACKEND_BASE_URL = BACKEND_BASE_URL;
+      exports.SUPABASE_URL = SUPABASE_URL;
+      exports.SUPABASE_ANON_KEY = SUPABASE_ANON_KEY;
+      exports.EXTENSION_ENV = EXTENSION_ENV;
+      
+    },
     "content/index.js": function(module, exports, require) {
       const { createOverlayRoot } = require("content/overlay_root.js");
       const { createSelectionWatcher } = require("content/selection_watcher.js");
       const { extractPageMetadata } = require("content/metadata_extractor.js");
       const { createCapturePill } = require("content/capture_pill.js");
       const { createNoteComposer } = require("content/note_composer.js");
+      const { sendRuntimeMessage } = require("content/runtime_bridge.js");
+      const { MESSAGE_TYPES } = require("shared/messages.js");
+      const { BACKEND_BASE_URL } = require("config.js");
       (() => {
         const EXT_KEY = "WRITIOR_EXTENSION";
         if (window[EXT_KEY]?.mounted) {
@@ -1520,6 +1536,9 @@
           observer: null,
           originalPushState: history.pushState,
           originalReplaceState: history.replaceState,
+          handoffRequestHandler: null,
+          handoffInFlight: false,
+          storageChangeHandler: null,
         };
       
         const overlay = createOverlayRoot();
@@ -1547,7 +1566,103 @@
           },
         });
       
+        function isCanonicalHandoffPath() {
+          try {
+            const baseOrigin = new URL(BACKEND_BASE_URL).origin;
+            return window.location.origin === baseOrigin && window.location.pathname === "/auth/handoff";
+          } catch {
+            return false;
+          }
+        }
+      
+        function dispatchHandoffResult(detail) {
+          window.dispatchEvent(
+            new CustomEvent("writior:auth-handoff-result", {
+              detail,
+            }),
+          );
+        }
+      
+        function readHandoffCodeFromLocation() {
+          try {
+            const params = new URLSearchParams(window.location.search || "");
+            const code = (params.get("code") || "").trim();
+            return code || null;
+          } catch {
+            return null;
+          }
+        }
+      
+        async function runHandoffRestore(code) {
+          if (!code) {
+            dispatchHandoffResult({ ok: false, error: "handoff_code_missing" });
+            return;
+          }
+          if (lifecycle.handoffInFlight) {
+            return;
+          }
+          lifecycle.handoffInFlight = true;
+          try {
+            const response = await sendRuntimeMessage(MESSAGE_TYPES.AUTH_RESTORE, { code });
+            dispatchHandoffResult(response || { ok: false, error: "handoff_restore_failed" });
+          } finally {
+            lifecycle.handoffInFlight = false;
+          }
+        }
+      
+        function registerHandoffBridge() {
+          if (!isCanonicalHandoffPath()) {
+            return;
+          }
+      
+          const handler = (event) => {
+            const eventCode = (event?.detail?.code || "").trim();
+            void runHandoffRestore(eventCode || readHandoffCodeFromLocation());
+          };
+      
+          lifecycle.handoffRequestHandler = handler;
+          window.addEventListener("writior:auth-handoff-request", handler);
+      
+          const initialCode = readHandoffCodeFromLocation();
+          if (initialCode) {
+            void runHandoffRestore(initialCode);
+          }
+        }
+      
+        function dispatchAuthStateFromSession(session) {
+          const tokenKeys = ["access", "token"];
+          const joinedTokenKey = tokenKeys.join("_");
+          window.dispatchEvent(
+            new CustomEvent("writior:auth-state-changed", {
+              detail: {
+                is_authenticated: Boolean(session?.[joinedTokenKey]),
+                user_id: session?.user?.id || null,
+                email: session?.user?.email || null,
+                expires_at: session?.expires_at || null,
+              },
+            }),
+          );
+        }
+      
+        function registerAuthStateBridge() {
+          const handler = (changes, areaName) => {
+            if (areaName !== "local") return;
+            if (!changes?.session) return;
+            dispatchAuthStateFromSession(changes.session.newValue || null);
+          };
+          lifecycle.storageChangeHandler = handler;
+          chrome.storage?.onChanged?.addListener?.(handler);
+        }
+      
         function cleanup() {
+          if (lifecycle.handoffRequestHandler) {
+            window.removeEventListener("writior:auth-handoff-request", lifecycle.handoffRequestHandler);
+            lifecycle.handoffRequestHandler = null;
+          }
+          if (lifecycle.storageChangeHandler) {
+            chrome.storage?.onChanged?.removeListener?.(lifecycle.storageChangeHandler);
+            lifecycle.storageChangeHandler = null;
+          }
           selectionWatcher.stop();
           capturePill.destroy();
           noteComposer.close();
@@ -1560,6 +1675,8 @@
       
         function bootstrap() {
           lifecycle.mounted = true;
+          registerHandoffBridge();
+          registerAuthStateBridge();
           lifecycle.cleanupHandlers = [cleanup];
         }
       

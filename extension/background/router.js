@@ -190,8 +190,18 @@ export function createRouter(deps) {
         await chrome.tabs.create({ url: "https://app.writior.com/dashboard" });
         return { ok: true };
       case MESSAGE_TYPES.AUTH_RESTORE:
-        await handoffManager.restoreAuthSession(message.payload || {});
-        return syncManager.flush();
+        {
+          const restored = await handoffManager.restoreAuthSession(message.payload || {});
+          const sync = await syncManager.flush();
+          return {
+            ok: Boolean(restored?.ok && sync?.ok !== false),
+            data: {
+              ...(restored?.data || {}),
+              sync: sync || { ok: true },
+            },
+            error: restored?.ok ? (sync?.ok === false ? sync?.error || "auth_required" : null) : (restored?.error || "handoff_restore_failed"),
+          };
+        }
       case MESSAGE_TYPES.LOGOUT:
         await sessionManager.logout();
         return { ok: true };

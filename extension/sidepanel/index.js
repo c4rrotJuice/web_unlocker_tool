@@ -124,3 +124,9 @@ syncButton.addEventListener("click", async () => {
 });
 
 void load();
+
+chrome.storage?.onChanged?.addListener((changes, areaName) => {
+  if (areaName !== "local") return;
+  if (!changes?.session) return;
+  void load();
+});

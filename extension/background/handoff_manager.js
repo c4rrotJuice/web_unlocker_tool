@@ -7,12 +7,23 @@ export function createHandoffManager({ apiClient, sessionManager }) {
   return {
     async restoreAuthSession({ code }) {
       const exchange = await apiClient.exchangeHandoff({ code });
-      const session = exchange?.data?.session || exchange?.session;
+      const payload = exchange?.data || exchange || {};
+      const session = payload.session;
       if (!session) {
         throw new Error("handoff_session_missing");
       }
-      await sessionManager.restoreSession(session);
-      return { ok: true };
+      const publicSession = await sessionManager.restoreSession(session);
+      return {
+        ok: true,
+        data: {
+          session: publicSession,
+          web_session: {
+            access_token: session.access_token,
+            refresh_token: session.refresh_token,
+          },
+          redirect_path: payload.redirect_path || "/dashboard",
+        },
+      };
     },
     async openAppSignIn() {
       await chrome.tabs.create({ url: `${BACKEND_BASE_URL}/auth?source=extension` });

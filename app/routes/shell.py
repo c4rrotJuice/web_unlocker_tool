@@ -44,6 +44,7 @@ async def home(request: Request):
 @router.get("/auth", response_class=HTMLResponse)
 async def auth_page(request: Request):
     next_path = validate_internal_redirect_path(request.query_params.get("next"))
+    auth_source = (request.query_params.get("source") or "").strip().lower()
     return templates.TemplateResponse(
         request,
         "auth.html",
@@ -52,6 +53,7 @@ async def auth_page(request: Request):
             "supabase_url": settings.supabase_url,
             "supabase_key": settings.supabase_anon_key,
             "next_path": next_path,
+            "auth_source": auth_source,
         },
     )
 

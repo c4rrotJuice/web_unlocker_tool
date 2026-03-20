@@ -1,0 +1,48 @@
+{% extends "app_shell_base.html" %}
+
+{% block main %}
+<section class="page-stack">
+  <section class="hero-card">
+    <div>
+      <p class="hero-kicker">Canonical app origin</p>
+      <h2 class="hero-title">Writior v2 app shell</h2>
+      <p class="hero-copy">Capture with the extension, organize in Research, and synthesize in Documents. Use this entry point for the authenticated product surfaces at app.writior.com.</p>
+    </div>
+    <div class="hero-meta">
+      <a class="section-link" href="/auth?next=%2Fdashboard">Sign in</a>
+      <a class="section-link" href="/dashboard">Open dashboard</a>
+    </div>
+  </section>
+
+  <section class="split-grid">
+    <section class="surface-card">
+      <div class="surface-head">
+        <div>
+          <p class="section-kicker">Core surfaces</p>
+          <h2>Continue in the app</h2>
+        </div>
+      </div>
+      <div class="card-stack">
+        <a class="section-link" href="/research">Research graph</a>
+        <a class="section-link" href="/projects">Projects</a>
+        <a class="section-link" href="/editor">Editor workspace</a>
+        <a class="section-link" href="/insights">Insights</a>
+      </div>
+    </section>
+
+    <section class="surface-card">
+      <div class="surface-head">
+        <div>
+          <p class="section-kicker">Public and extension entry points</p>
+          <h2>Linked routes</h2>
+        </div>
+      </div>
+      <div class="card-stack">
+        <a class="section-link" href="/pricing">Pricing</a>
+        <a class="section-link" href="/auth">Auth</a>
+        <a class="section-link" href="/auth/handoff">Extension handoff landing</a>
+      </div>
+    </section>
+  </section>
+</section>
+{% endblock %}

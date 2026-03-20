@@ -34,7 +34,11 @@ def _shell_context(*, request: Request, page: str, title: str, nav_key: str, pag
 
 @router.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    return templates.TemplateResponse(request, "home.html", {"request": request})
+    return templates.TemplateResponse(
+        request,
+        "app_home.html",
+        _shell_context(request=request, page="home", title="Home", nav_key="dashboard"),
+    )
 
 
 @router.get("/auth", response_class=HTMLResponse)

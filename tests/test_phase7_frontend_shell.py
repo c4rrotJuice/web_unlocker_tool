@@ -54,6 +54,7 @@ async def test_public_config_exposes_canonical_boot_keys(monkeypatch):
 @pytest.mark.parametrize(
     ("path", "title_fragment", "page_id"),
     [
+        ("/", "Home", "home"),
         ("/dashboard", "Dashboard", "dashboard"),
         ("/projects", "Projects", "projects"),
         ("/projects/project-123", "Project", "projects"),
@@ -74,6 +75,31 @@ async def test_shell_routes_render_minimal_boot_metadata(monkeypatch, path, titl
     assert f'"page": "{page_id}"' in html
     assert "/static/js/app_shell/boot.js" in html
     assert "citation-history" not in html
+
+
+@pytest.mark.anyio
+async def test_route_surface_keeps_expected_public_and_shell_entries(monkeypatch):
+    main = _load_main(monkeypatch)
+    async with async_test_client(main.app) as client:
+        auth = await client.get("/auth")
+        dashboard = await client.get("/dashboard")
+        editor = await client.get("/editor")
+        pricing = await client.get("/pricing", follow_redirects=False)
+        handoff = await client.get("/auth/handoff?code=handoff-1", follow_redirects=False)
+
+    assert auth.status_code == 200
+    assert dashboard.status_code == 200
+    assert editor.status_code == 200
+    assert pricing.status_code == 307
+    assert pricing.headers["location"] == "/static/pricing.html"
+    assert handoff.status_code == 307
+    assert handoff.headers["location"].endswith("/auth/handoff?code=handoff-1")
+
+
+def test_app_root_shell_does_not_reference_legacy_unlock_endpoints():
+    source = open("app/templates/app_home.html", encoding="utf-8").read()
+    assert "/view" not in source
+    assert "/fetch_and_clean_page" not in source
 
 
 def test_shell_boot_payload_does_not_embed_entity_collections():

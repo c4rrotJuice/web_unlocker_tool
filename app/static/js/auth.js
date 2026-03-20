@@ -1,6 +1,7 @@
 (function () {
   let supabaseClient = null;
   let bootPromise = null;
+  let sessionReadInFlight = null;
   let refreshInFlight = null;
   let resumeRefreshBound = false;
   let protectedRequestObserver = null;
@@ -73,6 +74,10 @@
   }
 
   async function getSession() {
+    if (sessionReadInFlight) {
+      return sessionReadInFlight;
+    }
+    sessionReadInFlight = (async () => {
     const client = await ensureSupabaseClient();
     if (!client) {
       return {
@@ -100,6 +105,10 @@
       };
     }
     return session;
+    })().finally(() => {
+      sessionReadInFlight = null;
+    });
+    return sessionReadInFlight;
   }
 
   async function setSession(tokens) {
@@ -137,23 +146,8 @@
   }
 
   async function waitForSessionReady({ timeoutMs = 900 } = {}) {
-    const startedAt = Date.now();
-    let lastSession = null;
-
-    while (Date.now() - startedAt <= timeoutMs) {
-      lastSession = await getSession();
-      if (lastSession?.data?.session?.access_token) {
-        return lastSession;
-      }
-      if (Date.now() - startedAt >= timeoutMs) {
-        break;
-      }
-      await new Promise((resolve) => {
-        window.setTimeout(resolve, 50);
-      });
-    }
-
-    return lastSession || getSession();
+    void timeoutMs;
+    return getSession();
   }
 
   function createAuthSessionError(code = "missing_credentials", message = null, details = {}) {

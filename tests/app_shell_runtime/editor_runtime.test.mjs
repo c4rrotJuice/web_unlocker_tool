@@ -355,6 +355,52 @@ test("auth fetch waits for session rehydration before issuing a protected reques
   assert.equal(sessionReady, true);
 });
 
+test("concurrent auth fetches share a single session lookup", async () => {
+  let getSessionCalls = 0;
+  let refreshSessionCalls = 0;
+  const runtime = loadAuthRuntime({
+    client: {
+      auth: {
+        async getSession() {
+          getSessionCalls += 1;
+          return {
+            data: { session: null },
+            error: null,
+          };
+        },
+        async refreshSession() {
+          refreshSessionCalls += 1;
+          return {
+            data: {
+              session: {
+                access_token: "token-shared",
+                refresh_token: "refresh-shared",
+              },
+            },
+            error: null,
+          };
+        },
+        async onAuthStateChange() {
+          return { data: { subscription: { unsubscribe() {} } }, error: null };
+        },
+        async setSession() {
+          return { data: { session: null }, error: null };
+        },
+        async signOut() {},
+      },
+    },
+    fetchImpl: async () => okResponse({ ok: true }),
+  });
+
+  await Promise.all([
+    runtime.window.webUnlockerAuth.authFetch("/api/docs", { headers: { Accept: "application/json" } }),
+    runtime.window.webUnlockerAuth.authFetch("/api/docs", { headers: { Accept: "application/json" } }),
+  ]);
+
+  assert.equal(getSessionCalls, 1);
+  assert.equal(refreshSessionCalls, 1);
+});
+
 test("auth resume hooks refresh the session on visibility change", async () => {
   let refreshCalls = 0;
   const runtime = loadAuthRuntime({

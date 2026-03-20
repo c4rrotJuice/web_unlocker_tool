@@ -4,6 +4,7 @@ import { createLogger } from "../shared/log.js";
 import { readRawSession, writeRawSession } from "../auth/session_store.js";
 
 const logger = createLogger("background:session");
+const AUTH_HYDRATION_KEY = "auth_hydration_event";
 
 export function createSessionManager() {
   async function getSession() {
@@ -49,7 +50,18 @@ export function createSessionManager() {
       expires_at: session?.expires_at || Math.floor(Date.now() / 1000) + Number(session?.expires_in || 0),
     };
     await writeRawSession(merged);
+    logger.info("Session persisted");
     return summarizeSession(merged);
+  }
+
+  async function broadcastAuthHydration(payload = {}) {
+    await chrome.storage.local.set({
+      [AUTH_HYDRATION_KEY]: {
+        at: new Date().toISOString(),
+        ...payload,
+      },
+    });
+    logger.info("Auth hydration broadcast completed");
   }
 
   async function handleUnauthorized() {
@@ -69,9 +81,9 @@ export function createSessionManager() {
     getSession,
     ensureSession,
     restoreSession,
+    broadcastAuthHydration,
     handleUnauthorized,
     logout,
     getPublicSessionState,
   };
 }
-

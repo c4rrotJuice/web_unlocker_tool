@@ -117,6 +117,21 @@ export function createApiClient({ sessionManager }) {
         body: JSON.stringify(payload),
       }, "required");
     },
+    async createAuthAttempt(payload = {}) {
+      logger.info("Creating auth completion attempt");
+      return request("/api/auth/handoff/attempts", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }, "none");
+    },
+    async getAuthAttemptStatus({ attemptId, attemptToken }) {
+      return request(`/api/auth/handoff/attempts/${encodeURIComponent(attemptId)}`, {
+        method: "GET",
+        headers: {
+          "X-Auth-Attempt-Token": attemptToken,
+        },
+      }, "none");
+    },
     async exchangeHandoff(payload) {
       logger.info("Exchanging auth restore handoff");
       return request("/api/auth/handoff/exchange", {

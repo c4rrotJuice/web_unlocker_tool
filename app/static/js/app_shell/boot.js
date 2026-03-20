@@ -6,6 +6,7 @@ import { initProjects } from "./pages/projects.js";
 import { initResearch } from "./pages/research.js";
 import { ensureFeedbackRuntime } from "../shared/feedback/feedback_bus_singleton.js";
 import { FEEDBACK_EVENTS, STATUS_SCOPES, STATUS_STATES } from "../shared/feedback/feedback_tokens.js";
+import { initSidebarShell } from "./core/sidebar.js";
 
 async function initShell(boot) {
   const feedback = ensureFeedbackRuntime({ mountTarget: document.body });
@@ -54,6 +55,7 @@ async function bootPage() {
   if (!once("app_shell_boot")) return;
   const boot = readBootPayload();
   await initShell(boot);
+  await initSidebarShell({ page: boot.page });
 
   if (boot.page === "dashboard") {
     await initDashboard();

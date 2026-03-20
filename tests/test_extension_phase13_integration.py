@@ -48,6 +48,7 @@ def test_background_queue_and_sync_preserve_causal_ordering_and_background_auth(
     assert "getPublicSessionState" in session_source
     assert "summarizeSession" in session_source
     assert "return summarizeSession(merged)" in session_source
+    assert "broadcastAuthHydration" in session_source
 
 
 def test_content_runtime_uses_shadow_root_overlay_and_background_message_bridge():

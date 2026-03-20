@@ -21,6 +21,7 @@ class UserPreferences:
     editor_density: str = "comfortable"
     default_citation_style: str = "apa"
     sidebar_collapsed: bool = False
+    sidebar_auto_hide: bool = False
     defaults_applied: bool = False
     created_at: str | None = None
     updated_at: str | None = None
@@ -86,6 +87,7 @@ def _normalize_preferences(row: dict[str, object] | None) -> UserPreferences:
         editor_density=str(row.get("editor_density") or "comfortable"),
         default_citation_style=str(row.get("default_citation_style") or "apa"),
         sidebar_collapsed=bool(row.get("sidebar_collapsed") or False),
+        sidebar_auto_hide=bool(row.get("sidebar_auto_hide") or False),
         defaults_applied=defaults_applied,
         created_at=row.get("created_at") if isinstance(row.get("created_at"), str) else None,
         updated_at=row.get("updated_at") if isinstance(row.get("updated_at"), str) else None,

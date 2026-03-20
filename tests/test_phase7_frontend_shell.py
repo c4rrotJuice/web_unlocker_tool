@@ -93,8 +93,8 @@ async def test_route_surface_keeps_expected_public_and_shell_entries(monkeypatch
     assert pricing.status_code == 307
     assert pricing.headers["location"] == "/static/pricing.html"
     assert handoff.status_code == 200
-    assert "Completing secure sign-in" in handoff.text
-    assert "writior:auth-handoff-request" in handoff.text
+    assert "Sign-in complete" in handoff.text
+    assert "Return to the extension" in handoff.text
 
 
 def test_app_root_shell_does_not_reference_legacy_unlock_endpoints():
@@ -108,6 +108,14 @@ def test_shell_boot_payload_does_not_embed_entity_collections():
     assert "recent_documents" not in template
     assert "recent_research" not in template
     assert re.search(r'<script id="app-boot" type="application/json">', template)
+
+
+def test_shell_template_exposes_sidebar_controls_for_desktop_and_mobile():
+    template = open("app/templates/app_shell_base.html", encoding="utf-8").read()
+    assert 'id="app-sidebar-toggle"' in template
+    assert 'id="app-sidebar-autohide-toggle"' in template
+    assert 'id="app-sidebar-mobile-toggle"' in template
+    assert 'id="app-sidebar-backdrop"' in template
 
 
 def test_research_shell_uses_separate_card_and_detail_renderers():
@@ -167,3 +175,10 @@ def test_projects_api_supports_explicit_limit_parameter():
     assert "limit: int = Query(default=24, le=100)" in route_source
     assert "limit=limit" in service_source
     assert '"limit": str(limit)' in repo_source
+
+
+def test_auth_handoff_page_is_minimal_success_fallback_not_bridge_wait():
+    handoff_source = open("app/templates/auth_handoff.html", encoding="utf-8").read()
+    assert "Sign-in complete" in handoff_source
+    assert "Retry sign-in" in handoff_source
+    assert "Waiting for extension bridge timed out" not in handoff_source

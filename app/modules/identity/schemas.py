@@ -84,3 +84,4 @@ class PreferencesPatchRequest(BaseModel):
     editor_density: EditorDensity | None = None
     default_citation_style: CitationStyle | None = None
     sidebar_collapsed: bool | None = None
+    sidebar_auto_hide: bool | None = None

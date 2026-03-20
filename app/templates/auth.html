@@ -269,6 +269,7 @@
     const toast = window.webUnlockerUI?.createToastManager?.();
     const nextPath = {{ next_path | tojson }};
     const authSource = {{ auth_source | tojson }};
+    const authAttempt = {{ auth_attempt | tojson }};
     const loginContainer = document.getElementById("login-container");
     const signupContainer = document.getElementById("signup-container");
 
@@ -293,11 +294,14 @@
     document.getElementById("show-login")?.addEventListener("click", showLogin);
     document.getElementById("login-email")?.focus();
 
-    async function issueExtensionRestoreHandoff(session) {
-      if (!session?.access_token || !session?.refresh_token) {
-        return null;
+    async function completeExtensionAuthAttempt(session) {
+      if (!authAttempt) {
+        throw new Error("Missing extension auth attempt.");
       }
-      const response = await fetch("/api/auth/handoff", {
+      if (!session?.access_token || !session?.refresh_token) {
+        throw new Error("Session is missing required tokens.");
+      }
+      const response = await fetch(`/api/auth/handoff/attempts/${encodeURIComponent(authAttempt)}/complete`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -315,7 +319,7 @@
         const message = payload?.detail || payload?.error || payload?.message || "Failed to issue secure handoff.";
         throw new Error(message);
       }
-      return payload?.data?.code || payload?.code || null;
+      return payload?.data?.attempt_id || authAttempt;
     }
 
     document.getElementById("signup-form").addEventListener("submit", async (e) => {
@@ -380,12 +384,12 @@
         showInlineMessage(loginMsg, successMessage);
         toast?.show({ type: "success", message: successMessage });
         let redirectPath = nextPath;
-        if (authSource === "extension") {
-          const handoffCode = await issueExtensionRestoreHandoff(data?.session || null);
-          if (!handoffCode) {
-            throw new Error("Failed to issue secure extension restore code.");
+        if (authSource === "extension" && authAttempt) {
+          const completedAttempt = await completeExtensionAuthAttempt(data?.session || null);
+          if (!completedAttempt) {
+            throw new Error("Failed to complete extension sign-in attempt.");
           }
-          redirectPath = `/auth/handoff?code=${encodeURIComponent(handoffCode)}`;
+          redirectPath = `/auth/handoff?attempt=${encodeURIComponent(completedAttempt)}`;
         }
 
         setTimeout(() => {

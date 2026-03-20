@@ -44,8 +44,15 @@
 </head>
 <body>
   <main class="card" role="status" aria-live="polite">
-    <h1 class="title">Completing secure sign-in…</h1>
-    <p id="status" class="status">Waiting for extension session restore.</p>
+    <h1 class="title">Sign-in complete</h1>
+    <p id="status" class="status">Return to the extension. It will finish secure session exchange in the background.</p>
+    <p class="status" style="margin-top: 0.75rem;">
+      If the extension does not update within a few seconds, reopen the extension popup or sidepanel.
+    </p>
+    <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+      <a href="/auth?source=extension" style="color: #93c5fd;">Retry sign-in</a>
+      <button id="close-tab" type="button" style="background: #1d4ed8; color: #fff; border: 0; border-radius: 8px; padding: 0.45rem 0.7rem; cursor: pointer;">Close tab</button>
+    </div>
   </main>
 
   <script>
@@ -56,13 +63,17 @@
   <script src="/static/js/auth.js"></script>
   <script>
     const handoffCode = {{ code | tojson }};
+    const attemptId = {{ attempt_id | tojson }};
     const statusEl = document.getElementById("status");
-    let settled = false;
+    const closeBtn = document.getElementById("close-tab");
 
     function setStatus(text, isError = false) {
       statusEl.textContent = text;
       statusEl.classList.toggle("error", Boolean(isError));
     }
+    closeBtn?.addEventListener("click", () => {
+      window.close();
+    });
 
     async function applyWebSession(session) {
       if (!session?.access_token || !session?.refresh_token) {
@@ -81,41 +92,49 @@
       }
     }
 
-    async function completeRestore(detail) {
-      if (settled) return;
-      settled = true;
-      if (!detail?.ok) {
-        setStatus("Sign-in restore failed. Return to /auth and try again.", true);
-        return;
-      }
-
+    async function runCodeRestore() {
+      setStatus("Restoring secure handoff…");
       try {
-        const payload = detail.data || {};
-        await applyWebSession(payload.web_session || payload.session);
-        const redirectPath = payload.redirect_path || "/dashboard";
-        setStatus("Signed in. Redirecting…");
-        window.location.replace(redirectPath);
+        if (!window.chrome?.runtime?.sendMessage) {
+          setStatus("Extension bridge unavailable. Reopen the extension and retry sign-in.", true);
+          return;
+        }
+        chrome.runtime.sendMessage(
+          { type: "AUTH_RESTORE", payload: { code: handoffCode } },
+          async (response) => {
+            if (chrome.runtime.lastError) {
+              setStatus("Extension bridge unavailable. Reopen the extension and retry sign-in.", true);
+              return;
+            }
+            if (!response?.ok) {
+              setStatus("Secure restore did not complete. Reopen the extension and retry.", true);
+              return;
+            }
+            try {
+              const payload = response.data || {};
+              await applyWebSession(payload.web_session || payload.session);
+              const redirectPath = payload.redirect_path || "/dashboard";
+              setStatus("Session restored. Redirecting…");
+              window.location.replace(redirectPath);
+            } catch (_error) {
+              setStatus("Session restore failed in this tab. Return to /auth and retry.", true);
+            }
+          },
+        );
       } catch (_error) {
-        setStatus("Sign-in restore failed while applying session. Please sign in again.", true);
+        setStatus("Secure restore failed. Return to /auth and retry.", true);
       }
     }
 
-    window.addEventListener("writior:auth-handoff-result", (event) => {
-      void completeRestore(event.detail || {});
-    });
-
-    setStatus("Restoring extension and web session…");
-    window.dispatchEvent(
-      new CustomEvent("writior:auth-handoff-request", {
-        detail: { code: handoffCode },
-      }),
-    );
-
-    window.setTimeout(() => {
-      if (!settled) {
-        setStatus("Waiting for extension bridge timed out. Keep this tab open or retry from /auth.", true);
-      }
-    }, 5000);
+    if (attemptId) {
+      setStatus("Sign-in complete. The extension will finish secure session restore automatically.");
+      return;
+    }
+    if (handoffCode) {
+      void runCodeRestore();
+      return;
+    }
+    setStatus("Missing handoff details. Return to /auth and retry.", true);
   </script>
 </body>
 </html>

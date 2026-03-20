@@ -40,6 +40,25 @@ class HandoffExchangeRequest(BaseModel):
         return normalized
 
 
+class AuthAttemptCreateRequest(BaseModel):
+    redirect_path: str | None = None
+
+
+class AuthAttemptCompleteRequest(BaseModel):
+    refresh_token: str
+    expires_in: int | None = None
+    token_type: str | None = None
+    redirect_path: str | None = None
+
+    @field_validator("refresh_token")
+    @classmethod
+    def validate_refresh_token(cls, value: str) -> str:
+        normalized = (value or "").strip()
+        if not normalized:
+            raise ValueError("refresh_token is required")
+        return normalized
+
+
 class ExtensionCitationCaptureRequest(BaseModel):
     source_id: str | None = None
     extraction_payload: dict[str, Any] | None = None

@@ -42,6 +42,7 @@ class StoredIdentityRepository:
             "editor_density": "comfortable",
             "default_citation_style": "apa",
             "sidebar_collapsed": False,
+            "sidebar_auto_hide": False,
         }
 
     async def fetch_entitlement(self, user_id: str, access_token: str):

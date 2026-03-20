@@ -26,8 +26,26 @@
 <body class="app-shell-body" data-page-id="{{ page_id }}">
   <a class="app-skip-link" href="#app-main">Skip to content</a>
 
-  <div class="app-shell">
-    <aside class="app-sidebar" aria-label="Primary">
+  <div class="app-shell" id="app-shell" data-page="{{ page_id }}">
+    <button
+      type="button"
+      class="app-sidebar-backdrop"
+      id="app-sidebar-backdrop"
+      aria-hidden="true"
+      tabindex="-1"
+      hidden
+    ></button>
+    <aside class="app-sidebar" id="app-sidebar" aria-label="Primary navigation">
+      <div class="app-sidebar-controls">
+        <button
+          id="app-sidebar-toggle"
+          class="app-sidebar-toggle"
+          type="button"
+          aria-controls="app-sidebar"
+          aria-expanded="true"
+          aria-label="Collapse sidebar"
+        >&lt;</button>
+      </div>
       <div class="app-brand">
         <a class="app-brand-link" href="/dashboard">
           <span class="app-brand-mark">W</span>
@@ -39,14 +57,20 @@
       </div>
 
       <nav class="app-nav" aria-label="Primary navigation">
-        <a href="/dashboard" class="app-nav-link{% if nav_key == 'dashboard' %} is-active{% endif %}" data-nav-key="dashboard">Dashboard</a>
-        <a href="/research" class="app-nav-link{% if nav_key == 'research' %} is-active{% endif %}" data-nav-key="research">Research</a>
-        <a href="/projects" class="app-nav-link{% if nav_key == 'projects' %} is-active{% endif %}" data-nav-key="projects">Projects</a>
-        <a href="/editor" class="app-nav-link{% if nav_key == 'documents' %} is-active{% endif %}" data-nav-key="documents">Documents</a>
-        <a href="/insights" class="app-nav-link{% if nav_key == 'insights' %} is-active{% endif %}" data-nav-key="insights">Insights</a>
+        <a href="/dashboard" class="app-nav-link{% if nav_key == 'dashboard' %} is-active{% endif %}" data-nav-key="dashboard" data-short="D"><span class="app-nav-link-text">Dashboard</span></a>
+        <a href="/research" class="app-nav-link{% if nav_key == 'research' %} is-active{% endif %}" data-nav-key="research" data-short="R"><span class="app-nav-link-text">Research</span></a>
+        <a href="/projects" class="app-nav-link{% if nav_key == 'projects' %} is-active{% endif %}" data-nav-key="projects" data-short="P"><span class="app-nav-link-text">Projects</span></a>
+        <a href="/editor" class="app-nav-link{% if nav_key == 'documents' %} is-active{% endif %}" data-nav-key="documents" data-short="E"><span class="app-nav-link-text">Documents</span></a>
+        <a href="/insights" class="app-nav-link{% if nav_key == 'insights' %} is-active{% endif %}" data-nav-key="insights" data-short="I"><span class="app-nav-link-text">Insights</span></a>
       </nav>
 
       <div class="app-sidebar-footer">
+        <button
+          id="app-sidebar-autohide-toggle"
+          class="app-sidebar-pref-toggle"
+          type="button"
+          aria-pressed="false"
+        >Auto-hide: Off</button>
         <button id="themeToggle" class="app-theme-toggle" type="button" aria-live="polite">Theme</button>
         <a href="/auth" class="app-auth-link" id="authButton">Sign in</a>
       </div>
@@ -54,6 +78,14 @@
 
     <div class="app-workspace">
       <header class="app-header">
+        <button
+          id="app-sidebar-mobile-toggle"
+          class="app-sidebar-mobile-toggle"
+          type="button"
+          aria-controls="app-sidebar"
+          aria-expanded="false"
+          aria-label="Open navigation menu"
+        >☰</button>
         <div>
           <p class="app-eyebrow">Writior v2</p>
           <h1 class="app-page-title">{{ page_title }}</h1>

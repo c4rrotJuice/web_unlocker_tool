@@ -45,6 +45,7 @@ async def home(request: Request):
 async def auth_page(request: Request):
     next_path = validate_internal_redirect_path(request.query_params.get("next"))
     auth_source = (request.query_params.get("source") or "").strip().lower()
+    auth_attempt = (request.query_params.get("attempt") or "").strip() or None
     return templates.TemplateResponse(
         request,
         "auth.html",
@@ -54,6 +55,7 @@ async def auth_page(request: Request):
             "supabase_key": settings.supabase_anon_key,
             "next_path": next_path,
             "auth_source": auth_source,
+            "auth_attempt": auth_attempt,
         },
     )
 

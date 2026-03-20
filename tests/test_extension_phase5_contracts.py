@@ -47,6 +47,7 @@ class StoredIdentityRepository:
             "editor_density": "comfortable",
             "default_citation_style": "apa",
             "sidebar_collapsed": False,
+            "sidebar_auto_hide": False,
         }
 
     async def fetch_entitlement(self, user_id: str, access_token: str):
@@ -112,6 +113,71 @@ async def test_extension_contract_uses_canonical_handoff_workflow(monkeypatch):
     assert issued.json()["data"]["code"] == "handoff-1"
     assert exchanged.status_code == 200
     assert exchanged.json()["data"]["session"]["access_token"] == "access"
+
+
+@pytest.mark.anyio
+async def test_extension_contract_supports_attempt_create_complete_and_status(monkeypatch):
+    app, extension_routes = _load_app(monkeypatch)
+
+    async def fake_create_attempt(_request, payload):
+        return {
+            "ok": True,
+            "data": {
+                "attempt_id": "attempt-1",
+                "attempt_token": "token-1",
+                "status": "pending",
+                "redirect_path": payload.redirect_path or "/dashboard",
+                "expires_at": "2099-01-01T00:00:00Z",
+            },
+            "meta": {},
+            "error": None,
+        }
+
+    async def fake_complete_attempt(_request, *, attempt_id, auth_context, payload):
+        assert auth_context.user_id == "user-1"
+        return {
+            "ok": True,
+            "data": {
+                "attempt_id": attempt_id,
+                "status": "ready",
+                "redirect_path": payload.redirect_path or "/dashboard",
+            },
+            "meta": {},
+            "error": None,
+        }
+
+    async def fake_attempt_status(_request, *, attempt_id, attempt_token):
+        assert attempt_token == "token-1"
+        return {
+            "ok": True,
+            "data": {
+                "attempt_id": attempt_id,
+                "status": "ready",
+                "exchange": {"code": "handoff-1", "exchange_path": "/api/auth/handoff/exchange"},
+            },
+            "meta": {},
+            "error": None,
+        }
+
+    extension_routes.service.create_auth_attempt = fake_create_attempt
+    extension_routes.service.complete_auth_attempt = fake_complete_attempt
+    extension_routes.service.auth_attempt_status = fake_attempt_status
+
+    async with async_test_client(app) as client:
+        created = await client.post("/api/auth/handoff/attempts", json={"redirect_path": "/dashboard"})
+        completed = await client.post(
+            "/api/auth/handoff/attempts/attempt-1/complete",
+            headers={"Authorization": "Bearer valid"},
+            json={"refresh_token": "refresh-1", "redirect_path": "/dashboard"},
+        )
+        status = await client.get("/api/auth/handoff/attempts/attempt-1", headers={"X-Auth-Attempt-Token": "token-1"})
+
+    assert created.status_code == 200
+    assert created.json()["data"]["attempt_id"] == "attempt-1"
+    assert completed.status_code == 200
+    assert completed.json()["data"]["status"] == "ready"
+    assert status.status_code == 200
+    assert status.json()["data"]["exchange"]["code"] == "handoff-1"
 
 
 @pytest.mark.anyio

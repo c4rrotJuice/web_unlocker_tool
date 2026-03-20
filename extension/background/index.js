@@ -72,6 +72,13 @@ export function createBackgroundRuntime({
 
   async function hydrateAuthorityState(source = "startup") {
     try {
+      if (typeof handoffManager.resumePendingAuthAttempt === "function") {
+        await handoffManager.resumePendingAuthAttempt();
+      }
+    } catch (error) {
+      logger.warn("Pending auth attempt hydration failed", { source, error: error?.message });
+    }
+    try {
       const bootstrap = await apiClient.bootstrap();
       await capabilityCache.write(bootstrap?.data?.capabilities || bootstrap?.capabilities || null);
     } catch (error) {

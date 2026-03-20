@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import hmac
 import hashlib
 import json
+import logging
 import secrets
 from typing import Any
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit
@@ -30,6 +32,8 @@ from app.core.serialization import (
 from app.modules.identity.service import IdentityService
 from app.modules.research.taxonomy.service import TaxonomyService
 
+logger = logging.getLogger(__name__)
+
 
 class HandoffCodeInvalidError(AppError):
     def __init__(self, message: str = "Invalid handoff code.") -> None:
@@ -54,6 +58,16 @@ class HandoffPayloadInvalidError(AppError):
 class HandoffRefreshFailedError(AppError):
     def __init__(self, message: str = "Handoff session refresh failed.") -> None:
         super().__init__("handoff_refresh_failed", message, 401)
+
+
+class HandoffAttemptInvalidError(AppError):
+    def __init__(self, message: str = "Auth attempt is invalid.") -> None:
+        super().__init__("auth_attempt_invalid", message, 400)
+
+
+class HandoffAttemptExpiredError(AppError):
+    def __init__(self, message: str = "Auth attempt has expired.") -> None:
+        super().__init__("auth_attempt_expired", message, 400)
 
 
 class ExtensionPersistenceError(AppError):
@@ -119,6 +133,9 @@ class ExtensionService:
 
     async def cleanup_expired_handoff_codes(self) -> int:
         return await self.repository.delete_expired_handoff_codes()
+
+    async def cleanup_expired_handoff_attempts(self) -> int:
+        return await self.repository.delete_expired_handoff_attempts()
 
     async def build_access_context(self, request: Request, auth_context: RequestAuthContext) -> ExtensionAccessContext:
         account_state = await self.identity_service.ensure_account_bootstrapped(auth_context)
@@ -223,6 +240,41 @@ class ExtensionService:
     def _rate_limit_identity(self, request: Request, user_id: str | None = None) -> str:
         return user_id or resolve_client_ip(request, self.settings)
 
+    def _attempt_expiry(self) -> str:
+        attempt_ttl_seconds = max(self.settings.auth_handoff_ttl_seconds * 3, 180)
+        return (datetime.now(timezone.utc) + timedelta(seconds=attempt_ttl_seconds)).isoformat()
+
+    def _attempt_secret_hash(self, attempt_secret: str) -> str:
+        return hashlib.sha256(attempt_secret.encode("utf-8")).hexdigest()
+
+    def _session_payload(self, *, access_token: str | None, refresh_token: str, expires_in: int | None, token_type: str | None) -> dict[str, Any]:
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_in": expires_in,
+            "token_type": token_type or "bearer",
+        }
+
+    async def _create_one_time_handoff_code(
+        self,
+        *,
+        user_id: str,
+        redirect_path: str,
+        session_payload: dict[str, Any],
+    ) -> tuple[str, str]:
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=self.settings.auth_handoff_ttl_seconds)).isoformat()
+        code = secrets.token_urlsafe(32)
+        created = await self.repository.create_handoff_code(
+            code=code,
+            user_id=user_id,
+            redirect_path=redirect_path,
+            session_payload=session_payload,
+            expires_at=expires_at,
+        )
+        if created is None:
+            raise ExtensionPersistenceError("Failed to issue handoff code.")
+        return code, expires_at
+
     async def issue_handoff(self, request: Request, access: ExtensionAccessContext, payload) -> dict[str, object]:
         await self._enforce_rate_limit(
             request,
@@ -232,23 +284,17 @@ class ExtensionService:
             window_seconds=self.settings.rate_limits.auth_sensitive_window_seconds,
         )
         redirect_path = self._safe_redirect_path(payload.redirect_path)
-        session_payload = {
-            "access_token": access.access_token,
-            "refresh_token": payload.refresh_token,
-            "expires_in": payload.expires_in,
-            "token_type": payload.token_type or "bearer",
-        }
-        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=self.settings.auth_handoff_ttl_seconds)).isoformat()
-        code = secrets.token_urlsafe(32)
-        created = await self.repository.create_handoff_code(
-            code=code,
+        session_payload = self._session_payload(
+            access_token=access.access_token,
+            refresh_token=payload.refresh_token,
+            expires_in=payload.expires_in,
+            token_type=payload.token_type,
+        )
+        code, expires_at = await self._create_one_time_handoff_code(
             user_id=access.user_id,
             redirect_path=redirect_path,
             session_payload=session_payload,
-            expires_at=expires_at,
         )
-        if created is None:
-            raise ExtensionPersistenceError("Failed to issue handoff code.")
         return serialize_ok_envelope(
             {
                 "code": code,
@@ -256,6 +302,141 @@ class ExtensionService:
                 "expires_at": expires_at,
             }
         )
+
+    async def create_auth_attempt(self, request: Request, payload) -> dict[str, object]:
+        await self._enforce_rate_limit(
+            request,
+            scope="auth_attempt_create",
+            identity=self._rate_limit_identity(request),
+            limit=self.settings.rate_limits.auth_sensitive_limit,
+            window_seconds=self.settings.rate_limits.auth_sensitive_window_seconds,
+        )
+        redirect_path = self._safe_redirect_path(payload.redirect_path)
+        attempt_id = secrets.token_urlsafe(24)
+        attempt_token = secrets.token_urlsafe(32)
+        expires_at = self._attempt_expiry()
+        created = await self.repository.create_handoff_attempt(
+            attempt_id=attempt_id,
+            attempt_secret_hash=self._attempt_secret_hash(attempt_token),
+            redirect_path=redirect_path,
+            expires_at=expires_at,
+        )
+        if created is None:
+            raise ExtensionPersistenceError("Failed to create auth attempt.")
+        logger.info("Auth attempt created", extra={"attempt_id": attempt_id})
+        return serialize_ok_envelope(
+            {
+                "attempt_id": attempt_id,
+                "attempt_token": attempt_token,
+                "status": "pending",
+                "redirect_path": redirect_path,
+                "expires_at": expires_at,
+            }
+        )
+
+    async def complete_auth_attempt(
+        self,
+        request: Request,
+        *,
+        attempt_id: str,
+        auth_context: RequestAuthContext,
+        payload,
+    ) -> dict[str, object]:
+        await self._enforce_rate_limit(
+            request,
+            scope="auth_attempt_complete",
+            identity=self._rate_limit_identity(request, auth_context.user_id),
+            limit=self.settings.rate_limits.auth_sensitive_limit,
+            window_seconds=self.settings.rate_limits.auth_sensitive_window_seconds,
+        )
+        attempt = await self.repository.get_handoff_attempt(attempt_id=attempt_id)
+        if attempt is None:
+            raise HandoffAttemptInvalidError()
+        now = datetime.now(timezone.utc)
+        try:
+            expires_at = datetime.fromisoformat(str(attempt.get("expires_at")).replace("Z", "+00:00"))
+        except Exception as exc:
+            raise HandoffAttemptInvalidError("Auth attempt expiry is invalid.") from exc
+        if expires_at <= now:
+            raise HandoffAttemptExpiredError()
+        if attempt.get("status") == "ready" and attempt.get("handoff_code"):
+            return serialize_ok_envelope(
+                {
+                    "attempt_id": attempt_id,
+                    "status": "ready",
+                    "redirect_path": self._safe_redirect_path(payload.redirect_path or attempt.get("redirect_path")),
+                    "expires_at": attempt.get("expires_at"),
+                }
+            )
+        if attempt.get("status") not in {"pending", "ready"}:
+            raise HandoffAttemptInvalidError("Auth attempt is no longer completable.")
+        redirect_path = self._safe_redirect_path(payload.redirect_path or attempt.get("redirect_path"))
+        session_payload = self._session_payload(
+            access_token=auth_context.access_token,
+            refresh_token=payload.refresh_token,
+            expires_in=payload.expires_in,
+            token_type=payload.token_type,
+        )
+        handoff_code, handoff_expires_at = await self._create_one_time_handoff_code(
+            user_id=auth_context.user_id,
+            redirect_path=redirect_path,
+            session_payload=session_payload,
+        )
+        ready_at = datetime.now(timezone.utc).isoformat()
+        marked = await self.repository.mark_handoff_attempt_ready(
+            attempt_id=attempt_id,
+            user_id=auth_context.user_id,
+            handoff_code=handoff_code,
+            ready_at=ready_at,
+        )
+        if marked is None:
+            raise HandoffAttemptInvalidError("Auth attempt could not be marked ready.")
+        logger.info("Auth attempt marked ready", extra={"attempt_id": attempt_id, "user_id": auth_context.user_id})
+        return serialize_ok_envelope(
+            {
+                "attempt_id": attempt_id,
+                "status": "ready",
+                "redirect_path": redirect_path,
+                "expires_at": attempt.get("expires_at"),
+                "exchange_expires_at": handoff_expires_at,
+            }
+        )
+
+    async def auth_attempt_status(self, request: Request, *, attempt_id: str, attempt_token: str) -> dict[str, object]:
+        await self._enforce_rate_limit(
+            request,
+            scope="auth_attempt_status",
+            identity=self._rate_limit_identity(request),
+            limit=self.settings.rate_limits.auth_sensitive_limit * 3,
+            window_seconds=self.settings.rate_limits.auth_sensitive_window_seconds,
+        )
+        attempt = await self.repository.get_handoff_attempt(attempt_id=attempt_id)
+        if attempt is None:
+            raise HandoffAttemptInvalidError()
+        expected_hash = str(attempt.get("attempt_secret_hash") or "")
+        provided_hash = self._attempt_secret_hash((attempt_token or "").strip())
+        if not expected_hash or not hmac.compare_digest(expected_hash, provided_hash):
+            raise HandoffAttemptInvalidError("Auth attempt token is invalid.")
+        now = datetime.now(timezone.utc)
+        try:
+            expires_at = datetime.fromisoformat(str(attempt.get("expires_at")).replace("Z", "+00:00"))
+        except Exception as exc:
+            raise HandoffAttemptInvalidError("Auth attempt expiry is invalid.") from exc
+        if expires_at <= now:
+            raise HandoffAttemptExpiredError()
+        status = str(attempt.get("status") or "pending")
+        response: dict[str, Any] = {
+            "attempt_id": attempt_id,
+            "status": status,
+            "redirect_path": attempt.get("redirect_path"),
+            "expires_at": attempt.get("expires_at"),
+        }
+        if status == "ready" and attempt.get("handoff_code"):
+            response["exchange"] = {
+                "code": attempt.get("handoff_code"),
+                "exchange_path": "/api/auth/handoff/exchange",
+            }
+        return serialize_ok_envelope(response)
 
     def _load_stored_session(self, record: dict[str, Any]) -> dict[str, Any]:
         payload = record.get("session_payload")
@@ -339,6 +520,11 @@ class ExtensionService:
             try:
                 stored_session = self._load_stored_session(record)
                 session_payload = await self._refresh_or_validate_session(stored_session, expected_user_id=str(record["user_id"]))
+                await self.repository.mark_handoff_attempt_exchanged(
+                    handoff_code=payload.code,
+                    exchanged_at=datetime.now(timezone.utc).isoformat(),
+                )
+                logger.info("Handoff exchange succeeded")
                 return serialize_ok_envelope(
                     {
                         "redirect_path": safe_redirect,

@@ -181,6 +181,7 @@ class IdentityService:
                 editor_density=str(preferences_row.get("editor_density") or "comfortable"),
                 default_citation_style=str(preferences_row.get("default_citation_style") or "apa"),
                 sidebar_collapsed=bool(preferences_row.get("sidebar_collapsed") or False),
+                sidebar_auto_hide=bool(preferences_row.get("sidebar_auto_hide") or False),
                 defaults_applied=False,
                 created_at=preferences_row.get("created_at") if isinstance(preferences_row.get("created_at"), str) else None,
                 updated_at=preferences_row.get("updated_at") if isinstance(preferences_row.get("updated_at"), str) else None,

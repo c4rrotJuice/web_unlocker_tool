@@ -60,6 +60,7 @@ class LazyBootstrapIdentityRepository:
                 "editor_density": "comfortable",
                 "default_citation_style": "apa",
                 "sidebar_collapsed": False,
+                "sidebar_auto_hide": False,
             }
             self.entitlement = {
                 "tier": "free",
@@ -80,6 +81,7 @@ class StoredIdentityRepository(LazyBootstrapIdentityRepository):
             "editor_density": "comfortable",
             "default_citation_style": "apa",
             "sidebar_collapsed": False,
+            "sidebar_auto_hide": False,
         }
         self.entitlement = {
             "tier": "standard",
@@ -174,7 +176,7 @@ async def test_profile_and_preferences_patch_persist_for_authenticated_user(monk
         preferences_response = await client.patch(
             "/api/preferences",
             headers={"Authorization": "Bearer valid-token"},
-            json={"theme": "dark", "editor_density": "compact", "sidebar_collapsed": True},
+            json={"theme": "dark", "editor_density": "compact", "sidebar_collapsed": True, "sidebar_auto_hide": True},
         )
 
     assert profile_response.status_code == 200
@@ -183,6 +185,7 @@ async def test_profile_and_preferences_patch_persist_for_authenticated_user(monk
     assert preferences_response.json()["data"]["theme"] == "dark"
     assert preferences_response.json()["data"]["editor_density"] == "compact"
     assert preferences_response.json()["data"]["sidebar_collapsed"] is True
+    assert preferences_response.json()["data"]["sidebar_auto_hide"] is True
 
 
 @pytest.mark.anyio

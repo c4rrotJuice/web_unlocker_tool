@@ -45,6 +45,7 @@ class FakeIdentityRepository:
             "editor_density": "comfortable",
             "default_citation_style": "apa",
             "sidebar_collapsed": False,
+            "sidebar_auto_hide": False,
         }
         self.entitlement = {
             "tier": "standard",

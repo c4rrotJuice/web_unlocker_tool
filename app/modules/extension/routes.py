@@ -11,6 +11,8 @@ from app.modules.common.ownership import OwnershipValidator
 from app.modules.common.relation_validation import RelationValidator
 from app.modules.extension.repo import ExtensionRepository
 from app.modules.extension.schemas import (
+    AuthAttemptCompleteRequest,
+    AuthAttemptCreateRequest,
     ExtensionCitationCaptureRequest,
     ExtensionNoteCaptureRequest,
     ExtensionQuoteCaptureRequest,
@@ -116,6 +118,14 @@ async def _extension_access(
     return await service.build_access_context(request, auth_context)
 
 
+async def _auth_context(
+    request: Request,
+    auth_context: RequestAuthContext = Depends(require_request_auth_context),
+):
+    request.state.auth_context = auth_context
+    return auth_context
+
+
 @router.get("/api/extension/status")
 async def extension_status() -> dict[str, object]:
     return service.status()
@@ -136,19 +146,57 @@ async def issue_handoff(request: Request, payload: HandoffIssueRequest, access=D
     return await service.issue_handoff(request, access, payload)
 
 
+@router.post("/api/auth/handoff/attempts")
+async def create_auth_attempt(request: Request, payload: AuthAttemptCreateRequest):
+    return await service.create_auth_attempt(request, payload)
+
+
+@router.get("/api/auth/handoff/attempts/{attempt_id}")
+async def auth_attempt_status(
+    request: Request,
+    attempt_id: str,
+    x_auth_attempt_token: str | None = Header(default=None),
+):
+    return await service.auth_attempt_status(
+        request,
+        attempt_id=attempt_id.strip(),
+        attempt_token=(x_auth_attempt_token or "").strip(),
+    )
+
+
+@router.post("/api/auth/handoff/attempts/{attempt_id}/complete")
+async def complete_auth_attempt(
+    request: Request,
+    attempt_id: str,
+    payload: AuthAttemptCompleteRequest,
+    auth_context: RequestAuthContext = Depends(_auth_context),
+):
+    return await service.complete_auth_attempt(
+        request,
+        attempt_id=attempt_id.strip(),
+        auth_context=auth_context,
+        payload=payload,
+    )
+
+
 @router.post("/api/auth/handoff/exchange")
 async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
     return await service.exchange_handoff(request, payload)
 
 
 @router.get("/auth/handoff", response_class=HTMLResponse)
-async def handoff_landing(request: Request, code: str = Query(..., min_length=1)):
+async def handoff_landing(
+    request: Request,
+    code: str | None = Query(default=None, min_length=1),
+    attempt: str | None = Query(default=None, min_length=1),
+):
     return templates.TemplateResponse(
         request,
         "auth_handoff.html",
         {
             "request": request,
-            "code": code.strip(),
+            "code": (code or "").strip() or None,
+            "attempt_id": (attempt or "").strip() or None,
             "supabase_url": settings.supabase_url,
             "supabase_key": settings.supabase_anon_key,
         },

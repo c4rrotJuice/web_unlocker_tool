@@ -44,6 +44,7 @@ def serialize_preferences(preferences) -> dict[str, object]:
         "editor_density": preferences.editor_density,
         "default_citation_style": preferences.default_citation_style,
         "sidebar_collapsed": preferences.sidebar_collapsed,
+        "sidebar_auto_hide": preferences.sidebar_auto_hide,
     }
 
 

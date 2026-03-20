@@ -13,7 +13,7 @@ function unwrap(payload) {
   return payload;
 }
 
-export async function apiFetchJson(path, { signal, redirectOnAuth = true } = {}) {
+export async function apiFetchJson(path, { signal, redirectOnAuth = true, unwrapEnvelope = true } = {}) {
   const feedback = ensureFeedbackRuntime({ mountTarget: document.body });
   const res = await window.webUnlockerAuth?.authFetch?.(path, {
     method: "GET",
@@ -40,7 +40,7 @@ export async function apiFetchJson(path, { signal, redirectOnAuth = true } = {})
     error.payload = payload;
     throw error;
   }
-  return unwrap(payload);
+  return unwrapEnvelope ? unwrap(payload) : payload;
 }
 
 export function createLatestRequestTracker() {

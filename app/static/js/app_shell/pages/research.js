@@ -2,44 +2,45 @@ import { apiFetchJson, createLatestRequestTracker } from "../core/fetch.js";
 import { renderEmpty, renderError, renderLoading, bindRetry } from "../core/dom.js";
 import { getResearchStateFromUrl, updateResearchUrl } from "../core/url_state.js";
 import { renderCitationCard, renderNoteCard, renderQuoteCard, renderSourceCard } from "../renderers/cards.js";
-import { renderCitationDetail, renderNoteDetail, renderQuoteDetail, renderSourceDetail } from "../renderers/details.js";
+import { renderCitationDetail, renderGraphDetail, renderNoteDetail, renderQuoteDetail, renderSourceDetail } from "../renderers/details.js";
 import { ensureFeedbackRuntime } from "../../shared/feedback/feedback_bus_singleton.js";
 import { FEEDBACK_EVENTS } from "../../shared/feedback/feedback_tokens.js";
 
 const TAB_CONFIG = {
   sources: {
-    listPath: (state) => `/api/sources?limit=20${state.q ? `&query=${encodeURIComponent(state.q)}` : ""}`,
-    detailPath: (id) => `/api/sources/${encodeURIComponent(id)}`,
+    listPath: (state, cursor = "") => `/api/sources?limit=20${state.q ? `&query=${encodeURIComponent(state.q)}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
     listRenderer: renderSourceCard,
     detailRenderer: renderSourceDetail,
-    envelope: false,
+    supportsProject: false,
+    supportsTag: false,
   },
   citations: {
-    listPath: (state) => `/api/citations?limit=20${state.q ? `&search=${encodeURIComponent(state.q)}` : ""}`,
-    detailPath: (id) => `/api/citations/${encodeURIComponent(id)}`,
+    listPath: (state, cursor = "") => `/api/citations?limit=20${state.q ? `&search=${encodeURIComponent(state.q)}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
     listRenderer: renderCitationCard,
     detailRenderer: renderCitationDetail,
-    envelope: false,
+    supportsProject: false,
+    supportsTag: false,
   },
   quotes: {
-    listPath: (state) => `/api/quotes?limit=20${state.q ? `&query=${encodeURIComponent(state.q)}` : ""}`,
-    detailPath: (id) => `/api/quotes/${encodeURIComponent(id)}`,
+    listPath: (state, cursor = "") => `/api/quotes?limit=20${state.q ? `&query=${encodeURIComponent(state.q)}` : ""}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
     listRenderer: renderQuoteCard,
     detailRenderer: renderQuoteDetail,
-    envelope: true,
+    supportsProject: false,
+    supportsTag: false,
   },
   notes: {
-    listPath: (state) => {
+    listPath: (state, cursor = "") => {
       const parts = [`/api/notes?limit=20`];
       if (state.q) parts.push(`&query=${encodeURIComponent(state.q)}`);
       if (state.project) parts.push(`&project_id=${encodeURIComponent(state.project)}`);
       if (state.tag) parts.push(`&tag_id=${encodeURIComponent(state.tag)}`);
+      if (cursor) parts.push(`&cursor=${encodeURIComponent(cursor)}`);
       return parts.join("");
     },
-    detailPath: (id) => `/api/notes/${encodeURIComponent(id)}`,
     listRenderer: renderNoteCard,
     detailRenderer: renderNoteDetail,
-    envelope: true,
+    supportsProject: true,
+    supportsTag: true,
   },
 };
 
@@ -68,10 +69,21 @@ export async function initResearch() {
   let detailAbortController = null;
   let latestListItems = [];
   let activeDatasetKey = "";
-  const detailCache = new Map();
+  let currentMeta = { has_more: false, next_cursor: null };
+  const graphCache = new Map();
+  let lastDetailId = "";
+  let lastDetailType = "";
 
   function setContextOpen(isOpen) {
     frame.classList.toggle("has-context", isOpen);
+  }
+
+  function activeConfig(state = getState()) {
+    return TAB_CONFIG[state.tab];
+  }
+
+  function tabEntityType(tab) {
+    return tab.slice(0, -1);
   }
 
   function getState() {
@@ -89,6 +101,11 @@ export async function initResearch() {
     queryInput.value = state.q;
     projectInput.value = state.project;
     tagInput.value = state.tag;
+    const config = activeConfig(state);
+    projectInput.disabled = !config.supportsProject;
+    tagInput.disabled = !config.supportsTag;
+    projectInput.placeholder = config.supportsProject ? "Project id" : "Project scope not available here";
+    tagInput.placeholder = config.supportsTag ? "Tag id" : "Tag scope not available here";
     [...tablist.querySelectorAll("[data-tab]")].forEach((button) => {
       const active = button.dataset.tab === state.tab;
       button.setAttribute("aria-selected", String(active));
@@ -96,13 +113,22 @@ export async function initResearch() {
     });
   }
 
-  function renderList(items, state) {
+  function renderLoadMore(meta) {
+    if (!meta?.has_more || !meta?.next_cursor) return "";
+    return `
+      <div class="surface-note">
+        <button type="button" class="app-button-secondary" data-research-load-more>Load more</button>
+      </div>
+    `;
+  }
+
+  function renderList(items, state, meta = currentMeta) {
     if (!items.length) {
       renderEmpty(listNode, `No ${state.tab} yet`, `Capture or create ${state.tab} to populate this view.`);
       return;
     }
     const renderer = TAB_CONFIG[state.tab].listRenderer;
-    listNode.innerHTML = `<div class="card-stack" role="list" aria-label="${state.tab} results">${items.map((item) => renderer(item, { selected: item.id === state.selected })).join("")}</div>`;
+    listNode.innerHTML = `<div class="card-stack" role="list" aria-label="${state.tab} results">${items.map((item) => renderer(item, { selected: item.id === state.selected })).join("")}</div>${renderLoadMore(meta)}`;
     const cards = [...listNode.querySelectorAll(".research-card")];
     cards.forEach((card, index) => {
       card.addEventListener("click", () => selectItem(cards[index].dataset.entityId || ""));
@@ -122,6 +148,10 @@ export async function initResearch() {
         }
       });
     });
+    const loadMoreButton = listNode.querySelector("[data-research-load-more]");
+    if (loadMoreButton) {
+      loadMoreButton.addEventListener("click", () => loadMore());
+    }
   }
 
   function datasetKey(state) {
@@ -134,24 +164,31 @@ export async function initResearch() {
   }
 
   function refreshListSelection() {
-    renderList(latestListItems, getState());
+    renderList(latestListItems, getState(), currentMeta);
   }
 
-  async function loadList() {
+  async function loadList({ append = false, cursor = "" } = {}) {
     const state = getState();
     syncControls(state);
-    renderLoading(listNode, `Loading ${state.tab}…`);
+    if (!append) {
+      renderLoading(listNode, `Loading ${state.tab}…`);
+    }
     if (listAbortController) listAbortController.abort();
     listAbortController = new AbortController();
     const requestId = listTracker.next();
 
     try {
-      const payload = await apiFetchJson(TAB_CONFIG[state.tab].listPath(state), { signal: listAbortController.signal });
+      const payload = await apiFetchJson(TAB_CONFIG[state.tab].listPath(state, cursor), {
+        signal: listAbortController.signal,
+        unwrapEnvelope: false,
+      });
       if (!listTracker.isLatest(requestId)) return;
       activeDatasetKey = datasetKey(state);
-      latestListItems = TAB_CONFIG[state.tab].envelope ? (payload || []) : (payload || []);
+      currentMeta = payload?.meta || { has_more: false, next_cursor: null };
+      const nextItems = payload?.data || [];
+      latestListItems = append ? [...latestListItems, ...nextItems] : nextItems;
       feedback.emitDomainEvent(FEEDBACK_EVENTS.RESEARCH_PANEL_READY, { label: `${state.tab} ready` });
-      renderList(latestListItems, state);
+      renderList(latestListItems, state, currentMeta);
       if (state.selected) {
         await loadDetail(state.selected);
       } else {
@@ -170,6 +207,11 @@ export async function initResearch() {
     }
   }
 
+  async function loadMore() {
+    if (!currentMeta?.has_more || !currentMeta?.next_cursor) return;
+    await loadList({ append: true, cursor: currentMeta.next_cursor });
+  }
+
   function localSelection(state, id) {
     return latestListItems.find((item) => item.id === id) || null;
   }
@@ -180,20 +222,27 @@ export async function initResearch() {
     setContextOpen(false);
   }
 
+  function renderContextLoading(id, fallbackDetail) {
+    contextTitle.textContent = id;
+    contextBody.innerHTML = `${fallbackDetail}<div class="surface-note">Loading related research neighborhood…</div>`;
+    setContextOpen(true);
+  }
+
+  function graphPath(type, id) {
+    return `/api/research/${encodeURIComponent(type)}/${encodeURIComponent(id)}/graph`;
+  }
+
   async function loadDetail(id) {
     const state = getState();
     const config = TAB_CONFIG[state.tab];
     const baseItem = localSelection(state, id);
-    if (!baseItem) {
-      clearContext();
-      return;
-    }
-    contextTitle.textContent = id;
-    contextBody.innerHTML = config.detailRenderer(baseItem);
-    setContextOpen(true);
+    const baseMarkup = config.detailRenderer(baseItem || { id, title: id });
+    renderContextLoading(id, baseMarkup);
+    lastDetailId = id;
+    lastDetailType = tabEntityType(state.tab);
 
-    if (detailCache.has(`${state.tab}:${id}`)) {
-      contextBody.innerHTML = config.detailRenderer(detailCache.get(`${state.tab}:${id}`));
+    if (graphCache.has(`${state.tab}:${id}`)) {
+      contextBody.innerHTML = renderGraphDetail(graphCache.get(`${state.tab}:${id}`));
       return;
     }
 
@@ -202,14 +251,15 @@ export async function initResearch() {
     const requestId = detailTracker.next();
 
     try {
-      const detail = await apiFetchJson(config.detailPath(id), { signal: detailAbortController.signal });
+      const graph = await apiFetchJson(graphPath(tabEntityType(state.tab), id), { signal: detailAbortController.signal });
       if (!detailTracker.isLatest(requestId)) return;
-      detailCache.set(`${state.tab}:${id}`, detail);
+      graphCache.set(`${state.tab}:${id}`, graph);
       if (getState().selected !== id || getState().tab !== state.tab) return;
-      contextBody.innerHTML = config.detailRenderer(detail);
+      contextBody.innerHTML = renderGraphDetail(graph);
     } catch (error) {
       if (error.name === "AbortError") return;
       if (!detailTracker.isLatest(requestId)) return;
+      contextBody.innerHTML = `${baseMarkup}<div class="surface-note">Unable to load the canonical neighborhood right now.</div>`;
     }
   }
 
@@ -226,6 +276,28 @@ export async function initResearch() {
     updateResearchUrl({ selected: id });
     refreshListSelection();
     loadDetail(id);
+  }
+
+  function navigateToEntity(type, id) {
+    const nextTab = `${type}s`;
+    const nextState = {
+      tab: nextTab,
+      selected: id,
+      q: "",
+      project: nextTab === "notes" ? getState().project : "",
+      tag: nextTab === "notes" ? getState().tag : "",
+    };
+    updateResearchUrl(nextState);
+    if (nextTab === getState().tab) {
+      refreshListSelection();
+      void loadDetail(id);
+      return;
+    }
+    void loadList();
+  }
+
+  function navigateToDocument(documentId) {
+    window.location.href = `/editor?document_id=${encodeURIComponent(documentId)}`;
   }
 
   tablist.addEventListener("click", (event) => {
@@ -260,13 +332,26 @@ export async function initResearch() {
 
   filtersForm.addEventListener("submit", (event) => {
     event.preventDefault();
+    const config = activeConfig();
     updateResearchUrl({
       q: queryInput.value.trim(),
-      project: projectInput.value.trim(),
-      tag: tagInput.value.trim(),
+      project: config.supportsProject ? projectInput.value.trim() : "",
+      tag: config.supportsTag ? tagInput.value.trim() : "",
       selected: "",
     });
     loadList();
+  });
+
+  contextBody.addEventListener("click", (event) => {
+    const relatedEntity = event.target.closest("[data-related-entity-id]");
+    if (relatedEntity) {
+      navigateToEntity(relatedEntity.dataset.relatedEntityType || "", relatedEntity.dataset.relatedEntityId || "");
+      return;
+    }
+    const relatedDocument = event.target.closest("[data-related-document-id]");
+    if (relatedDocument) {
+      navigateToDocument(relatedDocument.dataset.relatedDocumentId || "");
+    }
   });
 
   closeButton.addEventListener("click", clearSelection);

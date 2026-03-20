@@ -53,32 +53,80 @@ class SourcesRepository:
         source_type: str | None,
         hostname: str | None,
         limit: int,
+        offset: int = 0,
     ) -> list[dict]:
-        citation_params = {
-            "user_id": f"eq.{user_id}",
-            "select": "source_id",
-            "order": "created_at.desc",
-            "limit": str(limit),
-        }
-        response = await self.supabase_repo.get(
-            "citation_instances",
-            params=citation_params,
-            headers=self._user_headers(access_token, include_content_type=False),
-        )
-        citation_rows = response_json(response)
-        if not isinstance(citation_rows, list):
+        batch_size = max(limit + offset + 1, 100)
+        target_count = offset + limit + 1
+        source_activity: dict[str, str] = {}
+        citation_offset = 0
+        note_offset = 0
+        citation_exhausted = False
+        note_exhausted = False
+
+        while len(source_activity) < target_count and (not citation_exhausted or not note_exhausted):
+            if not citation_exhausted:
+                citation_response = await self.supabase_repo.get(
+                    "citation_instances",
+                    params={
+                        "user_id": f"eq.{user_id}",
+                        "select": "source_id,created_at",
+                        "order": "created_at.desc,id.desc",
+                        "limit": str(batch_size),
+                        "offset": str(citation_offset),
+                    },
+                    headers=self._user_headers(access_token, include_content_type=False),
+                )
+                citation_rows = response_json(citation_response)
+                if not isinstance(citation_rows, list) or not citation_rows:
+                    citation_exhausted = True
+                else:
+                    for row in citation_rows:
+                        source_id = row.get("source_id")
+                        activity_at = str(row.get("created_at") or "")
+                        if source_id and activity_at and activity_at > source_activity.get(source_id, ""):
+                            source_activity[source_id] = activity_at
+                    citation_offset += len(citation_rows)
+                    citation_exhausted = len(citation_rows) < batch_size
+
+            if not note_exhausted:
+                note_response = await self.supabase_repo.get(
+                    "note_sources",
+                    params={
+                        "user_id": f"eq.{user_id}",
+                        "source_id": "not.is.null",
+                        "select": "source_id,attached_at",
+                        "order": "attached_at.desc,id.desc",
+                        "limit": str(batch_size),
+                        "offset": str(note_offset),
+                    },
+                    headers=self._user_headers(access_token, include_content_type=False),
+                )
+                note_rows = response_json(note_response)
+                if not isinstance(note_rows, list) or not note_rows:
+                    note_exhausted = True
+                else:
+                    for row in note_rows:
+                        source_id = row.get("source_id")
+                        activity_at = str(row.get("attached_at") or "")
+                        if source_id and activity_at and activity_at > source_activity.get(source_id, ""):
+                            source_activity[source_id] = activity_at
+                    note_offset += len(note_rows)
+                    note_exhausted = len(note_rows) < batch_size
+
+            if citation_exhausted and note_exhausted:
+                break
+
+        if not source_activity:
             return []
-        source_ids: list[str] = []
-        seen: set[str] = set()
-        for row in citation_rows:
-            source_id = row.get("source_id")
-            if not source_id or source_id in seen:
-                continue
-            seen.add(source_id)
-            source_ids.append(source_id)
-        if not source_ids:
-            return []
-        params = {"id": f"in.({','.join(source_ids)})", "select": "*"}
+        ordered_source_ids = [
+            source_id
+            for source_id, _activity_at in sorted(
+                source_activity.items(),
+                key=lambda item: (item[1], item[0]),
+                reverse=True,
+            )
+        ]
+        params = {"id": f"in.({','.join(ordered_source_ids)})", "select": "*"}
         if source_type:
             params["source_type"] = f"eq.{source_type}"
         if hostname:
@@ -92,7 +140,27 @@ class SourcesRepository:
         if not isinstance(payload, list):
             return []
         by_id = {row.get("id"): row for row in payload if row.get("id")}
-        return [by_id[source_id] for source_id in source_ids if source_id in by_id]
+        filtered_ids = [source_id for source_id in ordered_source_ids if source_id in by_id]
+        page_ids = filtered_ids[offset:offset + limit]
+        return [by_id[source_id] for source_id in page_ids]
+
+    async def count_visible_sources(
+        self,
+        *,
+        user_id: str,
+        access_token: str | None,
+        source_type: str | None,
+        hostname: str | None,
+    ) -> int:
+        rows = await self.list_visible_sources(
+            user_id=user_id,
+            access_token=access_token,
+            source_type=source_type,
+            hostname=hostname,
+            limit=10000,
+            offset=0,
+        )
+        return len(rows)
 
     async def count_citations_for_sources(self, *, user_id: str, access_token: str | None, source_ids: list[str]) -> dict[str, int]:
         if not source_ids:

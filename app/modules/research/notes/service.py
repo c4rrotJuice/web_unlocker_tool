@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
+from app.core.serialization import serialize_paging_meta
 from app.core.serialization import serialize_note, serialize_note_source
 from app.modules.common.ownership import OwnershipValidator
 from app.modules.common.relation_validation import RelationValidator, map_relation_error
@@ -136,6 +137,7 @@ class NotesService:
         status: str | None = None,
         query: str | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[dict]:
         if project_id:
             project_id = await self.taxonomy_service.ensure_project_exists(
@@ -161,6 +163,7 @@ class NotesService:
             status=status,
             query=query,
             limit=limit,
+            offset=offset,
         )
         hydrated = await self._hydrate(user_id=user_id, access_token=access_token, rows=rows)
         if tag_id:
@@ -170,6 +173,42 @@ class NotesService:
                 if any(tag.get("id") == normalized_tag_id for tag in item.get("tags", []))
             ]
         return hydrated
+
+    async def list_notes_page(
+        self,
+        *,
+        user_id: str,
+        access_token: str | None,
+        project_id: str | None = None,
+        tag_id: str | None = None,
+        citation_id: str | None = None,
+        quote_id: str | None = None,
+        status: str | None = None,
+        query: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> dict[str, object]:
+        offset = int(cursor or "0")
+        batch_limit = limit + 1
+        items = await self.list_notes(
+            user_id=user_id,
+            access_token=access_token,
+            project_id=project_id,
+            tag_id=tag_id,
+            citation_id=citation_id,
+            quote_id=quote_id,
+            status=status,
+            query=query,
+            limit=batch_limit,
+            offset=offset,
+        )
+        has_more = len(items) > limit
+        page_items = items[:limit]
+        next_cursor = str(offset + limit) if has_more else None
+        return {
+            "items": page_items,
+            "meta": serialize_paging_meta(next_cursor=next_cursor, has_more=has_more),
+        }
 
     async def get_note(self, *, user_id: str, access_token: str | None, note_id: str) -> dict:
         row = await self.ownership.load_owned_note(

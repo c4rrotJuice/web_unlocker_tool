@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.core.auth import RequestAuthContext, require_request_auth_context
 from app.core.config import get_settings
+from app.core.serialization import serialize_ok_envelope
 from app.modules.research.citations.repo import CitationsRepository
 from app.modules.research.citations.schemas import (
     CitationByIdsRequest,
@@ -232,17 +233,20 @@ async def list_sources(
     query: str | None = None,
     hostname: str | None = None,
     source_type: str | None = None,
+    cursor: str | None = None,
     limit: int = Query(default=50, le=100),
     access=Depends(_access),
 ):
-    return await sources_service.list_sources(
+    page = await sources_service.list_sources_page(
         user_id=access.user_id,
         access_token=access.access_token,
         query=query,
         hostname=hostname,
         source_type=source_type,
+        cursor=cursor,
         limit=limit,
     )
+    return serialize_ok_envelope(page["items"], meta=page["meta"])
 
 
 @router.post("/api/sources/resolve")
@@ -272,17 +276,20 @@ async def get_source(source_id: str, access=Depends(_access)):
 async def list_citations(
     source_id: str | None = None,
     search: str | None = None,
+    cursor: str | None = None,
     limit: int = Query(default=50, le=100),
     access=Depends(_access),
 ):
-    return await citations_service.list_citations(
+    page = await citations_service.list_citations_page(
         user_id=access.user_id,
         access_token=access.access_token,
         source_id=source_id,
         search=search,
+        cursor=cursor,
         limit=limit,
         account_type=access.capability_state.tier,
     )
+    return serialize_ok_envelope(page["items"], meta=page["meta"])
 
 
 @router.post("/api/citations")
@@ -330,18 +337,21 @@ async def list_quotes(
     document_id: str | None = None,
     project_id: str | None = None,
     query: str | None = None,
+    cursor: str | None = None,
     limit: int = Query(default=50, le=100),
     access=Depends(_access),
 ):
-    return {"ok": True, "data": await quotes_service.list_quotes(
+    page = await quotes_service.list_quotes_page(
         user_id=access.user_id,
         access_token=access.access_token,
         citation_id=citation_id,
         document_id=document_id,
         project_id=project_id,
         query=query,
+        cursor=cursor,
         limit=limit,
-    ), "meta": {}, "error": None}
+    )
+    return serialize_ok_envelope(page["items"], meta=page["meta"])
 
 
 @router.post("/api/quotes")
@@ -399,10 +409,11 @@ async def list_notes(
     quote_id: str | None = None,
     status: str | None = None,
     query: str | None = None,
+    cursor: str | None = None,
     limit: int = Query(default=50, le=100),
     access=Depends(_access),
 ):
-    return {"ok": True, "data": await notes_service.list_notes(
+    page = await notes_service.list_notes_page(
         user_id=access.user_id,
         access_token=access.access_token,
         project_id=project_id,
@@ -411,8 +422,10 @@ async def list_notes(
         quote_id=quote_id,
         status=status,
         query=query,
+        cursor=cursor,
         limit=limit,
-    ), "meta": {}, "error": None}
+    )
+    return serialize_ok_envelope(page["items"], meta=page["meta"])
 
 
 @router.post("/api/notes")

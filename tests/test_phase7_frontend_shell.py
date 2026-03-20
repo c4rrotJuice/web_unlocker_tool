@@ -129,6 +129,16 @@ def test_research_shell_uses_separate_card_and_detail_renderers():
     assert "renderSourceDetail" in detail_source
 
 
+def test_research_selection_uses_canonical_graph_endpoint_for_context_neighborhoods():
+    source = open("app/static/js/app_shell/pages/research.js", encoding="utf-8").read()
+    detail_source = open("app/static/js/app_shell/renderers/details.js", encoding="utf-8").read()
+    assert "/api/research/${encodeURIComponent(type)}/${encodeURIComponent(id)}/graph" in source
+    assert "renderGraphDetail" in source
+    assert "data-related-entity-id" in detail_source
+    assert "data-related-document-id" in detail_source
+    assert "Open in editor" in detail_source
+
+
 def test_phase7_runtime_avoids_legacy_cookie_and_dashboard_fetch_paths():
     auth_source = open("app/static/js/auth.js", encoding="utf-8").read()
     dashboard_source = open("app/static/js/app_shell/pages/dashboard.js", encoding="utf-8").read()
@@ -157,6 +167,15 @@ def test_research_popstate_reuses_current_list_when_only_selection_changes():
     assert "loadList();" in source
 
 
+def test_research_list_supports_truthful_load_more_and_unwrapped_meta():
+    source = open("app/static/js/app_shell/pages/research.js", encoding="utf-8").read()
+    fetch_source = open("app/static/js/app_shell/core/fetch.js", encoding="utf-8").read()
+    assert "data-research-load-more" in source
+    assert "currentMeta = payload?.meta" in source
+    assert "unwrapEnvelope: false" in source
+    assert "unwrapEnvelope = true" in fetch_source
+
+
 def test_research_tablist_has_keyboard_navigation_hooks():
     template = open("app/templates/app_research.html", encoding="utf-8").read()
     source = open("app/static/js/app_shell/pages/research.js", encoding="utf-8").read()
@@ -166,6 +185,16 @@ def test_research_tablist_has_keyboard_navigation_hooks():
     assert 'event.key === "ArrowLeft"' in source
     assert 'event.key === "Home"' in source
     assert 'event.key === "End"' in source
+
+
+def test_research_filter_controls_are_honest_about_project_and_tag_support():
+    template = open("app/templates/app_research.html", encoding="utf-8").read()
+    source = open("app/static/js/app_shell/pages/research.js", encoding="utf-8").read()
+    quotes_service = open("app/modules/research/quotes/service.py", encoding="utf-8").read()
+    assert 'id="research-filter-hint"' in template
+    assert "projectInput.disabled = !config.supportsProject" in source
+    assert "tagInput.disabled = !config.supportsTag" in source
+    assert "Quote project filtering is not defined by the canonical workflow contract" in quotes_service
 
 
 def test_projects_api_supports_explicit_limit_parameter():
@@ -182,3 +211,9 @@ def test_auth_handoff_page_is_minimal_success_fallback_not_bridge_wait():
     assert "Sign-in complete" in handoff_source
     assert "Retry sign-in" in handoff_source
     assert "Waiting for extension bridge timed out" not in handoff_source
+
+
+def test_research_routes_expose_cursor_pagination_for_all_knowledge_tabs():
+    route_source = open("app/modules/research/routes.py", encoding="utf-8").read()
+    assert "cursor: str | None = None" in route_source
+    assert "serialize_ok_envelope(page[\"items\"], meta=page[\"meta\"])" in route_source

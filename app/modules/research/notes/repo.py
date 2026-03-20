@@ -57,12 +57,14 @@ class NotesRepository:
         status: str | None = None,
         query: str | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[dict]:
         params = {
             "user_id": f"eq.{user_id}",
             "select": "id,title,note_body,highlight_text,project_id,citation_id,quote_id,status,archived_at,created_at,updated_at",
             "order": "updated_at.desc,id.desc",
             "limit": str(limit),
+            "offset": str(offset),
         }
         if project_id:
             params["project_id"] = f"eq.{project_id}"

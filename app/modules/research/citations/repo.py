@@ -62,11 +62,13 @@ class CitationsRepository:
         citation_ids: list[str] | None = None,
         source_id: str | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[dict]:
         params = {
             "user_id": f"eq.{user_id}",
             "order": "created_at.desc",
             "limit": str(limit),
+            "offset": str(offset),
             "select": "id,source_id,locator,quote_text,excerpt,annotation,citation_version,created_at,updated_at",
         }
         if citation_ids:

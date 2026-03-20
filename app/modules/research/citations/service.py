@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.core.serialization import serialize_paging_meta
 from app.core.serialization import serialize_citation, serialize_citation_template, serialize_source_summary
 from app.modules.research.citations.repo import CitationsRepository
 from app.modules.research.sources.service import SourcesService
@@ -224,10 +225,18 @@ class CitationsService:
         source_id: str | None = None,
         search: str | None = None,
         limit: int = 50,
+        offset: int = 0,
         account_type: str | None = None,
         selected_style: str | None = None,
     ) -> list[dict]:
-        rows = await self.repository.list_citations(user_id=user_id, access_token=access_token, citation_ids=ids, source_id=source_id, limit=limit)
+        rows = await self.repository.list_citations(
+            user_id=user_id,
+            access_token=access_token,
+            citation_ids=ids,
+            source_id=source_id,
+            limit=limit,
+            offset=offset,
+        )
         payload = await self._hydrate(
             user_id=user_id,
             access_token=access_token,
@@ -245,6 +254,36 @@ class CitationsService:
                 or needle in str((item.get("source") or {}).get("canonical_url") or "").lower()
             ]
         return payload
+
+    async def list_citations_page(
+        self,
+        *,
+        user_id: str,
+        access_token: str | None,
+        source_id: str | None = None,
+        search: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+        account_type: str | None = None,
+    ) -> dict[str, object]:
+        offset = int(cursor or "0")
+        batch_limit = limit + 1
+        items = await self.list_citations(
+            user_id=user_id,
+            access_token=access_token,
+            source_id=source_id,
+            search=search,
+            limit=batch_limit,
+            offset=offset,
+            account_type=account_type,
+        )
+        has_more = len(items) > limit
+        page_items = items[:limit]
+        next_cursor = str(offset + limit) if has_more else None
+        return {
+            "items": page_items,
+            "meta": serialize_paging_meta(next_cursor=next_cursor, has_more=has_more),
+        }
 
     async def get_citation(
         self,

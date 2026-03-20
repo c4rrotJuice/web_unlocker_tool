@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.core.serialization import serialize_paging_meta
 from app.core.serialization import serialize_source_detail, serialize_source_summary
 from app.modules.research.sources.repo import SourcesRepository
 from app.services.citation_domain import ExtractionPayload, legacy_metadata_to_payload, normalize_citation_payload
@@ -94,6 +95,7 @@ class SourcesService:
         hostname: str | None = None,
         source_type: str | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[dict]:
         rows = await self.repository.list_visible_sources(
             user_id=user_id,
@@ -101,6 +103,7 @@ class SourcesService:
             source_type=source_type,
             hostname=hostname,
             limit=limit,
+            offset=offset,
         )
         if query:
             needle = query.strip().lower()
@@ -111,6 +114,36 @@ class SourcesService:
             source_ids=[row["id"] for row in rows if row.get("id")],
         )
         return [serialize_source_summary(row, relationship_counts={"citation_count": counts.get(row["id"], 0)}) for row in rows]
+
+    async def list_sources_page(
+        self,
+        *,
+        user_id: str,
+        access_token: str | None,
+        query: str | None = None,
+        hostname: str | None = None,
+        source_type: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> dict[str, object]:
+        offset = int(cursor or "0")
+        batch_limit = limit + 1
+        items = await self.list_sources(
+            user_id=user_id,
+            access_token=access_token,
+            query=query,
+            hostname=hostname,
+            source_type=source_type,
+            limit=batch_limit,
+            offset=offset,
+        )
+        has_more = len(items) > limit
+        page_items = items[:limit]
+        next_cursor = str(offset + limit) if has_more else None
+        return {
+            "items": page_items,
+            "meta": serialize_paging_meta(next_cursor=next_cursor, has_more=has_more),
+        }
 
     async def get_source(self, *, user_id: str, access_token: str | None, source_id: str) -> dict:
         rows = await self.repository.get_sources_by_ids(source_ids=[source_id], access_token=access_token)

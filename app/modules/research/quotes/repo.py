@@ -32,6 +32,7 @@ class QuotesRepository:
         quote_ids: list[str] | None = None,
         query: str | None = None,
         limit: int = 50,
+        offset: int = 0,
         order: str = "created_at.desc,id.desc",
     ) -> list[dict]:
         params = {
@@ -39,6 +40,7 @@ class QuotesRepository:
             "select": "id,citation_id,excerpt,locator,annotation,created_at,updated_at",
             "order": order,
             "limit": str(limit),
+            "offset": str(offset),
         }
         if citation_id:
             params["citation_id"] = f"eq.{citation_id}"
@@ -48,6 +50,7 @@ class QuotesRepository:
             params["id"] = f"in.({','.join(quote_ids)})"
             params.pop("limit", None)
             params.pop("order", None)
+            params.pop("offset", None)
         if query and query.strip():
             needle = query.strip().replace("*", "")
             if needle:

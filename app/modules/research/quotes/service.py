@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
+from app.core.serialization import serialize_paging_meta
 from app.core.serialization import serialize_quote
 from app.modules.common.ownership import OwnershipValidator
 from app.modules.common.relation_validation import RelationValidator
@@ -78,6 +79,7 @@ class QuotesService:
         project_id: str | None = None,
         query: str | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[dict]:
         if project_id:
             raise HTTPException(status_code=422, detail="Quote project filtering is not defined by the canonical workflow contract")
@@ -98,9 +100,42 @@ class QuotesService:
                 citation_id=citation_id,
                 query=query,
                 limit=limit,
+                offset=offset,
             )
         serialized = await self._serialize_rows(user_id=user_id, access_token=access_token, rows=rows)
         return self._filter_serialized_quotes_by_query(rows=serialized, query=query)
+
+    async def list_quotes_page(
+        self,
+        *,
+        user_id: str,
+        access_token: str | None,
+        citation_id: str | None = None,
+        document_id: str | None = None,
+        project_id: str | None = None,
+        query: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> dict[str, object]:
+        offset = int(cursor or "0")
+        batch_limit = limit + 1
+        items = await self.list_quotes(
+            user_id=user_id,
+            access_token=access_token,
+            citation_id=citation_id,
+            document_id=document_id,
+            project_id=project_id,
+            query=query,
+            limit=batch_limit,
+            offset=offset,
+        )
+        has_more = len(items) > limit
+        page_items = items[:limit]
+        next_cursor = str(offset + limit) if has_more else None
+        return {
+            "items": page_items,
+            "meta": serialize_paging_meta(next_cursor=next_cursor, has_more=has_more),
+        }
 
     async def _list_quotes_for_document(
         self,

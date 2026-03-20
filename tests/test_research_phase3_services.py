@@ -119,13 +119,13 @@ class FakeSourcesRepository:
         self.by_fingerprint[payload["fingerprint"]] = row
         return row
 
-    async def list_visible_sources(self, *, user_id, access_token, source_type, hostname, limit):
+    async def list_visible_sources(self, *, user_id, access_token, source_type, hostname, limit, offset=0):
         rows = list(self.by_id.values())
         if source_type:
             rows = [row for row in rows if row["source_type"] == source_type]
         if hostname:
             rows = [row for row in rows if row.get("hostname") == hostname]
-        return rows[:limit]
+        return rows[offset:offset + limit]
 
     async def count_citations_for_sources(self, *, user_id, access_token, source_ids):
         return {source_id: self.citation_counts.get(source_id, 0) for source_id in source_ids}
@@ -160,13 +160,13 @@ class FakeCitationsRepository:
                 return row
         return None
 
-    async def list_citations(self, *, user_id, access_token, citation_ids=None, source_id=None, limit=50):
+    async def list_citations(self, *, user_id, access_token, citation_ids=None, source_id=None, limit=50, offset=0):
         rows = [row for row in self.rows.values() if row["user_id"] == user_id]
         if citation_ids is not None:
             rows = [row for row in rows if row["id"] in citation_ids]
         if source_id:
             rows = [row for row in rows if row["source_id"] == source_id]
-        return rows[:limit]
+        return rows[offset:offset + limit]
 
     async def get_citation(self, *, user_id, access_token, citation_id):
         row = self.rows.get(citation_id)
@@ -463,3 +463,61 @@ async def test_pro_only_template_behavior_is_enforced(citations_service):
     with pytest.raises(HTTPException) as exc:
         await citations_service.list_templates(user_id="user-1", access_token=None, account_type="free")
     assert exc.value.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_research_list_pages_return_cursor_meta_for_sources(sources_service):
+    await sources_service.resolve_or_create_source(
+        access_token=None,
+        extraction_payload=None,
+        url="https://example.com/1",
+        metadata={"title": "One"},
+        excerpt="",
+        quote="",
+        locator={},
+    )
+    await sources_service.resolve_or_create_source(
+        access_token=None,
+        extraction_payload=None,
+        url="https://example.com/2",
+        metadata={"title": "Two"},
+        excerpt="",
+        quote="",
+        locator={},
+    )
+    page = await sources_service.list_sources_page(
+        user_id="user-1",
+        access_token=None,
+        limit=1,
+        cursor="0",
+    )
+    assert len(page["items"]) == 1
+    assert page["meta"]["has_more"] is True
+    assert page["meta"]["next_cursor"] == "1"
+
+
+@pytest.mark.anyio
+async def test_research_list_pages_return_cursor_meta_for_citations(citations_service):
+    first = await citations_service.create_citation(
+        user_id="user-1",
+        access_token=None,
+        account_type="pro",
+        payload={"url": "https://example.com/paper-1", "metadata": {"title": "Paper 1"}, "excerpt": "Excerpt 1", "quote": "Excerpt 1", "style": "mla"},
+    )
+    second = await citations_service.create_citation(
+        user_id="user-1",
+        access_token=None,
+        account_type="pro",
+        payload={"url": "https://example.com/paper-2", "metadata": {"title": "Paper 2"}, "excerpt": "Excerpt 2", "quote": "Excerpt 2", "style": "mla"},
+    )
+    page = await citations_service.list_citations_page(
+        user_id="user-1",
+        access_token=None,
+        limit=1,
+        cursor="0",
+        account_type="pro",
+    )
+    assert len(page["items"]) == 1
+    assert page["items"][0]["id"] in {first["id"], second["id"]}
+    assert page["meta"]["has_more"] is True
+    assert page["meta"]["next_cursor"] == "1"

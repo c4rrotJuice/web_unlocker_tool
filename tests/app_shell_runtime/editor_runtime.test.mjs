@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import * as vm from "node:vm";
 
 import { createWorkspaceApi } from "../../app/static/js/editor_v2/api/workspace_api.js";
 import { createWorkspaceState } from "../../app/static/js/editor_v2/core/workspace_state.js";
@@ -14,6 +16,8 @@ import { renderContextRail } from "../../app/static/js/editor_v2/ui/context_rail
 import { createExplorerController } from "../../app/static/js/editor_v2/research/explorer_controller.js";
 import { createCheckpointController } from "../../app/static/js/editor_v2/document/checkpoint_controller.js";
 import { createNoteActions } from "../../app/static/js/editor_v2/actions/note_actions.js";
+import { createAuthSessionError, isAuthSessionError } from "../../app/static/js/shared/auth/session.js";
+import { initSidebarShell } from "../../app/static/js/app_shell/core/sidebar.js";
 
 function okResponse(data) {
   return {
@@ -32,11 +36,88 @@ function installWindow(overrides = {}) {
     clearTimeout: globalThis.clearTimeout.bind(globalThis),
     addEventListener() {},
     removeEventListener() {},
+    location: { pathname: "/", search: "" },
     webUnlockerAuth: existing.webUnlockerAuth,
     ...existing,
     ...overrides,
   };
   return globalThis.window;
+}
+
+function loadAuthRuntime({ client, fetchImpl }) {
+  const listeners = new Map();
+  const documentListeners = new Map();
+  const window = {
+    WRITIOR_SUPABASE_URL: "https://supabase.example.test",
+    WRITIOR_SUPABASE_ANON_KEY: "anon-key",
+    supabase: {
+      createClient() {
+        return client;
+      },
+    },
+    fetch: fetchImpl,
+    setTimeout: globalThis.setTimeout.bind(globalThis),
+    clearTimeout: globalThis.clearTimeout.bind(globalThis),
+    addEventListener(type, listener) {
+      const entries = listeners.get(type) || [];
+      entries.push(listener);
+      listeners.set(type, entries);
+    },
+    removeEventListener(type, listener) {
+      const entries = listeners.get(type) || [];
+      listeners.set(type, entries.filter((entry) => entry !== listener));
+    },
+    dispatchEvent(event) {
+      const entries = listeners.get(event?.type) || [];
+      for (const listener of entries) {
+        listener(event);
+      }
+    },
+    location: {
+      pathname: "/editor",
+      search: "?document_id=doc-1",
+      href: "http://example.test/editor?document_id=doc-1",
+    },
+  };
+  const document = {
+    hidden: false,
+    addEventListener(type, listener) {
+      const entries = documentListeners.get(type) || [];
+      entries.push(listener);
+      documentListeners.set(type, entries);
+    },
+    removeEventListener(type, listener) {
+      const entries = documentListeners.get(type) || [];
+      documentListeners.set(type, entries.filter((entry) => entry !== listener));
+    },
+  };
+  const context = {
+    window,
+    document,
+    fetch: fetchImpl,
+    Headers: globalThis.Headers,
+    Error,
+    console,
+    setTimeout: globalThis.setTimeout.bind(globalThis),
+    clearTimeout: globalThis.clearTimeout.bind(globalThis),
+    URLSearchParams,
+  };
+  context.globalThis = context;
+  vm.runInNewContext(readFileSync("app/static/js/auth.js", "utf8"), context, { filename: "app/static/js/auth.js" });
+  return {
+    window: context.window,
+    document,
+    emitWindow(type, event = {}) {
+      for (const listener of listeners.get(type) || []) {
+        listener(event);
+      }
+    },
+    emitDocument(type, event = {}) {
+      for (const listener of documentListeners.get(type) || []) {
+        listener(event);
+      }
+    },
+  };
 }
 
 async function flush(times = 6) {
@@ -80,6 +161,12 @@ function makeElement(extra = {}) {
       toggle() {},
     },
     setAttribute() {},
+    querySelectorAll() {
+      return [];
+    },
+    querySelector() {
+      return null;
+    },
     ...extra,
   };
 }
@@ -125,6 +212,223 @@ test("workspace hydrate forwards non-citation seed ids to hydrate route", async 
     requests[0],
     "/api/docs/doc-1/hydrate?seed_source_id=source-1&seed_quote_id=quote-1&seed_note_id=note-1&seed_mode=seed_review",
   );
+});
+
+test("auth fetch refreshes a resumed session and keeps bearer credentials attached", async () => {
+  const requests = [];
+  const runtime = loadAuthRuntime({
+    client: {
+      auth: {
+        async getSession() {
+          return { data: { session: null }, error: null };
+        },
+        async refreshSession() {
+          return {
+            data: {
+              session: {
+                access_token: "token-resumed",
+                refresh_token: "refresh-resumed",
+              },
+            },
+            error: null,
+          };
+        },
+        async onAuthStateChange() {
+          return { data: { subscription: { unsubscribe() {} } }, error: null };
+        },
+        async setSession() {
+          return { data: { session: null }, error: null };
+        },
+        async signOut() {},
+      },
+    },
+    fetchImpl: async (_url, options = {}) => {
+      requests.push(options);
+      return okResponse({ ok: true });
+    },
+  });
+
+  await runtime.window.webUnlockerAuth.authFetch("/api/docs", {
+    headers: { Accept: "application/json" },
+  });
+
+  assert.equal(requests[0].headers.get("Authorization"), "Bearer token-resumed");
+});
+
+test("auth resume hooks refresh the session on visibility change", async () => {
+  let refreshCalls = 0;
+  const runtime = loadAuthRuntime({
+    client: {
+      auth: {
+        async getSession() {
+          return { data: { session: null }, error: null };
+        },
+        async refreshSession() {
+          refreshCalls += 1;
+          return {
+            data: {
+              session: {
+                access_token: "token-resumed",
+                refresh_token: "refresh-resumed",
+              },
+            },
+            error: null,
+          };
+        },
+        async onAuthStateChange() {
+          return { data: { subscription: { unsubscribe() {} } }, error: null };
+        },
+        async setSession() {
+          return { data: { session: null }, error: null };
+        },
+        async signOut() {},
+      },
+    },
+    fetchImpl: async () => okResponse({ ok: true }),
+  });
+
+  runtime.emitDocument("visibilitychange", {});
+  await flush();
+
+  assert.equal(refreshCalls, 1);
+});
+
+test("auth fetch fails fast with explicit missing-token error instead of issuing a protected request", async () => {
+  let fetchCalls = 0;
+  const runtime = loadAuthRuntime({
+    client: {
+      auth: {
+        async getSession() {
+          return { data: { session: null }, error: null };
+        },
+        async refreshSession() {
+          return { data: { session: null }, error: null };
+        },
+        async onAuthStateChange() {
+          return { data: { subscription: { unsubscribe() {} } }, error: null };
+        },
+        async setSession() {
+          return { data: { session: null }, error: null };
+        },
+        async signOut() {},
+      },
+    },
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      return okResponse({ ok: true });
+    },
+  });
+
+  await assert.rejects(
+    () => runtime.window.webUnlockerAuth.authFetch("/api/docs", { headers: { Accept: "application/json" } }),
+    (error) => isAuthSessionError(error) && error.code === "missing_credentials" && /bearer token/i.test(error.message),
+  );
+  assert.equal(fetchCalls, 0);
+});
+
+test("workspace auth errors settle into a recoverable session-lost state without retrying forever", async () => {
+  installWindow({
+    setTimeout(_callback, delay) {
+      if (!globalThis.__delayLog) {
+        globalThis.__delayLog = [];
+      }
+      globalThis.__delayLog.push(delay);
+      return globalThis.__delayLog.length;
+    },
+    clearTimeout: globalThis.clearTimeout.bind(globalThis),
+  });
+  globalThis.__delayLog = [];
+  globalThis.navigator = { onLine: true };
+  const events = [];
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft 1",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft 1\n" }] },
+    content_html: "<p>Draft 1</p>",
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  workspaceState.markDirty({ title: "Updated title" });
+  const autosave = createAutosaveController({
+    workspaceState,
+    workspaceApi: {
+      async updateDocument() {
+        throw createAuthSessionError("missing_credentials", "Missing bearer token.");
+      },
+    },
+    eventBus: { emit(name) { events.push(name); } },
+  });
+
+  await assert.rejects(() => autosave.flush(), /Missing bearer token/);
+
+  assert.equal(workspaceState.getState().runtime_failures.session.message, "Missing bearer token.");
+  assert.equal(workspaceState.getState().runtime_activity.save.phase, "error");
+  assert.equal(workspaceState.getState().runtime_activity.flush.phase, "error");
+  assert.ok(!globalThis.__delayLog.some((delay) => delay === 1500 || delay === 3000));
+  assert.deepEqual(events, ["doc.flush.started", "doc.save.started", "doc.save.failed", "doc.flush.failed"]);
+});
+
+test("preferences caller uses the authenticated request path and does not poison editor state on auth loss", async () => {
+  const requests = [];
+  installWindow({
+    webUnlockerAuth: {
+      async authFetch(path, options = {}) {
+        requests.push({ path, options });
+        return okResponse({ data: { sidebar_collapsed: true, sidebar_auto_hide: false } });
+      },
+      isAuthSessionError() {
+        return false;
+      },
+      onAuthStateChange: null,
+      getAccessToken: async () => "token-test",
+    },
+  });
+
+  const sidebar = makeElement();
+  const toggle = makeElement();
+  const autoHideToggle = makeElement();
+  const mobileToggle = makeElement();
+  const backdrop = makeElement();
+  globalThis.document = {
+    body: makeElement(),
+    getElementById(id) {
+      return {
+        "app-shell": makeElement(),
+        "app-sidebar": sidebar,
+        "app-sidebar-toggle": toggle,
+        "app-sidebar-autohide-toggle": autoHideToggle,
+        "app-sidebar-mobile-toggle": mobileToggle,
+        "app-sidebar-backdrop": backdrop,
+      }[id] || null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  globalThis.window.document = globalThis.document;
+  globalThis.window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  await initSidebarShell({ page: "editor" });
+
+  assert.equal(requests[0].path, "/api/preferences");
+  assert.equal(requests[0].options.method, "GET");
+});
+
+test("session loss renders a recoverable editor state instead of a generic timeout", async () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  workspaceState.setSessionFailure({ code: "missing_credentials", message: "Missing bearer token." });
+  const target = makeElement();
+
+  renderContextRail(target, { mode: "idle" }, workspaceState.getState(), null, {});
+
+  assert.match(target.innerHTML, /Session lost/);
+  assert.match(target.innerHTML, /Sign in again/);
+  assert.match(target.innerHTML, /Unsaved work stays in the editor/i);
 });
 
 test("attached hydrate payloads are consumed into runtime state and primed stores", async () => {

@@ -1,4 +1,5 @@
 import { withTimeout } from "../core/async_operation.js";
+import { isAuthSessionError } from "../../shared/auth/session.js";
 
 export function createAutosaveController({ workspaceState, workspaceApi, eventBus }) {
   let timer = null;
@@ -47,14 +48,22 @@ export function createAutosaveController({ workspaceState, workspaceApi, eventBu
         if (currentSeq < latestApplied) return workspaceState.getState().active_document;
         retryCount += 1;
         const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+        const authLost = isAuthSessionError(error);
         workspaceState.setSaveStatus(offline ? "offline" : "error");
+        if (authLost) {
+          workspaceState.setSessionFailure({
+            code: error?.code || "missing_credentials",
+            label: "Session expired",
+            message: error?.message || "Session expired. Sign in again to resume saving.",
+          });
+        }
         workspaceState.setSaveActivity({
           phase: "error",
           sequence: currentSeq,
           message: error?.message || "Save failed",
         });
         eventBus.emit("doc.save.failed", { documentId: state.active_document_id, error, offline });
-        if (allowRetry && retryCount <= maxRetries && !offline) {
+        if (allowRetry && retryCount <= maxRetries && !offline && !authLost) {
           timer = window.setTimeout(() => {
             void persistNow({ allowRetry: true }).catch(() => {});
           }, 1500 * retryCount);

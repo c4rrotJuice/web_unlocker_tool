@@ -52,18 +52,7 @@
     return effectiveTheme;
   }
 
-  async function getSession() {
-    try {
-      return await window.webUnlockerAuth?.getSession?.();
-    } catch (_error) {
-      return { data: { session: null }, error: null };
-    }
-  }
-
-  async function upsertThemeForSession(mode, session) {
-    if (!session?.user?.id) {
-      return;
-    }
+  async function upsertThemeForSession(mode) {
     await window.webUnlockerAuth?.authFetch?.("/api/preferences", {
       method: "PATCH",
       headers: {
@@ -89,14 +78,12 @@
       return selectedMode;
     }
 
-    const { data } = await getSession();
-    if (!data?.session) {
-      return selectedMode;
-    }
-
     try {
-      await upsertThemeForSession(selectedMode, data.session);
+      await upsertThemeForSession(selectedMode);
     } catch (error) {
+      if (window.webUnlockerAuth?.isAuthSessionError?.(error)) {
+        return selectedMode;
+      }
       console.error("Theme preference save failed:", error);
     }
 
@@ -104,13 +91,6 @@
   }
 
   async function syncThemeFromDatabase() {
-    const { data } = await getSession();
-    const session = data?.session;
-
-    if (!session?.user?.id) {
-      return;
-    }
-
     const localTheme = getStoredTheme();
 
     try {
@@ -118,6 +98,7 @@
         method: "GET",
         headers: { Accept: "application/json" },
       });
+      if (!payload) return;
       const body = await payload?.json?.();
       const row = body?.data || {};
       if (row?.theme && isValidTheme(row.theme)) {
@@ -130,8 +111,11 @@
         return;
       }
 
-      await upsertThemeForSession(localTheme, session);
+      await upsertThemeForSession(localTheme);
     } catch (error) {
+      if (window.webUnlockerAuth?.isAuthSessionError?.(error)) {
+        return;
+      }
       console.error("Theme preference sync failed:", error);
     }
   }

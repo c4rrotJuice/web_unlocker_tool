@@ -45,6 +45,27 @@ def test_editor_runtime_uses_summary_boot_and_legacy_denylist():
     assert "Use the explorer to choose" not in editor_source
 
 
+def test_editor_runtime_uses_canonical_authenticated_request_path_for_protected_calls():
+    workspace_api = Path("app/static/js/editor_v2/api/workspace_api.js").read_text(encoding="utf-8")
+    research_api = Path("app/static/js/editor_v2/api/research_api.js").read_text(encoding="utf-8")
+    shell_fetch = Path("app/static/js/app_shell/core/fetch.js").read_text(encoding="utf-8")
+    sidebar_source = Path("app/static/js/app_shell/core/sidebar.js").read_text(encoding="utf-8")
+    theme_source = Path("app/static/js/theme.js").read_text(encoding="utf-8")
+    auth_source = Path("app/static/js/auth.js").read_text(encoding="utf-8")
+
+    assert "createAuthSessionErrorFromPayload" in workspace_api
+    assert "createAuthSessionErrorFromPayload" in research_api
+    assert "isAuthSessionError" in shell_fetch
+    assert 'authFetch?.("/api/preferences"' in sidebar_source
+    assert 'authFetch?.("/api/preferences"' in theme_source
+    assert "getSession()" not in sidebar_source
+    assert "getSession()" not in theme_source
+    assert "visibilitychange" in auth_source
+    assert "pageshow" in auth_source
+    assert "refreshSession" in auth_source
+    assert "Missing bearer token" in auth_source
+
+
 def test_quill_adapter_keeps_domain_logic_outside_adapter():
     source = Path("app/static/js/editor_v2/ui/quill_adapter.js").read_text(encoding="utf-8")
     assert "insertBibliography" not in source

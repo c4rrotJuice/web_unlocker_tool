@@ -21,6 +21,7 @@ const initialState = () => ({
   runtime_failures: {
     document_transition: null,
     document_hydrate: null,
+    session: null,
     explorer_by_type: {},
     checkpoints: null,
   },
@@ -119,6 +120,7 @@ export function createWorkspaceState() {
           ...state.runtime_failures,
           document_transition: null,
           document_hydrate: null,
+          session: null,
           checkpoints: null,
         },
       });
@@ -159,6 +161,10 @@ export function createWorkspaceState() {
         active_project_id: nextDocument?.project_id || null,
         attached_relation_ids: attached,
         document_list: nextDocument ? upsertDocumentList(nextDocument) : state.document_list,
+        runtime_failures: {
+          ...state.runtime_failures,
+          session: null,
+        },
       });
     },
     setAttachedRelationIds(kind, ids) {
@@ -315,6 +321,14 @@ export function createWorkspaceState() {
         runtime_failures: {
           ...state.runtime_failures,
           checkpoints: failure ? { ...failure } : null,
+        },
+      });
+    },
+    setSessionFailure(failure) {
+      set({
+        runtime_failures: {
+          ...state.runtime_failures,
+          session: failure ? { ...failure } : null,
         },
       });
     },

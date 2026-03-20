@@ -34,6 +34,7 @@ import { createExportController } from "../document/export_controller.js";
 import { createDocumentController } from "../document/document_controller.js";
 import { ensureFeedbackRuntime } from "../../shared/feedback/feedback_bus_singleton.js";
 import { FEEDBACK_EVENTS, STATUS_SCOPES } from "../../shared/feedback/feedback_tokens.js";
+import { isAuthSessionError } from "../../shared/auth/session.js";
 
 function queryRefs() {
   return {
@@ -240,7 +241,10 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
 
   function renderShell() {
     const state = workspaceState.getState();
-    const statusSnapshot = { label: saveStatusLabel(state.save_status) };
+    const sessionFailure = state.runtime_failures?.session;
+    const statusSnapshot = sessionFailure
+      ? { label: sessionFailure.label || sessionFailure.message || "Session expired" }
+      : { label: saveStatusLabel(state.save_status) };
     refs.saveState.textContent = statusSnapshot.label;
     renderStatusBar(refs.statusBar, quillAdapter, workspaceState, statusSnapshot);
     const context = deriveContextState(state, selectionState.getState());
@@ -274,17 +278,38 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
   const unsubFeedback = feedback.status.subscribe((_statuses, { scope }) => {
     if (scope && scope !== STATUS_SCOPES.EDITOR_DOCUMENT) return;
     const state = workspaceState.getState();
-    const statusSnapshot = { label: saveStatusLabel(state.save_status) };
+    const sessionFailure = state.runtime_failures?.session;
+    const statusSnapshot = sessionFailure
+      ? { label: sessionFailure.label || sessionFailure.message || "Session expired" }
+      : { label: saveStatusLabel(state.save_status) };
     refs.saveState.textContent = statusSnapshot.label;
     renderStatusBar(refs.statusBar, quillAdapter, workspaceState, statusSnapshot);
   });
 
   eventBus.on("doc.save.started", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.DOC_SAVE_STARTED, payload));
   eventBus.on("doc.save.succeeded", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.DOC_SAVE_SUCCEEDED, payload));
-  eventBus.on("doc.save.failed", ({ offline, error }) => feedback.emitDomainEvent(FEEDBACK_EVENTS.DOC_SAVE_FAILED, {
-    offline,
-    message: error?.message || "Your latest edits could not be saved.",
-  }));
+  eventBus.on("doc.save.failed", ({ offline, error }) => {
+    const authLost = isAuthSessionError(error);
+    if (authLost) {
+      workspaceState.setSessionFailure({
+        code: error?.code || "missing_credentials",
+        label: "Session expired",
+        message: error?.message || "Session expired. Sign in again to resume saving.",
+      });
+      feedback.emitDomainEvent(FEEDBACK_EVENTS.SESSION_EXPIRED, {
+        scope: STATUS_SCOPES.EDITOR_DOCUMENT,
+        message: error?.message || "Session expired. Sign in again to resume saving.",
+        onAction() {
+          window.location.href = `/auth?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+        },
+      });
+      return;
+    }
+    feedback.emitDomainEvent(FEEDBACK_EVENTS.DOC_SAVE_FAILED, {
+      offline,
+      message: error?.message || "Your latest edits could not be saved.",
+    });
+  });
   eventBus.on("checkpoint.created", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.CHECKPOINT_CREATED, payload));
   eventBus.on("checkpoint.restored", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.CHECKPOINT_RESTORED, payload));
   eventBus.on("document.export.succeeded", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.DOCUMENT_EXPORT_SUCCEEDED, payload));
@@ -330,6 +355,9 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
             message: "Latest edits are still unsaved. Retry save before switching documents.",
           });
         }
+      }
+      if (action.dataset.contextAction === "reconnect-session") {
+        window.location.href = `/auth?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
       }
       if (action.dataset.contextAction === "insert-quote" && selectionState.getState().text) {
         quillAdapter.insertText(quillAdapter.getSelection()?.index || 0, `> ${selectionState.getState().text}\n`);

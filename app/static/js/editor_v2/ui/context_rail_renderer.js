@@ -8,11 +8,27 @@ import { escapeHtml } from "../../app_shell/core/format.js";
 
 export function renderContextRail(target, context, state, detail, handlers = {}) {
   const seed = state.seed_state;
+  const sessionFailure = state.runtime_failures?.session;
   const transitionFailure = state.runtime_failures?.document_transition;
   const hydrateFailure = state.runtime_failures?.document_hydrate;
   const hydrateActivity = state.runtime_activity?.hydrate;
   const attached = state.attached_research || {};
   target.innerHTML = "";
+  if (sessionFailure) {
+    const authHref = escapeHtml(`/auth?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+    target.innerHTML = `
+      <div class="editor-v2-card">
+        <h3>Session lost</h3>
+        <p>${escapeHtml(sessionFailure.message || "Your sign-in expired. Local edits are still in this tab.")}</p>
+        <div class="editor-v2-context-actions">
+          <a class="editor-v2-action" href="${authHref}">Sign in again</a>
+          <button class="editor-v2-action" data-context-action="reconnect-session">Open auth</button>
+        </div>
+        <p class="editor-v2-meta">Unsaved work stays in the editor until you leave or reload.</p>
+      </div>
+    `;
+    return;
+  }
   if (transitionFailure) {
     target.innerHTML = `
       <div class="editor-v2-card">

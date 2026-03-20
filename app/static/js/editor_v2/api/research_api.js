@@ -1,3 +1,5 @@
+import { createAuthSessionErrorFromPayload } from "../../shared/auth/session.js";
+
 async function authJson(path, options = {}) {
   const headers = new Headers(options.headers || {});
   headers.set("Accept", "application/json");
@@ -12,8 +14,13 @@ async function authJson(path, options = {}) {
   });
   const payload = await res.json().catch(() => ({}));
   if (!res.ok) {
+    const authError = createAuthSessionErrorFromPayload(payload, res.status, path);
+    if (authError) {
+      throw authError;
+    }
     const error = new Error(payload?.detail || "Research request failed");
     error.status = res.status;
+    error.payload = payload;
     throw error;
   }
   return payload?.data ?? payload;

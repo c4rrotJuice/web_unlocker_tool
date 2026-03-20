@@ -1,4 +1,5 @@
 import { withTimeout } from "../core/async_operation.js";
+import { isAuthSessionError } from "../../shared/auth/session.js";
 
 export function createDocumentController({
   workspaceState,
@@ -63,6 +64,15 @@ export function createDocumentController({
     try {
       await autosaveController.flush();
     } catch (error) {
+      if (isAuthSessionError(error)) {
+        workspaceState.setSessionFailure({
+          code: error?.code || "missing_credentials",
+          label: "Session expired",
+          message: error?.message || "Session expired. Sign in again to continue editing.",
+        });
+        workspaceState.setDocumentTransitionFailure(null);
+        return false;
+      }
       workspaceState.setDocumentTransitionFailure({
         message: error?.message || "Save failed. Retry save before switching documents.",
       });
@@ -124,6 +134,13 @@ export function createDocumentController({
         documentId,
         message: error?.message || "Document research context could not be loaded.",
       });
+      if (isAuthSessionError(error)) {
+        workspaceState.setSessionFailure({
+          code: error?.code || "missing_credentials",
+          label: "Session expired",
+          message: error?.message || "Session expired. Sign in again to continue editing.",
+        });
+      }
       workspaceState.setHydrateActivity({
         phase: "error",
         sequence,
@@ -172,6 +189,13 @@ export function createDocumentController({
       try {
         document = await withTimeout(workspaceApi.getDocument(documentId), { label: "Open document" });
       } catch (error) {
+        if (isAuthSessionError(error)) {
+          workspaceState.setSessionFailure({
+            code: error?.code || "missing_credentials",
+            label: "Session expired",
+            message: error?.message || "Session expired. Sign in again to continue editing.",
+          });
+        }
         workspaceState.setDocumentHydrateFailure({
           documentId,
           message: error?.message || "Document could not be opened.",

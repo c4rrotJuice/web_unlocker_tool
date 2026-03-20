@@ -97,10 +97,6 @@ export async function initSidebarShell({ page }) {
 
   const updatePreferenceRemote = async (patch) => {
     try {
-      const { data } = await window.webUnlockerAuth?.getSession?.();
-      if (!data?.session?.user?.id) {
-        return;
-      }
       await window.webUnlockerAuth?.authFetch?.("/api/preferences", {
         method: "PATCH",
         headers: {
@@ -109,7 +105,8 @@ export async function initSidebarShell({ page }) {
         },
         body: JSON.stringify(patch),
       });
-    } catch (_error) {
+    } catch (error) {
+      if (isAuthSessionError(error)) return;
       // ignore preference network failures
     }
   };
@@ -129,15 +126,11 @@ export async function initSidebarShell({ page }) {
     }
     syncInFlight = (async () => {
       try {
-        const { data } = await window.webUnlockerAuth?.getSession?.();
-        if (!data?.session?.user?.id) {
-          return;
-        }
-
         const response = await window.webUnlockerAuth?.authFetch?.("/api/preferences", {
           method: "GET",
           headers: { Accept: "application/json" },
         });
+        if (!response) return;
         const payload = await response?.json?.();
         const preferences = payload?.data || {};
 
@@ -151,7 +144,7 @@ export async function initSidebarShell({ page }) {
           writeStoredBoolean(AUTO_HIDE_STORAGE_KEY, state.autoHide);
         }
         applyState();
-      } catch (_error) {
+      } catch (error) {
         // ignore startup sync failures
       } finally {
         syncInFlight = null;
@@ -248,3 +241,4 @@ export async function initSidebarShell({ page }) {
   applyState();
   await syncFromRemotePreferences();
 }
+import { isAuthSessionError } from "../../shared/auth/session.js";

@@ -327,7 +327,9 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     const commandClick = () => commandRegistry.open("");
     const checkpointClick = () => void checkpointController.createCheckpoint();
     const exportClick = () => exportController.exportHtml();
-    const newDocumentClick = () => void documentController.createDocument();
+    const newDocumentClick = () => void documentController.createDocument()
+      .then(() => outlineController.compute())
+      .catch(() => {});
     const focusExplorerClick = () => explorerController.focusSearch();
     const outlineRefreshClick = () => outlineController.compute();
     const commandMenuClick = (event) => {
@@ -350,6 +352,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       }
       if (action.dataset.contextAction === "reload-latest") {
         await documentController.reloadCurrentDocument();
+        outlineController.compute();
       }
       if (action.dataset.contextAction === "retry-save") {
         try {

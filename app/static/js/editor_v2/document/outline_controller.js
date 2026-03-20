@@ -1,42 +1,77 @@
-function structuralChange(delta) {
-  return (delta?.ops || []).some((op) => {
-    const attrs = op.attributes || {};
-    return typeof op.insert === "string" && op.insert.includes("\n")
-      || "header" in attrs
-      || "blockquote" in attrs
-      || "list" in attrs;
-  });
+function extractHeadingItemsFromDom(quillAdapter) {
+  const root = quillAdapter?.root;
+  const quill = quillAdapter?.quill;
+  const find = typeof window !== "undefined" ? window.Quill?.find : null;
+  if (!root?.querySelectorAll || !quill || typeof find !== "function") return null;
+
+  const headingNodes = Array.from(root.querySelectorAll("h1, h2, h3, h4, h5, h6"));
+  return headingNodes.map((node) => {
+    const level = Number(node.tagName.slice(1));
+    const blot = find(node);
+    const index = blot && typeof quill.getIndex === "function" ? quill.getIndex(blot) : 0;
+    return {
+      level,
+      text: (node.textContent || "").trim(),
+      index,
+    };
+  }).filter((item) => item.text && Number.isInteger(item.level) && item.level >= 1 && item.level <= 6);
+}
+
+function extractHeadingItemsFromDelta(delta) {
+  const items = [];
+  const ops = delta?.ops || [];
+  let lineText = "";
+  let lineStartIndex = 0;
+  let index = 0;
+
+  for (const op of ops) {
+    if (typeof op.insert === "string") {
+      for (const char of op.insert) {
+        if (char === "\n") {
+          const level = Number(op.attributes?.header);
+          const text = lineText.trim();
+          if (Number.isInteger(level) && level >= 1 && level <= 6 && text) {
+            items.push({ text, level, index: lineStartIndex });
+          }
+          index += 1;
+          lineText = "";
+          lineStartIndex = index;
+        } else {
+          lineText += char;
+          index += 1;
+        }
+      }
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return items;
 }
 
 export function createOutlineController({ refs, quillAdapter }) {
   let timer = null;
 
   function render(items) {
+    if (!refs.outlineList) return;
     refs.outlineList.innerHTML = items.length
       ? items.map((item) => `<button class="editor-v2-link" type="button" data-outline-index="${item.index}">${"&nbsp;".repeat(Math.max(item.level - 1, 0) * 2)}${item.text}</button>`).join("")
       : `<div class="editor-v2-card">No headings yet.</div>`;
   }
 
   function compute() {
-    const ops = quillAdapter.getContents().ops || [];
-    const items = [];
-    let runningIndex = 0;
-    for (const op of ops) {
-      const insert = typeof op.insert === "string" ? op.insert : "";
-      const text = insert.trim();
-      const level = op.attributes?.header;
-      if (level && text) {
-        items.push({ text, level, index: runningIndex });
-      }
-      runningIndex += insert.length;
-    }
+    const items = extractHeadingItemsFromDom(quillAdapter) ?? extractHeadingItemsFromDelta(quillAdapter.getContents());
     render(items);
+    return items;
   }
 
-  function schedule(delta) {
-    if (!structuralChange(delta)) return;
+  function schedule() {
     if (timer) window.clearTimeout(timer);
-    timer = window.setTimeout(compute, 250);
+    timer = window.setTimeout(() => {
+      timer = null;
+      compute();
+    }, 250);
   }
 
   const onClick = (event) => {

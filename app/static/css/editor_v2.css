@@ -1,12 +1,17 @@
 .editor-v2-page {
-  min-height: 100%;
+  display: flex;
+  min-height: 0;
+  height: 100%;
 }
 
 .editor-v2-shell {
   display: grid;
   grid-template-columns: minmax(14rem, 17.5rem) minmax(0, 1fr) minmax(14rem, 18rem);
   gap: 1rem;
-  min-height: calc(100vh - 12rem);
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
 }
 
 .editor-v2-panel {
@@ -16,6 +21,7 @@
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
   padding: 1rem;
   min-height: 0;
+  overflow: hidden;
 }
 
 html.dark .editor-v2-panel {
@@ -156,6 +162,10 @@ html.dark .editor-v2-search-row input {
   overflow: auto;
 }
 
+.editor-v2-scroll {
+  flex: 1 1 auto;
+}
+
 .editor-v2-documents,
 .editor-v2-results,
 .editor-v2-side-section {
@@ -165,6 +175,7 @@ html.dark .editor-v2-search-row input {
 .editor-v2-results,
 .editor-v2-context {
   flex: 1 1 auto;
+  min-height: 0;
 }
 
 .editor-v2-results {
@@ -177,6 +188,7 @@ html.dark .editor-v2-search-row input {
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
 }
 
 .editor-v2-toolbar {
@@ -259,8 +271,10 @@ html.dark .editor-v2-search-row input {
 }
 
 .editor-v2-quill {
-  min-height: 22rem;
   flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .editor-v2-quill .ql-toolbar.ql-snow {
@@ -271,11 +285,18 @@ html.dark .editor-v2-search-row input {
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 0 0 1rem 1rem;
   font-size: 1rem;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .editor-v2-quill .ql-editor {
-  min-height: 22rem;
+  min-height: 0;
+  flex: 1 1 auto;
   font: 1.05rem/1.65 Georgia, "Times New Roman", serif;
+  overflow: auto;
 }
 
 .editor-v2-quill .ql-editor blockquote {
@@ -285,10 +306,11 @@ html.dark .editor-v2-search-row input {
 }
 
 .editor-v2-empty-state {
-  display: grid;
-  place-items: center;
-  gap: 0.75rem;
-  min-height: 24rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 1rem 0;
   text-align: center;
 }
 
@@ -386,6 +408,44 @@ html.dark .editor-v2-status-signal {
   width: 100%;
   text-align: left;
   margin-bottom: 0.5rem;
+}
+
+.editor-v2-empty-actions {
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.editor-v2-side-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor-v2-side-section .editor-v2-outline,
+.editor-v2-side-section .editor-v2-checkpoints {
+  min-height: 0;
+  overflow: auto;
+  max-height: 12rem;
+}
+
+.app-shell[data-page="editor"] .app-workspace {
+  overflow: hidden;
+}
+
+.app-shell[data-page="editor"] .app-content-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.app-shell[data-page="editor"] .app-main {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-shell[data-page="editor"] .app-main > * {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .editor-v2-checkpoint-item {

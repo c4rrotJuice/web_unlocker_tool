@@ -10,6 +10,7 @@ import { createSourceStore } from "../../app/static/js/editor_v2/research/source
 import { createCitationStore } from "../../app/static/js/editor_v2/research/citation_store.js";
 import { createQuoteStore } from "../../app/static/js/editor_v2/research/quote_store.js";
 import { createNoteStore } from "../../app/static/js/editor_v2/research/note_store.js";
+import { createOutlineController } from "../../app/static/js/editor_v2/document/outline_controller.js";
 import { createDocumentController } from "../../app/static/js/editor_v2/document/document_controller.js";
 import { createAutosaveController } from "../../app/static/js/editor_v2/document/autosave_controller.js";
 import { createAttachActions } from "../../app/static/js/editor_v2/actions/attach_actions.js";
@@ -186,6 +187,14 @@ function makeElement(extra = {}) {
       return null;
     },
     ...extra,
+  };
+}
+
+function createHeadingNode(tagName, textContent, index) {
+  return {
+    tagName,
+    textContent,
+    blot: { index },
   };
 }
 
@@ -460,6 +469,98 @@ test("workspace auth errors settle into a recoverable session-lost state without
   assert.equal(workspaceState.getState().runtime_activity.flush.phase, "error");
   assert.ok(!globalThis.__delayLog.some((delay) => delay === 1500 || delay === 3000));
   assert.deepEqual(events, ["doc.flush.started", "doc.save.started", "doc.save.failed", "doc.flush.failed"]);
+});
+
+test("outline derives headings from the live editor surface and supports normal heading levels", () => {
+  installWindow({
+    setTimeout: globalThis.setTimeout.bind(globalThis),
+    clearTimeout: globalThis.clearTimeout.bind(globalThis),
+    Quill: {
+      find(node) {
+        return node.blot;
+      },
+    },
+  });
+  const nodes = [
+    createHeadingNode("H1", "Overview", 0),
+    createHeadingNode("H4", "Methods", 18),
+  ];
+  const refs = { outlineList: makeElement() };
+  const quillAdapter = {
+    root: {
+      querySelectorAll() {
+        return nodes;
+      },
+    },
+    quill: {
+      getIndex(blot) {
+        return blot.index;
+      },
+    },
+    getContents() {
+      return { ops: [] };
+    },
+    focus() {},
+    setSelection() {},
+  };
+
+  const controller = createOutlineController({ refs, quillAdapter });
+  const items = controller.compute();
+
+  assert.deepEqual(items, [
+    { level: 1, text: "Overview", index: 0 },
+    { level: 4, text: "Methods", index: 18 },
+  ]);
+  assert.match(refs.outlineList.innerHTML, /Overview/);
+  assert.match(refs.outlineList.innerHTML, /Methods/);
+});
+
+test("outline recomputes after heading edits and insert/delete mutations", async () => {
+  installWindow({
+    setTimeout: globalThis.setTimeout.bind(globalThis),
+    clearTimeout: globalThis.clearTimeout.bind(globalThis),
+    Quill: {
+      find(node) {
+        return node.blot;
+      },
+    },
+  });
+  const nodes = [createHeadingNode("H2", "Original heading", 6)];
+  const refs = { outlineList: makeElement() };
+  const quillAdapter = {
+    root: {
+      querySelectorAll() {
+        return nodes;
+      },
+    },
+    quill: {
+      getIndex(blot) {
+        return blot.index;
+      },
+    },
+    getContents() {
+      return {
+        ops: [
+          { insert: "Original heading\n", attributes: { header: 2 } },
+        ],
+      };
+    },
+    focus() {},
+    setSelection() {},
+  };
+
+  const controller = createOutlineController({ refs, quillAdapter });
+  controller.compute();
+  assert.match(refs.outlineList.innerHTML, /Original heading/);
+
+  nodes[0].textContent = "Updated heading";
+  nodes.push(createHeadingNode("H3", "Inserted section", 31));
+  controller.schedule({ ops: [{ insert: "Updated heading" }] });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  assert.match(refs.outlineList.innerHTML, /Updated heading/);
+  assert.match(refs.outlineList.innerHTML, /Inserted section/);
+  assert.doesNotMatch(refs.outlineList.innerHTML, /Original heading/);
 });
 
 test("workspace saves and preferences sync share the same canonical authJson helper", async () => {

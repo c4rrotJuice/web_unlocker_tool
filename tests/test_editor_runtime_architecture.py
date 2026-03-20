@@ -115,6 +115,26 @@ def test_editor_toolbar_and_quill_adapter_support_production_format_controls():
     assert "attributors/style/align" in adapter_source
 
 
+def test_editor_empty_state_copy_is_removed_but_primary_ctas_remain():
+    template_source = Path("app/templates/app_editor.html").read_text(encoding="utf-8")
+
+    assert "Open a document or start a clean draft" not in template_source
+    assert "The editor stays idle until a canonical document is selected or explicitly created." not in template_source
+    assert 'id="editor-empty-new-document"' in template_source
+    assert 'id="editor-empty-focus-explorer"' in template_source
+
+
+def test_editor_shell_uses_viewport_bounded_height_and_internal_scroll():
+    css_source = Path("app/static/css/editor_v2.css").read_text(encoding="utf-8")
+
+    assert ".editor-v2-page {\n  display: flex;\n  min-height: 0;\n  height: 100%;\n}" in css_source
+    assert ".app-shell[data-page=\"editor\"] .app-workspace" in css_source
+    assert ".app-shell[data-page=\"editor\"] .app-main" in css_source
+    assert ".editor-v2-quill .ql-editor" in css_source
+    assert "overflow: auto;" in css_source
+    assert "min-height: calc(100vh - 12rem)" not in css_source
+
+
 def test_workspace_state_is_single_truth_and_context_state_is_pure():
     workspace_source = Path("app/static/js/editor_v2/core/workspace_state.js").read_text(encoding="utf-8")
     selection_source = Path("app/static/js/editor_v2/core/selection_state.js").read_text(encoding="utf-8")

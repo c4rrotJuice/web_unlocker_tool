@@ -60,15 +60,7 @@ class NotesService:
                 access_token=access_token,
             )
             source_id_set = {row.get("id") for row in source_rows if row.get("id")}
-            owned_citations = await self.citations_service.repository.list_citations(
-                user_id=user_id,
-                access_token=access_token,
-                source_id=None,
-                citation_ids=None,
-                limit=500,
-            )
-            owned_source_ids = {row.get("source_id") for row in owned_citations if row.get("source_id")}
-            if any(source_id not in source_id_set or source_id not in owned_source_ids for source_id in normalized_source_ids):
+            if any(source_id not in source_id_set for source_id in normalized_source_ids):
                 raise HTTPException(status_code=422, detail="Invalid source references")
 
     async def _hydrate(self, *, user_id: str, access_token: str | None, rows: list[dict]) -> list[dict]:
@@ -99,21 +91,17 @@ class NotesService:
 
         source_rows = await self.repository.list_note_sources(user_id=user_id, access_token=access_token, note_ids=note_ids)
         sources_by_note: dict[str, list[dict]] = {note_id: [] for note_id in note_ids if note_id}
-        for index, source_row in enumerate(source_rows):
+        for source_row in source_rows:
             note_id = source_row.get("note_id")
             if not note_id:
                 continue
             hydrated_source = serialize_note_source(
                 {
                     **source_row,
-                    "source_id": None,
-                    "citation_id": None,
-                    "relation_type": "external",
                     "display": {
                         "label": source_row.get("title") or source_row.get("url"),
                         "subtitle": source_row.get("hostname"),
                     },
-                    "position": index,
                 }
             )
             sources_by_note.setdefault(note_id, []).append(hydrated_source)
@@ -199,23 +187,12 @@ class NotesService:
             access_token=access_token,
             project_id=payload.get("project_id"),
         ) if payload.get("project_id") else None
-        citation_id = None
-        if payload.get("citation_id"):
-            citation_ids = await self.relation_validation.validate_owned_citation_ids(
-                user_id=user_id,
-                access_token=access_token,
-                citation_ids=[payload["citation_id"]],
-            )
-            citation_id = citation_ids[0]
-        quote_id = None
-        if payload.get("quote_id"):
-            quote_id = normalize_uuid(payload["quote_id"], field_name="quote_id")
-            await self.ownership.load_owned_quote(
-                user_id=user_id,
-                quote_id=quote_id,
-                access_token=access_token,
-                select="id,citation_id",
-            )
+        citation_id, quote_id = await self._normalize_citation_lineage(
+            user_id=user_id,
+            access_token=access_token,
+            citation_id=payload.get("citation_id"),
+            quote_id=payload.get("quote_id"),
+        )
         linked_note_ids = await self.relation_validation.validate_owned_note_ids(
             user_id=user_id,
             access_token=access_token,
@@ -245,7 +222,12 @@ class NotesService:
         return await self._hydrate(user_id=user_id, access_token=access_token, rows=rows)
 
     async def update_note(self, *, user_id: str, access_token: str | None, note_id: str, payload: dict) -> dict:
-        await self.ownership.load_owned_note(user_id=user_id, note_id=note_id, access_token=access_token, select="id")
+        existing = await self.ownership.load_owned_note(
+            user_id=user_id,
+            note_id=note_id,
+            access_token=access_token,
+            select="id,citation_id,quote_id",
+        )
         patch_payload = dict(payload)
         if payload.get("project_id") is not None:
             patch_payload["project_id"] = await self.taxonomy_service.ensure_project_exists(
@@ -253,26 +235,17 @@ class NotesService:
                 access_token=access_token,
                 project_id=payload.get("project_id"),
             ) if payload.get("project_id") else None
-        if payload.get("citation_id") is not None:
-            patch_payload["citation_id"] = None
-            if payload.get("citation_id"):
-                patch_payload["citation_id"] = (
-                    await self.relation_validation.validate_owned_citation_ids(
-                        user_id=user_id,
-                        access_token=access_token,
-                        citation_ids=[payload["citation_id"]],
-                    )
-                )[0]
-        if payload.get("quote_id") is not None:
-            patch_payload["quote_id"] = None
-            if payload.get("quote_id"):
-                patch_payload["quote_id"] = normalize_uuid(payload["quote_id"], field_name="quote_id")
-                await self.ownership.load_owned_quote(
-                    user_id=user_id,
-                    quote_id=patch_payload["quote_id"],
-                    access_token=access_token,
-                    select="id,citation_id",
-                )
+        if payload.get("citation_id") is not None or payload.get("quote_id") is not None:
+            next_citation_id, next_quote_id = await self._normalize_citation_lineage(
+                user_id=user_id,
+                access_token=access_token,
+                citation_id=payload.get("citation_id") if payload.get("citation_id") is not None else existing.get("citation_id"),
+                quote_id=payload.get("quote_id") if payload.get("quote_id") is not None else existing.get("quote_id"),
+            )
+            if payload.get("citation_id") is not None:
+                patch_payload["citation_id"] = next_citation_id
+            if payload.get("quote_id") is not None:
+                patch_payload["quote_id"] = next_quote_id
         row = await self.repository.update_note(
             user_id=user_id,
             access_token=access_token,
@@ -378,3 +351,35 @@ class NotesService:
         if response.status_code != 200:
             raise map_relation_error(response, missing_parent_detail="Note not found", invalid_related_detail="Invalid linked note references")
         return await self.get_note(user_id=user_id, access_token=access_token, note_id=normalized_note_id)
+    async def _normalize_citation_lineage(
+        self,
+        *,
+        user_id: str,
+        access_token: str | None,
+        citation_id: str | None,
+        quote_id: str | None,
+    ) -> tuple[str | None, str | None]:
+        normalized_citation_id = None
+        if citation_id:
+            normalized_citation_id = (
+                await self.relation_validation.validate_owned_citation_ids(
+                    user_id=user_id,
+                    access_token=access_token,
+                    citation_ids=[citation_id],
+                )
+            )[0]
+        normalized_quote_id = None
+        if quote_id:
+            normalized_quote_id = normalize_uuid(quote_id, field_name="quote_id")
+            quote_row = await self.ownership.load_owned_quote(
+                user_id=user_id,
+                quote_id=normalized_quote_id,
+                access_token=access_token,
+                select="id,citation_id",
+            )
+            quote_citation_id = str(quote_row.get("citation_id")) if quote_row.get("citation_id") else None
+            if normalized_citation_id is None:
+                normalized_citation_id = quote_citation_id
+            elif quote_citation_id and normalized_citation_id != quote_citation_id:
+                raise HTTPException(status_code=422, detail="quote_id and citation_id must reference the same citation")
+        return normalized_citation_id, normalized_quote_id

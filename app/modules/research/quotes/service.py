@@ -148,6 +148,15 @@ class QuotesService:
         serialized = await self._serialize_rows(user_id=user_id, access_token=access_token, rows=[row])
         return serialized[0]
 
+    async def list_quotes_by_ids(self, *, user_id: str, access_token: str | None, quote_ids: list[str]) -> list[dict]:
+        normalized_quote_ids = [normalize_uuid(quote_id, field_name="quote_id") for quote_id in quote_ids]
+        rows = await self.repository.list_quotes(
+            user_id=user_id,
+            access_token=access_token,
+            quote_ids=normalized_quote_ids,
+        )
+        return await self._serialize_rows(user_id=user_id, access_token=access_token, rows=rows)
+
     async def create_quote(self, *, user_id: str, access_token: str | None, payload: dict) -> dict:
         citation_ids = await self.relation_validation.validate_owned_citation_ids(
             user_id=user_id,

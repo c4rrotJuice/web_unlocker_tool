@@ -17,6 +17,7 @@ from app.modules.research.citations.service import CitationsService
 from app.modules.common.ownership import OwnershipValidator
 from app.modules.common.relation_validation import RelationValidator
 from app.modules.research.common import load_capability_state_from_request, normalize_uuid
+from app.modules.research.graph_service import ResearchGraphService
 from app.modules.research.notes.repo import NotesRepository
 from app.modules.research.notes.schemas import (
     NoteCreateRequest,
@@ -42,6 +43,8 @@ from app.modules.research.taxonomy.schemas import (
     TagUpdateRequest,
 )
 from app.modules.research.taxonomy.service import TaxonomyService
+from app.modules.workspace.repo import WorkspaceRepository
+from app.modules.workspace.service import WorkspaceService
 from app.services.supabase_rest import SupabaseRestRepository
 
 
@@ -83,6 +86,23 @@ quotes_service = QuotesService(
     notes_service=notes_service,
     ownership=ownership,
     relation_validation=relation_validation,
+)
+workspace_service = WorkspaceService(
+    repository=WorkspaceRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key),
+    taxonomy_service=taxonomy_service,
+    citations_service=citations_service,
+    quotes_service=quotes_service,
+    notes_service=notes_service,
+    ownership=ownership,
+    relation_validation=relation_validation,
+)
+graph_service = ResearchGraphService(
+    sources_service=sources_service,
+    citations_service=citations_service,
+    quotes_service=quotes_service,
+    notes_service=notes_service,
+    workspace_service=workspace_service,
+    notes_repository=notes_repository,
 )
 
 
@@ -261,6 +281,7 @@ async def list_citations(
         source_id=source_id,
         search=search,
         limit=limit,
+        account_type=access.capability_state.tier,
     )
 
 
@@ -280,6 +301,7 @@ async def get_citation(citation_id: str, access=Depends(_access)):
         user_id=access.user_id,
         access_token=access.access_token,
         citation_id=normalize_uuid(citation_id, field_name="citation_id"),
+        account_type=access.capability_state.tier,
     )
 
 
@@ -411,6 +433,17 @@ async def get_note(note_id: str, access=Depends(_access)):
     ), "meta": {}, "error": None}
 
 
+@router.get("/api/research/{entity}/{entity_id}/graph")
+async def get_research_graph(entity: str, entity_id: str, access=Depends(_access)):
+    return {"ok": True, "data": await graph_service.get_graph(
+        user_id=access.user_id,
+        access_token=access.access_token,
+        capability_state=access.capability_state,
+        entity=entity,
+        entity_id=entity_id,
+    ), "meta": {}, "error": None}
+
+
 @router.patch("/api/notes/{note_id}")
 async def update_note(note_id: str, payload: NoteUpdateRequest, access=Depends(_access)):
     return {"ok": True, "data": await notes_service.update_note(
@@ -485,6 +518,7 @@ async def render_citation(payload: CitationRenderRequest, access=Depends(_access
         access_token=access.access_token,
         citation_id=normalize_uuid(payload.citation_id, field_name="citation_id"),
         style=payload.style,
+        account_type=access.capability_state.tier,
     )
 
 
@@ -495,6 +529,7 @@ async def citations_by_ids(payload: CitationByIdsRequest, access=Depends(_access
         access_token=access.access_token,
         ids=[normalize_uuid(citation_id, field_name="citation_id") for citation_id in payload.ids],
         limit=min(len(payload.ids) or 1, 100),
+        account_type=access.capability_state.tier,
     )
 
 

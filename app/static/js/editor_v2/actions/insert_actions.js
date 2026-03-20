@@ -11,7 +11,7 @@ export function createInsertActions({ quillAdapter, attachActions, workspaceStat
       quillAdapter.insertCitationChip({
         citationId: citation.id,
         sourceId: citation.source?.id || citation.source_id || "",
-        label: citation.renders?.mla?.full || citation.source?.title || "Citation",
+        label: citation.renders?.mla?.bibliography || citation.source?.title || "Citation",
         index,
       });
       await attachActions.attachCitation(citation.id);
@@ -46,7 +46,7 @@ export function createInsertActions({ quillAdapter, attachActions, workspaceStat
       if (!citations.length) return;
       const unique = Array.from(new Map(citations.map((citation) => [citation.id, citation])).values());
       const index = insertionIndex(quillAdapter);
-      const lines = ["\nBibliography\n", ...unique.map((citation) => `${citation.renders?.mla?.full || citation.source?.title || citation.id}\n`)];
+      const lines = ["\nBibliography\n", ...unique.map((citation) => `${citation.renders?.mla?.bibliography || citation.source?.title || citation.id}\n`)];
       quillAdapter.insertText(index, lines.join(""));
       eventBus?.emit("bibliography.inserted", { count: unique.length });
     },

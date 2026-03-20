@@ -12,6 +12,8 @@ FORBIDDEN_CODE_PATTERNS = (
     "wu_" + "access_token",
     "documents" + ".citation_ids",
     "citation_instances" + ".document_id",
+    "renders?.mla?.full",
+    "payload.full || payload.footnote",
 )
 
 FORBIDDEN_ENDPOINT_PATTERNS = (
@@ -55,6 +57,7 @@ class DummyClient:
 
 
 def _iter_paths():
+    current = Path(__file__).resolve()
     seen: set[Path] = set()
     for pattern in ACTIVE_RUNTIME_GLOBS:
         for path in Path(".").glob(pattern):
@@ -62,8 +65,15 @@ def _iter_paths():
                 seen.add(path)
     for path in Path("tests").glob("test_*.py"):
         if path.is_file():
+            resolved = path.resolve()
+            if resolved == current:
+                continue
             seen.add(path)
     return sorted(seen)
+
+
+def _iter_sql_paths():
+    return sorted(path for path in Path("sql").glob("*.sql") if path.is_file())
 
 
 def test_forbidden_identifiers_are_absent_from_active_runtime_and_tests():
@@ -71,6 +81,16 @@ def test_forbidden_identifiers_are_absent_from_active_runtime_and_tests():
     for path in _iter_paths():
         text = path.read_text(encoding="utf-8")
         for pattern in FORBIDDEN_CODE_PATTERNS + FORBIDDEN_ENDPOINT_PATTERNS:
+            if pattern in text:
+                offenders.append(f"{path}:{pattern}")
+    assert offenders == []
+
+
+def test_forbidden_legacy_citation_identifiers_are_absent_from_sql_contracts():
+    offenders: list[str] = []
+    for path in _iter_sql_paths():
+        text = path.read_text(encoding="utf-8")
+        for pattern in ("documents" + ".citation_ids", "citation_instances" + ".document_id"):
             if pattern in text:
                 offenders.append(f"{path}:{pattern}")
     assert offenders == []

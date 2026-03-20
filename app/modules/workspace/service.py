@@ -27,6 +27,7 @@ class WorkspaceService:
         repository: WorkspaceRepository,
         taxonomy_service,
         citations_service,
+        quotes_service,
         notes_service,
         ownership: OwnershipValidator,
         relation_validation: RelationValidator,
@@ -34,6 +35,7 @@ class WorkspaceService:
         self.repository = repository
         self.taxonomy_service = taxonomy_service
         self.citations_service = citations_service
+        self.quotes_service = quotes_service
         self.notes_service = notes_service
         self.ownership = ownership
         self.relation_validation = relation_validation
@@ -172,6 +174,22 @@ class WorkspaceService:
         )
         hydrated = await self._hydrate_documents(user_id=user_id, access_token=access_token, capability_state=capability_state, rows=[row])
         return serialize_ok_envelope(hydrated[0])
+
+    async def list_documents_by_ids(self, *, user_id: str, access_token: str | None, capability_state, document_ids: list[str]) -> list[dict]:
+        normalized_document_ids = [normalize_uuid(document_id, field_name="document_id") for document_id in document_ids]
+        rows = await self.repository.list_documents_by_ids(
+            user_id=user_id,
+            access_token=access_token,
+            document_ids=normalized_document_ids,
+        )
+        hydrated = await self._hydrate_documents(
+            user_id=user_id,
+            access_token=access_token,
+            capability_state=capability_state,
+            rows=rows,
+        )
+        by_id = {row.get("id"): row for row in hydrated if row.get("id")}
+        return [by_id[document_id] for document_id in normalized_document_ids if document_id in by_id]
 
     async def create_document(self, *, user_id: str, access_token: str | None, capability_state, payload: dict) -> dict:
         project_id = await self.taxonomy_service.ensure_project_exists(
@@ -375,6 +393,13 @@ class WorkspaceService:
             access_token=access_token,
             ids=document.get("attached_citation_ids") or [],
             limit=len(document.get("attached_citation_ids") or []) or 1,
+            account_type=capability_state.tier,
+        )
+        attached_quotes = await self.quotes_service.list_quotes(
+            user_id=user_id,
+            access_token=access_token,
+            document_id=document_id,
+            limit=100,
         )
         attached_notes = await self.notes_service.list_notes_by_ids(
             user_id=user_id,
@@ -383,14 +408,22 @@ class WorkspaceService:
         )
         notes_by_id = {note.get("id"): note for note in attached_notes if note.get("id")}
         ordered_notes = [notes_by_id[note_id] for note_id in document.get("attached_note_ids") or [] if note_id in notes_by_id]
+        attached_sources: list[dict] = []
+        seen_source_ids: set[str] = set()
+        for citation in attached_citations:
+            source = citation.get("source") or {}
+            source_id = source.get("id")
+            if source_id and source_id not in seen_source_ids:
+                seen_source_ids.add(source_id)
+                attached_sources.append(source)
         compact_seed = self.summarize_seed(seed)
         return serialize_ok_envelope(
             serialize_document_hydration(
                 document=document,
                 attached_citations=attached_citations,
                 attached_notes=ordered_notes,
-                attached_quotes=[],
-                attached_sources=[],
+                attached_quotes=attached_quotes,
+                attached_sources=attached_sources,
                 seed=compact_seed,
             )
         )

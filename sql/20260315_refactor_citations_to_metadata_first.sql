@@ -30,7 +30,6 @@ create table if not exists public.citation_instances (
   id uuid primary key default gen_random_uuid(),
   source_id uuid not null references public.sources(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
-  document_id uuid null references public.documents(id) on delete set null,
   legacy_citation_id text null,
   locator jsonb not null default '{}'::jsonb,
   quote_text text null,
@@ -46,6 +45,9 @@ create index if not exists citation_instances_user_id_created_at_idx
 
 create index if not exists citation_instances_source_id_idx
   on public.citation_instances (source_id);
+
+create unique index if not exists citation_instances_user_id_source_id_key
+  on public.citation_instances (user_id, source_id);
 
 create unique index if not exists citation_instances_legacy_citation_id_idx
   on public.citation_instances (legacy_citation_id)

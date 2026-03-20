@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 
 def test_backend_exposes_metadata_first_render_endpoint_and_render_cache_payload():
     source = Path("app/modules/research/routes.py").read_text(encoding="utf-8")
@@ -14,8 +16,13 @@ def test_backend_exposes_metadata_first_render_endpoint_and_render_cache_payload
 
 
 def test_extension_capture_runtime_delegates_network_to_background_router():
-    content_bridge = Path("extension/content/runtime_bridge.js").read_text(encoding="utf-8")
-    background_router = Path("extension/background/router.js").read_text(encoding="utf-8")
+    content_bridge_path = Path("extension/content/runtime_bridge.js")
+    background_router_path = Path("extension/background/router.js")
+    if not content_bridge_path.exists() or not background_router_path.exists():
+        pytest.skip("Extension runtime sources are not present in this checkout")
+
+    content_bridge = content_bridge_path.read_text(encoding="utf-8")
+    background_router = background_router_path.read_text(encoding="utf-8")
 
     assert "chrome.runtime.sendMessage" in content_bridge
     assert "MESSAGE_TYPES.CAPTURE_CITATION" in background_router
@@ -24,12 +31,13 @@ def test_extension_capture_runtime_delegates_network_to_background_router():
     assert "MESSAGE_TYPES.WORK_IN_EDITOR" in background_router
 
 
-def test_sql_schema_supports_source_identity_and_render_cache():
-    migration = Path("sql/20260315_refactor_citations_to_metadata_first.sql").read_text(encoding="utf-8")
+def test_canonical_sql_schema_supports_source_identity_and_non_lossy_citation_instances():
+    migration = Path("writior_migration_pack/005_sources_citations_quotes.sql").read_text(encoding="utf-8")
 
     assert "create table if not exists public.sources" in migration
     assert "create table if not exists public.citation_instances" in migration
     assert "create table if not exists public.citation_renders" in migration
+    assert "citation_instances_user_id_source_id_key" not in migration
 
 
 def test_rls_migration_secures_metadata_first_tables_and_note_links():

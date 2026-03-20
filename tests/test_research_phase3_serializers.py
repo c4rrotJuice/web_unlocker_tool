@@ -106,7 +106,7 @@ def test_citation_serializer_shape_is_stable():
             relationship_counts={},
         ),
         renders={"mla": {"inline": "(Ada)", "bibliography": "Ada. Source."}},
-        relationship_counts={"quote_count": 1},
+        relationship_counts={"quote_count": 1, "note_count": 2, "document_count": 3},
     )
     assert set(payload.keys()) == {
         "id",

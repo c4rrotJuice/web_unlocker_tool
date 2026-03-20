@@ -119,3 +119,16 @@ class SourcesService:
             raise HTTPException(status_code=404, detail="Source not found")
         counts = await self.repository.count_citations_for_sources(user_id=user_id, access_token=access_token, source_ids=[source_id])
         return serialize_source_detail(row, relationship_counts={"citation_count": counts.get(source_id, 0)})
+
+    async def list_sources_by_ids(self, *, user_id: str, access_token: str | None, source_ids: list[str]) -> list[dict]:
+        rows = await self.repository.get_sources_by_ids(source_ids=source_ids, access_token=access_token)
+        counts = await self.repository.count_citations_for_sources(
+            user_id=user_id,
+            access_token=access_token,
+            source_ids=[row["id"] for row in rows if row.get("id")],
+        )
+        return [
+            serialize_source_summary(row, relationship_counts={"citation_count": counts.get(row["id"], 0)})
+            for row in rows
+            if row.get("id")
+        ]

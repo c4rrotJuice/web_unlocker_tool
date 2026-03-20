@@ -298,6 +298,8 @@ def serialize_note(
     sources: list[dict[str, object]],
 ) -> dict[str, object]:
     title = row.get("title")
+    supporting_source_ids = [source.get("source_id") for source in sources if source.get("source_id")]
+    supporting_citation_ids = [source.get("citation_id") for source in sources if source.get("citation_id")]
     return {
         "id": row.get("id"),
         "title": "" if title is None else str(title),
@@ -309,6 +311,12 @@ def serialize_note(
         "tags": tags,
         "linked_note_ids": linked_note_ids,
         "sources": sources,
+        "lineage": {
+            "citation_id": row.get("citation_id"),
+            "quote_id": row.get("quote_id"),
+            "supporting_source_ids": supporting_source_ids,
+            "supporting_citation_ids": supporting_citation_ids,
+        },
         "status": row.get("status") or "active",
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -464,3 +472,26 @@ def serialize_document_hydration(
 
 def serialize_outline(items: list[dict[str, object]]) -> dict[str, object]:
     return {"items": items}
+
+
+def serialize_research_graph(
+    *,
+    node: dict[str, object],
+    sources: list[dict[str, object]],
+    citations: list[dict[str, object]],
+    quotes: list[dict[str, object]],
+    notes: list[dict[str, object]],
+    documents: list[dict[str, object]],
+    edges: list[dict[str, object]],
+) -> dict[str, object]:
+    return {
+        "node": node,
+        "collections": {
+            "sources": sources,
+            "citations": citations,
+            "quotes": quotes,
+            "notes": notes,
+            "documents": documents,
+        },
+        "edges": edges,
+    }

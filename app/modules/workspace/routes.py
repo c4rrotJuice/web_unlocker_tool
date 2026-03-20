@@ -9,6 +9,8 @@ from app.modules.research.citations.service import CitationsService
 from app.modules.research.common import load_capability_state_from_request
 from app.modules.research.notes.repo import NotesRepository
 from app.modules.research.notes.service import NotesService
+from app.modules.research.quotes.repo import QuotesRepository
+from app.modules.research.quotes.service import QuotesService
 from app.modules.research.sources.repo import SourcesRepository
 from app.modules.research.sources.service import SourcesService
 from app.modules.research.taxonomy.repo import TaxonomyRepository
@@ -58,10 +60,18 @@ notes_service = NotesService(
     ownership=ownership,
     relation_validation=relation_validation,
 )
+quotes_service = QuotesService(
+    repository=QuotesRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key),
+    citations_service=citations_service,
+    notes_service=notes_service,
+    ownership=ownership,
+    relation_validation=relation_validation,
+)
 service = WorkspaceService(
     repository=WorkspaceRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key),
     taxonomy_service=taxonomy_service,
     citations_service=citations_service,
+    quotes_service=quotes_service,
     notes_service=notes_service,
     ownership=ownership,
     relation_validation=relation_validation,

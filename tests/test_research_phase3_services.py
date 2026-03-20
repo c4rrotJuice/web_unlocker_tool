@@ -137,6 +137,8 @@ class FakeCitationsRepository:
         self.templates = {}
         self.renders = {}
         self.quote_counts = {}
+        self.note_counts = {}
+        self.document_counts = {}
         self.list_renders_calls = []
         self.replace_renders_calls = []
 
@@ -151,6 +153,12 @@ class FakeCitationsRepository:
         }
         self.rows[citation_id] = row
         return row
+
+    async def get_citation_by_source(self, *, user_id, access_token, source_id):
+        for row in self.rows.values():
+            if row["user_id"] == user_id and row["source_id"] == source_id:
+                return row
+        return None
 
     async def list_citations(self, *, user_id, access_token, citation_ids=None, source_id=None, limit=50):
         rows = [row for row in self.rows.values() if row["user_id"] == user_id]
@@ -192,6 +200,12 @@ class FakeCitationsRepository:
 
     async def list_quote_counts(self, *, user_id, access_token, citation_ids):
         return {citation_id: self.quote_counts.get(citation_id, 0) for citation_id in citation_ids}
+
+    async def list_note_counts(self, *, user_id, access_token, citation_ids):
+        return {citation_id: self.note_counts.get(citation_id, 0) for citation_id in citation_ids}
+
+    async def list_document_counts(self, *, user_id, access_token, citation_ids):
+        return {citation_id: self.document_counts.get(citation_id, 0) for citation_id in citation_ids}
 
     async def list_templates(self, *, user_id, access_token):
         return [row for row in self.templates.values() if row["user_id"] == user_id]
@@ -299,15 +313,20 @@ async def test_citation_create_get_list_update_delete_and_shape_are_canonical(ci
     )
     sources_service.repository.citation_counts[created["source_id"]] = 1
     citations_service.repository.quote_counts[created["id"]] = 2
+    citations_service.repository.note_counts[created["id"]] = 1
+    citations_service.repository.document_counts[created["id"]] = 3
 
-    loaded = await citations_service.get_citation(user_id="user-1", access_token=None, citation_id=created["id"])
-    listed = (await citations_service.list_citations(user_id="user-1", access_token=None, ids=[created["id"]], limit=1))[0]
-    rendered = await citations_service.render_citation(user_id="user-1", access_token=None, citation_id=created["id"], style="mla")
+    loaded = await citations_service.get_citation(user_id="user-1", access_token=None, citation_id=created["id"], account_type="pro")
+    listed = (await citations_service.list_citations(user_id="user-1", access_token=None, ids=[created["id"]], limit=1, account_type="pro"))[0]
+    rendered = await citations_service.render_citation(user_id="user-1", access_token=None, citation_id=created["id"], style="mla", account_type="pro")
 
     expected_keys = set(created.keys())
     assert expected_keys == set(loaded.keys()) == set(listed.keys()) == set(rendered.keys())
     assert {"id", "source_id", "source", "renders", "created_at", "updated_at", "relationship_counts"}.issubset(expected_keys)
     assert "mla" in created["renders"]
+    assert loaded["relationship_counts"] == {"quote_count": 2, "note_count": 1, "document_count": 3}
+    assert listed["relationship_counts"] == {"quote_count": 2, "note_count": 1, "document_count": 3}
+    assert rendered["relationship_counts"] == {"quote_count": 2, "note_count": 1, "document_count": 3}
 
     updated = await citations_service.update_citation(
         user_id="user-1",
@@ -323,6 +342,28 @@ async def test_citation_create_get_list_update_delete_and_shape_are_canonical(ci
 
 
 @pytest.mark.anyio
+async def test_citation_create_allows_multiple_contexts_per_user_and_source(citations_service):
+    first = await citations_service.create_citation(
+        user_id="user-1",
+        access_token=None,
+        account_type="pro",
+        payload={"url": "https://example.com/paper", "metadata": {"title": "Paper"}, "excerpt": "First", "quote": "First", "style": "mla"},
+    )
+    second = await citations_service.create_citation(
+        user_id="user-1",
+        access_token=None,
+        account_type="pro",
+        payload={"url": "https://example.com/paper", "metadata": {"title": "Paper"}, "excerpt": "Second", "quote": "Second", "style": "mla"},
+    )
+
+    assert first["id"] != second["id"]
+    assert first["source_id"] == second["source_id"]
+    assert first["excerpt"] == "First"
+    assert second["excerpt"] == "Second"
+    assert len(citations_service.repository.rows) == 2
+
+
+@pytest.mark.anyio
 async def test_cross_user_citation_access_is_denied(citations_service):
     created = await citations_service.create_citation(
         user_id="user-1",
@@ -331,7 +372,7 @@ async def test_cross_user_citation_access_is_denied(citations_service):
         payload={"url": "https://example.com/paper", "metadata": {"title": "Paper"}, "excerpt": "Excerpt", "quote": "Excerpt", "style": "mla"},
     )
     with pytest.raises(HTTPException) as exc:
-        await citations_service.get_citation(user_id="user-2", access_token=None, citation_id=created["id"])
+        await citations_service.get_citation(user_id="user-2", access_token=None, citation_id=created["id"], account_type="pro")
     assert exc.value.status_code == 404
 
 
@@ -344,7 +385,7 @@ async def test_render_cache_populates_and_reuses(citations_service):
         payload={"url": "https://example.com/paper", "metadata": {"title": "Paper"}, "excerpt": "Excerpt", "quote": "Excerpt", "style": "mla"},
     )
     render_rows = list(citations_service.repository.renders[created["id"]])
-    await citations_service.get_citation(user_id="user-1", access_token=None, citation_id=created["id"])
+    await citations_service.get_citation(user_id="user-1", access_token=None, citation_id=created["id"], account_type="pro")
     assert citations_service.repository.renders[created["id"]] == render_rows
 
 
@@ -372,11 +413,42 @@ async def test_stale_render_refresh_rereads_once_for_bulk_hydration(citations_se
         access_token=None,
         ids=[first["id"], second["id"]],
         limit=2,
+        account_type="pro",
     )
 
     assert [row["id"] for row in rows] == [first["id"], second["id"]]
     assert citations_service.repository.replace_renders_calls == [first["id"], second["id"]]
     assert citations_service.repository.list_renders_calls == [[first["id"], second["id"]], [first["id"], second["id"]]]
+
+
+@pytest.mark.anyio
+async def test_render_endpoint_filters_to_requested_allowed_style_and_reuses_cache(citations_service):
+    created = await citations_service.create_citation(
+        user_id="user-1",
+        access_token=None,
+        account_type="pro",
+        payload={"url": "https://example.com/paper", "metadata": {"title": "Paper"}, "excerpt": "Excerpt", "quote": "Excerpt", "style": "mla"},
+    )
+
+    rendered = await citations_service.render_citation(
+        user_id="user-1",
+        access_token=None,
+        citation_id=created["id"],
+        style="mla",
+        account_type="free",
+    )
+    assert set(rendered["renders"].keys()) == {"mla"}
+    assert rendered["renders"]["mla"]["bibliography"]
+
+    with pytest.raises(HTTPException) as exc:
+        await citations_service.render_citation(
+            user_id="user-1",
+            access_token=None,
+            citation_id=created["id"],
+            style="chicago",
+            account_type="free",
+        )
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.anyio

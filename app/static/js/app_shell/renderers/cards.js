@@ -34,7 +34,7 @@ export function renderCitationCard(citation, options = {}) {
       <div class="research-card-header">
         <h3 class="research-card-title">${escapeHtml(source.title || "Citation")}</h3>
       </div>
-      <p class="research-card-body">${escapeHtml(limitText(citation.renders?.mla?.full || citation.excerpt || citation.annotation || "Citation saved", 160))}</p>
+      <p class="research-card-body">${escapeHtml(limitText(citation.renders?.mla?.bibliography || citation.excerpt || citation.annotation || "Citation saved", 160))}</p>
       <div class="research-card-meta">
         <span class="meta-pill">${escapeHtml(source.hostname || source.publisher || "Source")}</span>
         <span class="meta-pill">${counts.quote_count || 0} quotes</span>

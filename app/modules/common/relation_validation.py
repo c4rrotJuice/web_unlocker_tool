@@ -10,29 +10,32 @@ from app.services.supabase_rest import response_error_text, response_json
 
 def _dedupe_sources(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
-    seen: set[tuple[str, str | None, str | None]] = set()
+    seen: set[tuple[str, str, str | None, str | None]] = set()
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             continue
+        relation_type = str(item.get("relation_type") or "external").strip().lower() or "external"
         url = str(item.get("url") or "").strip()
         source_id = str(item.get("source_id") or "").strip() or None
         citation_id = str(item.get("citation_id") or "").strip() or None
+        raw_position = item.get("position")
         if source_id:
             source_id = normalize_uuid(source_id, field_name="source_id")
         if citation_id:
             citation_id = normalize_uuid(citation_id, field_name="citation_id")
         if not url and not source_id and not citation_id:
             continue
-        key = (url.lower(), source_id, citation_id)
+        key = (relation_type, url.lower(), source_id, citation_id)
         if key in seen:
             continue
         seen.add(key)
+        position = raw_position if isinstance(raw_position, int) and raw_position >= 0 else index
         normalized.append(
             {
                 "id": item.get("id"),
                 "source_id": source_id,
                 "citation_id": citation_id,
-                "relation_type": (item.get("relation_type") or "external"),
+                "relation_type": relation_type,
                 "url": url or None,
                 "hostname": (item.get("hostname") or "").strip() or None,
                 "title": (item.get("title") or "").strip() or None,
@@ -42,7 +45,7 @@ def _dedupe_sources(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "label": (item.get("title") or item.get("url") or "").strip() or None,
                     "subtitle": (item.get("hostname") or "").strip() or None,
                 },
-                "position": index,
+                "position": position,
             }
         )
     return normalized

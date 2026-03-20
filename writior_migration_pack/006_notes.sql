@@ -37,17 +37,38 @@ create table if not exists public.note_sources (
   id uuid primary key default gen_random_uuid(),
   note_id uuid not null references public.notes(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
-  url text not null,
+  source_id uuid references public.sources(id) on delete cascade,
+  citation_id uuid references public.citation_instances(id) on delete cascade,
+  relation_type text not null default 'external'
+    check (relation_type in ('external', 'source', 'citation')),
+  url text,
   hostname text,
   title text,
   source_author text,
   source_published_at timestamptz,
+  position integer not null default 0 check (position >= 0),
   attached_at timestamptz not null default now(),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint note_sources_reference_check check (
+    (relation_type = 'external' and url is not null)
+    or (relation_type = 'source' and source_id is not null)
+    or (relation_type = 'citation' and citation_id is not null)
+  )
 );
 
 create index if not exists idx_note_sources_note_attached_at
   on public.note_sources(note_id, attached_at desc);
+
+create index if not exists idx_note_sources_note_position
+  on public.note_sources(note_id, position asc, attached_at asc, id asc);
+
+create index if not exists idx_note_sources_source_id
+  on public.note_sources(source_id)
+  where source_id is not null;
+
+create index if not exists idx_note_sources_citation_id
+  on public.note_sources(citation_id)
+  where citation_id is not null;
 
 create table if not exists public.note_links (
   note_id uuid not null references public.notes(id) on delete cascade,

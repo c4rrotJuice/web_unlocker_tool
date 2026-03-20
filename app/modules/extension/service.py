@@ -108,6 +108,7 @@ class ExtensionService:
         quotes_service,
         notes_service,
         workspace_service,
+        graph_service,
         auth_client,
     ):
         self.settings = settings
@@ -119,6 +120,7 @@ class ExtensionService:
         self.quotes_service = quotes_service
         self.notes_service = notes_service
         self.workspace_service = workspace_service
+        self.graph_service = graph_service
         self.auth_client = auth_client
 
     def status(self) -> dict[str, object]:
@@ -581,29 +583,6 @@ class ExtensionService:
         parsed = urlsplit(payload.url)
         return parsed.netloc or "New document"
 
-    def _document_seed(self, payload, citation: dict[str, Any], quote: dict[str, Any] | None, note: dict[str, Any] | None) -> dict[str, Any]:
-        lines: list[str] = []
-        if payload.title:
-            lines.append(f"{payload.title}\n")
-        if quote and quote.get("excerpt"):
-            lines.append(f"{quote['excerpt']}\n\n")
-        elif payload.selected_text:
-            lines.append(f"{payload.selected_text}\n\n")
-        if note and note.get("note_body"):
-            lines.append(f"{note['note_body']}\n")
-        elif payload.citation_text:
-            lines.append(f"Source: {payload.citation_text}\n")
-        text = "".join(lines) or "\n"
-        return {
-            "ops": [{"insert": text}],
-            "document_id": None,
-            "source_id": citation.get("source_id") or (citation.get("source") or {}).get("id"),
-            "citation_id": citation.get("id"),
-            "quote_id": quote.get("id") if quote else None,
-            "note_id": note.get("id") if note else None,
-            "mode": "quote_focus" if quote else "seed_review",
-        }
-
     def _safe_editor_path(self, document_id: str, seed: dict[str, Any] | None = None) -> str:
         seed = seed or {}
         params = [f"document_id={document_id}", "seeded=1"]
@@ -678,96 +657,24 @@ class ExtensionService:
             )
             if cached is not None:
                 return cached
-        citation_payload = {
-            "url": payload.url,
-            "metadata": payload.metadata,
-            "excerpt": payload.selected_text,
-            "quote": payload.selected_text,
-            "locator": payload.locator,
-            "style": payload.citation_format,
-            "annotation": None,
-            "extraction_payload": payload.extraction_payload,
-        }
-        citation = await self.citations_service.create_citation(
-            user_id=access.user_id,
-            access_token=access.access_token,
-            account_type=access.capability_state.tier,
-            payload=citation_payload,
-        )
-        quote = None
-        if payload.selected_text:
-            quote = await self.quotes_service.create_quote(
-                user_id=access.user_id,
-                access_token=access.access_token,
-                payload={
-                    "citation_id": citation["id"],
-                    "excerpt": payload.selected_text,
-                    "locator": payload.locator,
-                    "annotation": None,
-                },
-            )
-        note = None
-        if payload.note is not None:
-            note_title = payload.note.title or payload.title or "Captured note"
-            note = await self.notes_service.create_note(
-                user_id=access.user_id,
-                access_token=access.access_token,
-                payload={
-                    "title": note_title,
-                    "note_body": payload.note.note_body,
-                    "highlight_text": payload.selected_text,
-                    "project_id": payload.note.project_id or payload.project_id,
-                    "citation_id": citation["id"],
-                    "quote_id": quote["id"] if quote else None,
-                    "tag_ids": payload.note.tag_ids,
-                    "sources": [source.model_dump(exclude_none=True) for source in payload.note.sources],
-                    "linked_note_ids": [],
-                },
-            )
-        document = await self.workspace_service.create_document(
+        workflow = await self.graph_service.orchestrate_work_in_editor(
             user_id=access.user_id,
             access_token=access.access_token,
             capability_state=access.capability_state,
-            payload={
-                "title": self._default_document_title(payload),
-                "project_id": payload.project_id or (payload.note.project_id if payload.note else None),
-            },
+            payload=payload,
+            default_document_title=self._default_document_title(payload),
         )
-        document_id = document["data"]["id"]
-        seed = self._document_seed(payload, citation, quote, note)
-        seed["document_id"] = document_id
-        document = await self.workspace_service.update_document(
-            user_id=access.user_id,
-            access_token=access.access_token,
-            capability_state=access.capability_state,
-            document_id=document_id,
-            payload={"content_delta": {"ops": seed["ops"]}},
-        )
-        document = await self.workspace_service.replace_document_citations(
-            user_id=access.user_id,
-            access_token=access.access_token,
-            capability_state=access.capability_state,
-            document_id=document_id,
-            citation_ids=[citation["id"]],
-        )
-        if note is not None:
-            document = await self.workspace_service.replace_document_notes(
-                user_id=access.user_id,
-                access_token=access.access_token,
-                capability_state=access.capability_state,
-                document_id=document_id,
-                note_ids=[note["id"]],
-            )
-        editor_path = self._safe_editor_path(document_id, seed)
+        document_id = workflow["document_id"]
+        editor_path = self._safe_editor_path(document_id, workflow["seed"])
         response = serialize_ok_envelope(
             {
                 "document_id": document_id,
-                "seed": self.workspace_service.summarize_seed(seed),
+                "seed": workflow["seed"],
                 "redirect_path": editor_path,
-                "document": document["data"],
-                "citation": citation,
-                "quote": quote,
-                "note": note,
+                "document": workflow["document"],
+                "citation": workflow["citation"],
+                "quote": workflow["quote"],
+                "note": workflow["note"],
                 "editor_path": editor_path,
                 "editor_url": editor_path,
             }
@@ -818,6 +725,7 @@ def build_extension_service(
     quotes_service,
     notes_service,
     workspace_service,
+    graph_service,
     auth_client,
 ) -> ExtensionService:
     return ExtensionService(
@@ -830,5 +738,6 @@ def build_extension_service(
         quotes_service=quotes_service,
         notes_service=notes_service,
         workspace_service=workspace_service,
+        graph_service=graph_service,
         auth_client=auth_client,
     )

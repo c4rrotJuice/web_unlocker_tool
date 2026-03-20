@@ -28,6 +28,7 @@ from app.modules.unlock.repo import UnlockRepository
 from app.modules.unlock.service import UnlockService
 from app.modules.research.citations.repo import CitationsRepository
 from app.modules.research.citations.service import CitationsService
+from app.modules.research.graph_service import ResearchGraphService
 from app.modules.research.notes.repo import NotesRepository
 from app.modules.research.notes.service import NotesService
 from app.modules.research.quotes.repo import QuotesRepository
@@ -90,9 +91,18 @@ workspace_service = WorkspaceService(
     repository=WorkspaceRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key),
     taxonomy_service=taxonomy_service,
     citations_service=citations_service,
+    quotes_service=quotes_service,
     notes_service=notes_service,
     ownership=ownership,
     relation_validation=relation_validation,
+)
+graph_service = ResearchGraphService(
+    sources_service=sources_service,
+    citations_service=citations_service,
+    quotes_service=quotes_service,
+    notes_service=notes_service,
+    workspace_service=workspace_service,
+    notes_repository=notes_repository,
 )
 unlock_service = UnlockService(
     repository=UnlockRepository(supabase_repo=supabase_repo),
@@ -107,6 +117,7 @@ service = build_extension_service(
     quotes_service=quotes_service,
     notes_service=notes_service,
     workspace_service=workspace_service,
+    graph_service=graph_service,
     auth_client=create_client(settings.supabase_url or "", settings.supabase_anon_key or ""),
 )
 

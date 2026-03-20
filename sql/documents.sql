@@ -3,7 +3,6 @@ create table if not exists public.documents (
     user_id uuid not null,
     title text not null default 'Untitled',
     content_delta jsonb not null default '{}'::jsonb,
-    citation_ids uuid[] not null default '{}'::uuid[],
     created_at timestamptz default now(),
     updated_at timestamptz default now(),
     expires_at timestamptz null

@@ -38,6 +38,17 @@ class CitationsService:
             )
         return selected_style
 
+    def _allowed_styles(self, account_type: str | None) -> set[str]:
+        if account_type is None:
+            return set(SUPPORTED_STYLES)
+        return set(allowed_citation_formats(account_type)) - {"custom"}
+
+    def _filter_renders(self, *, renders: dict[str, dict[str, str]], account_type: str | None, selected_style: str | None = None) -> dict[str, dict[str, str]]:
+        allowed_styles = self._allowed_styles(account_type)
+        if selected_style:
+            return {selected_style: renders.get(selected_style, {})} if selected_style in allowed_styles else {}
+        return {style: payload for style, payload in renders.items() if style in allowed_styles}
+
     async def _build_render_rows(self, *, citation_id: str, source_id: str, source_row: dict[str, Any], citation_row: dict[str, Any]) -> list[dict[str, Any]]:
         source_payload = {
             "id": source_row.get("id"),
@@ -114,7 +125,16 @@ class CitationsService:
         )
         await self.repository.replace_renders(citation_id=str(citation_row["id"]), source_id=str(source_row["id"]), rows=rows)
 
-    async def _hydrate(self, *, user_id: str, access_token: str | None, rows: list[dict], preserve_order_ids: list[str] | None = None) -> list[dict]:
+    async def _hydrate(
+        self,
+        *,
+        user_id: str,
+        access_token: str | None,
+        rows: list[dict],
+        preserve_order_ids: list[str] | None = None,
+        account_type: str | None = None,
+        selected_style: str | None = None,
+    ) -> list[dict]:
         if not rows:
             return []
         source_ids: list[str] = []
@@ -129,6 +149,8 @@ class CitationsService:
         citation_ids = [row["id"] for row in rows if row.get("id")]
         render_rows = await self.repository.list_renders(citation_ids=citation_ids, access_token=access_token)
         quote_counts = await self.repository.list_quote_counts(user_id=user_id, access_token=access_token, citation_ids=citation_ids)
+        note_counts = await self.repository.list_note_counts(user_id=user_id, access_token=access_token, citation_ids=citation_ids)
+        document_counts = await self.repository.list_document_counts(user_id=user_id, access_token=access_token, citation_ids=citation_ids)
 
         render_map: dict[str, dict[str, dict[str, str]]] = {}
         render_versions: dict[str, tuple[str, str]] = {}
@@ -176,8 +198,16 @@ class CitationsService:
                 serialize_citation(
                     row,
                     source=serialize_source_summary(source_row, relationship_counts={}),
-                    renders=render_map.get(row["id"], {}),
-                    relationship_counts={"quote_count": quote_counts.get(row["id"], 0)},
+                    renders=self._filter_renders(
+                        renders=render_map.get(row["id"], {}),
+                        account_type=account_type,
+                        selected_style=selected_style,
+                    ),
+                    relationship_counts={
+                        "quote_count": quote_counts.get(row["id"], 0),
+                        "note_count": note_counts.get(row["id"], 0),
+                        "document_count": document_counts.get(row["id"], 0),
+                    },
                 )
             )
         if preserve_order_ids:
@@ -194,9 +224,18 @@ class CitationsService:
         source_id: str | None = None,
         search: str | None = None,
         limit: int = 50,
+        account_type: str | None = None,
+        selected_style: str | None = None,
     ) -> list[dict]:
         rows = await self.repository.list_citations(user_id=user_id, access_token=access_token, citation_ids=ids, source_id=source_id, limit=limit)
-        payload = await self._hydrate(user_id=user_id, access_token=access_token, rows=rows, preserve_order_ids=ids)
+        payload = await self._hydrate(
+            user_id=user_id,
+            access_token=access_token,
+            rows=rows,
+            preserve_order_ids=ids,
+            account_type=account_type,
+            selected_style=selected_style,
+        )
         if search:
             needle = search.strip().lower()
             payload = [
@@ -207,8 +246,23 @@ class CitationsService:
             ]
         return payload
 
-    async def get_citation(self, *, user_id: str, access_token: str | None, citation_id: str) -> dict:
-        rows = await self.list_citations(user_id=user_id, access_token=access_token, ids=[citation_id], limit=1)
+    async def get_citation(
+        self,
+        *,
+        user_id: str,
+        access_token: str | None,
+        citation_id: str,
+        account_type: str | None = None,
+        selected_style: str | None = None,
+    ) -> dict:
+        rows = await self.list_citations(
+            user_id=user_id,
+            access_token=access_token,
+            ids=[citation_id],
+            limit=1,
+            account_type=account_type,
+            selected_style=selected_style,
+        )
         if not rows:
             raise HTTPException(status_code=404, detail="Citation not found")
         return rows[0]
@@ -255,7 +309,12 @@ class CitationsService:
         source_rows = await self.sources_service.repository.get_sources_by_ids(source_ids=[source["id"]], access_token=access_token)
         source_row = source_rows[0] if source_rows else self._source_detail_to_row(source)
         await self.refresh_renders(access_token=access_token, citation_row=row, source_row=source_row)
-        return await self.get_citation(user_id=user_id, access_token=access_token, citation_id=str(row["id"]))
+        return await self.get_citation(
+            user_id=user_id,
+            access_token=access_token,
+            citation_id=str(row["id"]),
+            account_type=account_type,
+        )
 
     async def update_citation(
         self,
@@ -300,13 +359,34 @@ class CitationsService:
             raise HTTPException(status_code=404, detail="Citation not found")
         return {"ok": True, "id": citation_id}
 
-    async def render_citation(self, *, user_id: str, access_token: str | None, citation_id: str, style: str | None) -> dict:
-        citation = await self.get_citation(user_id=user_id, access_token=access_token, citation_id=citation_id)
-        if style:
-            normalized_style = style.strip().lower()
-            if normalized_style not in SUPPORTED_STYLES:
-                raise HTTPException(status_code=422, detail={"code": "CITATION_STYLE_UNSUPPORTED", "message": "Unsupported citation style."})
-        return citation
+    async def render_citation(
+        self,
+        *,
+        user_id: str,
+        access_token: str | None,
+        citation_id: str,
+        style: str | None,
+        account_type: str | None,
+    ) -> dict:
+        normalized_style = (style or "mla").strip().lower()
+        if normalized_style not in SUPPORTED_STYLES:
+            raise HTTPException(status_code=422, detail={"code": "CITATION_STYLE_UNSUPPORTED", "message": "Unsupported citation style."})
+        if normalized_style not in self._allowed_styles(account_type):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "CITATION_FORMAT_LOCKED",
+                    "message": "Citation format not available on your plan.",
+                    "toast": "Upgrade to unlock this citation format.",
+                },
+            )
+        return await self.get_citation(
+            user_id=user_id,
+            access_token=access_token,
+            citation_id=citation_id,
+            account_type=account_type,
+            selected_style=normalized_style,
+        )
 
     def _require_template_capability(self, account_type: str) -> None:
         if "custom" not in allowed_citation_formats(account_type):

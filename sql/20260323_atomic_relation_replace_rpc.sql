@@ -255,23 +255,31 @@ begin
   with normalized as (
     select
       ord,
+      nullif(trim(item->>'relation_type'), '') as relation_type,
+      nullif(trim(item->>'source_id'), '')::uuid as source_id,
+      nullif(trim(item->>'citation_id'), '')::uuid as citation_id,
       nullif(trim(item->>'url'), '') as url,
       nullif(trim(item->>'title'), '') as title,
       nullif(trim(item->>'hostname'), '') as hostname,
       nullif(trim(item->>'source_author'), '') as source_author,
       (item->>'source_published_at')::timestamptz as source_published_at,
-      (item->>'attached_at')::timestamptz as attached_at
+      (item->>'attached_at')::timestamptz as attached_at,
+      coalesce((item->>'position')::integer, ord - 1) as position
     from jsonb_array_elements(coalesce(p_sources, '[]'::jsonb)) with ordinality as input(item, ord)
   )
   select coalesce(
     jsonb_agg(
       jsonb_build_object(
+        'relation_type', coalesce(relation_type, 'external'),
+        'source_id', source_id,
+        'citation_id', citation_id,
         'url', url,
         'title', title,
         'hostname', hostname,
         'source_author', source_author,
         'source_published_at', source_published_at,
-        'attached_at', attached_at
+        'attached_at', attached_at,
+        'position', position
       )
       order by ord
     ),
@@ -282,14 +290,42 @@ begin
 
   if exists (
     with normalized as (
-      select nullif(trim(item->>'url'), '') as url
+      select
+        coalesce(nullif(trim(item->>'relation_type'), ''), 'external') as relation_type,
+        nullif(trim(item->>'url'), '') as url,
+        nullif(trim(item->>'source_id'), '')::uuid as source_id,
+        nullif(trim(item->>'citation_id'), '')::uuid as citation_id
       from jsonb_array_elements(coalesce(p_sources, '[]'::jsonb)) as input(item)
     )
     select 1
     from normalized
-    where url is null
+    where (relation_type = 'external' and url is null)
+       or (relation_type = 'source' and source_id is null)
+       or (relation_type = 'citation' and citation_id is null)
   ) then
     raise exception 'invalid_sources_payload'
+      using errcode = 'P0001';
+  end if;
+
+  if exists (
+    with normalized as (
+      select
+        coalesce(nullif(trim(item->>'relation_type'), ''), 'external') as relation_type,
+        nullif(trim(item->>'source_id'), '')::uuid as source_id,
+        nullif(trim(item->>'citation_id'), '')::uuid as citation_id
+      from jsonb_array_elements(v_applied_sources) as input(item)
+    )
+    select 1
+    from normalized n
+    left join public.sources s
+      on s.id = n.source_id
+    left join public.citation_instances ci
+      on ci.id = n.citation_id
+     and ci.user_id = p_user_id
+    where (n.relation_type = 'source' and (s.id is null))
+       or (n.relation_type = 'citation' and ci.id is null)
+  ) then
+    raise exception 'invalid_related_rows'
       using errcode = 'P0001';
   end if;
 
@@ -297,16 +333,33 @@ begin
   where user_id = p_user_id
     and note_id = p_note_id;
 
-  insert into public.note_sources (note_id, user_id, url, title, hostname, source_author, source_published_at, attached_at)
+  insert into public.note_sources (
+    note_id,
+    user_id,
+    source_id,
+    citation_id,
+    relation_type,
+    url,
+    title,
+    hostname,
+    source_author,
+    source_published_at,
+    attached_at,
+    position
+  )
   select
     p_note_id,
     p_user_id,
+    nullif(trim(item->>'source_id'), '')::uuid,
+    nullif(trim(item->>'citation_id'), '')::uuid,
+    coalesce(nullif(trim(item->>'relation_type'), ''), 'external'),
     nullif(trim(item->>'url'), ''),
     nullif(trim(item->>'title'), ''),
     nullif(trim(item->>'hostname'), ''),
     nullif(trim(item->>'source_author'), ''),
     (item->>'source_published_at')::timestamptz,
-    (item->>'attached_at')::timestamptz
+    (item->>'attached_at')::timestamptz,
+    coalesce((item->>'position')::integer, 0)
   from jsonb_array_elements(v_applied_sources) as input(item);
 
   return v_applied_sources;

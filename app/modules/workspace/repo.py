@@ -80,6 +80,22 @@ class WorkspaceRepository:
         )
         return first_row(response_json(response))
 
+    async def list_documents_by_ids(self, *, user_id: str, access_token: str | None, document_ids: list[str], summary_only: bool = False) -> list[dict]:
+        if not document_ids:
+            return []
+        select = "id,title,project_id,status,archived_at,created_at,updated_at" if summary_only else "id,title,content_delta,content_html,project_id,status,archived_at,created_at,updated_at"
+        response = await self.supabase_repo.get(
+            "documents",
+            params={
+                "id": f"in.({','.join(document_ids)})",
+                "user_id": f"eq.{user_id}",
+                "select": select,
+            },
+            headers=self._headers(access_token, include_content_type=False),
+        )
+        payload = response_json(response)
+        return payload if isinstance(payload, list) else []
+
     async def update_document(self, *, user_id: str, access_token: str | None, document_id: str, payload: dict[str, Any]) -> dict | None:
         patch_payload = {**payload, "updated_at": datetime.now(timezone.utc).isoformat()}
         response = await self.supabase_repo.patch(
@@ -114,6 +130,38 @@ class WorkspaceRepository:
         else:
             params.update({"select": "document_id,tag_id,created_at", "order": "created_at.asc,tag_id.asc"})
         response = await self.supabase_repo.get(table, params=params, headers=self._headers(access_token, include_content_type=False))
+        payload = response_json(response)
+        return payload if isinstance(payload, list) else []
+
+    async def list_documents_for_citation_ids(self, *, user_id: str, access_token: str | None, citation_ids: list[str]) -> list[dict]:
+        if not citation_ids:
+            return []
+        response = await self.supabase_repo.get(
+            "document_citations",
+            params={
+                "user_id": f"eq.{user_id}",
+                "citation_id": f"in.({','.join(citation_ids)})",
+                "select": "document_id,citation_id,attached_at",
+                "order": "attached_at.asc,document_id.asc",
+            },
+            headers=self._headers(access_token, include_content_type=False),
+        )
+        payload = response_json(response)
+        return payload if isinstance(payload, list) else []
+
+    async def list_documents_for_note_ids(self, *, user_id: str, access_token: str | None, note_ids: list[str]) -> list[dict]:
+        if not note_ids:
+            return []
+        response = await self.supabase_repo.get(
+            "document_notes",
+            params={
+                "user_id": f"eq.{user_id}",
+                "note_id": f"in.({','.join(note_ids)})",
+                "select": "document_id,note_id,attached_at",
+                "order": "attached_at.asc,document_id.asc",
+            },
+            headers=self._headers(access_token, include_content_type=False),
+        )
         payload = response_json(response)
         return payload if isinstance(payload, list) else []
 

@@ -8,7 +8,6 @@ from app.services.citation_domain import SUPPORTED_STYLES
 
 
 class CitationCreateRequest(BaseModel):
-    source_id: str | None = None
     extraction_payload: dict[str, Any] | None = None
     url: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

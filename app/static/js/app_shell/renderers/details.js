@@ -31,13 +31,13 @@ export function renderCitationDetail(citation) {
   return `
     <section class="detail-section">
       <h3>${escapeHtml(source.title || "Citation")}</h3>
-      <p class="detail-copy">${escapeHtml(citation.renders?.mla?.full || citation.excerpt || citation.annotation || "Citation saved")}</p>
+      <p class="detail-copy">${escapeHtml(citation.renders?.mla?.bibliography || citation.excerpt || citation.annotation || "Citation saved")}</p>
       <div class="detail-chip-row">
         <span class="meta-pill">${escapeHtml(source.hostname || source.publisher || "Source")}</span>
         <span class="meta-pill">${escapeHtml(formatDateTime(citation.updated_at || citation.created_at))}</span>
       </div>
     </section>
-    ${detailList("Available renders", Object.entries(citation.renders || {}).map(([style, payload]) => `<strong>${escapeHtml(style.toUpperCase())}</strong><br>${escapeHtml(payload.full || payload.footnote || "")}`), "No render output available.")}
+    ${detailList("Available renders", Object.entries(citation.renders || {}).map(([style, payload]) => `<strong>${escapeHtml(style.toUpperCase())}</strong><br>${escapeHtml(payload.bibliography || payload.footnote || "")}`), "No render output available.")}
   `;
 }
 

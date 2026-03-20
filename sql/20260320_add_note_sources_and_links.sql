@@ -4,7 +4,7 @@ create table if not exists public.note_sources (
   id uuid primary key default gen_random_uuid(),
   note_id uuid not null references public.notes(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
-  url text not null,
+  url text,
   title text,
   hostname text,
   attached_at timestamptz not null default now(),

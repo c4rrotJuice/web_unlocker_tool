@@ -41,6 +41,19 @@ class CitationsRepository:
         )
         return first_row(response_json(response))
 
+    async def get_citation_by_source(self, *, user_id: str, access_token: str | None, source_id: str) -> dict | None:
+        response = await self.supabase_repo.get(
+            "citation_instances",
+            params={
+                "user_id": f"eq.{user_id}",
+                "source_id": f"eq.{source_id}",
+                "select": "id,source_id,locator,quote_text,excerpt,annotation,citation_version,created_at,updated_at",
+                "limit": "1",
+            },
+            headers=self._headers(access_token, include_content_type=False),
+        )
+        return first_row(response_json(response))
+
     async def list_citations(
         self,
         *,
@@ -120,6 +133,52 @@ class CitationsRepository:
             return {}
         response = await self.supabase_repo.get(
             "quotes",
+            params={
+                "user_id": f"eq.{user_id}",
+                "citation_id": f"in.({','.join(citation_ids)})",
+                "select": "citation_id",
+                "limit": "500",
+            },
+            headers=self._headers(access_token, include_content_type=False),
+        )
+        rows = response_json(response)
+        counts: dict[str, int] = {}
+        if isinstance(rows, list):
+            for row in rows:
+                citation_id = row.get("citation_id")
+                if not citation_id:
+                    continue
+                counts[citation_id] = counts.get(citation_id, 0) + 1
+        return counts
+
+    async def list_note_counts(self, *, user_id: str, access_token: str | None, citation_ids: list[str]) -> dict[str, int]:
+        if not citation_ids:
+            return {}
+        response = await self.supabase_repo.get(
+            "notes",
+            params={
+                "user_id": f"eq.{user_id}",
+                "citation_id": f"in.({','.join(citation_ids)})",
+                "select": "citation_id",
+                "limit": "500",
+            },
+            headers=self._headers(access_token, include_content_type=False),
+        )
+        rows = response_json(response)
+        counts: dict[str, int] = {}
+        if isinstance(rows, list):
+            for row in rows:
+                citation_id = row.get("citation_id")
+                if not citation_id:
+                    continue
+                counts[citation_id] = counts.get(citation_id, 0) + 1
+        return counts
+
+    async def list_document_counts(self, *, user_id: str, access_token: str | None, citation_ids: list[str]) -> dict[str, int]:
+        if not citation_ids:
+            return {}
+        response = await self.supabase_repo.get(
+            "document_citations",
             params={
                 "user_id": f"eq.{user_id}",
                 "citation_id": f"in.({','.join(citation_ids)})",

@@ -228,16 +228,6 @@ create index if not exists document_citations_user_id_document_id_attached_at_id
 create index if not exists document_citations_user_id_citation_id_idx
   on public.document_citations (user_id, citation_id);
 
-insert into public.document_citations (document_id, citation_id, user_id, attached_at)
-select
-  d.id,
-  unnest(d.citation_ids),
-  d.user_id,
-  coalesce(d.updated_at, d.created_at, now())
-from public.documents d
-where cardinality(d.citation_ids) > 0
-on conflict (document_id, citation_id) do nothing;
-
 do $$
 begin
   if exists (

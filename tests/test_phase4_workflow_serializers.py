@@ -93,6 +93,12 @@ def test_quote_note_document_serializers_exclude_legacy_fields():
     assert "citation" in quote
     assert "citation_ids" not in document
     assert note["tags"][0]["id"] == "tag-1"
+    assert note["lineage"] == {
+        "citation_id": "citation-1",
+        "quote_id": "quote-1",
+        "supporting_source_ids": [],
+        "supporting_citation_ids": [],
+    }
     assert document["attached_citation_ids"] == ["citation-1"]
     assert document["attached_note_ids"] == ["note-1"]
     assert document["tag_ids"] == ["tag-1"]

@@ -144,8 +144,40 @@ class NotesRepository:
             params={
                 "user_id": f"eq.{user_id}",
                 "note_id": f"in.({','.join(note_ids)})",
-                "select": "id,note_id,url,hostname,title,source_author,source_published_at,attached_at",
-                "order": "attached_at.asc,id.asc",
+                "select": "id,note_id,source_id,citation_id,relation_type,url,hostname,title,source_author,source_published_at,attached_at,position",
+                "order": "position.asc,attached_at.asc,id.asc",
+            },
+            headers=self._headers(access_token, include_content_type=False),
+        )
+        payload = response_json(response)
+        return payload if isinstance(payload, list) else []
+
+    async def list_note_sources_by_source_ids(self, *, user_id: str, access_token: str | None, source_ids: list[str]) -> list[dict]:
+        if not source_ids:
+            return []
+        response = await self.supabase_repo.get(
+            "note_sources",
+            params={
+                "user_id": f"eq.{user_id}",
+                "source_id": f"in.({','.join(source_ids)})",
+                "select": "id,note_id,source_id,citation_id,relation_type,url,hostname,title,source_author,source_published_at,attached_at,position",
+                "order": "position.asc,attached_at.asc,id.asc",
+            },
+            headers=self._headers(access_token, include_content_type=False),
+        )
+        payload = response_json(response)
+        return payload if isinstance(payload, list) else []
+
+    async def list_note_sources_by_citation_ids(self, *, user_id: str, access_token: str | None, citation_ids: list[str]) -> list[dict]:
+        if not citation_ids:
+            return []
+        response = await self.supabase_repo.get(
+            "note_sources",
+            params={
+                "user_id": f"eq.{user_id}",
+                "citation_id": f"in.({','.join(citation_ids)})",
+                "select": "id,note_id,source_id,citation_id,relation_type,url,hostname,title,source_author,source_published_at,attached_at,position",
+                "order": "position.asc,attached_at.asc,id.asc",
             },
             headers=self._headers(access_token, include_content_type=False),
         )

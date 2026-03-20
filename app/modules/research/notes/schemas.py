@@ -13,6 +13,16 @@ class NoteSourceInput(BaseModel):
     title: str | None = None
     source_author: str | None = None
     source_published_at: str | None = None
+    position: int | None = None
+
+    @field_validator("position")
+    @classmethod
+    def validate_position(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        if value < 0:
+            raise ValueError("position must be non-negative")
+        return value
 
 
 class NoteCreateRequest(BaseModel):

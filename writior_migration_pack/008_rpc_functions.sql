@@ -216,17 +216,21 @@ begin
     select value from jsonb_array_elements(coalesce(p_sources, '[]'::jsonb))
   loop
     insert into public.note_sources(
-      note_id, user_id, url, hostname, title, source_author, source_published_at
+      note_id, user_id, source_id, citation_id, relation_type, url, hostname, title, source_author, source_published_at, position
     )
     values (
       p_note_id,
       p_user_id,
-      coalesce(v_item->>'url', ''),
+      case when nullif(v_item->>'source_id', '') is null then null else (v_item->>'source_id')::uuid end,
+      case when nullif(v_item->>'citation_id', '') is null then null else (v_item->>'citation_id')::uuid end,
+      coalesce(nullif(v_item->>'relation_type', ''), 'external'),
+      nullif(v_item->>'url', ''),
       nullif(v_item->>'hostname', ''),
       nullif(v_item->>'title', ''),
       nullif(v_item->>'source_author', ''),
       case when nullif(v_item->>'source_published_at', '') is null then null
-           else (v_item->>'source_published_at')::timestamptz end
+           else (v_item->>'source_published_at')::timestamptz end,
+      coalesce((v_item->>'position')::integer, 0)
     );
   end loop;
 
@@ -235,13 +239,17 @@ begin
       jsonb_agg(
         jsonb_build_object(
           'id', ns.id,
+          'source_id', ns.source_id,
+          'citation_id', ns.citation_id,
+          'relation_type', ns.relation_type,
           'url', ns.url,
           'hostname', ns.hostname,
           'title', ns.title,
           'source_author', ns.source_author,
           'source_published_at', ns.source_published_at,
-          'attached_at', ns.attached_at
-        ) order by ns.attached_at, ns.id
+          'attached_at', ns.attached_at,
+          'position', ns.position
+        ) order by ns.position, ns.attached_at, ns.id
       ),
       '[]'::jsonb
     )

@@ -46,7 +46,8 @@ export async function initSidebarShell({ page }) {
 
   const storedCollapsed = readStoredBoolean(COLLAPSED_STORAGE_KEY);
   const storedAutoHide = readStoredBoolean(AUTO_HIDE_STORAGE_KEY);
-  const defaultCollapsed = page === "editor";
+  const preferCollapsedForEditor = page === "editor";
+  const defaultCollapsed = preferCollapsedForEditor;
   const state = {
     collapsed: storedCollapsed.exists ? storedCollapsed.value : defaultCollapsed,
     autoHide: storedAutoHide.exists ? storedAutoHide.value : false,
@@ -140,7 +141,8 @@ export async function initSidebarShell({ page }) {
         const payload = await response?.json?.();
         const preferences = payload?.data || {};
 
-        if (typeof preferences.sidebar_collapsed === "boolean") {
+        const allowRemoteCollapsedPreference = !preferCollapsedForEditor || storedCollapsed.exists;
+        if (allowRemoteCollapsedPreference && typeof preferences.sidebar_collapsed === "boolean") {
           state.collapsed = preferences.sidebar_collapsed;
           writeStoredBoolean(COLLAPSED_STORAGE_KEY, state.collapsed);
         }

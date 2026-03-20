@@ -17,25 +17,19 @@
         <button class="app-theme-toggle editor-v2-action" id="editor-new-document" type="button">New document</button>
       </div>
       <div class="editor-v2-search-row">
-        <input id="editor-explorer-search" type="search" placeholder="Search sources, citations, quotes, notes" aria-label="Search research" />
+        <input id="editor-explorer-search" type="search" placeholder="Search documents, sources, citations, quotes, notes" aria-label="Search research" />
       </div>
       <div class="editor-v2-tablist" role="tablist" aria-label="Research explorer">
-        <button class="editor-v2-tab is-active" data-explorer-tab="sources" role="tab" aria-selected="true">Sources</button>
+        <button class="editor-v2-tab is-active" data-explorer-tab="documents" role="tab" aria-selected="true">Documents</button>
+        <button class="editor-v2-tab" data-explorer-tab="sources" role="tab" aria-selected="false">Sources</button>
         <button class="editor-v2-tab" data-explorer-tab="citations" role="tab" aria-selected="false">Citations</button>
         <button class="editor-v2-tab" data-explorer-tab="quotes" role="tab" aria-selected="false">Quotes</button>
         <button class="editor-v2-tab" data-explorer-tab="notes" role="tab" aria-selected="false">Notes</button>
       </div>
-      <section class="editor-v2-documents">
-        <div class="editor-v2-subhead">
-          <h3>Documents</h3>
-          <span id="editor-documents-status" class="editor-v2-meta">Summary</span>
-        </div>
-        <div id="editor-document-list" class="editor-v2-scroll" tabindex="0"></div>
-      </section>
       <section class="editor-v2-results">
         <div class="editor-v2-subhead">
-          <h3 id="editor-explorer-heading">Sources</h3>
-          <span id="editor-explorer-status" class="editor-v2-meta">On demand</span>
+          <h3 id="editor-explorer-heading">Documents</h3>
+          <span id="editor-explorer-status" class="editor-v2-meta">Ready</span>
         </div>
         <div id="editor-explorer-list" class="editor-v2-scroll" tabindex="0"></div>
       </section>
@@ -68,12 +62,60 @@
       <div id="editor-writing-surface" class="editor-v2-writing-surface" hidden>
         <div id="editor-command-menu" class="editor-v2-popover" hidden aria-label="Editor commands"></div>
         <div id="editor-toolbar" class="editor-v2-toolbar">
-          <button class="ql-bold" aria-label="Bold"></button>
-          <button class="ql-italic" aria-label="Italic"></button>
-          <button class="ql-underline" aria-label="Underline"></button>
-          <button class="ql-blockquote" aria-label="Quote block"></button>
-          <button class="ql-list" value="ordered" aria-label="Ordered list"></button>
-          <button class="ql-list" value="bullet" aria-label="Bullet list"></button>
+          <span class="ql-formats">
+            <select class="ql-header" aria-label="Heading level">
+              <option value="1">Heading 1</option>
+              <option value="2">Heading 2</option>
+              <option value="3">Heading 3</option>
+              <option selected>Paragraph</option>
+            </select>
+          </span>
+          <span class="ql-formats">
+            <select class="ql-font" aria-label="Font family">
+              <option value="Georgia,serif" selected>Georgia</option>
+              <option value="Cambria,serif">Cambria</option>
+              <option value="&quot;Times New Roman&quot;,serif">Times New Roman</option>
+              <option value="&quot;Palatino Linotype&quot;,&quot;Book Antiqua&quot;,Palatino,serif">Palatino</option>
+              <option value="Garamond,serif">Garamond</option>
+              <option value="Baskerville,serif">Baskerville</option>
+              <option value="&quot;Century Schoolbook&quot;,&quot;Times New Roman&quot;,serif">Century Schoolbook</option>
+              <option value="Didot,&quot;Bodoni MT&quot;,&quot;Times New Roman&quot;,serif">Didot</option>
+            </select>
+            <select class="ql-size" aria-label="Font size">
+              <option value="12px">12px</option>
+              <option value="13px">13px</option>
+              <option value="14px">14px</option>
+              <option value="16px" selected>16px</option>
+              <option value="18px">18px</option>
+              <option value="20px">20px</option>
+              <option value="24px">24px</option>
+              <option value="28px">28px</option>
+              <option value="32px">32px</option>
+            </select>
+          </span>
+          <span class="ql-formats">
+            <button class="ql-bold" aria-label="Bold"></button>
+            <button class="ql-italic" aria-label="Italic"></button>
+            <button class="ql-underline" aria-label="Underline"></button>
+            <button class="ql-strike" aria-label="Strike"></button>
+          </span>
+          <span class="ql-formats">
+            <button class="ql-list" value="ordered" aria-label="Ordered list"></button>
+            <button class="ql-list" value="bullet" aria-label="Bullet list"></button>
+            <button class="ql-blockquote" aria-label="Quote block"></button>
+          </span>
+          <span class="ql-formats">
+            <select class="ql-align" aria-label="Alignment">
+              <option selected></option>
+              <option value="center"></option>
+              <option value="right"></option>
+              <option value="justify"></option>
+            </select>
+            <button class="ql-link" aria-label="Insert link"></button>
+            <button class="ql-script" value="super" aria-label="Superscript"></button>
+            <button class="ql-script" value="sub" aria-label="Subscript"></button>
+            <button class="ql-clean" aria-label="Clear formatting"></button>
+          </span>
         </div>
         <div id="editor-quill" class="editor-v2-quill" aria-label="Document editor"></div>
         <div class="editor-v2-status-row">

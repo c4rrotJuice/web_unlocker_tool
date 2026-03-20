@@ -1,10 +1,28 @@
 let registered = false;
+const FONT_FAMILIES = [
+  "Georgia,serif",
+  "Cambria,serif",
+  "\"Times New Roman\",serif",
+  "\"Palatino Linotype\",\"Book Antiqua\",Palatino,serif",
+  "Garamond,serif",
+  "Baskerville,serif",
+  "\"Century Schoolbook\",\"Times New Roman\",serif",
+  "Didot,\"Bodoni MT\",\"Times New Roman\",serif",
+];
+const FONT_SIZES = ["12px", "13px", "14px", "16px", "18px", "20px", "24px", "28px", "32px"];
 
 function registerEditorFormats(Quill) {
   if (registered) return;
   registered = true;
+  const SizeStyle = Quill.import("attributors/style/size");
+  const FontStyle = Quill.import("attributors/style/font");
+  const AlignStyle = Quill.import("attributors/style/align");
   const Inline = Quill.import("blots/inline");
   const BlockEmbed = Quill.import("blots/block/embed");
+
+  SizeStyle.whitelist = FONT_SIZES;
+  FontStyle.whitelist = FONT_FAMILIES;
+  AlignStyle.whitelist = ["center", "right", "justify"];
 
   class CitationChipBlot extends Inline {
     static create(value) {
@@ -70,6 +88,9 @@ function registerEditorFormats(Quill) {
   QuoteBlockBlot.blotName = "quote-block";
   QuoteBlockBlot.tagName = "blockquote";
 
+  Quill.register(SizeStyle, true);
+  Quill.register(FontStyle, true);
+  Quill.register(AlignStyle, true);
   Quill.register(CitationChipBlot, true);
   Quill.register(NoteMarkerBlot, true);
   Quill.register(QuoteBlockBlot, true);

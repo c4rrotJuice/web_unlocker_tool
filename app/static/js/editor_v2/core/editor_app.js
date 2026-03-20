@@ -37,8 +37,6 @@ import { FEEDBACK_EVENTS, STATUS_SCOPES } from "../../shared/feedback/feedback_t
 function queryRefs() {
   return {
     shell: document.getElementById("editor-v2-shell"),
-    documentList: document.getElementById("editor-document-list"),
-    documentsStatus: document.getElementById("editor-documents-status"),
     explorerSearch: document.getElementById("editor-explorer-search"),
     explorerList: document.getElementById("editor-explorer-list"),
     explorerHeading: document.getElementById("editor-explorer-heading"),
@@ -155,7 +153,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
   const explorerController = createExplorerController({
     workspaceState,
     refs,
-    renderers: { renderDocumentList, renderExplorerList },
+    renderers: { renderDocumentList },
     hydrator,
     onOpenDocument: (documentId) => void documentController.openDocument(documentId, { seed: null }).then(() => {
       void checkpointController.refresh();
@@ -215,7 +213,6 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       offline: "Offline",
       error: "Error",
     }[state.save_status] || "Saved";
-    renderDocumentList(refs.documentList, state.document_list || [], state.active_document_id);
     renderStatusBar(refs.statusBar, quillAdapter, workspaceState, statusSnapshot);
     const context = deriveContextState(state, selectionState.getState());
     refs.contextMode.textContent = context.mode.replace(/_/g, " ");
@@ -323,7 +320,6 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       workspaceState.setSeedState(normalizeSeed(pageState));
       const documentSummaries = await workspaceApi.listDocumentsSummary();
       workspaceState.setDocumentList(documentSummaries);
-      refs.documentsStatus.textContent = "Ready";
       explorerController.bind();
       void explorerController.prime();
       const documentId = pageState.document_id || "";

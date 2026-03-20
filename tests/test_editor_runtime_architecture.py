@@ -49,6 +49,31 @@ def test_quill_adapter_keeps_domain_logic_outside_adapter():
     assert "seed_state" not in source
 
 
+def test_editor_toolbar_and_quill_adapter_support_production_format_controls():
+    template_source = Path("app/templates/app_editor.html").read_text(encoding="utf-8")
+    adapter_source = Path("app/static/js/editor_v2/ui/quill_adapter.js").read_text(encoding="utf-8")
+
+    assert 'class="ql-header"' in template_source
+    assert 'class="ql-font"' in template_source
+    assert 'class="ql-size"' in template_source
+    assert 'value="16px"' in template_source
+    assert 'class="ql-strike"' in template_source
+    assert 'class="ql-align"' in template_source
+    assert 'class="ql-link"' in template_source
+    assert 'class="ql-script" value="super"' in template_source
+    assert 'class="ql-script" value="sub"' in template_source
+    assert 'class="ql-clean"' in template_source
+    assert "small" not in template_source
+    assert "large" not in template_source
+    assert "huge" not in template_source
+
+    assert "const FONT_FAMILIES" in adapter_source
+    assert "const FONT_SIZES" in adapter_source
+    assert "attributors/style/size" in adapter_source
+    assert "attributors/style/font" in adapter_source
+    assert "attributors/style/align" in adapter_source
+
+
 def test_workspace_state_is_single_truth_and_context_state_is_pure():
     workspace_source = Path("app/static/js/editor_v2/core/workspace_state.js").read_text(encoding="utf-8")
     selection_source = Path("app/static/js/editor_v2/core/selection_state.js").read_text(encoding="utf-8")

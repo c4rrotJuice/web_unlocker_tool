@@ -1,13 +1,23 @@
+import { withTimeout } from "../core/async_operation.js";
+
 export function createCheckpointController({ workspaceState, workspaceApi, refs, eventBus }) {
+  let refreshSeq = 0;
+
   async function refresh() {
     const documentId = workspaceState.getState().active_document_id;
     if (!documentId) {
       refs.checkpointsList.innerHTML = `<div class="editor-v2-card">No active document.</div>`;
       return;
     }
+    refreshSeq += 1;
+    const sequence = refreshSeq;
+    workspaceState.setCheckpointActivity({ phase: "running", sequence, document_id: documentId, message: null });
+    eventBus.emit("checkpoints.refresh.started", { sequence, documentId });
     try {
-      const checkpoints = await workspaceApi.listCheckpoints(documentId);
+      const checkpoints = await withTimeout(workspaceApi.listCheckpoints(documentId), { label: "Checkpoint refresh" });
       workspaceState.setCheckpointFailure(null);
+      workspaceState.setCheckpointActivity({ phase: "idle", sequence, document_id: documentId, message: null });
+      eventBus.emit("checkpoints.refresh.succeeded", { sequence, documentId });
       refs.checkpointsList.innerHTML = checkpoints.length
         ? checkpoints.map((item) => `
           <button class="editor-v2-checkpoint-item" type="button" data-checkpoint-id="${item.id}">
@@ -20,6 +30,13 @@ export function createCheckpointController({ workspaceState, workspaceApi, refs,
       workspaceState.setCheckpointFailure({
         message: error?.message || "Checkpoint history could not be refreshed.",
       });
+      workspaceState.setCheckpointActivity({
+        phase: "error",
+        sequence,
+        document_id: documentId,
+        message: error?.message || "Checkpoint history could not be refreshed.",
+      });
+      eventBus.emit("checkpoints.refresh.failed", { sequence, documentId, error });
       refs.checkpointsList.innerHTML = `
         <div class="editor-v2-card">
           <h3>Checkpoint refresh failed</h3>

@@ -1,3 +1,5 @@
+import { withTimeout } from "../core/async_operation.js";
+
 export function createResearchHydrator({
   workspaceState,
   eventBus,
@@ -6,6 +8,7 @@ export function createResearchHydrator({
 }) {
   let explorerAbort = null;
   let detailAbort = null;
+  let explorerSeq = 0;
 
   function consumeDocumentHydration(payload = {}) {
     const attached = {
@@ -25,19 +28,23 @@ export function createResearchHydrator({
   async function hydrateExplorer(type, params = {}) {
     if (explorerAbort) explorerAbort.abort();
     explorerAbort = new AbortController();
+    explorerSeq += 1;
+    const sequence = explorerSeq;
     const projectId = workspaceState.getState().active_project_id;
     const documentId = workspaceState.getState().active_document_id;
     const query = params.query || "";
     let rows = [];
+    workspaceState.setExplorerActivity(type, { phase: "running", sequence, message: null });
+    eventBus.emit("explorer.load.started", { sequence, type, documentId, projectId, query });
     try {
       if (type === "sources") {
-        rows = await stores.sources.list({ query, limit: 24 });
+        rows = await withTimeout(stores.sources.list({ query, limit: 24 }), { label: "Explorer load" });
       } else if (type === "citations") {
-        rows = await stores.citations.list({ search: query, limit: 24 });
+        rows = await withTimeout(stores.citations.list({ search: query, limit: 24 }), { label: "Explorer load" });
       } else if (type === "quotes") {
-        rows = await stores.quotes.list({ query, documentId: documentId || "", limit: 24 });
+        rows = await withTimeout(stores.quotes.list({ query, documentId: documentId || "", limit: 24 }), { label: "Explorer load" });
       } else if (type === "notes") {
-        rows = await stores.notes.list({ query, projectId: projectId || "", limit: 24 });
+        rows = await withTimeout(stores.notes.list({ query, projectId: projectId || "", limit: 24 }), { label: "Explorer load" });
       }
     } catch (error) {
       if (explorerAbort.signal.aborted) return [];
@@ -46,12 +53,20 @@ export function createResearchHydrator({
         type,
         message: error?.message || `Failed to load ${type}.`,
       });
+      workspaceState.setExplorerActivity(type, {
+        phase: "error",
+        sequence,
+        message: error?.message || `Failed to load ${type}.`,
+      });
+      eventBus.emit("explorer.load.failed", { sequence, type, error });
       throw error;
     }
     if (explorerAbort.signal.aborted) return [];
     workspaceState.setExplorerHydrated(type, true);
     workspaceState.setExplorerFailure(type, null);
+    workspaceState.setExplorerActivity(type, { phase: "idle", sequence, message: null });
     eventBus.emit("hydration:completed", { area: `explorer:${type}` });
+    eventBus.emit("explorer.load.succeeded", { sequence, type, count: rows.length });
     renderExplorer(type, rows, { projectId });
     return rows;
   }

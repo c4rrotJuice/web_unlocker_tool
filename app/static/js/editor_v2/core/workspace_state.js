@@ -24,6 +24,14 @@ const initialState = () => ({
     explorer_by_type: {},
     checkpoints: null,
   },
+  runtime_activity: {
+    save: { phase: "idle", sequence: 0, message: null },
+    flush: { phase: "idle", sequence: 0, message: null },
+    document_transition: { phase: "idle", sequence: 0, message: null },
+    hydrate: { phase: "idle", sequence: 0, message: null },
+    explorer_by_type: {},
+    checkpoints: { phase: "idle", sequence: 0, message: null },
+  },
   pending_explorer_action: null,
   focused_entity: null,
 });
@@ -180,6 +188,7 @@ export function createWorkspaceState() {
       });
     },
     setExplorerHydrated(type, value) {
+      if (state.hydration.explorer_by_type[type] === value) return;
       set({
         hydration: {
           ...state.hydration,
@@ -191,6 +200,7 @@ export function createWorkspaceState() {
       });
     },
     setDetailHydrated(key, value) {
+      if (state.hydration.detail_by_key[key] === value) return;
       set({
         hydration: {
           ...state.hydration,
@@ -203,6 +213,75 @@ export function createWorkspaceState() {
     },
     setFocusedEntity(entity) {
       set({ focused_entity: entity ? { ...entity } : null });
+    },
+    setSaveActivity(activity) {
+      set({
+        runtime_activity: {
+          ...state.runtime_activity,
+          save: {
+            ...state.runtime_activity.save,
+            ...activity,
+          },
+        },
+      });
+    },
+    setFlushActivity(activity) {
+      set({
+        runtime_activity: {
+          ...state.runtime_activity,
+          flush: {
+            ...state.runtime_activity.flush,
+            ...activity,
+          },
+        },
+      });
+    },
+    setDocumentTransitionActivity(activity) {
+      set({
+        runtime_activity: {
+          ...state.runtime_activity,
+          document_transition: {
+            ...state.runtime_activity.document_transition,
+            ...activity,
+          },
+        },
+      });
+    },
+    setHydrateActivity(activity) {
+      set({
+        runtime_activity: {
+          ...state.runtime_activity,
+          hydrate: {
+            ...state.runtime_activity.hydrate,
+            ...activity,
+          },
+        },
+      });
+    },
+    setExplorerActivity(type, activity) {
+      set({
+        runtime_activity: {
+          ...state.runtime_activity,
+          explorer_by_type: {
+            ...state.runtime_activity.explorer_by_type,
+            [type]: {
+              ...(state.runtime_activity.explorer_by_type[type] || { phase: "idle", sequence: 0, message: null }),
+              ...activity,
+            },
+          },
+        },
+      });
+    },
+    setCheckpointActivity(activity) {
+      set({
+        runtime_activity: {
+          ...state.runtime_activity,
+          checkpoints: {
+            ...state.runtime_activity.checkpoints,
+            ...activity,
+          },
+        },
+      });
     },
     setDocumentTransitionFailure(failure) {
       set({

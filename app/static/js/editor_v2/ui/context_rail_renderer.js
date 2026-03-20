@@ -10,6 +10,7 @@ export function renderContextRail(target, context, state, detail, handlers = {})
   const seed = state.seed_state;
   const transitionFailure = state.runtime_failures?.document_transition;
   const hydrateFailure = state.runtime_failures?.document_hydrate;
+  const hydrateActivity = state.runtime_activity?.hydrate;
   const attached = state.attached_research || {};
   target.innerHTML = "";
   if (transitionFailure) {
@@ -28,6 +29,15 @@ export function renderContextRail(target, context, state, detail, handlers = {})
         <h3>Document context failed to load</h3>
         <p>${escapeHtml(hydrateFailure.message || "Document research context could not be loaded.")}</p>
         <button class="editor-v2-action" data-context-action="retry-hydrate">Retry hydrate</button>
+      </div>
+    `;
+    return;
+  }
+  if (hydrateActivity?.phase === "running") {
+    target.innerHTML = `
+      <div class="editor-v2-card">
+        <h3>Loading document context</h3>
+        <p>Attached research is still hydrating for this document.</p>
       </div>
     `;
     return;

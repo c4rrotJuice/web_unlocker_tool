@@ -79,6 +79,15 @@ function normalizeSeed(pageState) {
   };
 }
 
+function saveStatusLabel(saveStatus) {
+  return {
+    saved: "Saved",
+    saving: "Saving",
+    offline: "Offline",
+    error: "Error",
+  }[saveStatus] || "Saved";
+}
+
 export async function createEditorApp({ boot = readBootPayload() } = {}) {
   const refs = queryRefs();
   const workspaceApi = createWorkspaceApi();
@@ -231,13 +240,8 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
 
   function renderShell() {
     const state = workspaceState.getState();
-    const statusSnapshot = feedback.status.get(STATUS_SCOPES.EDITOR_DOCUMENT);
-    refs.saveState.textContent = statusSnapshot?.label || {
-      saved: "Saved",
-      saving: "Saving",
-      offline: "Offline",
-      error: "Error",
-    }[state.save_status] || "Saved";
+    const statusSnapshot = { label: saveStatusLabel(state.save_status) };
+    refs.saveState.textContent = statusSnapshot.label;
     renderStatusBar(refs.statusBar, quillAdapter, workspaceState, statusSnapshot);
     const context = deriveContextState(state, selectionState.getState());
     refs.contextMode.textContent = context.mode.replace(/_/g, " ");
@@ -248,11 +252,18 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       });
       return;
     }
+    const detailKey = focused ? `${focused.type}:${focused.id}` : (state.seed_state?.quote_id ? `quote:${state.seed_state.quote_id}` : null);
     const promise = focused
-      ? hydrator.hydrateFocused(focused)
+      ? (state.hydration.detail_by_key[detailKey]
+        ? stores[`${focused.type}s`]?.get?.(focused.id)
+        : hydrator.hydrateFocused(focused))
       : (state.seed_state?.quote_id ? stores.quotes.get(state.seed_state.quote_id) : Promise.resolve(null));
     void promise.then((detail) => {
       renderContextRail(refs.contextRail, context, state, detail, {
+        selectionText: () => selectionState.getState().text,
+      });
+    }).catch(() => {
+      renderContextRail(refs.contextRail, context, workspaceState.getState(), null, {
         selectionText: () => selectionState.getState().text,
       });
     });
@@ -262,8 +273,10 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
   const unsubSelection = selectionState.subscribe(renderShell);
   const unsubFeedback = feedback.status.subscribe((_statuses, { scope }) => {
     if (scope && scope !== STATUS_SCOPES.EDITOR_DOCUMENT) return;
-    refs.saveState.textContent = feedback.status.get(STATUS_SCOPES.EDITOR_DOCUMENT)?.label || refs.saveState.textContent;
-    renderStatusBar(refs.statusBar, quillAdapter, workspaceState, feedback.status.get(STATUS_SCOPES.EDITOR_DOCUMENT));
+    const state = workspaceState.getState();
+    const statusSnapshot = { label: saveStatusLabel(state.save_status) };
+    refs.saveState.textContent = statusSnapshot.label;
+    renderStatusBar(refs.statusBar, quillAdapter, workspaceState, statusSnapshot);
   });
 
   eventBus.on("doc.save.started", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.DOC_SAVE_STARTED, payload));

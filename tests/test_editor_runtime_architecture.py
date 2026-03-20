@@ -24,6 +24,8 @@ def test_editor_runtime_uses_modular_v2_modules_and_not_legacy_orchestration():
     assert "../research/explorer_controller.js" in source
     assert "../actions/insert_actions.js" in source
     assert "../actions/note_actions.js" in source
+    assert "../core/async_operation.js" in Path("app/static/js/editor_v2/document/document_controller.js").read_text(encoding="utf-8")
+    assert "../core/async_operation.js" in Path("app/static/js/editor_v2/document/autosave_controller.js").read_text(encoding="utf-8")
     assert "../ui/quill_adapter.js" in source
     assert "../api/workspace_api.js" in source
     assert "../api/research_api.js" in source
@@ -84,6 +86,7 @@ def test_workspace_state_is_single_truth_and_context_state_is_pure():
 
     assert "active_document_id" in workspace_source
     assert "save_status" in workspace_source
+    assert "runtime_activity" in workspace_source
     assert "attached_relation_ids" in workspace_source
     assert "seed_state" in workspace_source
     assert "hydration" in workspace_source

@@ -8,7 +8,30 @@ import { escapeHtml } from "../../app_shell/core/format.js";
 
 export function renderContextRail(target, context, state, detail, handlers = {}) {
   const seed = state.seed_state;
+  const transitionFailure = state.runtime_failures?.document_transition;
+  const hydrateFailure = state.runtime_failures?.document_hydrate;
+  const attached = state.attached_research || {};
   target.innerHTML = "";
+  if (transitionFailure) {
+    target.innerHTML = `
+      <div class="editor-v2-card">
+        <h3>Unsaved edits blocked document switch</h3>
+        <p>${escapeHtml(transitionFailure.message || "Latest edits are still unsaved.")}</p>
+        <button class="editor-v2-action" data-context-action="retry-save">Retry save</button>
+      </div>
+    `;
+    return;
+  }
+  if (hydrateFailure) {
+    target.innerHTML = `
+      <div class="editor-v2-card">
+        <h3>Document context failed to load</h3>
+        <p>${escapeHtml(hydrateFailure.message || "Document research context could not be loaded.")}</p>
+        <button class="editor-v2-action" data-context-action="retry-hydrate">Retry hydrate</button>
+      </div>
+    `;
+    return;
+  }
   if (context.mode === "empty_document") {
     target.innerHTML = `<div class="editor-v2-card"><h3>Empty document</h3><p>Use the explorer or create a new document to start writing.</p></div>`;
     return;
@@ -34,7 +57,7 @@ export function renderContextRail(target, context, state, detail, handlers = {})
         <p>${escapeHtml(detail?.excerpt || detail?.citation?.source?.title || "Captured context is ready for writing.")}</p>
         <div class="editor-v2-context-actions">
           <button class="editor-v2-action" data-context-action="insert-seed-quote">Insert quote now</button>
-          <button class="editor-v2-action" data-context-action="create-note-from-seed">Create note from quote</button>
+          ${seed?.quote_id ? '<button class="editor-v2-action" data-context-action="create-note-from-seed">Create note from quote</button>' : ""}
           <button class="editor-v2-action" data-context-action="start-outline">Start outline</button>
         </div>
         <p class="editor-v2-meta">Citation: ${escapeHtml(seed?.citation_id || "none")}</p>
@@ -58,5 +81,13 @@ export function renderContextRail(target, context, state, detail, handlers = {})
     target.innerHTML = renderSourceDetail(detail);
     return;
   }
-  target.innerHTML = `<div class="editor-v2-card"><h3>Context</h3><p>Select text or focus a research item to work without modal sprawl.</p></div>`;
+  target.innerHTML = `
+    <div class="editor-v2-card">
+      <h3>Context</h3>
+      <p>Select text or focus a research item to work without modal sprawl.</p>
+      <p class="editor-v2-meta">
+        Attached: ${(attached.citations || []).length} citations, ${(attached.notes || []).length} notes, ${(attached.quotes || []).length} quotes, ${(attached.sources || []).length} sources
+      </p>
+    </div>
+  `;
 }

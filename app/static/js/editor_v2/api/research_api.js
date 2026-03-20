@@ -1,7 +1,14 @@
-async function authJson(path) {
+async function authJson(path, options = {}) {
+  const headers = new Headers(options.headers || {});
+  headers.set("Accept", "application/json");
+  if (options.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   const res = await window.webUnlockerAuth.authFetch(path, {
-    method: "GET",
-    headers: { Accept: "application/json" },
+    method: options.method || "GET",
+    ...options,
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined,
   });
   const payload = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -47,6 +54,18 @@ export function createResearchApi() {
     },
     getNote(noteId) {
       return authJson(`/api/notes/${encodeURIComponent(noteId)}`);
+    },
+    createNote(payload) {
+      return authJson("/api/notes", {
+        method: "POST",
+        body: payload,
+      });
+    },
+    createNoteFromQuote(quoteId, payload) {
+      return authJson(`/api/quotes/${encodeURIComponent(quoteId)}/notes`, {
+        method: "POST",
+        body: payload,
+      });
     },
     listProjects() {
       return authJson("/api/projects");

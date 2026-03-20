@@ -24,6 +24,7 @@ import { createResearchHydrator } from "../research/research_hydrator.js";
 import { createExplorerController } from "../research/explorer_controller.js";
 import { createAttachActions } from "../actions/attach_actions.js";
 import { createInsertActions } from "../actions/insert_actions.js";
+import { createNoteActions } from "../actions/note_actions.js";
 import { createLinkActions } from "../actions/link_actions.js";
 import { createConvertActions } from "../actions/convert_actions.js";
 import { createAutosaveController } from "../document/autosave_controller.js";
@@ -66,7 +67,8 @@ function queryRefs() {
 
 function normalizeSeed(pageState) {
   const seed = pageState.seed || {};
-  if (!pageState.seeded && !seed.citation_id) return null;
+  const hasSeedIds = !!(seed.source_id || seed.citation_id || seed.quote_id || seed.note_id);
+  if (!pageState.seeded && !hasSeedIds) return null;
   return {
     document_id: seed.document_id || pageState.document_id || null,
     source_id: seed.source_id || null,
@@ -140,6 +142,13 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
   });
   const attachActions = createAttachActions({ workspaceState, workspaceApi, eventBus });
   const insertActions = createInsertActions({ quillAdapter, attachActions, workspaceState, eventBus });
+  const noteActions = createNoteActions({
+    researchApi,
+    attachActions,
+    workspaceState,
+    eventBus,
+    stores,
+  });
   createLinkActions();
   createConvertActions();
   const documentController = createDocumentController({
@@ -148,6 +157,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     refs,
     quillAdapter,
     autosaveController,
+    hydrator,
     eventBus,
   });
   const explorerController = createExplorerController({
@@ -160,8 +170,20 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       outlineController.compute();
     }),
     onFocusEntity: (entity) => {
+      workspaceState.setPendingExplorerAction(null);
       workspaceState.setFocusedEntity(entity);
       eventBus.emit("focus:changed", entity);
+    },
+    onEntityAction: async (pending, entity) => {
+      const store = stores[`${pending.entityType}s`];
+      const detail = await store?.get?.(entity.id);
+      if (!detail) return;
+      if (pending.action === "insert") {
+        if (pending.entityType === "citation") await insertActions.insertCitation(detail);
+        if (pending.entityType === "quote") await insertActions.insertQuote(detail);
+        if (pending.entityType === "note") await insertActions.insertNote(detail);
+      }
+      workspaceState.setPendingExplorerAction(null);
     },
   });
 
@@ -170,8 +192,11 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     selectionState,
     handlers: {
       openInsertSearch(kind) {
-        refs.commandMenu.hidden = false;
-        refs.commandMenu.innerHTML = `<div class="editor-v2-card">Use the explorer to choose a ${kind.slice(0, -1)}.</div>`;
+        hidePopover(refs.commandMenu);
+        void explorerController.beginEntityAction({
+          action: "insert",
+          entityType: kind.slice(0, -1),
+        });
       },
       focusExplorerSearch() {
         explorerController.focusSearch();
@@ -280,8 +305,28 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
         await insertActions.insertQuote(quote);
         workspaceState.setSeedState({ ...state.seed_state, mode: "idle" });
       }
+      if (action.dataset.contextAction === "retry-hydrate") {
+        await documentController.retryHydration();
+      }
+      if (action.dataset.contextAction === "retry-save") {
+        try {
+          await autosaveController.flush();
+          workspaceState.setDocumentTransitionFailure(null);
+        } catch (_error) {
+          workspaceState.setDocumentTransitionFailure({
+            message: "Latest edits are still unsaved. Retry save before switching documents.",
+          });
+        }
+      }
       if (action.dataset.contextAction === "insert-quote" && selectionState.getState().text) {
         quillAdapter.insertText(quillAdapter.getSelection()?.index || 0, `> ${selectionState.getState().text}\n`);
+      }
+      if (action.dataset.contextAction === "create-note" && selectionState.getState().text) {
+        await noteActions.createNoteFromSelection(selectionState.getState().text);
+      }
+      if (action.dataset.contextAction === "create-note-from-seed" && state.seed_state?.quote_id) {
+        const quote = await stores.quotes.get(state.seed_state.quote_id);
+        await noteActions.createNoteFromQuote(quote, state.seed_state);
       }
       if (action.dataset.contextAction === "start-outline") {
         quillAdapter.focus();

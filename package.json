@@ -4,6 +4,6 @@
   "type": "module",
   "scripts": {
     "build:extension:content": "node extension/scripts/build_content_bundle.mjs",
-    "test:research-runtime": "node --test tests/app_shell_runtime/research_runtime.test.mjs"
+    "test:research-runtime": "node --test tests/app_shell_runtime/research_runtime.test.mjs tests/app_shell_runtime/editor_runtime.test.mjs"
   }
 }

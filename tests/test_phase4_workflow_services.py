@@ -349,8 +349,8 @@ class FakeQuotesRepository:
         self.list_quotes_calls = []
         self.list_quotes_for_document_calls = []
 
-    async def list_quotes(self, *, user_id, access_token, citation_id=None, citation_ids=None, quote_ids=None, query=None, limit=50, order="created_at.desc,id.desc"):
-        del user_id, access_token, limit
+    async def list_quotes(self, *, user_id, access_token, citation_id=None, citation_ids=None, quote_ids=None, query=None, limit=50, offset=0, order="created_at.desc,id.desc"):
+        del user_id, access_token, limit, offset
         self.list_quotes_calls.append(
             {
                 "citation_id": citation_id,

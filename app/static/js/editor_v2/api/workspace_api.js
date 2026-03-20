@@ -20,7 +20,7 @@ async function authJson(path, options = {}) {
 }
 
 function buildHydrateQuery(seed) {
-  if (!seed || !seed.citation_id) return "";
+  if (!seed) return "";
   const params = new URLSearchParams();
   if (seed.source_id) params.set("seed_source_id", seed.source_id);
   if (seed.citation_id) params.set("seed_citation_id", seed.citation_id);

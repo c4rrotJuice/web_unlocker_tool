@@ -23,6 +23,7 @@ def test_editor_runtime_uses_modular_v2_modules_and_not_legacy_orchestration():
     assert "../research/research_hydrator.js" in source
     assert "../research/explorer_controller.js" in source
     assert "../actions/insert_actions.js" in source
+    assert "../actions/note_actions.js" in source
     assert "../ui/quill_adapter.js" in source
     assert "../api/workspace_api.js" in source
     assert "../api/research_api.js" in source
@@ -39,6 +40,7 @@ def test_editor_runtime_uses_summary_boot_and_legacy_denylist():
     assert "/api/auth/handoff" not in workspace_api
     assert "WORK_IN_EDITOR" not in editor_source
     assert "/api/editor/access" not in editor_source
+    assert "Use the explorer to choose" not in editor_source
 
 
 def test_quill_adapter_keeps_domain_logic_outside_adapter():

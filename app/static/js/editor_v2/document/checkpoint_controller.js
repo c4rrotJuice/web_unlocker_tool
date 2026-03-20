@@ -5,15 +5,29 @@ export function createCheckpointController({ workspaceState, workspaceApi, refs,
       refs.checkpointsList.innerHTML = `<div class="editor-v2-card">No active document.</div>`;
       return;
     }
-    const checkpoints = await workspaceApi.listCheckpoints(documentId);
-    refs.checkpointsList.innerHTML = checkpoints.length
-      ? checkpoints.map((item) => `
-        <button class="editor-v2-checkpoint-item" type="button" data-checkpoint-id="${item.id}">
-          <strong>${item.label || "Checkpoint"}</strong>
-          <div class="editor-v2-meta">${item.created_at || ""}</div>
-        </button>
-      `).join("")
-      : `<div class="editor-v2-card">No checkpoints yet.</div>`;
+    try {
+      const checkpoints = await workspaceApi.listCheckpoints(documentId);
+      workspaceState.setCheckpointFailure(null);
+      refs.checkpointsList.innerHTML = checkpoints.length
+        ? checkpoints.map((item) => `
+          <button class="editor-v2-checkpoint-item" type="button" data-checkpoint-id="${item.id}">
+            <strong>${item.label || "Checkpoint"}</strong>
+            <div class="editor-v2-meta">${item.created_at || ""}</div>
+          </button>
+        `).join("")
+        : `<div class="editor-v2-card">No checkpoints yet.</div>`;
+    } catch (error) {
+      workspaceState.setCheckpointFailure({
+        message: error?.message || "Checkpoint history could not be refreshed.",
+      });
+      refs.checkpointsList.innerHTML = `
+        <div class="editor-v2-card">
+          <h3>Checkpoint refresh failed</h3>
+          <p>${error?.message || "Checkpoint history could not be refreshed."}</p>
+          <button class="editor-v2-action" type="button" data-checkpoint-retry="true">Retry checkpoints</button>
+        </div>
+      `;
+    }
   }
 
   async function createCheckpoint() {
@@ -33,6 +47,11 @@ export function createCheckpointController({ workspaceState, workspaceApi, refs,
   }
 
   const onClick = (event) => {
+    const retryButton = event.target.closest("[data-checkpoint-retry]");
+    if (retryButton) {
+      void refresh();
+      return;
+    }
     const button = event.target.closest("[data-checkpoint-id]");
     if (!button) return;
     void restore(button.dataset.checkpointId);

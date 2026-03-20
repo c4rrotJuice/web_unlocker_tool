@@ -5,10 +5,25 @@ export function createExplorerController({
   hydrator,
   onOpenDocument,
   onFocusEntity,
+  onEntityAction,
 }) {
   let currentTab = "documents";
   let searchQuery = "";
   const cleanups = [];
+
+  function singularType() {
+    return currentTab.slice(0, -1);
+  }
+
+  function renderExplorerFailure(message) {
+    refs.explorerList.innerHTML = `
+      <div class="editor-v2-card">
+        <h3>${currentTab[0].toUpperCase() + currentTab.slice(1)} unavailable</h3>
+        <p>${message}</p>
+        <button class="editor-v2-action" type="button" data-explorer-retry="true">Retry</button>
+      </div>
+    `;
+  }
 
   function activeDocumentId() {
     return workspaceState.getState().active_document_id;
@@ -39,8 +54,16 @@ export function createExplorerController({
       return;
     }
     refs.explorerStatus.textContent = "Loading";
-    await hydrator.hydrateExplorer(currentTab, { query: searchQuery });
-    refs.explorerStatus.textContent = "Ready";
+    try {
+      await hydrator.hydrateExplorer(currentTab, { query: searchQuery });
+      const pending = workspaceState.getState().pending_explorer_action;
+      refs.explorerStatus.textContent = pending?.entityType === singularType()
+        ? `Choose a ${singularType()} to ${pending.action}.`
+        : "Ready";
+    } catch (error) {
+      refs.explorerStatus.textContent = `${heading} failed`;
+      renderExplorerFailure(error?.message || `Failed to load ${currentTab}.`);
+    }
   }
 
   function bind() {
@@ -70,6 +93,11 @@ export function createExplorerController({
     refs.explorerSearch.addEventListener("input", searchHandler);
     cleanups.push(() => refs.explorerSearch.removeEventListener("input", searchHandler));
     const explorerClick = (event) => {
+      const retryButton = event.target.closest("[data-explorer-retry]");
+      if (retryButton) {
+        void refreshExplorer();
+        return;
+      }
       const documentCard = event.target.closest("[data-document-id]");
       if (documentCard) {
         onOpenDocument(documentCard.dataset.documentId);
@@ -77,7 +105,13 @@ export function createExplorerController({
       }
       const card = event.target.closest("[data-entity-id]");
       if (!card) return;
-      onFocusEntity({ type: currentTab.slice(0, -1), id: card.dataset.entityId });
+      const entity = { type: singularType(), id: card.dataset.entityId };
+      const pending = workspaceState.getState().pending_explorer_action;
+      if (pending?.entityType === entity.type) {
+        void onEntityAction?.(pending, entity);
+        return;
+      }
+      onFocusEntity(entity);
     };
     refs.explorerList.addEventListener("click", explorerClick);
     cleanups.push(() => refs.explorerList.removeEventListener("click", explorerClick));
@@ -86,6 +120,18 @@ export function createExplorerController({
   return {
     async prime() {
       await refreshExplorer();
+    },
+    async beginEntityAction(action) {
+      if (!action?.entityType) return;
+      currentTab = `${action.entityType}s`;
+      workspaceState.setPendingExplorerAction(action);
+      refs.explorerTabs.forEach((tab) => {
+        const selected = tab.dataset.explorerTab === currentTab;
+        tab.classList.toggle("is-active", selected);
+        tab.setAttribute("aria-selected", selected ? "true" : "false");
+      });
+      await refreshExplorer();
+      refs.explorerSearch.focus();
     },
     bind,
     focusSearch() {

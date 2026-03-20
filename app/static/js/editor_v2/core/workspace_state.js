@@ -9,6 +9,7 @@ const initialState = () => ({
   dirty: false,
   save_status: "saved",
   attached_relation_ids: { citations: [], notes: [], tags: [] },
+  attached_research: { citations: [], notes: [], quotes: [], sources: [] },
   active_project_id: null,
   seed_state: null,
   hydration: {
@@ -17,6 +18,13 @@ const initialState = () => ({
     explorer_by_type: {},
     detail_by_key: {},
   },
+  runtime_failures: {
+    document_transition: null,
+    document_hydrate: null,
+    explorer_by_type: {},
+    checkpoints: null,
+  },
+  pending_explorer_action: null,
   focused_entity: null,
 });
 
@@ -92,10 +100,18 @@ export function createWorkspaceState() {
         save_status: "saved",
         active_project_id: document?.project_id || null,
         attached_relation_ids: attached,
+        attached_research: { citations: [], notes: [], quotes: [], sources: [] },
         document_list: document ? upsertDocumentList(document) : state.document_list,
         hydration: {
           ...state.hydration,
           document_ready: !!document,
+          attached_ready: false,
+        },
+        runtime_failures: {
+          ...state.runtime_failures,
+          document_transition: null,
+          document_hydrate: null,
+          checkpoints: null,
         },
       });
     },
@@ -145,6 +161,16 @@ export function createWorkspaceState() {
         },
       });
     },
+    setAttachedResearch(payload = {}) {
+      set({
+        attached_research: {
+          citations: Array.isArray(payload.citations) ? payload.citations.slice() : [],
+          notes: Array.isArray(payload.notes) ? payload.notes.slice() : [],
+          quotes: Array.isArray(payload.quotes) ? payload.quotes.slice() : [],
+          sources: Array.isArray(payload.sources) ? payload.sources.slice() : [],
+        },
+      });
+    },
     setHydrationFlag(key, value) {
       set({
         hydration: {
@@ -177,6 +203,46 @@ export function createWorkspaceState() {
     },
     setFocusedEntity(entity) {
       set({ focused_entity: entity ? { ...entity } : null });
+    },
+    setDocumentTransitionFailure(failure) {
+      set({
+        runtime_failures: {
+          ...state.runtime_failures,
+          document_transition: failure ? { ...failure } : null,
+        },
+      });
+    },
+    setDocumentHydrateFailure(failure) {
+      set({
+        runtime_failures: {
+          ...state.runtime_failures,
+          document_hydrate: failure ? { ...failure } : null,
+        },
+      });
+    },
+    setExplorerFailure(type, failure) {
+      set({
+        runtime_failures: {
+          ...state.runtime_failures,
+          explorer_by_type: {
+            ...state.runtime_failures.explorer_by_type,
+            [type]: failure ? { ...failure } : null,
+          },
+        },
+      });
+    },
+    setCheckpointFailure(failure) {
+      set({
+        runtime_failures: {
+          ...state.runtime_failures,
+          checkpoints: failure ? { ...failure } : null,
+        },
+      });
+    },
+    setPendingExplorerAction(action) {
+      set({
+        pending_explorer_action: action ? { ...action } : null,
+      });
     },
   };
 }

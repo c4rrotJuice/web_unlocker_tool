@@ -96,15 +96,25 @@ class WorkspaceRepository:
         payload = response_json(response)
         return payload if isinstance(payload, list) else []
 
-    async def update_document(self, *, user_id: str, access_token: str | None, document_id: str, payload: dict[str, Any]) -> dict | None:
+    async def update_document(
+        self,
+        *,
+        user_id: str,
+        access_token: str | None,
+        document_id: str,
+        expected_revision: str,
+        payload: dict[str, Any],
+    ) -> dict | None:
         patch_payload = {**payload, "updated_at": datetime.now(timezone.utc).isoformat()}
+        params = {
+            "id": f"eq.{document_id}",
+            "user_id": f"eq.{user_id}",
+            "updated_at": f"eq.{expected_revision}",
+            "select": "id,title,content_delta,content_html,project_id,status,archived_at,created_at,updated_at",
+        }
         response = await self.supabase_repo.patch(
             "documents",
-            params={
-                "id": f"eq.{document_id}",
-                "user_id": f"eq.{user_id}",
-                "select": "id,title,content_delta,content_html,project_id,status,archived_at,created_at,updated_at",
-            },
+            params=params,
             json=patch_payload,
             headers=self._headers(access_token, prefer="return=representation"),
         )

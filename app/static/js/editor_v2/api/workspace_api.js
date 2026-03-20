@@ -33,16 +33,22 @@ export function createWorkspaceApi() {
         body: payload,
       });
     },
-    replaceDocumentCitations(documentId, citationIds) {
+    replaceDocumentCitations(documentId, revision, citationIds) {
       return window.webUnlockerAuth.authJson(`/api/docs/${encodeURIComponent(documentId)}/citations`, {
         method: "PUT",
-        body: { citation_ids: citationIds },
+        body: { revision, citation_ids: citationIds },
       });
     },
-    replaceDocumentNotes(documentId, noteIds) {
+    replaceDocumentNotes(documentId, revision, noteIds) {
       return window.webUnlockerAuth.authJson(`/api/docs/${encodeURIComponent(documentId)}/notes`, {
         method: "PUT",
-        body: { note_ids: noteIds },
+        body: { revision, note_ids: noteIds },
+      });
+    },
+    replaceDocumentTags(documentId, revision, tagIds) {
+      return window.webUnlockerAuth.authJson(`/api/docs/${encodeURIComponent(documentId)}/tags`, {
+        method: "PUT",
+        body: { revision, tag_ids: tagIds },
       });
     },
     listCheckpoints(documentId) {
@@ -54,8 +60,10 @@ export function createWorkspaceApi() {
         body: { label },
       });
     },
-    restoreCheckpoint(documentId, checkpointId) {
-      return window.webUnlockerAuth.authJson(`/api/docs/${encodeURIComponent(documentId)}/checkpoints/${encodeURIComponent(checkpointId)}/restore`, {
+    restoreCheckpoint(documentId, checkpointId, revision) {
+      const params = new URLSearchParams();
+      params.set("revision", revision);
+      return window.webUnlockerAuth.authJson(`/api/docs/${encodeURIComponent(documentId)}/checkpoints/${encodeURIComponent(checkpointId)}/restore?${params.toString()}`, {
         method: "POST",
       });
     },

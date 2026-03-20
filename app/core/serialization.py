@@ -422,6 +422,7 @@ def serialize_document(
     edit_lock_reason: str | None = None,
 ) -> dict[str, object]:
     status = str(row.get("status") or "active")
+    revision = row.get("updated_at")
     return {
         "id": row.get("id"),
         "title": row.get("title") or "Untitled",
@@ -439,6 +440,7 @@ def serialize_document(
         "edit_lock_reason": edit_lock_reason,
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
+        "revision": revision,
     }
 
 

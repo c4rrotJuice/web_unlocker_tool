@@ -240,6 +240,13 @@ function createEventAdapter({ bus, statusStore }) {
           });
         }
         break;
+      case FEEDBACK_EVENTS.DOC_SAVE_CONFLICT:
+        statusStore.set(STATUS_SCOPES.EDITOR_DOCUMENT, STATUS_STATES.CONFLICT, { label: "Conflict" });
+        emitToast(TOAST_TYPES.WARNING, "Document conflict", {
+          description: payload.message || "Another surface changed this document. Reload latest before saving again.",
+          dedupeKey: "editor-save-conflict",
+        });
+        break;
       case FEEDBACK_EVENTS.CHECKPOINT_CREATED:
         emitToast(TOAST_TYPES.SUCCESS, "Checkpoint created");
         break;

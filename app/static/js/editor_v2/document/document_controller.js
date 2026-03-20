@@ -241,6 +241,30 @@ export function createDocumentController({
     return document;
   }
 
+  async function reloadCurrentDocument() {
+    const state = workspaceState.getState();
+    if (!state.active_document_id) return null;
+    const documentId = state.active_document_id;
+    const seed = state.seed_state || null;
+    const token = ++openToken;
+    let document = null;
+    try {
+      document = await withTimeout(workspaceApi.getDocument(documentId), { label: "Reload document" });
+    } catch (error) {
+      workspaceState.setDocumentHydrateFailure({
+        documentId,
+        message: error?.message || "Document could not be refreshed.",
+      });
+      return false;
+    }
+    if (token !== openToken) return false;
+    workspaceState.setDocument(document);
+    refs.titleInput.value = document.title || "";
+    quillAdapter.setContents(document.content_delta || { ops: [{ insert: "\n" }] });
+    void hydrateAttached(documentId, seed, document, token);
+    return document;
+  }
+
   function onTitleInput() {
     workspaceState.markDirty({ title: refs.titleInput.value });
     workspaceState.setSaveStatus("saving");
@@ -252,6 +276,7 @@ export function createDocumentController({
   return {
     openDocument,
     createDocument,
+    reloadCurrentDocument,
     retryHydration() {
       if (!pendingHydration?.documentId) return false;
       const state = workspaceState.getState();

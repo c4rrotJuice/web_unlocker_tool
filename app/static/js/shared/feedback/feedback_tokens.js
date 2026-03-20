@@ -48,6 +48,7 @@ export const STATUS_STATES = Object.freeze({
   SAVED: "saved",
   OFFLINE: "offline",
   SYNCING: "syncing",
+  CONFLICT: "conflict",
   ERROR: "error",
 });
 
@@ -66,6 +67,7 @@ export const STATUS_LABELS = Object.freeze({
   [STATUS_STATES.SAVED]: "Saved",
   [STATUS_STATES.OFFLINE]: "Offline",
   [STATUS_STATES.SYNCING]: "Syncing…",
+  [STATUS_STATES.CONFLICT]: "Conflict",
   [STATUS_STATES.ERROR]: "Error",
 });
 
@@ -73,6 +75,7 @@ export const FEEDBACK_EVENTS = Object.freeze({
   DOC_SAVE_STARTED: "doc.save.started",
   DOC_SAVE_SUCCEEDED: "doc.save.succeeded",
   DOC_SAVE_FAILED: "doc.save.failed",
+  DOC_SAVE_CONFLICT: "doc.save.conflict",
   CHECKPOINT_CREATED: "checkpoint.created",
   CHECKPOINT_RESTORED: "checkpoint.restored",
   DOCUMENT_EXPORT_SUCCEEDED: "document.export.succeeded",

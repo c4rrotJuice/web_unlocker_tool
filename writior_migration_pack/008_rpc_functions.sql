@@ -33,6 +33,7 @@ $$;
 create or replace function public.replace_document_citations_atomic(
   p_user_id uuid,
   p_document_id uuid,
+  p_expected_revision timestamptz,
   p_citation_ids uuid[]
 )
 returns uuid[]
@@ -44,6 +45,16 @@ declare
   v_ids uuid[] := coalesce(p_citation_ids, '{}'::uuid[]);
 begin
   perform public.assert_document_owner(p_document_id, p_user_id);
+
+  if not exists (
+    select 1
+    from public.documents d
+    where d.id = p_document_id
+      and d.user_id = p_user_id
+      and d.updated_at = p_expected_revision
+  ) then
+    raise exception 'revision_conflict';
+  end if;
 
   if exists (
     select 1
@@ -63,6 +74,11 @@ begin
   from unnest(v_ids) as x(id)
   on conflict do nothing;
 
+  update public.documents
+  set updated_at = statement_timestamp()
+  where id = p_document_id
+    and user_id = p_user_id;
+
   return (
     select coalesce(array_agg(citation_id order by attached_at, citation_id), '{}'::uuid[])
     from public.document_citations
@@ -74,6 +90,7 @@ $$;
 create or replace function public.replace_document_tags_atomic(
   p_user_id uuid,
   p_document_id uuid,
+  p_expected_revision timestamptz,
   p_tag_ids uuid[]
 )
 returns uuid[]
@@ -85,6 +102,16 @@ declare
   v_ids uuid[] := coalesce(p_tag_ids, '{}'::uuid[]);
 begin
   perform public.assert_document_owner(p_document_id, p_user_id);
+
+  if not exists (
+    select 1
+    from public.documents d
+    where d.id = p_document_id
+      and d.user_id = p_user_id
+      and d.updated_at = p_expected_revision
+  ) then
+    raise exception 'revision_conflict';
+  end if;
 
   if exists (
     select 1
@@ -104,6 +131,11 @@ begin
   from unnest(v_ids) as x(id)
   on conflict do nothing;
 
+  update public.documents
+  set updated_at = statement_timestamp()
+  where id = p_document_id
+    and user_id = p_user_id;
+
   return (
     select coalesce(array_agg(tag_id order by created_at, tag_id), '{}'::uuid[])
     from public.document_tags
@@ -115,6 +147,7 @@ $$;
 create or replace function public.replace_document_notes_atomic(
   p_user_id uuid,
   p_document_id uuid,
+  p_expected_revision timestamptz,
   p_note_ids uuid[]
 )
 returns uuid[]
@@ -126,6 +159,16 @@ declare
   v_ids uuid[] := coalesce(p_note_ids, '{}'::uuid[]);
 begin
   perform public.assert_document_owner(p_document_id, p_user_id);
+
+  if not exists (
+    select 1
+    from public.documents d
+    where d.id = p_document_id
+      and d.user_id = p_user_id
+      and d.updated_at = p_expected_revision
+  ) then
+    raise exception 'revision_conflict';
+  end if;
 
   if exists (
     select 1
@@ -144,6 +187,11 @@ begin
   select p_document_id, x.id, p_user_id
   from unnest(v_ids) as x(id)
   on conflict do nothing;
+
+  update public.documents
+  set updated_at = statement_timestamp()
+  where id = p_document_id
+    and user_id = p_user_id;
 
   return (
     select coalesce(array_agg(note_id order by attached_at, note_id), '{}'::uuid[])

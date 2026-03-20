@@ -56,10 +56,9 @@
     await window.webUnlockerAuth?.authJson?.("/api/preferences", {
       method: "PATCH",
       headers: {
-        "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({ theme: mode }),
+      body: { theme: mode },
     });
   }
 

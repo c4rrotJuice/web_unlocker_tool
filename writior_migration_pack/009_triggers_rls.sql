@@ -203,9 +203,9 @@ create policy "document_tags_insert_own" on public.document_tags for insert with
 create policy "document_tags_delete_own" on public.document_tags for delete using (auth.uid() = user_id);
 
 grant usage on schema public to authenticated, anon;
-grant execute on function public.replace_document_citations_atomic(uuid, uuid, uuid[]) to authenticated;
-grant execute on function public.replace_document_tags_atomic(uuid, uuid, uuid[]) to authenticated;
-grant execute on function public.replace_document_notes_atomic(uuid, uuid, uuid[]) to authenticated;
+grant execute on function public.replace_document_citations_atomic(uuid, uuid, timestamptz, uuid[]) to authenticated;
+grant execute on function public.replace_document_tags_atomic(uuid, uuid, timestamptz, uuid[]) to authenticated;
+grant execute on function public.replace_document_notes_atomic(uuid, uuid, timestamptz, uuid[]) to authenticated;
 grant execute on function public.replace_note_tag_links_atomic(uuid, uuid, uuid[]) to authenticated;
 grant execute on function public.replace_note_sources_atomic(uuid, uuid, jsonb) to authenticated;
 grant execute on function public.replace_note_links_atomic(uuid, uuid, uuid[]) to authenticated;

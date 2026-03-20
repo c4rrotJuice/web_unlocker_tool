@@ -12,6 +12,7 @@ class DocumentCreateRequest(BaseModel):
 
 
 class DocumentUpdateRequest(BaseModel):
+    revision: str = Field(..., description="Expected document revision from the caller's last read")
     title: str | None = None
     content_delta: dict[str, Any] | None = None
     content_html: str | None = None
@@ -20,14 +21,17 @@ class DocumentUpdateRequest(BaseModel):
 
 
 class CitationIdsReplaceRequest(BaseModel):
+    revision: str = Field(..., description="Expected document revision from the caller's last read")
     citation_ids: list[str] = Field(default_factory=list)
 
 
 class NoteIdsReplaceRequest(BaseModel):
+    revision: str = Field(..., description="Expected document revision from the caller's last read")
     note_ids: list[str] = Field(default_factory=list)
 
 
 class TagIdsReplaceRequest(BaseModel):
+    revision: str = Field(..., description="Expected document revision from the caller's last read")
     tag_ids: list[str] = Field(default_factory=list)
 
 

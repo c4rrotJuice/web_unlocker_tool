@@ -58,7 +58,11 @@ export function createCheckpointController({ workspaceState, workspaceApi, refs,
   async function restore(checkpointId) {
     const state = workspaceState.getState();
     if (!state.active_document_id) return;
-    const document = await workspaceApi.restoreCheckpoint(state.active_document_id, checkpointId);
+    const document = await workspaceApi.restoreCheckpoint(
+      state.active_document_id,
+      checkpointId,
+      state.active_document.revision || state.active_document.updated_at,
+    );
     workspaceState.markSavedFromServer(document);
     eventBus.emit("checkpoint.restored", { documentId: state.active_document_id, checkpointId });
   }

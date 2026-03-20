@@ -85,6 +85,7 @@ function saveStatusLabel(saveStatus) {
     saved: "Saved",
     saving: "Saving",
     offline: "Offline",
+    conflict: "Conflict",
     error: "Error",
   }[saveStatus] || "Saved";
 }
@@ -288,6 +289,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
 
   eventBus.on("doc.save.started", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.DOC_SAVE_STARTED, payload));
   eventBus.on("doc.save.succeeded", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.DOC_SAVE_SUCCEEDED, payload));
+  eventBus.on("doc.save.conflict", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.DOC_SAVE_CONFLICT, payload));
   eventBus.on("doc.save.failed", ({ offline, error }) => {
     const authLost = isAuthSessionError(error);
     if (authLost) {
@@ -345,6 +347,9 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       }
       if (action.dataset.contextAction === "retry-hydrate") {
         await documentController.retryHydration();
+      }
+      if (action.dataset.contextAction === "reload-latest") {
+        await documentController.reloadCurrentDocument();
       }
       if (action.dataset.contextAction === "retry-save") {
         try {

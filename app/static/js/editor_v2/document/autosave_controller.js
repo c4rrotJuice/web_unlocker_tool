@@ -1,5 +1,6 @@
 import { withTimeout } from "../core/async_operation.js";
 import { isAuthSessionError } from "../../shared/auth/session.js";
+import { getWorkspaceConflictSnapshot, isWorkspaceConflictError } from "../core/workspace_conflicts.js";
 
 export function createAutosaveController({ workspaceState, workspaceApi, eventBus }) {
   let timer = null;
@@ -9,6 +10,11 @@ export function createAutosaveController({ workspaceState, workspaceApi, eventBu
   let retryCount = 0;
   let inFlight = null;
   const maxRetries = 2;
+
+  function isDeterministicClientError(error) {
+    const status = Number(error?.status);
+    return Number.isInteger(status) && status >= 400 && status < 500 && status !== 401 && status !== 403 && status !== 409;
+  }
 
   function clearTimer() {
     if (timer) {
@@ -30,6 +36,7 @@ export function createAutosaveController({ workspaceState, workspaceApi, eventBu
       try {
         const document = await withTimeout(
           workspaceApi.updateDocument(state.active_document_id, {
+            revision: state.active_document.revision || state.active_document.updated_at,
             title: state.active_document.title,
             content_delta: state.active_document.content_delta,
             content_html: state.active_document.content_html,
@@ -46,6 +53,27 @@ export function createAutosaveController({ workspaceState, workspaceApi, eventBu
         return document;
       } catch (error) {
         if (currentSeq < latestApplied) return workspaceState.getState().active_document;
+        if (isWorkspaceConflictError(error)) {
+          const conflict = getWorkspaceConflictSnapshot(error);
+          retryCount = 0;
+          workspaceState.setSaveStatus("conflict");
+          workspaceState.setSaveActivity({
+            phase: "conflict",
+            sequence: currentSeq,
+            message: conflict.message,
+          });
+          workspaceState.setDocumentConflict({
+            ...conflict,
+            documentId: state.active_document_id,
+            source: "autosave",
+          });
+          eventBus.emit("doc.save.conflict", {
+            documentId: state.active_document_id,
+            error,
+            conflict,
+          });
+          throw error;
+        }
         retryCount += 1;
         const offline = typeof navigator !== "undefined" && navigator.onLine === false;
         const authLost = isAuthSessionError(error);
@@ -63,7 +91,11 @@ export function createAutosaveController({ workspaceState, workspaceApi, eventBu
           message: error?.message || "Save failed",
         });
         eventBus.emit("doc.save.failed", { documentId: state.active_document_id, error, offline });
-        if (allowRetry && retryCount <= maxRetries && !offline && !authLost) {
+        const deterministicClientError = isDeterministicClientError(error);
+        if (deterministicClientError) {
+          retryCount = 0;
+        }
+        if (allowRetry && retryCount <= maxRetries && !offline && !authLost && !deterministicClientError) {
           timer = window.setTimeout(() => {
             void persistNow({ allowRetry: true }).catch(() => {});
           }, 1500 * retryCount);

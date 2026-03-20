@@ -101,9 +101,8 @@ export async function initSidebarShell({ page }) {
         method: "PATCH",
         headers: {
           Accept: "application/json",
-          "Content-Type": "application/json",
         },
-        body: JSON.stringify(patch),
+        body: patch,
       });
     } catch (_error) {
       // ignore preference network failures

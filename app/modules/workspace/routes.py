@@ -189,6 +189,7 @@ async def replace_document_citations(document_id: str, payload: CitationIdsRepla
         access_token=access.access_token,
         capability_state=access.capability_state,
         document_id=document_id,
+        revision=payload.revision,
         citation_ids=payload.citation_ids,
     )
 
@@ -200,6 +201,7 @@ async def replace_document_notes(document_id: str, payload: NoteIdsReplaceReques
         access_token=access.access_token,
         capability_state=access.capability_state,
         document_id=document_id,
+        revision=payload.revision,
         note_ids=payload.note_ids,
     )
 
@@ -211,6 +213,7 @@ async def replace_document_tags(document_id: str, payload: TagIdsReplaceRequest,
         access_token=access.access_token,
         capability_state=access.capability_state,
         document_id=document_id,
+        revision=payload.revision,
         tag_ids=payload.tag_ids,
     )
 
@@ -236,13 +239,14 @@ async def create_document_checkpoint(document_id: str, payload: CheckpointCreate
 
 
 @router.post("/api/docs/{document_id}/checkpoints/{checkpoint_id}/restore")
-async def restore_document_checkpoint(document_id: str, checkpoint_id: str, access=Depends(_access)):
+async def restore_document_checkpoint(document_id: str, checkpoint_id: str, revision: str = Query(...), access=Depends(_access)):
     return await service.restore_checkpoint(
         user_id=access.user_id,
         access_token=access.access_token,
         capability_state=access.capability_state,
         document_id=document_id,
         checkpoint_id=checkpoint_id,
+        revision=revision,
     )
 
 

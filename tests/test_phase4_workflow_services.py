@@ -421,6 +421,7 @@ class FakeNotesServiceForQuotes:
 
 class FakeWorkspaceRepository:
     def __init__(self):
+        self.revision_counter = 0
         self.documents = {
             DOC_ID: {
                 "id": DOC_ID,
@@ -449,6 +450,10 @@ class FakeWorkspaceRepository:
         }
         self.rpc_calls = []
 
+    def _next_revision(self):
+        self.revision_counter += 1
+        return f"2026-01-0{self.revision_counter + 2}T00:00:00+00:00"
+
     async def list_documents(self, *, user_id, access_token, project_id=None, status=None, limit=50, summary_only=False):
         del user_id, access_token, project_id, limit, summary_only
         rows = list(self.documents.values())
@@ -467,12 +472,15 @@ class FakeWorkspaceRepository:
         self.document_tags["doc-new"] = []
         return deepcopy(row)
 
-    async def update_document(self, *, user_id, access_token, document_id, payload):
+    async def update_document(self, *, user_id, access_token, document_id, expected_revision, payload):
         del user_id, access_token
         row = self.documents.get(document_id)
         if row is None:
             return None
+        if row["updated_at"] != expected_revision:
+            return None
         row.update(payload)
+        row["updated_at"] = self._next_revision()
         return deepcopy(row)
 
     async def delete_document(self, *, user_id, access_token, document_id):
@@ -517,12 +525,18 @@ class FakeWorkspaceRepository:
 
     async def call_replace_rpc(self, *, function_name, payload):
         self.rpc_calls.append((function_name, deepcopy(payload)))
+        document_id = payload.get("p_document_id")
+        if document_id in self.documents and payload.get("p_expected_revision") != self.documents[document_id]["updated_at"]:
+            return type("Resp", (), {"status_code": 409})(), None
         if function_name == "replace_document_citations_atomic":
             self.document_citations[payload["p_document_id"]] = list(payload["p_citation_ids"])
+            self.documents[payload["p_document_id"]]["updated_at"] = self._next_revision()
         elif function_name == "replace_document_notes_atomic":
             self.document_notes[payload["p_document_id"]] = list(payload["p_note_ids"])
+            self.documents[payload["p_document_id"]]["updated_at"] = self._next_revision()
         elif function_name == "replace_document_tags_atomic":
             self.document_tags[payload["p_document_id"]] = list(payload["p_tag_ids"])
+            self.documents[payload["p_document_id"]]["updated_at"] = self._next_revision()
         return type("Resp", (), {"status_code": 200})(), True
 
 
@@ -674,12 +688,15 @@ async def test_document_relation_replacement_is_atomic_and_document_payload_is_c
         access_token=None,
         capability_state=capability_state,
         document_id=DOC_ID,
+        revision=workspace_service.repository.documents[DOC_ID]["updated_at"],
         citation_ids=["citation-a", "citation-a", "citation-b"],
     )
     assert result["data"]["attached_citation_ids"] == ["citation-a", "citation-b"]
     assert "citation_ids" not in result["data"]
+    assert result["data"]["revision"] == workspace_service.repository.documents[DOC_ID]["updated_at"]
     assert workspace_service.repository.rpc_calls[-1][0] == "replace_document_citations_atomic"
     assert workspace_service.repository.rpc_calls[-1][1]["p_citation_ids"] == ["citation-a", "citation-b"]
+    assert workspace_service.repository.rpc_calls[-1][1]["p_expected_revision"] == "2026-01-02T00:00:00+00:00"
     assert ("document", DOC_ID) in workspace_service.ownership.calls
 
 
@@ -693,6 +710,7 @@ async def test_checkpoint_restore_restores_content_only(workspace_service):
         capability_state=capability_state,
         document_id=DOC_ID,
         checkpoint_id=CHECKPOINT_ID,
+        revision=workspace_service.repository.documents[DOC_ID]["updated_at"],
     )
     assert restored["data"]["title"] == "Keep title"
     assert restored["data"]["content_html"] == "<p>Restored</p>"
@@ -876,10 +894,12 @@ async def test_replace_document_notes_preloads_parent_and_single_rpc(workspace_s
         access_token=None,
         capability_state=capability_state,
         document_id=DOC_ID,
+        revision=workspace_service.repository.documents[DOC_ID]["updated_at"],
         note_ids=[NOTE_ID_2, NOTE_ID_1, NOTE_ID_1],
     )
     assert result["data"]["attached_note_ids"] == [NOTE_ID_2, NOTE_ID_1]
     assert workspace_service.repository.rpc_calls[-1][0] == "replace_document_notes_atomic"
+    assert workspace_service.repository.rpc_calls[-1][1]["p_expected_revision"] == "2026-01-02T00:00:00+00:00"
     assert workspace_service.repository.rpc_calls[-1][1]["p_note_ids"] == [NOTE_ID_2, NOTE_ID_1]
     assert ("document", DOC_ID) in workspace_service.ownership.calls
 
@@ -892,9 +912,64 @@ async def test_replace_document_tags_preloads_parent_and_single_rpc(workspace_se
         access_token=None,
         capability_state=capability_state,
         document_id=DOC_ID,
+        revision=workspace_service.repository.documents[DOC_ID]["updated_at"],
         tag_ids=["tag-2", "tag-2"],
     )
     assert result["data"]["tag_ids"] == ["tag-2"]
     assert workspace_service.repository.rpc_calls[-1][0] == "replace_document_tags_atomic"
+    assert workspace_service.repository.rpc_calls[-1][1]["p_expected_revision"] == "2026-01-02T00:00:00+00:00"
     assert workspace_service.repository.rpc_calls[-1][1]["p_tag_ids"] == ["tag-2"]
     assert ("document", DOC_ID) in workspace_service.ownership.calls
+
+
+@pytest.mark.anyio
+async def test_document_update_rejects_stale_revision_before_mutation(workspace_service):
+    capability_state = DummyCapabilityState()
+    with pytest.raises(HTTPException) as exc:
+        await workspace_service.update_document(
+            user_id="user-1",
+            access_token=None,
+            capability_state=capability_state,
+            document_id=DOC_ID,
+            payload={"revision": "2026-01-01T00:00:00+00:00", "title": "Stale title"},
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "revision_conflict"
+
+
+@pytest.mark.anyio
+async def test_document_attachment_rejects_stale_revision_before_rpc(workspace_service):
+    capability_state = DummyCapabilityState()
+    with pytest.raises(HTTPException) as exc:
+        await workspace_service.replace_document_notes(
+            user_id="user-1",
+            access_token=None,
+            capability_state=capability_state,
+            document_id=DOC_ID,
+            revision="2026-01-01T00:00:00+00:00",
+            note_ids=[NOTE_ID_1],
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "revision_conflict"
+    assert workspace_service.repository.rpc_calls == []
+
+
+@pytest.mark.anyio
+async def test_document_mutation_advances_revision(workspace_service):
+    capability_state = DummyCapabilityState()
+    before = workspace_service.repository.documents[DOC_ID]["updated_at"]
+    result = await workspace_service.update_document(
+        user_id="user-1",
+        access_token=None,
+        capability_state=capability_state,
+        document_id=DOC_ID,
+        payload={
+            "revision": before,
+            "title": "Updated title",
+            "content_delta": workspace_service.repository.documents[DOC_ID]["content_delta"],
+            "content_html": workspace_service.repository.documents[DOC_ID]["content_html"],
+            "project_id": None,
+        },
+    )
+    assert result["data"]["revision"] != before
+    assert workspace_service.repository.documents[DOC_ID]["updated_at"] == result["data"]["revision"]

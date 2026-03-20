@@ -27,6 +27,7 @@ export function createStatusStore({ bus, now = () => Date.now(), setTimer = wind
     const shouldAnnounce =
       nextState === STATUS_STATES.OFFLINE
       || nextState === STATUS_STATES.ERROR
+      || nextState === STATUS_STATES.CONFLICT
       || (previousState === STATUS_STATES.ERROR && nextState === STATUS_STATES.SAVED)
       || (previousState === STATUS_STATES.OFFLINE && nextState === STATUS_STATES.SAVED);
     if (!shouldAnnounce) return;

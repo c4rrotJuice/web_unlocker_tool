@@ -18,6 +18,7 @@ from app.modules.common.ownership import OwnershipValidator
 from app.modules.common.relation_validation import RelationValidator, map_relation_error
 from app.modules.research.common import normalize_uuid
 from app.modules.workspace.repo import WorkspaceRepository
+from app.services.supabase_rest import response_error_text
 
 
 class WorkspaceService:
@@ -62,6 +63,37 @@ class WorkspaceService:
                 "Document hydration is derived, compact, and deterministic.",
             ],
         )
+
+    @staticmethod
+    def _revision_conflict_detail(
+        *,
+        operation: str,
+        expected_revision: str,
+        current_document: dict,
+    ) -> dict[str, object]:
+        current_revision = current_document.get("revision") or current_document.get("updated_at")
+        return {
+            "code": "revision_conflict",
+            "message": "Document changed on another surface. Reload the latest version before saving again.",
+            "operation": operation,
+            "expected_revision": expected_revision,
+            "current_revision": current_revision,
+            "current_document": current_document,
+        }
+
+    def _raise_revision_conflict(self, *, operation: str, expected_revision: str, current_document: dict) -> None:
+        raise HTTPException(
+            status_code=409,
+            detail=self._revision_conflict_detail(
+                operation=operation,
+                expected_revision=expected_revision,
+                current_document=current_document,
+            ),
+        )
+
+    @staticmethod
+    def _is_revision_conflict_response(response) -> bool:
+        return response.status_code == 409 or "revision_conflict" in response_error_text(response).lower()
 
     def _access_state(self, *, capability_state, document_row: dict) -> tuple[bool, list[str], str | None]:
         status = str(document_row.get("status") or "active")
@@ -175,6 +207,14 @@ class WorkspaceService:
         hydrated = await self._hydrate_documents(user_id=user_id, access_token=access_token, capability_state=capability_state, rows=[row])
         return serialize_ok_envelope(hydrated[0])
 
+    async def _load_document_for_write(self, *, user_id: str, access_token: str | None, document_id: str) -> dict:
+        return await self.ownership.load_owned_document(
+            user_id=user_id,
+            document_id=document_id,
+            access_token=access_token,
+            select="id,title,content_delta,content_html,project_id,status,archived_at,created_at,updated_at",
+        )
+
     async def list_documents_by_ids(self, *, user_id: str, access_token: str | None, capability_state, document_ids: list[str]) -> list[dict]:
         normalized_document_ids = [normalize_uuid(document_id, field_name="document_id") for document_id in document_ids]
         rows = await self.repository.list_documents_by_ids(
@@ -207,8 +247,29 @@ class WorkspaceService:
         return await self.get_document(user_id=user_id, access_token=access_token, capability_state=capability_state, document_id=str(row["id"]))
 
     async def update_document(self, *, user_id: str, access_token: str | None, capability_state, document_id: str, payload: dict) -> dict:
-        await self.ownership.load_owned_document(user_id=user_id, document_id=document_id, access_token=access_token, select="id")
+        normalized_document_id = normalize_uuid(document_id, field_name="document_id")
+        current_document = await self._load_document_for_write(
+            user_id=user_id,
+            access_token=access_token,
+            document_id=normalized_document_id,
+        )
+        expected_revision = str(payload.get("revision") or "").strip()
+        if not expected_revision:
+            raise HTTPException(status_code=422, detail="revision is required")
+        current_revision = str(current_document.get("updated_at") or "")
+        if current_revision and expected_revision != current_revision:
+            self._raise_revision_conflict(
+                operation="update_document",
+                expected_revision=expected_revision,
+                current_document=(await self.get_document(
+                    user_id=user_id,
+                    access_token=access_token,
+                    capability_state=capability_state,
+                    document_id=normalized_document_id,
+                ))["data"],
+            )
         patch_payload = dict(payload)
+        patch_payload.pop("revision", None)
         if payload.get("project_id") is not None:
             patch_payload["project_id"] = await self.taxonomy_service.ensure_project_exists(
                 user_id=user_id,
@@ -218,11 +279,28 @@ class WorkspaceService:
         row = await self.repository.update_document(
             user_id=user_id,
             access_token=access_token,
-            document_id=normalize_uuid(document_id, field_name="document_id"),
+            document_id=normalized_document_id,
+            expected_revision=expected_revision,
             payload=patch_payload,
         )
         if row is None:
-            raise HTTPException(status_code=404, detail="Document not found")
+            current = await self.repository.get_document(
+                user_id=user_id,
+                access_token=access_token,
+                document_id=normalized_document_id,
+            )
+            if current is None:
+                raise HTTPException(status_code=404, detail="Document not found")
+            self._raise_revision_conflict(
+                operation="update_document",
+                expected_revision=expected_revision,
+                current_document=(await self.get_document(
+                    user_id=user_id,
+                    access_token=access_token,
+                    capability_state=capability_state,
+                    document_id=normalized_document_id,
+                ))["data"],
+            )
         return await self.get_document(user_id=user_id, access_token=access_token, capability_state=capability_state, document_id=str(row["id"]))
 
     async def archive_document(self, *, user_id: str, access_token: str | None, capability_state, document_id: str) -> dict:
@@ -231,7 +309,7 @@ class WorkspaceService:
             access_token=access_token,
             capability_state=capability_state,
             document_id=document_id,
-            payload={"status": "archived", "archived_at": datetime.now(timezone.utc).isoformat()},
+            payload={"status": "archived", "archived_at": datetime.now(timezone.utc).isoformat(), "revision": (await self._load_document_for_write(user_id=user_id, access_token=access_token, document_id=normalize_uuid(document_id, field_name="document_id"))).get("updated_at")},
         )
         return await self.get_document(user_id=user_id, access_token=access_token, capability_state=capability_state, document_id=document_id)
 
@@ -241,7 +319,7 @@ class WorkspaceService:
             access_token=access_token,
             capability_state=capability_state,
             document_id=document_id,
-            payload={"status": "active", "archived_at": None},
+            payload={"status": "active", "archived_at": None, "revision": (await self._load_document_for_write(user_id=user_id, access_token=access_token, document_id=normalize_uuid(document_id, field_name="document_id"))).get("updated_at")},
         )
         return await self.get_document(user_id=user_id, access_token=access_token, capability_state=capability_state, document_id=document_id)
 
@@ -258,14 +336,28 @@ class WorkspaceService:
             raise HTTPException(status_code=404, detail="Document not found")
         return serialize_ok_envelope({"id": normalized_document_id})
 
-    async def replace_document_citations(self, *, user_id: str, access_token: str | None, capability_state, document_id: str, citation_ids: list[str]) -> dict:
+    async def replace_document_citations(self, *, user_id: str, access_token: str | None, capability_state, document_id: str, revision: str, citation_ids: list[str]) -> dict:
         normalized_document_id = normalize_uuid(document_id, field_name="document_id")
-        await self.ownership.load_owned_document(
+        current_document = await self._load_document_for_write(
             user_id=user_id,
-            document_id=normalized_document_id,
             access_token=access_token,
-            select="id",
+            document_id=normalized_document_id,
         )
+        expected_revision = str(revision or "").strip()
+        if not expected_revision:
+            raise HTTPException(status_code=422, detail="revision is required")
+        current_revision = str(current_document.get("updated_at") or "")
+        if current_revision and expected_revision != current_revision:
+            self._raise_revision_conflict(
+                operation="replace_document_citations",
+                expected_revision=expected_revision,
+                current_document=(await self.get_document(
+                    user_id=user_id,
+                    access_token=access_token,
+                    capability_state=capability_state,
+                    document_id=normalized_document_id,
+                ))["data"],
+            )
         normalized_citation_ids = await self.relation_validation.validate_owned_citation_ids(
             user_id=user_id,
             access_token=access_token,
@@ -273,20 +365,45 @@ class WorkspaceService:
         )
         response, _ = await self.repository.call_replace_rpc(
             function_name="replace_document_citations_atomic",
-            payload={"p_user_id": user_id, "p_document_id": normalized_document_id, "p_citation_ids": normalized_citation_ids},
+            payload={"p_user_id": user_id, "p_document_id": normalized_document_id, "p_expected_revision": expected_revision, "p_citation_ids": normalized_citation_ids},
         )
+        if self._is_revision_conflict_response(response):
+            self._raise_revision_conflict(
+                operation="replace_document_citations",
+                expected_revision=expected_revision,
+                current_document=(await self.get_document(
+                    user_id=user_id,
+                    access_token=access_token,
+                    capability_state=capability_state,
+                    document_id=normalized_document_id,
+                ))["data"],
+            )
         if response.status_code != 200:
             raise map_relation_error(response, missing_parent_detail="Document not found", invalid_related_detail="Invalid citation references")
         return await self.get_document(user_id=user_id, access_token=access_token, capability_state=capability_state, document_id=normalized_document_id)
 
-    async def replace_document_notes(self, *, user_id: str, access_token: str | None, capability_state, document_id: str, note_ids: list[str]) -> dict:
+    async def replace_document_notes(self, *, user_id: str, access_token: str | None, capability_state, document_id: str, revision: str, note_ids: list[str]) -> dict:
         normalized_document_id = normalize_uuid(document_id, field_name="document_id")
-        await self.ownership.load_owned_document(
+        current_document = await self._load_document_for_write(
             user_id=user_id,
-            document_id=normalized_document_id,
             access_token=access_token,
-            select="id",
+            document_id=normalized_document_id,
         )
+        expected_revision = str(revision or "").strip()
+        if not expected_revision:
+            raise HTTPException(status_code=422, detail="revision is required")
+        current_revision = str(current_document.get("updated_at") or "")
+        if current_revision and expected_revision != current_revision:
+            self._raise_revision_conflict(
+                operation="replace_document_notes",
+                expected_revision=expected_revision,
+                current_document=(await self.get_document(
+                    user_id=user_id,
+                    access_token=access_token,
+                    capability_state=capability_state,
+                    document_id=normalized_document_id,
+                ))["data"],
+            )
         normalized_note_ids = await self.relation_validation.validate_owned_note_ids(
             user_id=user_id,
             access_token=access_token,
@@ -294,20 +411,45 @@ class WorkspaceService:
         )
         response, _ = await self.repository.call_replace_rpc(
             function_name="replace_document_notes_atomic",
-            payload={"p_user_id": user_id, "p_document_id": normalized_document_id, "p_note_ids": normalized_note_ids},
+            payload={"p_user_id": user_id, "p_document_id": normalized_document_id, "p_expected_revision": expected_revision, "p_note_ids": normalized_note_ids},
         )
+        if self._is_revision_conflict_response(response):
+            self._raise_revision_conflict(
+                operation="replace_document_notes",
+                expected_revision=expected_revision,
+                current_document=(await self.get_document(
+                    user_id=user_id,
+                    access_token=access_token,
+                    capability_state=capability_state,
+                    document_id=normalized_document_id,
+                ))["data"],
+            )
         if response.status_code != 200:
             raise map_relation_error(response, missing_parent_detail="Document not found", invalid_related_detail="Invalid note references")
         return await self.get_document(user_id=user_id, access_token=access_token, capability_state=capability_state, document_id=normalized_document_id)
 
-    async def replace_document_tags(self, *, user_id: str, access_token: str | None, capability_state, document_id: str, tag_ids: list[str]) -> dict:
+    async def replace_document_tags(self, *, user_id: str, access_token: str | None, capability_state, document_id: str, revision: str, tag_ids: list[str]) -> dict:
         normalized_document_id = normalize_uuid(document_id, field_name="document_id")
-        await self.ownership.load_owned_document(
+        current_document = await self._load_document_for_write(
             user_id=user_id,
-            document_id=normalized_document_id,
             access_token=access_token,
-            select="id",
+            document_id=normalized_document_id,
         )
+        expected_revision = str(revision or "").strip()
+        if not expected_revision:
+            raise HTTPException(status_code=422, detail="revision is required")
+        current_revision = str(current_document.get("updated_at") or "")
+        if current_revision and expected_revision != current_revision:
+            self._raise_revision_conflict(
+                operation="replace_document_tags",
+                expected_revision=expected_revision,
+                current_document=(await self.get_document(
+                    user_id=user_id,
+                    access_token=access_token,
+                    capability_state=capability_state,
+                    document_id=normalized_document_id,
+                ))["data"],
+            )
         normalized_tag_ids = await self.relation_validation.validate_owned_tag_ids(
             user_id=user_id,
             access_token=access_token,
@@ -315,8 +457,19 @@ class WorkspaceService:
         )
         response, _ = await self.repository.call_replace_rpc(
             function_name="replace_document_tags_atomic",
-            payload={"p_user_id": user_id, "p_document_id": normalized_document_id, "p_tag_ids": normalized_tag_ids},
+            payload={"p_user_id": user_id, "p_document_id": normalized_document_id, "p_expected_revision": expected_revision, "p_tag_ids": normalized_tag_ids},
         )
+        if self._is_revision_conflict_response(response):
+            self._raise_revision_conflict(
+                operation="replace_document_tags",
+                expected_revision=expected_revision,
+                current_document=(await self.get_document(
+                    user_id=user_id,
+                    access_token=access_token,
+                    capability_state=capability_state,
+                    document_id=normalized_document_id,
+                ))["data"],
+            )
         if response.status_code != 200:
             raise map_relation_error(response, missing_parent_detail="Document not found", invalid_related_detail="Invalid tag references")
         return await self.get_document(user_id=user_id, access_token=access_token, capability_state=capability_state, document_id=normalized_document_id)
@@ -350,14 +503,27 @@ class WorkspaceService:
         )
         return serialize_ok_envelope([serialize_checkpoint(row) for row in rows])
 
-    async def restore_checkpoint(self, *, user_id: str, access_token: str | None, capability_state, document_id: str, checkpoint_id: str) -> dict:
+    async def restore_checkpoint(self, *, user_id: str, access_token: str | None, capability_state, document_id: str, checkpoint_id: str, revision: str) -> dict:
         normalized_document_id = normalize_uuid(document_id, field_name="document_id")
-        await self.ownership.load_owned_document(
+        current_document = await self._load_document_for_write(
             user_id=user_id,
-            document_id=normalized_document_id,
             access_token=access_token,
-            select="id",
+            document_id=normalized_document_id,
         )
+        expected_revision = str(revision or "").strip()
+        if not expected_revision:
+            raise HTTPException(status_code=422, detail="revision is required")
+        if str(current_document.get("updated_at") or "") != expected_revision:
+            self._raise_revision_conflict(
+                operation="restore_checkpoint",
+                expected_revision=expected_revision,
+                current_document=(await self.get_document(
+                    user_id=user_id,
+                    access_token=access_token,
+                    capability_state=capability_state,
+                    document_id=normalized_document_id,
+                ))["data"],
+            )
         checkpoint = await self.repository.get_checkpoint(
             user_id=user_id,
             access_token=access_token,
@@ -366,15 +532,34 @@ class WorkspaceService:
         )
         if checkpoint is None:
             raise HTTPException(status_code=404, detail="Checkpoint not found")
-        await self.repository.update_document(
+        row = await self.repository.update_document(
             user_id=user_id,
             access_token=access_token,
             document_id=normalized_document_id,
+            expected_revision=expected_revision,
             payload={
                 "content_delta": checkpoint.get("content_delta") or {"ops": [{"insert": "\n"}]},
                 "content_html": checkpoint.get("content_html"),
             },
         )
+        if row is None:
+            current = await self.repository.get_document(
+                user_id=user_id,
+                access_token=access_token,
+                document_id=normalized_document_id,
+            )
+            if current is None:
+                raise HTTPException(status_code=404, detail="Document not found")
+            self._raise_revision_conflict(
+                operation="restore_checkpoint",
+                expected_revision=expected_revision,
+                current_document=(await self.get_document(
+                    user_id=user_id,
+                    access_token=access_token,
+                    capability_state=capability_state,
+                    document_id=normalized_document_id,
+                ))["data"],
+            )
         return await self.get_document(user_id=user_id, access_token=access_token, capability_state=capability_state, document_id=normalized_document_id)
 
     async def hydrate_document(

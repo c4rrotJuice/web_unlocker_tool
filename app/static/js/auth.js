@@ -185,6 +185,40 @@
     return createAuthSessionError(code, message, { status, payload, requestPath });
   }
 
+  function isPassthroughBody(body) {
+    return (
+      typeof body === "string"
+      || (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams)
+      || (typeof FormData !== "undefined" && body instanceof FormData)
+      || (typeof Blob !== "undefined" && body instanceof Blob)
+      || (typeof File !== "undefined" && body instanceof File)
+      || body instanceof ArrayBuffer
+      || (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView && ArrayBuffer.isView(body))
+      || (typeof ReadableStream !== "undefined" && body instanceof ReadableStream)
+      || (typeof Request !== "undefined" && body instanceof Request)
+    );
+  }
+
+  function prepareProtectedRequestOptions(options = {}) {
+    const headers = new Headers(options.headers || {});
+    const prepared = { ...options, headers };
+    if (!Object.hasOwn(prepared, "body")) {
+      return prepared;
+    }
+
+    const body = prepared.body;
+    if (body == null || isPassthroughBody(body)) {
+      return prepared;
+    }
+
+    if (typeof body === "object") {
+      prepared.body = JSON.stringify(body);
+      headers.set("Content-Type", "application/json");
+    }
+
+    return prepared;
+  }
+
   async function authFetch(url, options = {}) {
     const sessionResult = await waitForSessionReady();
     const token = sessionResult?.data?.session?.access_token || null;
@@ -207,7 +241,7 @@
         authorizationAttached: headers.has("Authorization"),
       });
     }
-    return fetch(url, { ...options, headers });
+    return fetch(url, prepareProtectedRequestOptions({ ...options, headers }));
   }
 
   async function authJson(url, options = {}, { unwrapEnvelope = true } = {}) {

@@ -9,6 +9,7 @@ import { escapeHtml } from "../../app_shell/core/format.js";
 export function renderContextRail(target, context, state, detail, handlers = {}) {
   const seed = state.seed_state;
   const sessionFailure = state.runtime_failures?.session;
+  const conflictFailure = state.runtime_failures?.document_conflict;
   const transitionFailure = state.runtime_failures?.document_transition;
   const hydrateFailure = state.runtime_failures?.document_hydrate;
   const hydrateActivity = state.runtime_activity?.hydrate;
@@ -25,6 +26,20 @@ export function renderContextRail(target, context, state, detail, handlers = {})
           <button class="editor-v2-action" data-context-action="reconnect-session">Open auth</button>
         </div>
         <p class="editor-v2-meta">Unsaved work stays in the editor until you leave or reload.</p>
+      </div>
+    `;
+    return;
+  }
+  if (conflictFailure) {
+    target.innerHTML = `
+      <div class="editor-v2-card">
+        <h3>Remote changes detected</h3>
+        <p>${escapeHtml(conflictFailure.message || "This document changed on another surface. Your local edits are still in this tab.")}</p>
+        <div class="editor-v2-context-actions">
+          <button class="editor-v2-action" data-context-action="reload-latest">Reload latest</button>
+          <button class="editor-v2-action" data-context-action="retry-save">Retry save</button>
+        </div>
+        <p class="editor-v2-meta">Reloading will replace the current local snapshot with backend truth.</p>
       </div>
     `;
     return;

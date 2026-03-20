@@ -12,6 +12,7 @@ import { createQuoteStore } from "../../app/static/js/editor_v2/research/quote_s
 import { createNoteStore } from "../../app/static/js/editor_v2/research/note_store.js";
 import { createDocumentController } from "../../app/static/js/editor_v2/document/document_controller.js";
 import { createAutosaveController } from "../../app/static/js/editor_v2/document/autosave_controller.js";
+import { createAttachActions } from "../../app/static/js/editor_v2/actions/attach_actions.js";
 import { renderContextRail } from "../../app/static/js/editor_v2/ui/context_rail_renderer.js";
 import { createExplorerController } from "../../app/static/js/editor_v2/research/explorer_controller.js";
 import { createCheckpointController } from "../../app/static/js/editor_v2/document/checkpoint_controller.js";
@@ -517,17 +518,99 @@ test("workspace saves and preferences sync share the same canonical authJson hel
   globalThis.window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   const api = createWorkspaceApi();
   await api.updateDocument("doc-1", {
+    revision: "2026-01-02T00:00:00+00:00",
     title: "Updated title",
     content_delta: { ops: [{ insert: "Draft 1\n" }] },
     content_html: "<p>Draft 1</p>",
     project_id: null,
   });
   await initSidebarShell({ page: "editor" });
+  toggle.dispatch("click");
+  await flush();
 
   assert.equal(requests[0].path, "/api/docs/doc-1");
   assert.equal(requests[0].options.method, "PATCH");
+  assert.deepEqual(requests[0].options.body, {
+    revision: "2026-01-02T00:00:00+00:00",
+    title: "Updated title",
+    content_delta: { ops: [{ insert: "Draft 1\n" }] },
+    content_html: "<p>Draft 1</p>",
+    project_id: null,
+  });
   assert.equal(requests[1].path, "/api/preferences");
   assert.equal(requests[1].options.method, "GET");
+  assert.equal(requests[2].path, "/api/preferences");
+  assert.equal(requests[2].options.method, "PATCH");
+  assert.deepEqual(requests[2].options.body, {
+    sidebar_collapsed: false,
+    sidebar_auto_hide: false,
+  });
+});
+
+test("canonical auth helper serializes object payloads and preserves non-json bodies", async () => {
+  const requests = [];
+  const runtime = loadAuthRuntime({
+    client: {
+      auth: {
+        async getSession() {
+          return {
+            data: {
+              session: {
+                access_token: "token-json",
+                refresh_token: "refresh-json",
+              },
+            },
+            error: null,
+          };
+        },
+        async refreshSession() {
+          return {
+            data: {
+              session: {
+                access_token: "token-json",
+                refresh_token: "refresh-json",
+              },
+            },
+            error: null,
+          };
+        },
+        async onAuthStateChange() {
+          return { data: { subscription: { unsubscribe() {} } }, error: null };
+        },
+        async setSession() {
+          return { data: { session: null }, error: null };
+        },
+        async signOut() {},
+      },
+    },
+    fetchImpl: async (_url, options = {}) => {
+      requests.push(options);
+      return okResponse({ ok: true, data: { saved: true } });
+    },
+  });
+
+  await runtime.window.webUnlockerAuth.authJson("/api/preferences", {
+    method: "PATCH",
+    headers: { Accept: "application/json" },
+    body: {
+      sidebar_collapsed: true,
+      sidebar_auto_hide: false,
+    },
+  });
+
+  const passthrough = new URLSearchParams("mode=fast");
+  await runtime.window.webUnlockerAuth.authFetch("/api/upload", {
+    method: "POST",
+    headers: { Accept: "application/json" },
+    body: passthrough,
+  });
+
+  assert.equal(requests[0].body, JSON.stringify({
+    sidebar_collapsed: true,
+    sidebar_auto_hide: false,
+  }));
+  assert.equal(requests[0].headers.get("Content-Type"), "application/json");
+  assert.equal(requests[1].body, passthrough);
 });
 
 test("canonical protected helper reports request metadata and attaches bearer for resumed /api/preferences requests", async () => {
@@ -564,14 +647,67 @@ test("canonical protected helper reports request metadata and attaches bearer fo
   runtime.window.webUnlockerAuth.setProtectedRequestObserver((meta) => observed.push(meta));
   await runtime.window.webUnlockerAuth.authJson("/api/preferences", {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ sidebar_collapsed: true }),
+    headers: { Accept: "application/json" },
+    body: { sidebar_collapsed: true },
   });
 
   assert.equal(observed[0].helper, "authFetch");
   assert.equal(observed[0].authorizationAttached, true);
   assert.equal(observed[0].waitedForSessionReady, true);
   assert.equal(observed[0].url, "/api/preferences");
+});
+
+test("autosave skips retrying deterministic validation failures", async () => {
+  const delays = [];
+  installWindow({
+    setTimeout(callback, delay) {
+      delays.push(delay);
+      if (delay === 650) {
+        queueMicrotask(callback);
+      }
+      return delays.length;
+    },
+    clearTimeout() {},
+  });
+  globalThis.navigator = { onLine: true };
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft 1",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft 1\n" }] },
+    content_html: "<p>Draft 1</p>",
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  workspaceState.markDirty({ title: "Updated title" });
+  const autosave = createAutosaveController({
+    workspaceState,
+    workspaceApi: {
+      async updateDocument() {
+        const error = new Error("Input should be a valid dictionary or object to extract fields from");
+        error.status = 422;
+        error.payload = {
+          detail: {
+            type: "model_attributes_type",
+            msg: "Input should be a valid dictionary or object to extract fields from",
+            input: "[object Object]",
+          },
+        };
+        throw error;
+      },
+    },
+    eventBus: { emit() {} },
+  });
+
+  autosave.schedule();
+  await flush();
+
+  assert.equal(delays[0], 650);
+  assert.equal(delays.filter((delay) => delay === 1500 || delay === 3000).length, 0);
+  assert.equal(workspaceState.getState().save_status, "error");
+  assert.equal(workspaceState.getState().runtime_activity.save.phase, "error");
 });
 
 test("session loss renders a recoverable editor state instead of a generic timeout", async () => {
@@ -705,6 +841,195 @@ test("autosave flush settles to error after failure", async () => {
   assert.equal(workspaceState.getState().runtime_activity.save.phase, "error");
   assert.equal(workspaceState.getState().runtime_activity.flush.phase, "error");
   assert.deepEqual(events, ["doc.flush.started", "doc.save.started", "doc.save.failed", "doc.flush.failed"]);
+});
+
+test("autosave conflict enters an explicit recoverable conflict state", async () => {
+  installWindow();
+  globalThis.navigator = { onLine: true };
+  const events = [];
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft 1",
+    revision: "rev-1",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft 1\n" }] },
+    content_html: "<p>Draft 1</p>",
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  workspaceState.markDirty({ title: "Updated title" });
+  const autosave = createAutosaveController({
+    workspaceState,
+    workspaceApi: {
+      async updateDocument() {
+        const error = new Error("Document changed on another surface.");
+        error.status = 409;
+        error.payload = {
+          detail: {
+            code: "revision_conflict",
+            message: "Document changed on another surface. Reload latest before saving again.",
+            expected_revision: "rev-1",
+            current_revision: "rev-2",
+            current_document: {
+              id: "doc-1",
+              title: "Remote title",
+              revision: "rev-2",
+              project_id: null,
+              content_delta: { ops: [{ insert: "Remote\n" }] },
+              content_html: "<p>Remote</p>",
+              attached_citation_ids: [],
+              attached_note_ids: [],
+              tag_ids: [],
+            },
+          },
+        };
+        throw error;
+      },
+    },
+    eventBus: { emit(name) { events.push(name); } },
+  });
+
+  await assert.rejects(() => autosave.flush(), /Document changed on another surface/);
+
+  assert.equal(workspaceState.getState().save_status, "conflict");
+  assert.equal(workspaceState.getState().runtime_activity.save.phase, "conflict");
+  assert.equal(workspaceState.getState().runtime_failures.document_conflict.current_revision, "rev-2");
+  assert.equal(workspaceState.getState().runtime_failures.document_conflict.source, "autosave");
+  assert.deepEqual(events, ["doc.flush.started", "doc.save.started", "doc.save.conflict", "doc.flush.failed"]);
+});
+
+test("attachment conflict preserves local snapshot instead of overwriting newer backend state", async () => {
+  installWindow();
+  const events = [];
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft 1",
+    revision: "rev-1",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft 1\n" }] },
+    content_html: "<p>Draft 1</p>",
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  const attachActions = createAttachActions({
+    workspaceState,
+    workspaceApi: {
+      async replaceDocumentCitations() {
+        const error = new Error("Document changed on another surface.");
+        error.status = 409;
+        error.payload = {
+          detail: {
+            code: "revision_conflict",
+            message: "Document changed on another surface. Reload latest before saving again.",
+            expected_revision: "rev-1",
+            current_revision: "rev-2",
+            current_document: {
+              id: "doc-1",
+              title: "Remote title",
+              revision: "rev-2",
+              project_id: null,
+              content_delta: { ops: [{ insert: "Remote\n" }] },
+              content_html: "<p>Remote</p>",
+              attached_citation_ids: ["citation-remote"],
+              attached_note_ids: [],
+              tag_ids: [],
+            },
+          },
+        };
+        throw error;
+      },
+      async replaceDocumentNotes() {
+        throw new Error("should not be called");
+      },
+    },
+    eventBus: { emit(name) { events.push(name); } },
+  });
+
+  await assert.rejects(() => attachActions.attachCitation("citation-local"), /Document changed on another surface/);
+
+  assert.equal(workspaceState.getState().save_status, "conflict");
+  assert.equal(workspaceState.getState().attached_relation_ids.citations.length, 0);
+  assert.equal(workspaceState.getState().runtime_failures.document_conflict.source, "attach_citation");
+  assert.deepEqual(events, ["doc.save.conflict"]);
+});
+
+test("refreshing after conflict resolves the editor to backend truth", async () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Local draft",
+    revision: "rev-1",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Local draft\n" }] },
+    content_html: "<p>Local draft</p>",
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  workspaceState.markDirty({ title: "Local draft" });
+  workspaceState.setDocumentConflict({
+    code: "revision_conflict",
+    message: "Document changed on another surface. Reload latest before saving again.",
+    current_revision: "rev-2",
+    current_document: { id: "doc-1", title: "Remote title", revision: "rev-2" },
+    source: "autosave",
+  });
+  const refs = createDocumentRefs();
+  refs.titleInput.value = "Local draft";
+  const hydratorCalls = [];
+  const controller = createDocumentController({
+    workspaceState,
+    workspaceApi: {
+      async getDocument(documentId) {
+        assert.equal(documentId, "doc-1");
+        return {
+          id: "doc-1",
+          title: "Remote title",
+          revision: "rev-2",
+          project_id: null,
+          content_delta: { ops: [{ insert: "Remote title\n" }] },
+          content_html: "<p>Remote title</p>",
+          attached_citation_ids: ["citation-remote"],
+          attached_note_ids: [],
+          tag_ids: [],
+        };
+      },
+      async hydrateDocument() {
+        return {
+          document: { id: "doc-1", title: "Remote title", revision: "rev-2" },
+          attached_citations: [],
+          attached_notes: [],
+          attached_quotes: [],
+          attached_sources: [],
+        };
+      },
+    },
+    refs,
+    quillAdapter: createQuillStub(),
+    autosaveController: { async flush() {}, schedule() {} },
+    hydrator: {
+      consumeDocumentHydration(payload) {
+        hydratorCalls.push(payload);
+      },
+    },
+    eventBus: { emit() {} },
+  });
+
+  await controller.reloadCurrentDocument();
+  await flush();
+
+  assert.equal(workspaceState.getState().dirty, false);
+  assert.equal(workspaceState.getState().active_document.title, "Remote title");
+  assert.equal(workspaceState.getState().active_document.revision, "rev-2");
+  assert.equal(workspaceState.getState().save_status, "saved");
+  assert.equal(workspaceState.getState().runtime_failures.document_conflict, null);
+  assert.equal(refs.titleInput.value, "Remote title");
+  assert.equal(hydratorCalls.length, 1);
 });
 
 test("dirty document switches block when save flush fails", async () => {

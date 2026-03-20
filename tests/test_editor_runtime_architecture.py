@@ -63,6 +63,10 @@ def test_editor_runtime_uses_canonical_authenticated_request_path_for_protected_
     assert "authJson?.(" in shell_fetch
     assert "authJson?.(" in sidebar_source
     assert "authJson?.(" in theme_source
+    assert "JSON.stringify(patch)" not in sidebar_source
+    assert "JSON.stringify({ theme: mode })" not in theme_source
+    assert "body: patch" in sidebar_source
+    assert "body: { theme: mode }" in theme_source
     assert "apiFetchJson(\"/api/me\")" in dashboard_source
     assert "apiFetchJson(\"/api/projects?include_archived=false&limit=24\")" in projects_source
     assert "apiFetchJson(" in research_source
@@ -127,3 +131,18 @@ def test_workspace_state_is_single_truth_and_context_state_is_pure():
     assert "composing" in selection_source
     assert "deriveContextState" in context_source
     assert "listeners = new Map()" in event_bus_source
+
+
+def test_workspace_mutations_require_revision_preconditions_across_canonical_paths():
+    workspace_api = Path("app/static/js/editor_v2/api/workspace_api.js").read_text(encoding="utf-8")
+    workspace_service = Path("app/modules/workspace/service.py").read_text(encoding="utf-8")
+    workspace_schemas = Path("app/modules/workspace/schemas.py").read_text(encoding="utf-8")
+    workspace_sql = Path("writior_migration_pack/008_rpc_functions.sql").read_text(encoding="utf-8")
+    workspace_state = Path("app/static/js/editor_v2/core/workspace_state.js").read_text(encoding="utf-8")
+
+    assert "revision" in workspace_api
+    assert "expected_revision" in workspace_service
+    assert "revision_conflict" in workspace_service
+    assert "revision" in workspace_schemas
+    assert "p_expected_revision" in workspace_sql
+    assert "document_conflict" in workspace_state

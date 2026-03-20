@@ -21,6 +21,7 @@ const initialState = () => ({
   runtime_failures: {
     document_transition: null,
     document_hydrate: null,
+    document_conflict: null,
     session: null,
     explorer_by_type: {},
     checkpoints: null,
@@ -50,6 +51,7 @@ export function createWorkspaceState() {
       project_id: document.project_id || null,
       status: document.status || "active",
       archived: !!document.archived,
+      revision: document.revision || document.updated_at || null,
       attached_citation_ids: (document.attached_citation_ids || []).slice(),
       attached_note_ids: (document.attached_note_ids || []).slice(),
       tag_ids: (document.tag_ids || []).slice(),
@@ -120,6 +122,7 @@ export function createWorkspaceState() {
           ...state.runtime_failures,
           document_transition: null,
           document_hydrate: null,
+          document_conflict: null,
           session: null,
           checkpoints: null,
         },
@@ -164,6 +167,7 @@ export function createWorkspaceState() {
         runtime_failures: {
           ...state.runtime_failures,
           session: null,
+          document_conflict: null,
         },
       });
     },
@@ -302,6 +306,15 @@ export function createWorkspaceState() {
         runtime_failures: {
           ...state.runtime_failures,
           document_hydrate: failure ? { ...failure } : null,
+        },
+      });
+    },
+    setDocumentConflict(failure) {
+      set({
+        save_status: failure ? "conflict" : state.save_status,
+        runtime_failures: {
+          ...state.runtime_failures,
+          document_conflict: failure ? { ...failure } : null,
         },
       });
     },

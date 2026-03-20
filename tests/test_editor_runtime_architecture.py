@@ -51,18 +51,30 @@ def test_editor_runtime_uses_canonical_authenticated_request_path_for_protected_
     shell_fetch = Path("app/static/js/app_shell/core/fetch.js").read_text(encoding="utf-8")
     sidebar_source = Path("app/static/js/app_shell/core/sidebar.js").read_text(encoding="utf-8")
     theme_source = Path("app/static/js/theme.js").read_text(encoding="utf-8")
+    dashboard_source = Path("app/static/js/app_shell/pages/dashboard.js").read_text(encoding="utf-8")
+    projects_source = Path("app/static/js/app_shell/pages/projects.js").read_text(encoding="utf-8")
+    research_source = Path("app/static/js/app_shell/pages/research.js").read_text(encoding="utf-8")
+    capability_source = Path("app/static/js/editor_v2/api/capability_api.js").read_text(encoding="utf-8")
+    pricing_source = Path("app/static/pricing.html").read_text(encoding="utf-8")
     auth_source = Path("app/static/js/auth.js").read_text(encoding="utf-8")
 
-    assert "createAuthSessionErrorFromPayload" in workspace_api
-    assert "createAuthSessionErrorFromPayload" in research_api
-    assert "isAuthSessionError" in shell_fetch
-    assert 'authFetch?.("/api/preferences"' in sidebar_source
-    assert 'authFetch?.("/api/preferences"' in theme_source
-    assert "getSession()" not in sidebar_source
-    assert "getSession()" not in theme_source
+    assert "authJson(" in workspace_api
+    assert "authJson(" in research_api
+    assert "authJson?.(" in shell_fetch
+    assert "authJson?.(" in sidebar_source
+    assert "authJson?.(" in theme_source
+    assert "apiFetchJson(\"/api/me\")" in dashboard_source
+    assert "apiFetchJson(\"/api/projects?include_archived=false&limit=24\")" in projects_source
+    assert "apiFetchJson(" in research_source
+    assert "apiFetchJson(\"/api/editor/access\")" in capability_source
+    assert 'authJson("/api/me"' in pricing_source
+    assert 'authJson("/get_paddle_token"' in pricing_source
+    assert 'authJson("/create_paddle_checkout"' in pricing_source
+    assert "authHeaders" not in pricing_source
+    assert "fetch(\"/api/me\"" not in pricing_source
     assert "visibilitychange" in auth_source
     assert "pageshow" in auth_source
-    assert "refreshSession" in auth_source
+    assert "waitForSessionReady" in auth_source
     assert "Missing bearer token" in auth_source
 
 

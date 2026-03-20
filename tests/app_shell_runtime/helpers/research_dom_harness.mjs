@@ -351,6 +351,20 @@ export function createResearchHarness({ initialSearch = "" } = {}) {
         }
         return handler.handle(path);
       },
+      async authJson(path, options = {}, { unwrapEnvelope = true } = {}) {
+        const response = await window.webUnlockerAuth.authFetch(path, options);
+        const payload = await response.json();
+        if (!response.ok) {
+          const error = new Error(payload?.detail || payload?.error?.message || "Request failed");
+          error.status = response.status;
+          error.payload = payload;
+          throw error;
+        }
+        if (unwrapEnvelope && payload && typeof payload === "object" && "ok" in payload && "data" in payload) {
+          return payload.data;
+        }
+        return payload;
+      },
     },
     webUnlockerUI: {
       mapApiError(payload) {

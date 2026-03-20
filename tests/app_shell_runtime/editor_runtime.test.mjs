@@ -31,7 +31,7 @@ function okResponse(data) {
 
 function installWindow(overrides = {}) {
   const existing = globalThis.window || {};
-  globalThis.window = {
+  const window = {
     setTimeout: globalThis.setTimeout.bind(globalThis),
     clearTimeout: globalThis.clearTimeout.bind(globalThis),
     addEventListener() {},
@@ -41,6 +41,23 @@ function installWindow(overrides = {}) {
     ...existing,
     ...overrides,
   };
+  if (window.webUnlockerAuth && typeof window.webUnlockerAuth.authJson !== "function" && typeof window.webUnlockerAuth.authFetch === "function") {
+    window.webUnlockerAuth.authJson = async function (path, options = {}, { unwrapEnvelope = true } = {}) {
+      const res = await window.webUnlockerAuth.authFetch(path, options);
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const error = new Error(payload?.detail || payload?.error?.message || "Request failed");
+        error.status = res.status;
+        error.payload = payload;
+        throw error;
+      }
+      if (unwrapEnvelope && payload && typeof payload === "object" && "ok" in payload && "data" in payload) {
+        return payload.data;
+      }
+      return payload;
+    };
+  }
+  globalThis.window = window;
   return globalThis.window;
 }
 
@@ -255,6 +272,79 @@ test("auth fetch refreshes a resumed session and keeps bearer credentials attach
   assert.equal(requests[0].headers.get("Authorization"), "Bearer token-resumed");
 });
 
+test("auth fetch waits for session rehydration before issuing a protected request", async () => {
+  const timeline = [];
+  let sessionReady = false;
+  let releaseRefresh = null;
+  let resolveRefreshStarted = null;
+  const refreshStarted = new Promise((resolve) => {
+    resolveRefreshStarted = resolve;
+  });
+  const refreshGate = new Promise((resolve) => {
+    releaseRefresh = resolve;
+  });
+  const runtime = loadAuthRuntime({
+    client: {
+      auth: {
+        async getSession() {
+          timeline.push(`getSession:${sessionReady ? "ready" : "pending"}`);
+          return sessionReady
+            ? {
+                data: {
+                  session: {
+                    access_token: "token-delayed",
+                    refresh_token: "refresh-delayed",
+                  },
+                },
+                error: null,
+              }
+            : { data: { session: null }, error: null };
+        },
+        async refreshSession() {
+          timeline.push("refreshSession");
+          resolveRefreshStarted();
+          await refreshGate;
+          sessionReady = true;
+          return {
+            data: {
+              session: {
+                access_token: "token-delayed",
+                refresh_token: "refresh-delayed",
+              },
+            },
+            error: null,
+          };
+        },
+        async onAuthStateChange() {
+          return { data: { subscription: { unsubscribe() {} } }, error: null };
+        },
+        async setSession() {
+          return { data: { session: null }, error: null };
+        },
+        async signOut() {},
+      },
+    },
+    fetchImpl: async () => {
+      timeline.push("fetch");
+      return okResponse({ ok: true });
+    },
+  });
+
+  const pending = runtime.window.webUnlockerAuth.authFetch("/api/docs", {
+    headers: { Accept: "application/json" },
+  });
+
+  await refreshStarted;
+  assert.equal(timeline.includes("fetch"), false);
+  assert.equal(timeline.includes("refreshSession"), true);
+  releaseRefresh();
+
+  await pending;
+  assert.ok(timeline.indexOf("fetch") > timeline.indexOf("refreshSession"));
+  assert.ok(timeline.some((entry) => entry === "getSession:pending"));
+  assert.equal(sessionReady, true);
+});
+
 test("auth resume hooks refresh the session on visibility change", async () => {
   let refreshCalls = 0;
   const runtime = loadAuthRuntime({
@@ -371,19 +461,32 @@ test("workspace auth errors settle into a recoverable session-lost state without
   assert.deepEqual(events, ["doc.flush.started", "doc.save.started", "doc.save.failed", "doc.flush.failed"]);
 });
 
-test("preferences caller uses the authenticated request path and does not poison editor state on auth loss", async () => {
+test("workspace saves and preferences sync share the same canonical authJson helper", async () => {
   const requests = [];
+  const authJson = async (path, options = {}) => {
+    requests.push({ path, options });
+    if (path === "/api/preferences") {
+      return { sidebar_collapsed: true, sidebar_auto_hide: false };
+    }
+    if (path === "/api/docs/doc-1") {
+      return {
+        id: "doc-1",
+        title: "Updated title",
+        project_id: null,
+        content_delta: { ops: [{ insert: "Draft 1\n" }] },
+        content_html: "<p>Draft 1</p>",
+        attached_citation_ids: [],
+        attached_note_ids: [],
+        tag_ids: [],
+      };
+    }
+    return {};
+  };
   installWindow({
     webUnlockerAuth: {
-      async authFetch(path, options = {}) {
-        requests.push({ path, options });
-        return okResponse({ data: { sidebar_collapsed: true, sidebar_auto_hide: false } });
-      },
-      isAuthSessionError() {
-        return false;
-      },
+      authJson,
+      setProtectedRequestObserver() {},
       onAuthStateChange: null,
-      getAccessToken: async () => "token-test",
     },
   });
 
@@ -412,10 +515,63 @@ test("preferences caller uses the authenticated request path and does not poison
   };
   globalThis.window.document = globalThis.document;
   globalThis.window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  const api = createWorkspaceApi();
+  await api.updateDocument("doc-1", {
+    title: "Updated title",
+    content_delta: { ops: [{ insert: "Draft 1\n" }] },
+    content_html: "<p>Draft 1</p>",
+    project_id: null,
+  });
   await initSidebarShell({ page: "editor" });
 
-  assert.equal(requests[0].path, "/api/preferences");
-  assert.equal(requests[0].options.method, "GET");
+  assert.equal(requests[0].path, "/api/docs/doc-1");
+  assert.equal(requests[0].options.method, "PATCH");
+  assert.equal(requests[1].path, "/api/preferences");
+  assert.equal(requests[1].options.method, "GET");
+});
+
+test("canonical protected helper reports request metadata and attaches bearer for resumed /api/preferences requests", async () => {
+  const observed = [];
+  const runtime = loadAuthRuntime({
+    client: {
+      auth: {
+        async getSession() {
+          return { data: { session: null }, error: null };
+        },
+        async refreshSession() {
+          return {
+            data: {
+              session: {
+                access_token: "token-observed",
+                refresh_token: "refresh-observed",
+              },
+            },
+            error: null,
+          };
+        },
+        async onAuthStateChange() {
+          return { data: { subscription: { unsubscribe() {} } }, error: null };
+        },
+        async setSession() {
+          return { data: { session: null }, error: null };
+        },
+        async signOut() {},
+      },
+    },
+    fetchImpl: async () => okResponse({ ok: true, data: { sidebar_collapsed: false } }),
+  });
+
+  runtime.window.webUnlockerAuth.setProtectedRequestObserver((meta) => observed.push(meta));
+  await runtime.window.webUnlockerAuth.authJson("/api/preferences", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ sidebar_collapsed: true }),
+  });
+
+  assert.equal(observed[0].helper, "authFetch");
+  assert.equal(observed[0].authorizationAttached, true);
+  assert.equal(observed[0].waitedForSessionReady, true);
+  assert.equal(observed[0].url, "/api/preferences");
 });
 
 test("session loss renders a recoverable editor state instead of a generic timeout", async () => {

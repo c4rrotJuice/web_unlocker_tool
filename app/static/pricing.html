@@ -441,25 +441,19 @@
       let paddleReady = false;
       let paddleInitError = null;
 
-      async function authHeaders() {
-        const token = await window.webUnlockerAuth?.getAccessToken?.();
-        return token ? { Authorization: `Bearer ${token}` } : {};
+      async function authJson(path, options = {}) {
+        return window.webUnlockerAuth?.authJson?.(path, options);
       }
 
       async function loadCurrentUser() {
         try {
-          const res = await fetch("/api/me", {
-            headers: await authHeaders(),
+          const data = await authJson("/api/me", {
+            method: "GET",
             credentials: "include",
+            headers: { Accept: "application/json" },
           });
-
-          if (!res.ok) {
-            currentUserId = null;
-            return;
-          }
-          const data = await res.json();
-          currentUserId = data.user_id || null;
-          currentUserEmail = data.email || null;
+          currentUserId = data?.user_id || null;
+          currentUserEmail = data?.email || null;
         } catch (err) {
           console.error("❌ Failed to load user info:", err);
           currentUserId = null;
@@ -469,15 +463,11 @@
 
       async function initPaddle() {
         try {
-          const res = await fetch("/get_paddle_token", {
-            headers: await authHeaders(),
+          const data = await authJson("/get_paddle_token", {
+            method: "GET",
             credentials: "include",
+            headers: { Accept: "application/json" },
           });
-          if (!res.ok) {
-            const errorText = await res.text();
-            throw new Error(errorText || "Failed to fetch Paddle token");
-          }
-          const data = await res.json();
 
           if (!data.token) {
             throw new Error("No Paddle token returned");
@@ -523,26 +513,16 @@
         }
 
         (async () => {
-          const auth = await authHeaders();
-          fetch("/create_paddle_checkout", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...auth,
-          },
-          credentials: "include",
-          body: JSON.stringify({ plan, cycle }),
-        })
-          .then(async (res) => {
-            if (!res.ok) {
-              const errorText = await res.text();
-              throw new Error(
-                errorText || "Failed to create a Paddle checkout session",
-              );
-            }
-            return res.json();
-          })
-          .then((data) => {
+          try {
+            const data = await authJson("/create_paddle_checkout", {
+              method: "POST",
+              credentials: "include",
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify({ plan, cycle }),
+            });
             if (!data.transaction_id) {
               throw new Error("Missing Paddle transaction ID");
             }
@@ -557,13 +537,12 @@
                 successUrl: "https://citeunlock.choneize.com/success",
               },
             });
-          })
-          .catch((err) => {
+          } catch (err) {
             console.error("❌ Failed to open Paddle checkout:", err);
             alert(
               "We couldn't start the checkout. Please refresh and try again.",
             );
-          });
+          }
         })();
       }
     </script>

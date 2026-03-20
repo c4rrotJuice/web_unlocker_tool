@@ -97,7 +97,7 @@ export async function initSidebarShell({ page }) {
 
   const updatePreferenceRemote = async (patch) => {
     try {
-      await window.webUnlockerAuth?.authFetch?.("/api/preferences", {
+      await window.webUnlockerAuth?.authJson?.("/api/preferences", {
         method: "PATCH",
         headers: {
           Accept: "application/json",
@@ -105,8 +105,7 @@ export async function initSidebarShell({ page }) {
         },
         body: JSON.stringify(patch),
       });
-    } catch (error) {
-      if (isAuthSessionError(error)) return;
+    } catch (_error) {
       // ignore preference network failures
     }
   };
@@ -126,13 +125,11 @@ export async function initSidebarShell({ page }) {
     }
     syncInFlight = (async () => {
       try {
-        const response = await window.webUnlockerAuth?.authFetch?.("/api/preferences", {
+        const preferences = await window.webUnlockerAuth?.authJson?.("/api/preferences", {
           method: "GET",
           headers: { Accept: "application/json" },
         });
-        if (!response) return;
-        const payload = await response?.json?.();
-        const preferences = payload?.data || {};
+        if (!preferences) return;
 
         const allowRemoteCollapsedPreference = !preferCollapsedForEditor || storedCollapsed.exists;
         if (allowRemoteCollapsedPreference && typeof preferences.sidebar_collapsed === "boolean") {

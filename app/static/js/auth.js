@@ -3,6 +3,7 @@
   let bootPromise = null;
   let refreshInFlight = null;
   let resumeRefreshBound = false;
+  let protectedRequestObserver = null;
 
   function readConfigFromWindow() {
     return {
@@ -125,6 +126,36 @@
     return data?.session?.access_token || null;
   }
 
+  function defaultMessageForCode(code) {
+    if (code === "expired_token") {
+      return "Session expired. Please sign in again.";
+    }
+    if (code === "invalid_token") {
+      return "The current session is invalid. Please sign in again.";
+    }
+    return "Missing bearer token.";
+  }
+
+  async function waitForSessionReady({ timeoutMs = 900 } = {}) {
+    const startedAt = Date.now();
+    let lastSession = null;
+
+    while (Date.now() - startedAt <= timeoutMs) {
+      lastSession = await getSession();
+      if (lastSession?.data?.session?.access_token) {
+        return lastSession;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        break;
+      }
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 50);
+      });
+    }
+
+    return lastSession || getSession();
+  }
+
   function createAuthSessionError(code = "missing_credentials", message = null, details = {}) {
     const error = new Error(message || (code === "expired_token" ? "Session expired. Please sign in again." : "Missing bearer token."));
     error.name = "AuthSessionError";
@@ -140,8 +171,22 @@
     return !!error && (error.name === "AuthSessionError" || error.authSessionLost === true || error.code === "missing_credentials" || error.code === "invalid_token" || error.code === "expired_token" || error.code === "auth_required" || error.code === "token_expired" || error.code === "session_lost");
   }
 
-  async function requireAccessToken() {
-    const sessionResult = await getSession();
+  function createAuthSessionErrorFromPayload(payload, status, requestPath = null) {
+    const payloadCode = payload?.error?.code || payload?.error_code || payload?.code || null;
+    const authCodes = new Set(["missing_credentials", "invalid_token", "expired_token", "auth_required", "token_expired", "session_lost"]);
+    if (!payloadCode && status !== 401) {
+      return null;
+    }
+    const code = authCodes.has(payloadCode) ? payloadCode : (status === 401 ? "missing_credentials" : null);
+    if (!code) {
+      return null;
+    }
+    const message = payload?.error?.message || payload?.detail || payload?.message || defaultMessageForCode(code);
+    return createAuthSessionError(code, message, { status, payload, requestPath });
+  }
+
+  async function authFetch(url, options = {}) {
+    const sessionResult = await waitForSessionReady();
     const token = sessionResult?.data?.session?.access_token || null;
     if (!token) {
       const errorMessage = sessionResult?.error?.message || "";
@@ -150,16 +195,42 @@
         payload: sessionResult?.error ? { error: { message: errorMessage } } : null,
       });
     }
-    return token;
-  }
-
-  async function authFetch(url, options = {}) {
-    const token = await requireAccessToken();
     const headers = new Headers(options.headers || {});
     if (token && !headers.has("Authorization")) {
       headers.set("Authorization", `Bearer ${token}`);
     }
+    if (typeof protectedRequestObserver === "function") {
+      protectedRequestObserver({
+        url,
+        helper: "authFetch",
+        waitedForSessionReady: true,
+        authorizationAttached: headers.has("Authorization"),
+      });
+    }
     return fetch(url, { ...options, headers });
+  }
+
+  async function authJson(url, options = {}, { unwrapEnvelope = true } = {}) {
+    const res = await authFetch(url, options);
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const authError = createAuthSessionErrorFromPayload(payload, res.status, url);
+      if (authError) {
+        throw authError;
+      }
+      const error = new Error(payload?.detail || payload?.error?.message || "Request failed");
+      error.status = res.status;
+      error.payload = payload;
+      throw error;
+    }
+    if (unwrapEnvelope && payload && typeof payload === "object" && "ok" in payload && "data" in payload) {
+      return payload.data;
+    }
+    return payload;
+  }
+
+  function setProtectedRequestObserver(observer) {
+    protectedRequestObserver = typeof observer === "function" ? observer : null;
   }
 
   function bindResumeRefresh() {
@@ -203,9 +274,12 @@
     setSession,
     onAuthStateChange,
     getAccessToken,
+    waitForSessionReady,
     authFetch,
+    authJson,
     isAuthSessionError,
     createAuthSessionError,
+    setProtectedRequestObserver,
     syncLegacyTokenFromSession,
     writeLegacyToken,
   };

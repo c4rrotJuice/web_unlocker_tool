@@ -53,7 +53,7 @@
   }
 
   async function upsertThemeForSession(mode) {
-    await window.webUnlockerAuth?.authFetch?.("/api/preferences", {
+    await window.webUnlockerAuth?.authJson?.("/api/preferences", {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
@@ -94,13 +94,11 @@
     const localTheme = getStoredTheme();
 
     try {
-      const payload = await window.webUnlockerAuth?.authFetch?.("/api/preferences", {
+      const row = await window.webUnlockerAuth?.authJson?.("/api/preferences", {
         method: "GET",
         headers: { Accept: "application/json" },
       });
-      if (!payload) return;
-      const body = await payload?.json?.();
-      const row = body?.data || {};
+      if (!row) return;
       if (row?.theme && isValidTheme(row.theme)) {
         try {
           window.localStorage.setItem(STORAGE_KEY, row.theme);

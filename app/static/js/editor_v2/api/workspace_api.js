@@ -1,30 +1,3 @@
-import { createAuthSessionErrorFromPayload } from "../../shared/auth/session.js";
-
-async function authJson(path, options = {}) {
-  const headers = new Headers(options.headers || {});
-  headers.set("Accept", "application/json");
-  if (options.body && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
-  }
-  const res = await window.webUnlockerAuth.authFetch(path, {
-    ...options,
-    headers,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const authError = createAuthSessionErrorFromPayload(payload, res.status, path);
-    if (authError) {
-      throw authError;
-    }
-    const error = new Error(payload?.detail || payload?.error?.message || "Workspace request failed");
-    error.status = res.status;
-    error.payload = payload;
-    throw error;
-  }
-  return payload?.data ?? payload;
-}
-
 function buildHydrateQuery(seed) {
   if (!seed) return "";
   const params = new URLSearchParams();
@@ -40,54 +13,54 @@ function buildHydrateQuery(seed) {
 export function createWorkspaceApi() {
   return {
     listDocumentsSummary() {
-      return authJson("/api/docs?view=summary");
+      return window.webUnlockerAuth.authJson("/api/docs?view=summary", { method: "GET" });
     },
     createDocument(payload = {}) {
-      return authJson("/api/docs", {
+      return window.webUnlockerAuth.authJson("/api/docs", {
         method: "POST",
         body: payload,
       });
     },
     getDocument(documentId) {
-      return authJson(`/api/docs/${encodeURIComponent(documentId)}`);
+      return window.webUnlockerAuth.authJson(`/api/docs/${encodeURIComponent(documentId)}`, { method: "GET" });
     },
     hydrateDocument(documentId, seed) {
-      return authJson(`/api/docs/${encodeURIComponent(documentId)}/hydrate${buildHydrateQuery(seed)}`);
+      return window.webUnlockerAuth.authJson(`/api/docs/${encodeURIComponent(documentId)}/hydrate${buildHydrateQuery(seed)}`, { method: "GET" });
     },
     updateDocument(documentId, payload) {
-      return authJson(`/api/docs/${encodeURIComponent(documentId)}`, {
+      return window.webUnlockerAuth.authJson(`/api/docs/${encodeURIComponent(documentId)}`, {
         method: "PATCH",
         body: payload,
       });
     },
     replaceDocumentCitations(documentId, citationIds) {
-      return authJson(`/api/docs/${encodeURIComponent(documentId)}/citations`, {
+      return window.webUnlockerAuth.authJson(`/api/docs/${encodeURIComponent(documentId)}/citations`, {
         method: "PUT",
         body: { citation_ids: citationIds },
       });
     },
     replaceDocumentNotes(documentId, noteIds) {
-      return authJson(`/api/docs/${encodeURIComponent(documentId)}/notes`, {
+      return window.webUnlockerAuth.authJson(`/api/docs/${encodeURIComponent(documentId)}/notes`, {
         method: "PUT",
         body: { note_ids: noteIds },
       });
     },
     listCheckpoints(documentId) {
-      return authJson(`/api/docs/${encodeURIComponent(documentId)}/checkpoints`);
+      return window.webUnlockerAuth.authJson(`/api/docs/${encodeURIComponent(documentId)}/checkpoints`, { method: "GET" });
     },
     createCheckpoint(documentId, label = null) {
-      return authJson(`/api/docs/${encodeURIComponent(documentId)}/checkpoints`, {
+      return window.webUnlockerAuth.authJson(`/api/docs/${encodeURIComponent(documentId)}/checkpoints`, {
         method: "POST",
         body: { label },
       });
     },
     restoreCheckpoint(documentId, checkpointId) {
-      return authJson(`/api/docs/${encodeURIComponent(documentId)}/checkpoints/${encodeURIComponent(checkpointId)}/restore`, {
+      return window.webUnlockerAuth.authJson(`/api/docs/${encodeURIComponent(documentId)}/checkpoints/${encodeURIComponent(checkpointId)}/restore`, {
         method: "POST",
       });
     },
     getOutline(documentId) {
-      return authJson(`/api/docs/${encodeURIComponent(documentId)}/outline`);
+      return window.webUnlockerAuth.authJson(`/api/docs/${encodeURIComponent(documentId)}/outline`, { method: "GET" });
     },
   };
 }

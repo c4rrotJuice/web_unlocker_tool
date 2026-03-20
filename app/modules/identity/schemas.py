@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 Theme = Literal["light", "dark", "system"]
@@ -80,6 +80,8 @@ class ProfilePatchRequest(BaseModel):
 
 
 class PreferencesPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     theme: Theme | None = None
     editor_density: EditorDensity | None = None
     default_citation_style: CitationStyle | None = None

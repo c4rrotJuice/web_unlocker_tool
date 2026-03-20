@@ -6,6 +6,15 @@ import supabase
 from tests.conftest import async_test_client
 
 
+SUPPORTED_PREFERENCE_PATCH_FIELDS = {
+    "theme",
+    "editor_density",
+    "default_citation_style",
+    "sidebar_collapsed",
+    "sidebar_auto_hide",
+}
+
+
 class DummyUser:
     def __init__(self, user_id: str, email: str = "user@example.com"):
         self.id = user_id
@@ -49,6 +58,7 @@ class LazyBootstrapIdentityRepository:
     async def update_preferences(self, user_id: str, access_token: str, patch: dict[str, object]):
         if self.preferences is None:
             return None
+        patch = {key: value for key, value in patch.items() if key in SUPPORTED_PREFERENCE_PATCH_FIELDS}
         self.preferences.update(patch)
         return dict(self.preferences)
 
@@ -186,6 +196,7 @@ async def test_profile_and_preferences_patch_persist_for_authenticated_user(monk
     assert preferences_response.json()["data"]["editor_density"] == "compact"
     assert preferences_response.json()["data"]["sidebar_collapsed"] is True
     assert preferences_response.json()["data"]["sidebar_auto_hide"] is True
+    assert repo.preferences["sidebar_auto_hide"] is True
 
 
 @pytest.mark.anyio

@@ -3,6 +3,15 @@ from __future__ import annotations
 from app.services.supabase_rest import SupabaseRestRepository, response_json
 
 
+_SUPPORTED_PREFERENCE_COLUMNS = {
+    "theme",
+    "editor_density",
+    "default_citation_style",
+    "sidebar_collapsed",
+    "sidebar_auto_hide",
+}
+
+
 class IdentityRepository:
     def __init__(
         self,
@@ -65,6 +74,9 @@ class IdentityRepository:
             return item if isinstance(item, dict) else None
         return None
 
+    def _filter_preference_patch(self, patch: dict[str, object]) -> dict[str, object]:
+        return {key: value for key, value in patch.items() if key in _SUPPORTED_PREFERENCE_COLUMNS}
+
     async def fetch_profile(self, user_id: str, access_token: str) -> dict[str, object] | None:
         return await self._fetch_single("user_profiles", user_id=user_id, access_token=access_token)
 
@@ -78,7 +90,26 @@ class IdentityRepository:
         return await self._patch_single("user_profiles", user_id=user_id, access_token=access_token, patch=patch)
 
     async def update_preferences(self, user_id: str, access_token: str, patch: dict[str, object]) -> dict[str, object] | None:
-        return await self._patch_single("user_preferences", user_id=user_id, access_token=access_token, patch=patch)
+        filtered_patch = self._filter_preference_patch(patch)
+        if not filtered_patch:
+            return await self.fetch_preferences(user_id, access_token)
+
+        response = await self.user_supabase_repo.post(
+            "user_preferences",
+            params={"on_conflict": "user_id"},
+            json={
+                "user_id": user_id,
+                **filtered_patch,
+            },
+            headers=self._user_headers(access_token, prefer="return=representation,resolution=merge-duplicates"),
+        )
+        if response.status_code not in {200, 201}:
+            return None
+        payload = response_json(response)
+        if isinstance(payload, list) and payload:
+            item = payload[0]
+            return item if isinstance(item, dict) else None
+        return await self.fetch_preferences(user_id, access_token)
 
     async def bootstrap_user(self, user_id: str, *, display_name: str | None, use_case: str | None) -> bool:
         response = await self.bootstrap_supabase_repo.rpc(

@@ -1,5 +1,5 @@
 import { buildCanonicalNotePayloadBase } from "../lib/note_sync.js";
-import { getRecord, putRecord } from "../storage/local_db.js";
+import { deleteRecord, getRecord, putRecord } from "../storage/local_db.js";
 import { setRemoteId, getRemoteId, getRemoteIdByIdempotency } from "../storage/reconciliation.js";
 import { createLogger } from "../shared/log.js";
 
@@ -26,6 +26,8 @@ function storeNameForType(type) {
   if (type === "capture_citation") return "citations";
   if (type === "capture_quote") return "quotes";
   if (type === "capture_note") return "notes";
+  if (type === "update_note") return "notes";
+  if (type === "delete_note") return "notes";
   return null;
 }
 
@@ -44,11 +46,15 @@ async function updateLocalSyncState(item, syncState, extra = {}) {
   });
 }
 
-async function markReconciled(item, remoteId) {
-  if (!remoteId) {
-    throw new Error("remote_id_missing");
-  }
-  const kind = item.type === "capture_citation" ? "citations" : item.type === "capture_quote" ? "quotes" : "notes";
+  async function markReconciled(item, remoteId) {
+    if (!remoteId) {
+      throw new Error("remote_id_missing");
+    }
+    const kind = item.type === "capture_citation"
+      ? "citations"
+      : item.type === "capture_quote"
+        ? "quotes"
+        : "notes";
   await setRemoteId(kind, item.local_id, remoteId, { idempotency_key: item.idempotency_key });
   await updateLocalSyncState(item, "synced", {
     remote_id: remoteId,
@@ -57,7 +63,7 @@ async function markReconciled(item, remoteId) {
   });
 }
 
-async function resolveExistingRemoteId(item) {
+  async function resolveExistingRemoteId(item) {
   const kind = item.type === "capture_citation" ? "citations" : item.type === "capture_quote" ? "quotes" : item.type === "capture_note" ? "notes" : null;
   if (!kind) return null;
   return (await getRemoteId(kind, item.local_id)) || (await getRemoteIdByIdempotency(kind, item.idempotency_key));
@@ -69,6 +75,31 @@ export function createSyncManager({ apiClient, queueManager, sessionManager }) {
   async function syncCitation(item) {
     const response = await apiClient.captureCitation(item.payload, { idempotencyKey: item.idempotency_key });
     await markReconciled(item, resolveResponseId(response));
+  }
+
+  async function syncNoteUpdate(item) {
+    const localNote = await getRecord("notes", item.local_id);
+    const noteId = item.payload?.remote_id || localNote?.remote_id || item.payload?.id;
+    if (!noteId) {
+      throw new Error("note_remote_id_missing");
+    }
+    await apiClient.updateNote(noteId, item.payload?.patch || {}, { idempotencyKey: item.idempotency_key });
+    await updateLocalSyncState(item, "synced", {
+      last_error: null,
+      next_attempt_at: null,
+      remote_id: noteId,
+    });
+  }
+
+  async function syncNoteDelete(item) {
+    const localNote = await getRecord("notes", item.local_id);
+    const noteId = item.payload?.remote_id || localNote?.remote_id || item.payload?.id;
+    if (noteId) {
+      await apiClient.deleteNote(noteId);
+    }
+    if (item.local_id) {
+      await deleteRecord("notes", item.local_id);
+    }
   }
 
   async function syncQuote(item) {
@@ -139,6 +170,8 @@ export function createSyncManager({ apiClient, queueManager, sessionManager }) {
           if (item.type === "capture_citation") await syncCitation(item);
           else if (item.type === "capture_quote") await syncQuote(item);
           else if (item.type === "capture_note") await syncNote(item);
+          else if (item.type === "update_note") await syncNoteUpdate(item);
+          else if (item.type === "delete_note") await syncNoteDelete(item);
           else if (item.type === "usage_event") await syncUsageEvent(item);
           await recordActivity({ id: `activity_${item.id}`, type: item.type, status: "synced" });
           await queueManager.remove(item.id);

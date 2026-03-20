@@ -4,6 +4,9 @@ import { extractPageMetadata } from "./metadata_extractor.js";
 import { createCapturePill } from "./capture_pill.js";
 import { createNoteComposer } from "./note_composer.js";
 import { sendRuntimeMessage } from "./runtime_bridge.js";
+import { createFloatingIcon } from "./floating_icon.js";
+import { createCitationPreview } from "./citation_preview.js";
+import { createIdempotencyKey } from "../shared/models.js";
 import { MESSAGE_TYPES } from "../shared/messages.js";
 import { BACKEND_BASE_URL } from "../config.js";
 
@@ -21,7 +24,8 @@ import { BACKEND_BASE_URL } from "../config.js";
     originalReplaceState: history.replaceState,
     handoffRequestHandler: null,
     handoffInFlight: false,
-    storageChangeHandler: null,
+    authStorageChangeHandler: null,
+    uiStorageChangeHandler: null,
   };
 
   const overlay = createOverlayRoot();
@@ -30,21 +34,76 @@ import { BACKEND_BASE_URL } from "../config.js";
     rect: null,
     metadata: extractPageMetadata(),
   };
+  let captureUiEnabled = true;
 
   const noteComposer = createNoteComposer({
     overlay,
     readContext: () => ({ ...context }),
   });
+  async function saveCitation(extraPayload = {}) {
+    await sendRuntimeMessage(MESSAGE_TYPES.CAPTURE_CITATION, {
+      url: context.metadata.canonical_url || context.metadata.url,
+      metadata: context.metadata,
+      excerpt: context.selected_text,
+      quote: context.selected_text,
+      locator: {},
+      ...extraPayload,
+      idempotency_key: extraPayload.idempotency_key || createIdempotencyKey("citation"),
+    });
+  }
+  async function workInEditor(extraPayload = {}) {
+    await sendRuntimeMessage(MESSAGE_TYPES.WORK_IN_EDITOR, {
+      url: context.metadata.canonical_url || context.metadata.url,
+      title: context.metadata.title || "",
+      selected_text: context.selected_text,
+      metadata: context.metadata,
+      locator: {},
+      ...extraPayload,
+      idempotency_key: extraPayload.idempotency_key || createIdempotencyKey("editor"),
+    });
+  }
+  const citationPreview = createCitationPreview({
+    overlay,
+    readContext: () => ({ ...context }),
+    onSaveCitation: saveCitation,
+    onWorkInEditor: workInEditor,
+  });
+  const floatingIcon = createFloatingIcon({ overlay });
   const capturePill = createCapturePill({
     overlay,
     readContext: () => ({ ...context }),
     openComposer: () => noteComposer.open(),
+    openCitationPreview: () => citationPreview.open(),
+    isEnabled: () => captureUiEnabled,
   });
+
+  async function loadCaptureUiEnabled() {
+    const payload = await chrome.storage.local.get({ capture_ui_enabled: true });
+    captureUiEnabled = Boolean(payload.capture_ui_enabled);
+  }
+
+  function applyCaptureUiEnabled() {
+    floatingIcon.setVisible(captureUiEnabled);
+    if (!captureUiEnabled) {
+      capturePill.destroy();
+      citationPreview.close();
+      noteComposer.close();
+      return;
+    }
+    capturePill.render(context);
+  }
+
+  function updateSelectionContext(payload) {
+    context.selected_text = payload.text;
+    context.rect = payload.rect;
+    context.metadata = extractPageMetadata();
+    void sendRuntimeMessage(MESSAGE_TYPES.SET_LAST_SELECTION, { text: context.selected_text || "" });
+  }
+
   const selectionWatcher = createSelectionWatcher({
     onSelectionChange(payload) {
-      context.selected_text = payload.text;
-      context.rect = payload.rect;
-      context.metadata = extractPageMetadata();
+      if (!captureUiEnabled) return;
+      updateSelectionContext(payload);
       capturePill.render(context);
     },
   });
@@ -133,7 +192,7 @@ import { BACKEND_BASE_URL } from "../config.js";
       if (!changes?.session) return;
       dispatchAuthStateFromSession(changes.session.newValue || null);
     };
-    lifecycle.storageChangeHandler = handler;
+    lifecycle.authStorageChangeHandler = handler;
     chrome.storage?.onChanged?.addListener?.(handler);
   }
 
@@ -142,12 +201,18 @@ import { BACKEND_BASE_URL } from "../config.js";
       window.removeEventListener("writior:auth-handoff-request", lifecycle.handoffRequestHandler);
       lifecycle.handoffRequestHandler = null;
     }
-    if (lifecycle.storageChangeHandler) {
-      chrome.storage?.onChanged?.removeListener?.(lifecycle.storageChangeHandler);
-      lifecycle.storageChangeHandler = null;
+    if (lifecycle.authStorageChangeHandler) {
+      chrome.storage?.onChanged?.removeListener?.(lifecycle.authStorageChangeHandler);
+      lifecycle.authStorageChangeHandler = null;
+    }
+    if (lifecycle.uiStorageChangeHandler) {
+      chrome.storage?.onChanged?.removeListener?.(lifecycle.uiStorageChangeHandler);
+      lifecycle.uiStorageChangeHandler = null;
     }
     selectionWatcher.stop();
+    floatingIcon.destroy();
     capturePill.destroy();
+    citationPreview.close();
     noteComposer.close();
     lifecycle.observer?.disconnect?.();
     history.pushState = lifecycle.originalPushState;
@@ -160,6 +225,15 @@ import { BACKEND_BASE_URL } from "../config.js";
     lifecycle.mounted = true;
     registerHandoffBridge();
     registerAuthStateBridge();
+    void loadCaptureUiEnabled().then(() => applyCaptureUiEnabled());
+    void sendRuntimeMessage(MESSAGE_TYPES.SET_LAST_SELECTION, { text: "" });
+    lifecycle.uiStorageChangeHandler = (changes, areaName) => {
+      if (areaName !== "local") return;
+      if (!changes?.capture_ui_enabled) return;
+      captureUiEnabled = Boolean(changes.capture_ui_enabled.newValue);
+      applyCaptureUiEnabled();
+    };
+    chrome.storage?.onChanged?.addListener?.(lifecycle.uiStorageChangeHandler);
     lifecycle.cleanupHandlers = [cleanup];
   }
 
@@ -172,7 +246,13 @@ import { BACKEND_BASE_URL } from "../config.js";
   };
 
   const handleRouteChange = () => {
+    context.selected_text = "";
+    context.rect = null;
     context.metadata = extractPageMetadata();
+    capturePill.destroy();
+    citationPreview.close();
+    noteComposer.close();
+    void sendRuntimeMessage(MESSAGE_TYPES.SET_LAST_SELECTION, { text: "" });
   };
   history.pushState = function pushState(...args) {
     lifecycle.originalPushState.apply(history, args);

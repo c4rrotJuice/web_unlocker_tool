@@ -86,6 +86,18 @@ export function createApiClient({ sessionManager }) {
         body: JSON.stringify(payload),
       }, "required");
     },
+    async updateNote(noteId, payload, { idempotencyKey } = {}) {
+      return request(`/api/notes/${encodeURIComponent(noteId)}`, {
+        method: "PATCH",
+        headers: idempotencyKey ? { "X-Idempotency-Key": idempotencyKey } : {},
+        body: JSON.stringify(payload),
+      }, "required");
+    },
+    async deleteNote(noteId) {
+      return request(`/api/notes/${encodeURIComponent(noteId)}`, {
+        method: "DELETE",
+      }, "required");
+    },
     async workInEditor(payload, { idempotencyKey } = {}) {
       return request("/api/extension/work-in-editor", {
         method: "POST",

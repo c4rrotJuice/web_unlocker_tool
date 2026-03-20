@@ -77,16 +77,34 @@ workspaceEl.addEventListener("click", async (event) => {
   const actionEl = event.target.closest("[data-action]");
   if (!actionEl) return;
   const draftId = actionEl.getAttribute("data-draft-id");
-  if (!draftId) return;
-  if (actionEl.dataset.action === "resume-editor-draft") {
+  if (actionEl.dataset.action === "resume-editor-draft" && draftId) {
     statusEl.textContent = "Resuming editor draft…";
     await store.resumeEditorDraft(draftId);
     await load();
     return;
   }
-  if (actionEl.dataset.action === "remove-local-draft") {
+  if (actionEl.dataset.action === "remove-local-draft" && draftId) {
     statusEl.textContent = "Clearing local draft…";
     await store.removeLocalDraft(draftId);
+    await load();
+    return;
+  }
+  const noteId = actionEl.getAttribute("data-note-id");
+  if (actionEl.dataset.action === "update-note" && noteId) {
+    const card = actionEl.closest("[data-note-id]");
+    const titleInput = card?.querySelector('[data-note-field="title"]');
+    const bodyInput = card?.querySelector('[data-note-field="note_body"]');
+    statusEl.textContent = "Saving note changes…";
+    await store.updateNote(noteId, {
+      title: titleInput?.value || "",
+      note_body: bodyInput?.value || "",
+    });
+    await load();
+    return;
+  }
+  if (actionEl.dataset.action === "delete-note" && noteId) {
+    statusEl.textContent = "Deleting note…";
+    await store.deleteNote(noteId);
     await load();
   }
 });

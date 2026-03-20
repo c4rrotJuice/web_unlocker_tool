@@ -23,12 +23,17 @@ export function createPopupActions() {
     syncNow() {
       return sendMessage(MESSAGE_TYPES.SYNC_NOW);
     },
+    setCaptureUiEnabled(enabled) {
+      return sendMessage(MESSAGE_TYPES.SET_CAPTURE_UI_ENABLED, { enabled: Boolean(enabled) });
+    },
     async workInEditor() {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const selectionResponse = await sendMessage(MESSAGE_TYPES.GET_LAST_SELECTION);
+      const selectedText = selectionResponse?.data?.text || "";
       return sendMessage(MESSAGE_TYPES.WORK_IN_EDITOR, {
         url: tab?.url || "",
         title: tab?.title || "",
-        selected_text: "",
+        selected_text: selectedText,
         metadata: {
           url: tab?.url || "",
           canonical_url: tab?.url || "",
@@ -49,4 +54,3 @@ export function createPopupActions() {
     },
   };
 }
-

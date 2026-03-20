@@ -43,6 +43,83 @@
           background: rgba(255, 255, 255, 0.12);
         }
       
+        .writior-floating-icon {
+          all: unset;
+          position: fixed;
+          right: 20px;
+          bottom: 20px;
+          width: 48px;
+          height: 48px;
+          border-radius: 999px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          background: #0f172a;
+          color: #f8fafc;
+          border: 1px solid rgba(148, 163, 184, 0.26);
+          box-shadow: 0 18px 36px rgba(15, 23, 42, 0.35);
+          font-size: 18px;
+          font-weight: 700;
+          pointer-events: auto;
+          cursor: pointer;
+        }
+      
+        .writior-cite-preview {
+          position: fixed;
+          width: min(460px, 92vw);
+          background: #fff;
+          color: #0f172a;
+          border-radius: 16px;
+          border: 1px solid rgba(15, 23, 42, 0.12);
+          box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
+          pointer-events: auto;
+          padding: 12px;
+        }
+      
+        .writior-cite-preview h2 {
+          margin: 0;
+          font-size: 14px;
+        }
+      
+        .writior-cite-preview header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 8px;
+        }
+      
+        .writior-cite-preview pre {
+          border: 1px solid rgba(15, 23, 42, 0.12);
+          border-radius: 10px;
+          padding: 10px;
+          max-height: 180px;
+          overflow: auto;
+          white-space: pre-wrap;
+          margin: 10px 0;
+        }
+      
+        .writior-segmented {
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+      
+        .writior-segmented button {
+          all: unset;
+          border: 1px solid rgba(15, 23, 42, 0.14);
+          border-radius: 999px;
+          padding: 6px 10px;
+          cursor: pointer;
+          font-size: 12px;
+          font-weight: 600;
+        }
+      
+        .writior-segmented button.is-active {
+          background: #0f172a;
+          color: #fff;
+        }
+      
         .writior-note {
           position: fixed;
           width: min(360px, 88vw);
@@ -100,7 +177,6 @@
       `;
       
       
-      
       exports.overlayCss = overlayCss;
       
     },
@@ -156,13 +232,32 @@
     },
     "content/selection_watcher.js": function(module, exports, require) {
       function createSelectionWatcher({ onSelectionChange }) {
-        let lastSelection = "";
+        let lastSignature = "";
+      
+        function isEditable(node) {
+          if (!node || typeof Element === "undefined" || !(node instanceof Element)) return false;
+          if (node.closest("input, textarea, [contenteditable='true']")) return true;
+          return false;
+        }
       
         function currentSelectionPayload() {
           const selection = window.getSelection();
-          const text = selection ? String(selection).trim() : "";
+          const text = selection ? String(selection || "").trim() : "";
           const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
-          const rect = range ? range.getBoundingClientRect() : null;
+          if (!range || range.collapsed) {
+            return { text: "", rect: null };
+          }
+          const elementNode = typeof Node === "undefined" ? 1 : Node.ELEMENT_NODE;
+          const anchorElement = selection?.anchorNode?.nodeType === elementNode
+            ? selection.anchorNode
+            : selection?.anchorNode?.parentElement || null;
+          if (isEditable(anchorElement)) {
+            return { text: "", rect: null };
+          }
+          let rect = range.getBoundingClientRect();
+          if ((!rect || (!rect.width && !rect.height)) && range.getClientRects?.().length) {
+            rect = range.getClientRects()[0];
+          }
           return {
             text,
             rect: rect && Number.isFinite(rect.top) ? {
@@ -177,8 +272,9 @@
       
         function emit() {
           const payload = currentSelectionPayload();
-          if (payload.text === lastSelection && payload.rect) return;
-          lastSelection = payload.text;
+          const signature = `${payload.text}|${payload.rect?.top || 0}|${payload.rect?.left || 0}|${payload.rect?.width || 0}|${payload.rect?.height || 0}`;
+          if (signature === lastSignature) return;
+          lastSignature = signature;
           onSelectionChange(payload);
         }
       
@@ -194,7 +290,6 @@
           },
         };
       }
-      
       
       
       exports.createSelectionWatcher = createSelectionWatcher;
@@ -240,6 +335,9 @@
       const MESSAGE_TYPES = {
         GET_STATUS: "GET_STATUS",
         GET_CAPTURE_STATE: "GET_CAPTURE_STATE",
+        GET_LAST_SELECTION: "GET_LAST_SELECTION",
+        SET_LAST_SELECTION: "SET_LAST_SELECTION",
+        SET_CAPTURE_UI_ENABLED: "SET_CAPTURE_UI_ENABLED",
         GET_WORKSPACE_SUMMARY: "GET_WORKSPACE_SUMMARY",
         OPEN_SIDEPANEL: "OPEN_SIDEPANEL",
         OPEN_APP_SIGN_IN: "OPEN_APP_SIGN_IN",
@@ -248,6 +346,8 @@
         CAPTURE_CITATION: "CAPTURE_CITATION",
         CAPTURE_QUOTE: "CAPTURE_QUOTE",
         CAPTURE_NOTE: "CAPTURE_NOTE",
+        UPDATE_NOTE: "UPDATE_NOTE",
+        DELETE_NOTE: "DELETE_NOTE",
         COPY_ASSIST: "COPY_ASSIST",
         SYNC_NOW: "SYNC_NOW",
         SET_CAPTURE_DRAFT: "SET_CAPTURE_DRAFT",
@@ -1300,13 +1400,62 @@
       exports.getFeedbackRuntime = getFeedbackRuntime;
       
     },
+    "content/clipboard.js": function(module, exports, require) {
+      function isRestrictedRuntimePage(url) {
+        const value = String(url || "");
+        return (
+          value.startsWith("chrome://")
+          || value.startsWith("chrome-extension://")
+          || value.startsWith("edge://")
+          || value.startsWith("about:")
+          || value.startsWith("moz-extension://")
+        );
+      }
+      
+      function copyTextWithFallback(text, { navigatorRef = navigator, documentRef = document } = {}) {
+        return (async () => {
+          const value = String(text || "");
+          try {
+            if (navigatorRef?.clipboard?.writeText) {
+              await navigatorRef.clipboard.writeText(value);
+              return { ok: true, method: "clipboard" };
+            }
+          } catch {
+            // Intentional fallback to command-based copy.
+          }
+      
+          try {
+            const textarea = documentRef.createElement("textarea");
+            textarea.value = value;
+            textarea.setAttribute("readonly", "true");
+            textarea.style.position = "fixed";
+            textarea.style.top = "-9999px";
+            textarea.style.left = "-9999px";
+            (documentRef.body || documentRef.documentElement).appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            const copied = documentRef.execCommand?.("copy");
+            textarea.remove();
+            return copied ? { ok: true, method: "execCommand" } : { ok: false, error: "copy_command_rejected" };
+          } catch (error) {
+            return { ok: false, error: error?.message || "copy_unavailable" };
+          }
+        })();
+      }
+      
+      
+      exports.isRestrictedRuntimePage = isRestrictedRuntimePage;
+      exports.copyTextWithFallback = copyTextWithFallback;
+      
+    },
     "content/capture_pill.js": function(module, exports, require) {
       const { MESSAGE_TYPES } = require("shared/messages.js");
       const { createIdempotencyKey } = require("shared/models.js");
       const { sendRuntimeMessage } = require("content/runtime_bridge.js");
       const { ensureFeedbackRuntime } = require("shared/feedback/feedback_bus_singleton.js");
       const { FEEDBACK_EVENTS, STATUS_SCOPES } = require("shared/feedback/feedback_tokens.js");
-      function createCapturePill({ overlay, readContext, openComposer }) {
+      const { copyTextWithFallback, isRestrictedRuntimePage } = require("content/clipboard.js");
+      function createCapturePill({ overlay, readContext, openComposer, openCitationPreview, isEnabled }) {
         const feedback = ensureFeedbackRuntime({ mountTarget: document.body });
         let pill = null;
       
@@ -1316,7 +1465,7 @@
           pill.style.left = `${Math.max(12, rect.left)}px`;
         }
       
-        async function captureCitation() {
+        async function captureCitation(extraPayload = {}) {
           const context = readContext();
           await sendRuntimeMessage(MESSAGE_TYPES.CAPTURE_CITATION, {
             url: context.metadata.canonical_url || context.metadata.url,
@@ -1324,6 +1473,7 @@
             excerpt: context.selected_text,
             quote: context.selected_text,
             locator: {},
+            ...extraPayload,
             idempotency_key: createIdempotencyKey("citation"),
           });
         }
@@ -1350,8 +1500,18 @@
       
         async function copyAssist() {
           const context = readContext();
+          if (isRestrictedRuntimePage(context.metadata.url)) {
+            feedback.emitDomainEvent(FEEDBACK_EVENTS.CLIPBOARD_COPY_FAILED, {
+              dedupeKey: "extension-copy-pill",
+              message: "Page restrictions prevented capture here.",
+            });
+            return;
+          }
           try {
-            await navigator.clipboard.writeText(context.selected_text || "");
+            const copied = await copyTextWithFallback(context.selected_text || "");
+            if (!copied.ok) {
+              throw new Error(copied.error || "copy_unavailable");
+            }
             await sendRuntimeMessage(MESSAGE_TYPES.COPY_ASSIST, {
               text: context.selected_text,
               url: context.metadata.canonical_url || context.metadata.url,
@@ -1397,13 +1557,13 @@
           pill = document.createElement("div");
           pill.className = "writior-pill";
           pill.innerHTML = `
-            <button type="button" data-action="citation">Citation</button>
+            <button type="button" data-action="cite">Cite</button>
             <button type="button" data-action="quote">Quote</button>
             <button type="button" data-action="note">Note</button>
             <button type="button" data-action="copy">Copy</button>
             <button type="button" data-action="editor">Editor</button>
           `;
-          pill.querySelector('[data-action="citation"]').addEventListener("click", () => void captureCitation());
+          pill.querySelector('[data-action="cite"]').addEventListener("click", () => openCitationPreview());
           pill.querySelector('[data-action="quote"]').addEventListener("click", () => void captureQuote());
           pill.querySelector('[data-action="note"]').addEventListener("click", openComposer);
           pill.querySelector('[data-action="copy"]').addEventListener("click", () => void copyAssist());
@@ -1414,7 +1574,7 @@
       
         return {
           render(context) {
-            if (!context.selected_text || !context.rect) {
+            if (!isEnabled() || !context.selected_text || !context.rect || context.selected_text.length < 2) {
               pill?.remove();
               pill = null;
               return;
@@ -1439,16 +1599,18 @@
       const { sendRuntimeMessage } = require("content/runtime_bridge.js");
       function createNoteComposer({ overlay, readContext }) {
         let container = null;
+        let currentDraft = null;
       
         function close() {
           container?.remove();
           container = null;
+          currentDraft = null;
         }
       
         async function save(titleInput, bodyInput) {
           const context = readContext();
           const note = {
-            id: createLocalId("note"),
+            id: currentDraft?.id || createLocalId("note"),
             title: titleInput.value.trim() || "Captured note",
             note_body: bodyInput.value.trim(),
             highlight_text: context.selected_text || null,
@@ -1468,8 +1630,9 @@
           close();
         }
       
-        function open() {
+        function open({ draft } = {}) {
           if (container) return;
+          currentDraft = draft || null;
           const context = readContext();
           container = document.createElement("section");
           container.className = "writior-note";
@@ -1481,11 +1644,13 @@
             <textarea placeholder="Write a quick synthesis note"></textarea>
             <div class="writior-actions">
               <button type="button" data-action="cancel">Cancel</button>
-              <button type="button" class="primary" data-action="save">Save</button>
+              <button type="button" class="primary" data-action="save">${currentDraft ? "Update" : "Save"}</button>
             </div>
           `;
           const titleInput = container.querySelector("input");
           const bodyInput = container.querySelector("textarea");
+          titleInput.value = currentDraft?.title || "";
+          bodyInput.value = currentDraft?.note_body || "";
           const cancelButton = container.querySelector('[data-action="cancel"]');
           const saveButton = container.querySelector('[data-action="save"]');
           cancelButton.addEventListener("click", close);
@@ -1498,8 +1663,179 @@
       }
       
       
-      
       exports.createNoteComposer = createNoteComposer;
+      
+    },
+    "content/floating_icon.js": function(module, exports, require) {
+      const { MESSAGE_TYPES } = require("shared/messages.js");
+      const { sendRuntimeMessage } = require("content/runtime_bridge.js");
+      function createFloatingIcon({ overlay }) {
+        let icon = null;
+      
+        function destroy() {
+          icon?.remove();
+          icon = null;
+        }
+      
+        function ensure() {
+          if (icon) return icon;
+          icon = document.createElement("button");
+          icon.type = "button";
+          icon.className = "writior-floating-icon";
+          icon.setAttribute("aria-label", "Open Writior sidepanel");
+          icon.innerHTML = '<span aria-hidden="true">W</span>';
+          icon.addEventListener("click", () => {
+            void sendRuntimeMessage(MESSAGE_TYPES.OPEN_SIDEPANEL, {});
+          });
+          overlay.root.appendChild(icon);
+          return icon;
+        }
+      
+        return {
+          setVisible(visible) {
+            if (!visible) {
+              destroy();
+              return;
+            }
+            ensure();
+          },
+          destroy,
+        };
+      }
+      
+      
+      exports.createFloatingIcon = createFloatingIcon;
+      
+    },
+    "content/citation_preview.js": function(module, exports, require) {
+      const { MESSAGE_TYPES } = require("shared/messages.js");
+      const { createIdempotencyKey } = require("shared/models.js");
+      const { sendRuntimeMessage } = require("content/runtime_bridge.js");
+      const { copyTextWithFallback } = require("content/clipboard.js");
+      function toAuthor(metadata = {}) {
+        const raw = String(metadata.author || "").trim();
+        if (raw) return raw;
+        return metadata.hostname || "Unknown source";
+      }
+      
+      function toYear(metadata = {}) {
+        const value = String(metadata.published_at || "").trim();
+        if (!value) return "n.d.";
+        const parsed = new Date(value);
+        if (!Number.isFinite(parsed.getTime())) return "n.d.";
+        return String(parsed.getUTCFullYear());
+      }
+      
+      function formatCitation(style, metadata, quoteText) {
+        const title = metadata.title || "Untitled page";
+        const url = metadata.canonical_url || metadata.url || "";
+        const author = toAuthor(metadata);
+        const year = toYear(metadata);
+        const styleName = String(style || "mla").toLowerCase();
+        if (styleName === "apa") return `${author}. (${year}). ${title}. ${url}`;
+        if (styleName === "chicago") return `${author}. "${title}." ${url}.`;
+        if (styleName === "harvard") return `${author} (${year}) ${title}. Available at: ${url}.`;
+        return `${author}. "${title}." ${url}.`;
+      }
+      
+      function createCitationPreview({ overlay, readContext, onSaveCitation, onWorkInEditor }) {
+        let modal = null;
+        let selectedStyle = "mla";
+      
+        function close() {
+          modal?.remove();
+          modal = null;
+        }
+      
+        function updatePreview() {
+          if (!modal) return;
+          const context = readContext();
+          const preview = modal.querySelector('[data-role="preview"]');
+          if (!preview) return;
+          preview.textContent = formatCitation(selectedStyle, context.metadata, context.selected_text);
+        }
+      
+        async function copyCurrentPreview() {
+          const context = readContext();
+          const text = formatCitation(selectedStyle, context.metadata, context.selected_text);
+          const copied = await copyTextWithFallback(text);
+          if (!copied.ok) {
+            return;
+          }
+          await sendRuntimeMessage(MESSAGE_TYPES.COPY_ASSIST, {
+            text: text,
+            url: context.metadata.canonical_url || context.metadata.url,
+          });
+        }
+      
+        async function saveCitation() {
+          const context = readContext();
+          const text = formatCitation(selectedStyle, context.metadata, context.selected_text);
+          await onSaveCitation({
+            style: selectedStyle,
+            full_citation: text,
+            inline_citation: text,
+            idempotency_key: createIdempotencyKey("citation"),
+          });
+        }
+      
+        async function workInEditor() {
+          const context = readContext();
+          const text = formatCitation(selectedStyle, context.metadata, context.selected_text);
+          await onWorkInEditor({
+            citation_format: selectedStyle,
+            citation_text: text,
+            idempotency_key: createIdempotencyKey("editor"),
+          });
+        }
+      
+        function open() {
+          if (modal) return;
+          const context = readContext();
+          modal = document.createElement("section");
+          modal.className = "writior-cite-preview";
+          modal.style.top = `${Math.max(16, (context.rect?.bottom || 72) + 10)}px`;
+          modal.style.left = `${Math.max(16, context.rect?.left || 16)}px`;
+          modal.innerHTML = `
+            <header>
+              <h2>Citation preview</h2>
+              <button type="button" data-action="close">Close</button>
+            </header>
+            <div class="writior-segmented">
+              <button type="button" data-style="mla" class="is-active">MLA</button>
+              <button type="button" data-style="apa">APA</button>
+              <button type="button" data-style="chicago">Chicago</button>
+              <button type="button" data-style="harvard">Harvard</button>
+            </div>
+            <pre data-role="preview"></pre>
+            <footer class="writior-actions">
+              <button type="button" data-action="copy">Copy</button>
+              <button type="button" data-action="save">Save citation</button>
+              <button type="button" data-action="editor" class="primary">Work in editor</button>
+            </footer>
+          `;
+          modal.querySelector('[data-action="close"]')?.addEventListener("click", close);
+          modal.querySelector('[data-action="copy"]')?.addEventListener("click", () => void copyCurrentPreview());
+          modal.querySelector('[data-action="save"]')?.addEventListener("click", () => void saveCitation());
+          modal.querySelector('[data-action="editor"]')?.addEventListener("click", () => void workInEditor());
+          modal.querySelectorAll("[data-style]").forEach((el) => {
+            el.addEventListener("click", () => {
+              selectedStyle = el.getAttribute("data-style") || "mla";
+              modal?.querySelectorAll("[data-style]").forEach((entry) => {
+                entry.classList.toggle("is-active", entry === el);
+              });
+              updatePreview();
+            });
+          });
+          overlay.root.appendChild(modal);
+          updatePreview();
+        }
+      
+        return { open, close };
+      }
+      
+      
+      exports.createCitationPreview = createCitationPreview;
       
     },
     "config.js": function(module, exports, require) {
@@ -1522,6 +1858,9 @@
       const { createCapturePill } = require("content/capture_pill.js");
       const { createNoteComposer } = require("content/note_composer.js");
       const { sendRuntimeMessage } = require("content/runtime_bridge.js");
+      const { createFloatingIcon } = require("content/floating_icon.js");
+      const { createCitationPreview } = require("content/citation_preview.js");
+      const { createIdempotencyKey } = require("shared/models.js");
       const { MESSAGE_TYPES } = require("shared/messages.js");
       const { BACKEND_BASE_URL } = require("config.js");
       (() => {
@@ -1538,7 +1877,8 @@
           originalReplaceState: history.replaceState,
           handoffRequestHandler: null,
           handoffInFlight: false,
-          storageChangeHandler: null,
+          authStorageChangeHandler: null,
+          uiStorageChangeHandler: null,
         };
       
         const overlay = createOverlayRoot();
@@ -1547,21 +1887,76 @@
           rect: null,
           metadata: extractPageMetadata(),
         };
+        let captureUiEnabled = true;
       
         const noteComposer = createNoteComposer({
           overlay,
           readContext: () => ({ ...context }),
         });
+        async function saveCitation(extraPayload = {}) {
+          await sendRuntimeMessage(MESSAGE_TYPES.CAPTURE_CITATION, {
+            url: context.metadata.canonical_url || context.metadata.url,
+            metadata: context.metadata,
+            excerpt: context.selected_text,
+            quote: context.selected_text,
+            locator: {},
+            ...extraPayload,
+            idempotency_key: extraPayload.idempotency_key || createIdempotencyKey("citation"),
+          });
+        }
+        async function workInEditor(extraPayload = {}) {
+          await sendRuntimeMessage(MESSAGE_TYPES.WORK_IN_EDITOR, {
+            url: context.metadata.canonical_url || context.metadata.url,
+            title: context.metadata.title || "",
+            selected_text: context.selected_text,
+            metadata: context.metadata,
+            locator: {},
+            ...extraPayload,
+            idempotency_key: extraPayload.idempotency_key || createIdempotencyKey("editor"),
+          });
+        }
+        const citationPreview = createCitationPreview({
+          overlay,
+          readContext: () => ({ ...context }),
+          onSaveCitation: saveCitation,
+          onWorkInEditor: workInEditor,
+        });
+        const floatingIcon = createFloatingIcon({ overlay });
         const capturePill = createCapturePill({
           overlay,
           readContext: () => ({ ...context }),
           openComposer: () => noteComposer.open(),
+          openCitationPreview: () => citationPreview.open(),
+          isEnabled: () => captureUiEnabled,
         });
+      
+        async function loadCaptureUiEnabled() {
+          const payload = await chrome.storage.local.get({ capture_ui_enabled: true });
+          captureUiEnabled = Boolean(payload.capture_ui_enabled);
+        }
+      
+        function applyCaptureUiEnabled() {
+          floatingIcon.setVisible(captureUiEnabled);
+          if (!captureUiEnabled) {
+            capturePill.destroy();
+            citationPreview.close();
+            noteComposer.close();
+            return;
+          }
+          capturePill.render(context);
+        }
+      
+        function updateSelectionContext(payload) {
+          context.selected_text = payload.text;
+          context.rect = payload.rect;
+          context.metadata = extractPageMetadata();
+          void sendRuntimeMessage(MESSAGE_TYPES.SET_LAST_SELECTION, { text: context.selected_text || "" });
+        }
+      
         const selectionWatcher = createSelectionWatcher({
           onSelectionChange(payload) {
-            context.selected_text = payload.text;
-            context.rect = payload.rect;
-            context.metadata = extractPageMetadata();
+            if (!captureUiEnabled) return;
+            updateSelectionContext(payload);
             capturePill.render(context);
           },
         });
@@ -1650,7 +2045,7 @@
             if (!changes?.session) return;
             dispatchAuthStateFromSession(changes.session.newValue || null);
           };
-          lifecycle.storageChangeHandler = handler;
+          lifecycle.authStorageChangeHandler = handler;
           chrome.storage?.onChanged?.addListener?.(handler);
         }
       
@@ -1659,12 +2054,18 @@
             window.removeEventListener("writior:auth-handoff-request", lifecycle.handoffRequestHandler);
             lifecycle.handoffRequestHandler = null;
           }
-          if (lifecycle.storageChangeHandler) {
-            chrome.storage?.onChanged?.removeListener?.(lifecycle.storageChangeHandler);
-            lifecycle.storageChangeHandler = null;
+          if (lifecycle.authStorageChangeHandler) {
+            chrome.storage?.onChanged?.removeListener?.(lifecycle.authStorageChangeHandler);
+            lifecycle.authStorageChangeHandler = null;
+          }
+          if (lifecycle.uiStorageChangeHandler) {
+            chrome.storage?.onChanged?.removeListener?.(lifecycle.uiStorageChangeHandler);
+            lifecycle.uiStorageChangeHandler = null;
           }
           selectionWatcher.stop();
+          floatingIcon.destroy();
           capturePill.destroy();
+          citationPreview.close();
           noteComposer.close();
           lifecycle.observer?.disconnect?.();
           history.pushState = lifecycle.originalPushState;
@@ -1677,6 +2078,15 @@
           lifecycle.mounted = true;
           registerHandoffBridge();
           registerAuthStateBridge();
+          void loadCaptureUiEnabled().then(() => applyCaptureUiEnabled());
+          void sendRuntimeMessage(MESSAGE_TYPES.SET_LAST_SELECTION, { text: "" });
+          lifecycle.uiStorageChangeHandler = (changes, areaName) => {
+            if (areaName !== "local") return;
+            if (!changes?.capture_ui_enabled) return;
+            captureUiEnabled = Boolean(changes.capture_ui_enabled.newValue);
+            applyCaptureUiEnabled();
+          };
+          chrome.storage?.onChanged?.addListener?.(lifecycle.uiStorageChangeHandler);
           lifecycle.cleanupHandlers = [cleanup];
         }
       
@@ -1689,7 +2099,13 @@
         };
       
         const handleRouteChange = () => {
+          context.selected_text = "";
+          context.rect = null;
           context.metadata = extractPageMetadata();
+          capturePill.destroy();
+          citationPreview.close();
+          noteComposer.close();
+          void sendRuntimeMessage(MESSAGE_TYPES.SET_LAST_SELECTION, { text: "" });
         };
         history.pushState = function pushState(...args) {
           lifecycle.originalPushState.apply(history, args);

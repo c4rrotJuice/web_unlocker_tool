@@ -3,8 +3,9 @@ import { createIdempotencyKey } from "../shared/models.js";
 import { sendRuntimeMessage } from "./runtime_bridge.js";
 import { ensureFeedbackRuntime } from "../shared/feedback/feedback_bus_singleton.js";
 import { FEEDBACK_EVENTS, STATUS_SCOPES } from "../shared/feedback/feedback_tokens.js";
+import { copyTextWithFallback, isRestrictedRuntimePage } from "./clipboard.js";
 
-export function createCapturePill({ overlay, readContext, openComposer }) {
+export function createCapturePill({ overlay, readContext, openComposer, openCitationPreview, isEnabled }) {
   const feedback = ensureFeedbackRuntime({ mountTarget: document.body });
   let pill = null;
 
@@ -14,7 +15,7 @@ export function createCapturePill({ overlay, readContext, openComposer }) {
     pill.style.left = `${Math.max(12, rect.left)}px`;
   }
 
-  async function captureCitation() {
+  async function captureCitation(extraPayload = {}) {
     const context = readContext();
     await sendRuntimeMessage(MESSAGE_TYPES.CAPTURE_CITATION, {
       url: context.metadata.canonical_url || context.metadata.url,
@@ -22,6 +23,7 @@ export function createCapturePill({ overlay, readContext, openComposer }) {
       excerpt: context.selected_text,
       quote: context.selected_text,
       locator: {},
+      ...extraPayload,
       idempotency_key: createIdempotencyKey("citation"),
     });
   }
@@ -48,8 +50,18 @@ export function createCapturePill({ overlay, readContext, openComposer }) {
 
   async function copyAssist() {
     const context = readContext();
+    if (isRestrictedRuntimePage(context.metadata.url)) {
+      feedback.emitDomainEvent(FEEDBACK_EVENTS.CLIPBOARD_COPY_FAILED, {
+        dedupeKey: "extension-copy-pill",
+        message: "Page restrictions prevented capture here.",
+      });
+      return;
+    }
     try {
-      await navigator.clipboard.writeText(context.selected_text || "");
+      const copied = await copyTextWithFallback(context.selected_text || "");
+      if (!copied.ok) {
+        throw new Error(copied.error || "copy_unavailable");
+      }
       await sendRuntimeMessage(MESSAGE_TYPES.COPY_ASSIST, {
         text: context.selected_text,
         url: context.metadata.canonical_url || context.metadata.url,
@@ -95,13 +107,13 @@ export function createCapturePill({ overlay, readContext, openComposer }) {
     pill = document.createElement("div");
     pill.className = "writior-pill";
     pill.innerHTML = `
-      <button type="button" data-action="citation">Citation</button>
+      <button type="button" data-action="cite">Cite</button>
       <button type="button" data-action="quote">Quote</button>
       <button type="button" data-action="note">Note</button>
       <button type="button" data-action="copy">Copy</button>
       <button type="button" data-action="editor">Editor</button>
     `;
-    pill.querySelector('[data-action="citation"]').addEventListener("click", () => void captureCitation());
+    pill.querySelector('[data-action="cite"]').addEventListener("click", () => openCitationPreview());
     pill.querySelector('[data-action="quote"]').addEventListener("click", () => void captureQuote());
     pill.querySelector('[data-action="note"]').addEventListener("click", openComposer);
     pill.querySelector('[data-action="copy"]').addEventListener("click", () => void copyAssist());
@@ -112,7 +124,7 @@ export function createCapturePill({ overlay, readContext, openComposer }) {
 
   return {
     render(context) {
-      if (!context.selected_text || !context.rect) {
+      if (!isEnabled() || !context.selected_text || !context.rect || context.selected_text.length < 2) {
         pill?.remove();
         pill = null;
         return;

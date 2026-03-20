@@ -33,10 +33,11 @@ export function createSidepanelStore() {
     async openEditorFromCurrentPage() {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       const url = tab?.url || "";
+      const selection = await sendMessage(MESSAGE_TYPES.GET_LAST_SELECTION);
       return sendMessage(MESSAGE_TYPES.WORK_IN_EDITOR, {
         url,
         title: tab?.title || "",
-        selected_text: "",
+        selected_text: selection?.data?.text || "",
         metadata: {
           url,
           canonical_url: url,
@@ -60,6 +61,12 @@ export function createSidepanelStore() {
     },
     async removeLocalDraft(id) {
       return sendMessage(MESSAGE_TYPES.REMOVE_LOCAL_DRAFT, { id });
+    },
+    async updateNote(id, patch) {
+      return sendMessage(MESSAGE_TYPES.UPDATE_NOTE, { id, patch });
+    },
+    async deleteNote(id) {
+      return sendMessage(MESSAGE_TYPES.DELETE_NOTE, { id });
     },
   };
 }

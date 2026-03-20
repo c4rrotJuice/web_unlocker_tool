@@ -293,3 +293,22 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
   font-size: 13px;
   color: #475569;
 }
+
+.workspace-actions-inline {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.workspace-actions-inline button {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}

@@ -2,6 +2,9 @@ import { MESSAGE_TYPES } from "../shared/messages.js";
 import { createLocalId } from "../shared/models.js";
 import { putRecord, deleteRecord, getRecord } from "../storage/local_db.js";
 
+const LAST_SELECTION_KEY = "research_last_selection";
+const CAPTURE_UI_ENABLED_KEY = "capture_ui_enabled";
+
 export function createRouter(deps) {
   const {
     apiClient,
@@ -14,12 +17,36 @@ export function createRouter(deps) {
     workspaceSummary,
   } = deps;
 
+  async function readCaptureUiEnabled() {
+    const payload = await chrome.storage.local.get({ [CAPTURE_UI_ENABLED_KEY]: true });
+    return Boolean(payload[CAPTURE_UI_ENABLED_KEY]);
+  }
+
+  async function setCaptureUiEnabled(value) {
+    const enabled = Boolean(value);
+    await chrome.storage.local.set({ [CAPTURE_UI_ENABLED_KEY]: enabled });
+    return enabled;
+  }
+
+  async function readLastSelection() {
+    const payload = await chrome.storage.local.get({ [LAST_SELECTION_KEY]: "" });
+    return String(payload[LAST_SELECTION_KEY] || "");
+  }
+
+  async function setLastSelection(text) {
+    const value = String(text || "");
+    await chrome.storage.local.set({ [LAST_SELECTION_KEY]: value });
+    return value;
+  }
+
   async function buildStatus() {
-    const [session, capabilities, sidepanel, summary] = await Promise.all([
+    const [session, capabilities, sidepanel, summary, captureUiEnabled, lastSelection] = await Promise.all([
       sessionManager.getPublicSessionState(),
       capabilityCache.summarize(),
       sidepanelManager.getState(),
       workspaceSummary.getSummary(),
+      readCaptureUiEnabled(),
+      readLastSelection(),
     ]);
     return {
       ok: true,
@@ -28,6 +55,10 @@ export function createRouter(deps) {
         capabilities,
         sidepanel,
         sync: summary.queue,
+        capture_ui: {
+          enabled: captureUiEnabled,
+          last_selection: lastSelection,
+        },
       },
     };
   }
@@ -80,6 +111,64 @@ export function createRouter(deps) {
       updated_at: new Date().toISOString(),
     });
     return id;
+  }
+
+  async function updateLocalNote(message) {
+    const noteId = message.payload?.id;
+    if (!noteId) return { ok: false, error: "note_id_missing", status: 400 };
+    const existing = await getRecord("notes", noteId);
+    if (!existing) return { ok: false, error: "note_not_found", status: 404 };
+    const patch = message.payload?.patch || {};
+    const next = {
+      ...existing,
+      ...patch,
+      id: noteId,
+      sync_status: "queued",
+      last_error: null,
+      next_attempt_at: null,
+      updated_at: new Date().toISOString(),
+    };
+    await putRecord("notes", next);
+    await queueManager.enqueue("update_note", {
+      id: noteId,
+      patch: {
+        title: next.title || null,
+        note_body: next.note_body || null,
+        highlight_text: next.highlight_text || null,
+        project_id: next.project_id || null,
+        citation_id: next.citation_id || null,
+        quote_id: next.quote_id || null,
+      },
+    }, {
+      local_id: noteId,
+      priority: 35,
+      idempotency_key: message.payload?.idempotency_key,
+    });
+    void syncManager.flush();
+    return { ok: true, data: { id: noteId, sync_status: "queued" } };
+  }
+
+  async function deleteLocalNote(message) {
+    const noteId = message.payload?.id;
+    if (!noteId) return { ok: false, error: "note_id_missing", status: 400 };
+    const existing = await getRecord("notes", noteId);
+    if (!existing) return { ok: false, error: "note_not_found", status: 404 };
+    await putRecord("notes", {
+      ...existing,
+      deleted_at: new Date().toISOString(),
+      sync_status: "queued",
+      updated_at: new Date().toISOString(),
+    });
+    await queueManager.enqueue("delete_note", {
+      id: noteId,
+      remote_id: existing.remote_id || null,
+    }, {
+      local_id: noteId,
+      priority: 40,
+      idempotency_key: message.payload?.idempotency_key,
+    });
+    void syncManager.flush();
+    return { ok: true, data: { id: noteId, deleted: true } };
   }
 
   async function handleCaptureCitation(message) {
@@ -182,6 +271,12 @@ export function createRouter(deps) {
         return { ok: true, data: await workspaceSummary.getSummary() };
       case MESSAGE_TYPES.GET_CAPTURE_STATE:
         return { ok: true, data: { current_tab_id: sender?.tab?.id || null } };
+      case MESSAGE_TYPES.GET_LAST_SELECTION:
+        return { ok: true, data: { text: await readLastSelection() } };
+      case MESSAGE_TYPES.SET_LAST_SELECTION:
+        return { ok: true, data: { text: await setLastSelection(message.payload?.text) } };
+      case MESSAGE_TYPES.SET_CAPTURE_UI_ENABLED:
+        return { ok: true, data: { enabled: await setCaptureUiEnabled(message.payload?.enabled) } };
       case MESSAGE_TYPES.OPEN_SIDEPANEL:
         return sidepanelManager.openSidePanel(sender?.tab?.id || null, sender?.tab?.windowId || null);
       case MESSAGE_TYPES.OPEN_APP_SIGN_IN:
@@ -211,6 +306,10 @@ export function createRouter(deps) {
         return handleCaptureQuote(message);
       case MESSAGE_TYPES.CAPTURE_NOTE:
         return handleCaptureNote(message);
+      case MESSAGE_TYPES.UPDATE_NOTE:
+        return updateLocalNote(message);
+      case MESSAGE_TYPES.DELETE_NOTE:
+        return deleteLocalNote(message);
       case MESSAGE_TYPES.COPY_ASSIST:
         return handleCopyAssist(message);
       case MESSAGE_TYPES.WORK_IN_EDITOR:

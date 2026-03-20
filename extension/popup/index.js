@@ -9,11 +9,14 @@ const statusEl = document.getElementById("status");
 const statusCardEl = document.getElementById("status-card");
 const signInButton = document.getElementById("open-sign-in");
 const sidepanelButton = document.getElementById("open-sidepanel");
+const toggleCaptureUiButton = document.getElementById("toggle-capture-ui");
 const workInEditorButton = document.getElementById("work-in-editor");
 const syncButton = document.getElementById("sync-now");
+let latestStatus = null;
 
 function applyStatus(response) {
   const payload = response?.data || {};
+  latestStatus = payload;
   const session = payload.session || {};
   const sync = payload.sync || {};
   const offline = typeof navigator !== "undefined" && navigator.onLine === false;
@@ -36,6 +39,7 @@ function applyStatus(response) {
     },
   );
   renderStatusCard(statusCardEl, payload);
+  toggleCaptureUiButton.textContent = payload?.capture_ui?.enabled === false ? "Show page tools" : "Hide page tools";
   statusEl.textContent = feedback.status.get(STATUS_SCOPES.EXTENSION_SYNC)?.label || "Ready";
 }
 
@@ -47,6 +51,11 @@ async function load() {
 
 signInButton.addEventListener("click", () => void actions.openSignIn());
 sidepanelButton.addEventListener("click", () => void actions.openSidepanel());
+toggleCaptureUiButton.addEventListener("click", async () => {
+  const enabledNow = latestStatus?.capture_ui?.enabled !== false;
+  await actions.setCaptureUiEnabled(!enabledNow);
+  await load();
+});
 workInEditorButton.addEventListener("click", async () => {
   feedback.emitDomainEvent(FEEDBACK_EVENTS.HANDOFF_STARTED, {
     scope: STATUS_SCOPES.SHELL_HANDOFF,

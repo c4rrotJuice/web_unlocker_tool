@@ -28,9 +28,10 @@ export function createWorkspaceSummary() {
           summary: draft.payload?.selected_text || draft.payload?.metadata?.title || "",
           updated_at: draft.updated_at || draft.created_at || null,
         })),
-        notes: sortByUpdatedAt(notes).slice(0, 10).map((note) => ({
+        notes: sortByUpdatedAt((notes || []).filter((note) => !note.deleted_at)).slice(0, 10).map((note) => ({
           id: note.id,
           title: note.title || "Untitled note",
+          note_body: note.note_body || "",
           preview: note.note_body ? String(note.note_body).slice(0, 160) : "",
           sync_status: note.sync_status || "local",
           updated_at: note.updated_at || note.created_at || null,

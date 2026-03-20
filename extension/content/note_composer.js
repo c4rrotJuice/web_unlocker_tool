@@ -4,16 +4,18 @@ import { sendRuntimeMessage } from "./runtime_bridge.js";
 
 export function createNoteComposer({ overlay, readContext }) {
   let container = null;
+  let currentDraft = null;
 
   function close() {
     container?.remove();
     container = null;
+    currentDraft = null;
   }
 
   async function save(titleInput, bodyInput) {
     const context = readContext();
     const note = {
-      id: createLocalId("note"),
+      id: currentDraft?.id || createLocalId("note"),
       title: titleInput.value.trim() || "Captured note",
       note_body: bodyInput.value.trim(),
       highlight_text: context.selected_text || null,
@@ -33,8 +35,9 @@ export function createNoteComposer({ overlay, readContext }) {
     close();
   }
 
-  function open() {
+  function open({ draft } = {}) {
     if (container) return;
+    currentDraft = draft || null;
     const context = readContext();
     container = document.createElement("section");
     container.className = "writior-note";
@@ -46,11 +49,13 @@ export function createNoteComposer({ overlay, readContext }) {
       <textarea placeholder="Write a quick synthesis note"></textarea>
       <div class="writior-actions">
         <button type="button" data-action="cancel">Cancel</button>
-        <button type="button" class="primary" data-action="save">Save</button>
+        <button type="button" class="primary" data-action="save">${currentDraft ? "Update" : "Save"}</button>
       </div>
     `;
     const titleInput = container.querySelector("input");
     const bodyInput = container.querySelector("textarea");
+    titleInput.value = currentDraft?.title || "";
+    bodyInput.value = currentDraft?.note_body || "";
     const cancelButton = container.querySelector('[data-action="cancel"]');
     const saveButton = container.querySelector('[data-action="save"]');
     cancelButton.addEventListener("click", close);
@@ -61,4 +66,3 @@ export function createNoteComposer({ overlay, readContext }) {
 
   return { open, close };
 }
-

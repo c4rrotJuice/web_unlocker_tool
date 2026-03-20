@@ -1,6 +1,7 @@
 export function renderStatusCard(root, status) {
   const session = status?.session || {};
   const sync = status?.sync || {};
+  const captureUi = status?.capture_ui || {};
   root.innerHTML = `
     <article class="workspace-card">
       <h2>Extension status</h2>
@@ -9,8 +10,8 @@ export function renderStatusCard(root, status) {
         <div><dt>Queued</dt><dd>${sync.pending || 0}</dd></div>
         <div><dt>Failed</dt><dd>${sync.failed || 0}</dd></div>
         <div><dt>Auth needed</dt><dd>${sync.auth_needed ? "Yes" : "No"}</dd></div>
+        <div><dt>Page tools</dt><dd>${captureUi.enabled === false ? "Hidden" : "Visible"}</dd></div>
       </dl>
     </article>
   `;
 }
-

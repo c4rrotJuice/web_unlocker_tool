@@ -944,6 +944,46 @@ test("autosave flush settles to error after failure", async () => {
   assert.deepEqual(events, ["doc.flush.started", "doc.save.started", "doc.save.failed", "doc.flush.failed"]);
 });
 
+test("autosave flush settles to error after save timeout", async () => {
+  installWindow({
+    setTimeout(callback, delay) {
+      if (delay === 12000) {
+        queueMicrotask(callback);
+      }
+      return 1;
+    },
+    clearTimeout() {},
+  });
+  globalThis.navigator = { onLine: true };
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft 1",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft 1\n" }] },
+    content_html: "<p>Draft 1</p>",
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  workspaceState.markDirty({ title: "Updated title" });
+  const autosave = createAutosaveController({
+    workspaceState,
+    workspaceApi: {
+      async updateDocument() {
+        return new Promise(() => {});
+      },
+    },
+    eventBus: { emit() {} },
+  });
+
+  await assert.rejects(() => autosave.flush(), /Save timed out/);
+
+  assert.equal(workspaceState.getState().save_status, "error");
+  assert.equal(workspaceState.getState().runtime_activity.save.phase, "error");
+  assert.equal(workspaceState.getState().runtime_activity.flush.phase, "error");
+});
+
 test("autosave conflict enters an explicit recoverable conflict state", async () => {
   installWindow();
   globalThis.navigator = { onLine: true };
@@ -1001,6 +1041,38 @@ test("autosave conflict enters an explicit recoverable conflict state", async ()
   assert.deepEqual(events, ["doc.flush.started", "doc.save.started", "doc.save.conflict", "doc.flush.failed"]);
 });
 
+test("autosave flush clears a stale saving indicator when the document is already clean", async () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft 1",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft 1\n" }] },
+    content_html: "<p>Draft 1</p>",
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  workspaceState.setSaveStatus("saving");
+  workspaceState.setSaveActivity({ phase: "running", sequence: 7, message: null });
+  const autosave = createAutosaveController({
+    workspaceState,
+    workspaceApi: {
+      async updateDocument() {
+        throw new Error("should not save when the document is clean");
+      },
+    },
+    eventBus: { emit() {} },
+  });
+
+  await autosave.flush();
+
+  assert.equal(workspaceState.getState().save_status, "saved");
+  assert.equal(workspaceState.getState().runtime_activity.save.phase, "idle");
+  assert.equal(workspaceState.getState().runtime_activity.flush.phase, "idle");
+});
+
 test("attachment conflict preserves local snapshot instead of overwriting newer backend state", async () => {
   installWindow();
   const events = [];
@@ -1056,6 +1128,64 @@ test("attachment conflict preserves local snapshot instead of overwriting newer 
   assert.equal(workspaceState.getState().attached_relation_ids.citations.length, 0);
   assert.equal(workspaceState.getState().runtime_failures.document_conflict.source, "attach_citation");
   assert.deepEqual(events, ["doc.save.conflict"]);
+});
+
+test("attached hydrate does not overwrite a newer local edit", async () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  const controller = createDocumentController({
+    workspaceState,
+    workspaceApi: {
+      async getDocument() {
+        return {
+          id: "doc-1",
+          title: "Remote title",
+          revision: "rev-1",
+          project_id: null,
+          content_delta: { ops: [{ insert: "Remote title\n" }] },
+          content_html: "<p>Remote title</p>",
+          attached_citation_ids: [],
+          attached_note_ids: [],
+          tag_ids: [],
+        };
+      },
+      async hydrateDocument() {
+        return {
+          document: {
+            id: "doc-1",
+            title: "Remote title",
+            revision: "rev-1",
+            project_id: null,
+            content_delta: { ops: [{ insert: "Remote title\n" }] },
+            content_html: "<p>Remote title</p>",
+            attached_citation_ids: [],
+            attached_note_ids: [],
+            tag_ids: [],
+          },
+          attached_citations: [],
+          attached_notes: [],
+          attached_quotes: [],
+          attached_sources: [],
+        };
+      },
+    },
+    refs: createDocumentRefs(),
+    quillAdapter: createQuillStub(),
+    autosaveController: { async flush() {}, schedule() {} },
+    hydrator: { consumeDocumentHydration() {} },
+    eventBus: { emit() {} },
+  });
+
+  await controller.openDocument("doc-1");
+  workspaceState.markDirty({ title: "Local title" });
+  workspaceState.setSaveStatus("saving");
+  workspaceState.setSaveActivity({ phase: "running", sequence: 9, message: null });
+  await flush();
+  await flush();
+
+  assert.equal(workspaceState.getState().dirty, true);
+  assert.equal(workspaceState.getState().active_document.title, "Local title");
+  assert.equal(workspaceState.getState().save_status, "saving");
 });
 
 test("refreshing after conflict resolves the editor to backend truth", async () => {

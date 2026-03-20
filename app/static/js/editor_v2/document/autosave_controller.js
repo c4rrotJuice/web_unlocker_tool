@@ -25,7 +25,18 @@ export function createAutosaveController({ workspaceState, workspaceApi, eventBu
 
   async function persistNow({ allowRetry = true } = {}) {
     const state = workspaceState.getState();
-    if (disposed || !state.active_document_id || !state.dirty || !state.active_document) return state.active_document;
+    if (disposed || !state.active_document_id || !state.active_document) return state.active_document;
+    if (!state.dirty) {
+      if (state.save_status === "saving" || state.runtime_activity.save.phase === "running") {
+        workspaceState.setSaveStatus("saved");
+        workspaceState.setSaveActivity({
+          phase: "idle",
+          sequence: state.runtime_activity.save.sequence,
+          message: null,
+        });
+      }
+      return state.active_document;
+    }
     if (inFlight) return inFlight;
     requestSeq += 1;
     const currentSeq = requestSeq;
@@ -134,21 +145,11 @@ export function createAutosaveController({ workspaceState, workspaceApi, eventBu
         documentId: workspaceState.getState().active_document_id,
         sequence: flushSeq,
       });
-      if (inFlight) {
-        try {
-          await withTimeout(inFlight, { label: "Flush" });
-        } catch (error) {
-          workspaceState.setFlushActivity({ phase: "error", sequence: flushSeq, message: error?.message || "Flush failed" });
-          eventBus.emit("doc.flush.failed", {
-            documentId: workspaceState.getState().active_document_id,
-            sequence: flushSeq,
-            error,
-          });
-          throw error;
-        }
-      }
       try {
-        const result = await withTimeout(Promise.resolve(persistNow({ allowRetry: false })), { label: "Flush" });
+        if (inFlight) {
+          await inFlight;
+        }
+        const result = await persistNow({ allowRetry: false });
         workspaceState.setFlushActivity({ phase: "idle", sequence: flushSeq, message: null });
         eventBus.emit("doc.flush.succeeded", {
           documentId: workspaceState.getState().active_document_id,

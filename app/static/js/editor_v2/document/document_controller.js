@@ -112,8 +112,6 @@ export function createDocumentController({
         }
         return false;
       }
-      const hydratedDocument = payload.document || document;
-      workspaceState.markSavedFromServer(hydratedDocument);
       workspaceState.setSeedState(payload.seed || seed);
       hydrator.consumeDocumentHydration(payload);
       workspaceState.setHydrationFlag("attached_ready", true);

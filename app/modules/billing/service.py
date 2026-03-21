@@ -446,6 +446,11 @@ class BillingService:
 
     @staticmethod
     def _extract_period_end(data: dict[str, object]) -> str | None:
+        billing_period = data.get("billing_period")
+        if isinstance(billing_period, dict):
+            end = billing_period.get("ends_at") or billing_period.get("endsAt")
+            if isinstance(end, str) and end.strip():
+                return end.strip()
         period = data.get("current_billing_period") or data.get("currentBillingPeriod")
         if isinstance(period, dict):
             end = period.get("ends_at") or period.get("endsAt")

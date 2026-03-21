@@ -202,7 +202,7 @@ async def test_transaction_completed_event_finalizes_canonical_billing_state(mon
             "subscription_id": "sub-2",
             "status": "completed",
             "items": [{"price_id": "price_pro_yearly"}],
-            "current_billing_period": {"ends_at": "2027-03-17T00:00:00Z"},
+            "billing_period": {"ends_at": "2027-03-17T00:00:00Z"},
             "custom_data": {"user_id": "user-1", "tier": "pro"},
         },
     }
@@ -225,6 +225,34 @@ async def test_transaction_completed_event_finalizes_canonical_billing_state(mon
         "auto_renew": True,
         "source": "paddle",
     }
+
+
+@pytest.mark.anyio
+async def test_transaction_completed_uses_billing_period_to_populate_paid_until(monkeypatch):
+    app, repo = _load_app(monkeypatch)
+    payload = {
+        "event_id": "evt-transaction-paid-until",
+        "event_type": "transaction.completed",
+        "occurred_at": "2026-03-17T00:00:00Z",
+        "data": {
+            "customer_id": "cust-3",
+            "subscription_id": "sub-3",
+            "status": "completed",
+            "items": [{"price_id": "price_standard_monthly"}],
+            "billing_period": {"ends_at": "2026-04-17T00:00:00Z"},
+            "custom_data": {"user_id": "user-1", "tier": "standard"},
+        },
+    }
+
+    async with async_test_client(app) as client:
+        response = await client.post(
+            "/api/webhooks/paddle",
+            headers={"Paddle-Signature": _signature("secret", payload)},
+            content=json.dumps(payload),
+        )
+
+    assert response.status_code == 200
+    assert repo.entitlement_updates[-1]["paid_until"] == "2026-04-17T00:00:00Z"
 
 
 @pytest.mark.anyio

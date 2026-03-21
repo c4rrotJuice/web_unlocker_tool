@@ -523,7 +523,7 @@ async def test_webhook_mutation_is_reflected_in_entitlement_readback(monkeypatch
             "subscription_id": "sub-42",
             "status": "completed",
             "items": [{"price_id": "price_pro_yearly"}],
-            "current_billing_period": {"ends_at": "2027-03-17T00:00:00Z"},
+            "billing_period": {"ends_at": "2027-03-17T00:00:00Z"},
             "custom_data": {"user_id": "user-1", "tier": "pro"},
         },
     }

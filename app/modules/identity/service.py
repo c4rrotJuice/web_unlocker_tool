@@ -29,8 +29,16 @@ logger = logging.getLogger(__name__)
 class IdentityService:
     def __init__(self, *, repository: IdentityRepository, supabase_admin=None):
         self.repository = repository
-        settings = get_settings()
-        self.supabase_admin = supabase_admin or create_client(settings.supabase_url or "", settings.supabase_service_role_key or "")
+        self._supabase_admin = supabase_admin
+
+    @property
+    def supabase_admin(self):
+        if self._supabase_admin is None:
+            settings = get_settings()
+            if not settings.supabase_url or not settings.supabase_service_role_key:
+                raise RuntimeError("Supabase admin settings are incomplete.")
+            self._supabase_admin = create_client(settings.supabase_url, settings.supabase_service_role_key)
+        return self._supabase_admin
 
     def _create_supabase_user(self, *, email: str | None, password: str | None):
         if not email or not password:

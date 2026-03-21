@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 from fastapi import Request
+from supabase import create_client
 
 from app.core.auth import RequestAuthContext
 from app.core.config import Settings, get_settings
@@ -110,7 +111,7 @@ class ExtensionService:
         notes_service,
         workspace_service,
         graph_service,
-        auth_client,
+        auth_client=None,
     ):
         self.settings = settings
         self.repository = repository
@@ -122,7 +123,15 @@ class ExtensionService:
         self.notes_service = notes_service
         self.workspace_service = workspace_service
         self.graph_service = graph_service
-        self.auth_client = auth_client
+        self._auth_client = auth_client
+
+    @property
+    def auth_client(self):
+        if self._auth_client is None:
+            if not self.settings.supabase_url or not self.settings.supabase_anon_key:
+                raise RuntimeError("Supabase auth settings are incomplete.")
+            self._auth_client = create_client(self.settings.supabase_url, self.settings.supabase_anon_key)
+        return self._auth_client
 
     def status(self) -> dict[str, object]:
         return serialize_module_status(
@@ -455,8 +464,9 @@ class ExtensionService:
 
     async def _refresh_or_validate_session(self, session_payload: dict[str, Any], *, expected_user_id: str) -> dict[str, Any]:
         access_token = session_payload["access_token"]
+        auth_client = self.auth_client
         try:
-            response = self.auth_client.auth.get_user(access_token)
+            response = auth_client.auth.get_user(access_token)
             user = getattr(response, "user", None)
             if user is None or str(getattr(user, "id", "")) != expected_user_id:
                 raise InvalidTokenError("Stored handoff access token is invalid.")
@@ -464,7 +474,7 @@ class ExtensionService:
         except Exception:
             pass
         try:
-            refreshed = self.auth_client.auth.refresh_session(session_payload["refresh_token"])
+            refreshed = auth_client.auth.refresh_session(session_payload["refresh_token"])
         except Exception as exc:
             raise HandoffRefreshFailedError() from exc
         session = getattr(refreshed, "session", None)
@@ -534,6 +544,8 @@ class ExtensionService:
                 raise
             finally:
                 await self.repository.clear_handoff_session_payload(record_id=str(record["id"]))
+        except RuntimeError:
+            raise
         except AppError:
             raise
         except Exception as exc:
@@ -727,7 +739,7 @@ def build_extension_service(
     notes_service,
     workspace_service,
     graph_service,
-    auth_client,
+    auth_client=None,
 ) -> ExtensionService:
     return ExtensionService(
         settings=get_settings(),

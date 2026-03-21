@@ -3,7 +3,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from supabase import create_client
 
 from app.core.auth import RequestAuthContext, require_request_auth_context
 from app.core.config import get_settings
@@ -119,7 +118,6 @@ service = build_extension_service(
     notes_service=notes_service,
     workspace_service=workspace_service,
     graph_service=graph_service,
-    auth_client=create_client(settings.supabase_url or "", settings.supabase_anon_key or ""),
 )
 
 

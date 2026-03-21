@@ -417,6 +417,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
   return {
     async start() {
       await getEditorAccess();
+      quillAdapter.setEnabled(false);
       const pageState = boot.page_state || {};
       workspaceState.setSeedState(normalizeSeed(pageState));
       const documentSummaries = await workspaceApi.listDocumentsSummary();
@@ -424,15 +425,20 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       explorerController.bind();
       void explorerController.prime();
       const documentId = pageState.document_id || "";
+      let bootReady = true;
       if (documentId) {
-        await documentController.openDocument(documentId, { seed: normalizeSeed(pageState) });
+        bootReady = await documentController.openDocument(documentId, { seed: normalizeSeed(pageState), awaitHydration: true });
       } else if (pageState.new_document) {
         await documentController.createDocument();
       } else {
-        await documentController.openDocument(null, { seed: normalizeSeed(pageState) });
+        await documentController.openDocument(null, { seed: normalizeSeed(pageState), awaitHydration: true });
+      }
+      if (!bootReady) {
+        return;
       }
       await checkpointController.refresh();
       outlineController.compute();
+      quillAdapter.setEnabled(true);
       const uiCleanup = wireUi();
       this.dispose = () => {
         uiCleanup?.();

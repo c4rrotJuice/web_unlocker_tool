@@ -33,15 +33,12 @@ function okResponse(data) {
 }
 
 function installWindow(overrides = {}) {
-  const existing = globalThis.window || {};
   const window = {
     setTimeout: globalThis.setTimeout.bind(globalThis),
     clearTimeout: globalThis.clearTimeout.bind(globalThis),
     addEventListener() {},
     removeEventListener() {},
     location: { pathname: "/", search: "" },
-    webUnlockerAuth: existing.webUnlockerAuth,
-    ...existing,
     ...overrides,
   };
   if (window.webUnlockerAuth && typeof window.webUnlockerAuth.authJson !== "function" && typeof window.webUnlockerAuth.authFetch === "function") {
@@ -391,8 +388,12 @@ function createDocumentRefs() {
 function createQuillStub() {
   return {
     contents: null,
+    enabled: true,
     setContents(value) {
       this.contents = value;
+    },
+    enable(value) {
+      this.enabled = value;
     },
   };
 }
@@ -2165,6 +2166,78 @@ test("open document settles transition even when hydrate never resolves", async 
   assert.match(workspaceState.getState().runtime_failures.document_hydrate.message, /timed out/i);
   assert.ok(events.includes("document.transition.succeeded"));
   assert.ok(events.includes("document.hydrate.failed"));
+});
+
+test("booted document open waits for hydration before revealing the writing surface", async () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  let releaseHydrate = null;
+  const hydrateStarted = new Promise((resolve) => {
+    releaseHydrate = resolve;
+  });
+  const hydratePayload = {
+    document: {
+      id: "doc-1",
+      title: "Draft",
+      revision: "rev-1",
+      project_id: null,
+      content_delta: { ops: [{ insert: "Draft\n" }] },
+      content_html: "<p>Draft</p>",
+      attached_citation_ids: [],
+      attached_note_ids: [],
+      tag_ids: [],
+    },
+    attached_citations: [],
+    attached_notes: [],
+    attached_quotes: [],
+    attached_sources: [],
+  };
+  const refs = createDocumentRefs();
+  const controller = createDocumentController({
+    workspaceState,
+    workspaceApi: {
+      async getDocument(documentId) {
+        assert.equal(documentId, "doc-1");
+        return hydratePayload.document;
+      },
+      async hydrateDocument(documentId, seed) {
+        assert.equal(documentId, "doc-1");
+        assert.deepEqual(seed, { quote_id: "quote-1" });
+        await hydrateStarted;
+        return hydratePayload;
+      },
+    },
+    refs,
+    quillAdapter: createQuillStub(),
+    autosaveController: { async flush() {}, schedule() {} },
+    hydrator: {
+      consumeDocumentHydration(payload) {
+        assert.deepEqual(payload, hydratePayload);
+      },
+    },
+    eventBus: { emit() {} },
+  });
+
+  const pending = controller.openDocument("doc-1", {
+    seed: { quote_id: "quote-1" },
+    awaitHydration: true,
+  });
+
+  await flush();
+  assert.equal(refs.writingSurface.hidden, true);
+  let settled = false;
+  pending.then(() => {
+    settled = true;
+  });
+  await flush();
+  assert.equal(settled, false);
+
+  releaseHydrate();
+  const result = await pending;
+
+  assert.equal(result, true);
+  assert.equal(refs.writingSurface.hidden, false);
+  assert.equal(workspaceState.getState().hydration.attached_ready, true);
 });
 
 test("hydrate prime failure leaves recoverable non-busy state", async () => {

@@ -180,6 +180,7 @@ export function createQuillAdapter({ element, toolbarSelector, onTextChange, onS
     theme: "snow",
     placeholder: "Build from your research without losing the thread.",
   });
+  quill.enable(false);
   quill.on("text-change", (delta, oldDelta, source) => onTextChange?.({ delta, oldDelta, source }));
   quill.on("selection-change", (range, oldRange, source) => onSelectionChange?.({ range, oldRange, source }));
 
@@ -204,6 +205,9 @@ export function createQuillAdapter({ element, toolbarSelector, onTextChange, onS
     },
     focus() {
       quill.focus();
+    },
+    setEnabled(enabled) {
+      quill.enable(!!enabled);
     },
     setSelection(index, length = 0, source = "silent") {
       quill.setSelection(index, length, source);

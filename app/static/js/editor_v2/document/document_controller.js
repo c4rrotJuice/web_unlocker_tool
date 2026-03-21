@@ -157,7 +157,7 @@ export function createDocumentController({
     return currentHydrate;
   }
 
-  async function openDocument(documentId, { seed = null } = {}) {
+  async function openDocument(documentId, { seed = null, awaitHydration = false } = {}) {
     if (transitionInFlight) {
       openToken += 1;
     }
@@ -179,7 +179,7 @@ export function createDocumentController({
       openToken += 1;
       const token = openToken;
       refs.emptyState.hidden = true;
-      refs.writingSurface.hidden = false;
+      refs.writingSurface.hidden = true;
       workspaceState.setSeedState(seed);
       workspaceState.setAttachedResearch({ citations: [], notes: [], quotes: [], sources: [] });
       workspaceState.setDocumentHydrateFailure(null);
@@ -210,7 +210,13 @@ export function createDocumentController({
       quillAdapter.setContents(document.content_delta || { ops: [{ insert: "\n" }] });
       eventBus.emit("hydration:completed", { area: "document" });
       finishTransition(transitionSequence, "open", documentId);
-      void hydrateAttached(documentId, seed, document, token);
+      const attachedReady = awaitHydration
+        ? await hydrateAttached(documentId, seed, document, token)
+        : void hydrateAttached(documentId, seed, document, token);
+      if (awaitHydration && attachedReady !== true) {
+        return false;
+      }
+      refs.writingSurface.hidden = false;
       return true;
     })();
     try {
@@ -235,7 +241,7 @@ export function createDocumentController({
     }
     const nextSeed = null;
     finishTransition(transitionSequence, "create", document.id);
-    await openDocument(document.id, { seed: nextSeed });
+    await openDocument(document.id, { seed: nextSeed, awaitHydration: true });
     return document;
   }
 

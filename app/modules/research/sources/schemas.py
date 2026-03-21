@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import Any
-
 from pydantic import BaseModel, ConfigDict
+
+from app.services.citation_domain import ExtractionPayload
 
 
 class SourceResolveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    extraction_payload: dict[str, Any]
+    extraction_payload: ExtractionPayload
 
 
 class SourceListQuery(BaseModel):

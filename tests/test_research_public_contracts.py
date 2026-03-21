@@ -34,8 +34,10 @@ def test_source_resolve_schema_rejects_legacy_url_metadata_shape():
     with pytest.raises(ValidationError):
         SourceResolveRequest.model_validate(
             {
-                "url": "https://example.com/paper",
-                "metadata": {"title": "Paper title"},
+                "extraction_payload": {
+                    "url": "https://example.com/paper",
+                    "metadata": {"title": "Paper title"},
+                }
             }
         )
 
@@ -56,15 +58,17 @@ async def test_source_resolve_handler_accepts_canonical_extraction_payload(monke
 
     assert response["data"]["id"] == "source-1"
     assert captured["access_token"] == "token"
-    assert captured["extraction_payload"]["canonical_url"] == "https://example.com/paper"
+    assert captured["extraction_payload"].canonical_url == "https://example.com/paper"
 
 
 def test_citation_create_schema_rejects_legacy_metadata_shape():
     with pytest.raises(ValidationError):
         CitationCreateRequest.model_validate(
             {
-                "url": "https://example.com/paper",
-                "metadata": {"title": "Paper title", "author": "Ada Lovelace"},
+                "extraction_payload": {
+                    "url": "https://example.com/paper",
+                    "metadata": {"title": "Paper title", "author": "Ada Lovelace"},
+                },
                 "excerpt": "Quoted sentence",
                 "quote": "Quoted sentence",
                 "locator": {"paragraph": 4},
@@ -77,11 +81,27 @@ def test_citation_create_schema_rejects_legacy_metadata_shape():
 async def test_citation_create_handler_accepts_canonical_extraction_payload(monkeypatch):
     captured = {}
 
-    async def fake_create_citation(*, user_id, access_token, account_type, payload):
+    async def fake_create_citation(
+        *,
+        user_id,
+        access_token,
+        account_type,
+        extraction_payload,
+        excerpt,
+        locator,
+        annotation,
+        quote,
+        style,
+    ):
         captured["user_id"] = user_id
         captured["access_token"] = access_token
         captured["account_type"] = account_type
-        captured["payload"] = payload
+        captured["extraction_payload"] = extraction_payload
+        captured["excerpt"] = excerpt
+        captured["locator"] = locator
+        captured["annotation"] = annotation
+        captured["quote"] = quote
+        captured["style"] = style
         return {
             "id": "citation-1",
             "source_id": "source-1",
@@ -112,5 +132,4 @@ async def test_citation_create_handler_accepts_canonical_extraction_payload(monk
     assert response["id"] == "citation-1"
     assert captured["user_id"] == "user-1"
     assert captured["account_type"] == "pro"
-    assert captured["payload"]["extraction_payload"]["canonical_url"] == "https://example.com/paper"
-
+    assert captured["extraction_payload"].canonical_url == "https://example.com/paper"

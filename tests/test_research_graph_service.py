@@ -85,13 +85,35 @@ class FakeCitationsService:
             rows = [row for row in rows if row["source_id"] == source_id]
         return [deepcopy(row) for row in rows]
 
-    async def create_citation(self, *, user_id, access_token, account_type, payload):
+    async def create_citation(
+        self,
+        *,
+        user_id,
+        access_token,
+        account_type,
+        extraction_payload,
+        excerpt,
+        locator,
+        annotation,
+        quote,
+        style,
+    ):
         del access_token, account_type
-        self.create_calls.append({"user_id": user_id, "payload": deepcopy(payload)})
+        self.create_calls.append(
+            {
+                "user_id": user_id,
+                "extraction_payload": deepcopy(extraction_payload),
+                "excerpt": excerpt,
+                "locator": deepcopy(locator),
+                "annotation": annotation,
+                "quote": quote,
+                "style": style,
+            }
+        )
         row = deepcopy(self.rows[CITATION_ID])
-        row["excerpt"] = payload.get("excerpt")
-        row["quote_text"] = payload.get("quote")
-        row["locator"] = payload.get("locator") or {}
+        row["excerpt"] = excerpt
+        row["quote_text"] = quote
+        row["locator"] = locator or {}
         self.rows[row["id"]] = row
         return row
 
@@ -428,6 +450,15 @@ async def test_work_in_editor_orchestration_centralizes_lineage_and_document_att
             "title": "Source A",
             "selected_text": "Quoted context",
             "citation_text": "Source A citation",
+            "extraction_payload": {
+                "canonical_url": "https://example.com/source",
+                "page_url": "https://example.com/source",
+                "title_candidates": [{"value": "Source A", "confidence": 1.0}],
+                "author_candidates": [{"value": "Example Author", "confidence": 1.0}],
+                "date_candidates": [{"value": "2026-01-01", "confidence": 1.0}],
+                "locator": {"paragraph": 3},
+                "raw_metadata": {"quote": "Quoted context", "excerpt": "Quoted context"},
+            },
             "locator": {"paragraph": 3},
             "note": {
                 "title": "Captured note",
@@ -450,7 +481,7 @@ async def test_work_in_editor_orchestration_centralizes_lineage_and_document_att
     citations_service = graph_service.citations_service
     quotes_service = graph_service.quotes_service
 
-    assert citations_service.create_calls[0]["payload"]["extraction_payload"] is None
+    assert citations_service.create_calls[0]["extraction_payload"].canonical_url == "https://example.com/source"
     assert quotes_service.create_calls[0]["citation_id"] == CITATION_ID
     assert notes_service.create_calls[0]["citation_id"] == CITATION_ID
     assert notes_service.create_calls[0]["quote_id"] == QUOTE_ID

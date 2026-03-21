@@ -291,7 +291,12 @@ async def create_citation(payload: CitationCreateRequest, access=Depends(_access
         user_id=access.user_id,
         access_token=access.access_token,
         account_type=access.capability_state.tier,
-        payload=payload.model_dump(exclude_none=True),
+        extraction_payload=payload.extraction_payload,
+        excerpt=payload.excerpt,
+        locator=payload.locator,
+        annotation=payload.annotation,
+        quote=payload.quote,
+        style=payload.style,
     )
 
 

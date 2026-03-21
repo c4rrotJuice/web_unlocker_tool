@@ -31,6 +31,7 @@ from app.core.serialization import (
 )
 from app.modules.identity.service import IdentityService
 from app.modules.research.taxonomy.service import TaxonomyService
+from app.services.citation_domain import ExtractionPayload
 
 logger = logging.getLogger(__name__)
 
@@ -555,7 +556,12 @@ class ExtensionService:
             user_id=access.user_id,
             access_token=access.access_token,
             account_type=access.capability_state.tier,
-            payload=payload.model_dump(exclude_none=True),
+            extraction_payload=ExtractionPayload.model_validate(payload.extraction_payload),
+            excerpt=payload.excerpt,
+            locator=payload.locator,
+            annotation=payload.annotation,
+            quote=payload.quote,
+            style=payload.style,
         )
         return serialize_ok_envelope(citation)
 

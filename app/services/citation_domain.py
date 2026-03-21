@@ -6,7 +6,7 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 SUPPORTED_STYLES = {"mla", "apa", "chicago", "harvard"}
@@ -29,12 +29,16 @@ PUBLISHER_EQUIVALENTS = {
 
 
 class ExtractionCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     value: str
     confidence: float = 0.5
     source: str | None = None
 
 
 class ExtractionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     identifiers: dict[str, Any] = Field(default_factory=dict)
     canonical_url: str | None = None
     page_url: str | None = None
@@ -124,27 +128,6 @@ def _candidate_value(candidates: list[ExtractionCandidate], fallback: str = "") 
             best = value
             best_confidence = candidate.confidence
     return best or _clean(fallback)
-
-
-def _is_canonical_extraction_payload(payload: dict[str, Any]) -> bool:
-    return any(
-        key in payload
-        for key in (
-            "identifiers",
-            "canonical_url",
-            "page_url",
-            "title_candidates",
-            "author_candidates",
-            "date_candidates",
-            "publisher_candidates",
-            "container_candidates",
-            "source_type_candidates",
-            "selection_text",
-            "locator",
-            "extraction_evidence",
-            "raw_metadata",
-        )
-    )
 
 
 def _parse_author_object(raw: Any) -> dict[str, Any] | None:
@@ -287,27 +270,24 @@ def compute_citation_version(context: dict[str, Any]) -> str:
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()  # noqa: S324
 
 
-def normalize_citation_payload(payload: ExtractionPayload | dict[str, Any]) -> dict[str, Any]:
-    if isinstance(payload, dict) and not _is_canonical_extraction_payload(payload):
-        raise ValueError("canonical extraction payload required")
-    extracted = payload if isinstance(payload, ExtractionPayload) else ExtractionPayload.model_validate(payload)
-    raw = dict(extracted.raw_metadata or {})
+def normalize_citation_payload(payload: ExtractionPayload) -> dict[str, Any]:
+    raw = dict(payload.raw_metadata or {})
 
-    page_url = _canonical_url(extracted.page_url or raw.get("page_url") or "")
-    canonical_url = _canonical_url(extracted.canonical_url or page_url)
+    page_url = _canonical_url(payload.page_url or raw.get("page_url") or "")
+    canonical_url = _canonical_url(payload.canonical_url or page_url)
     site_name = _normalize_org_name(
-        _candidate_value(extracted.publisher_candidates, raw.get("siteName") or raw.get("site_name") or raw.get("publisher") or _domain(canonical_url))
+        _candidate_value(payload.publisher_candidates, raw.get("siteName") or raw.get("site_name") or raw.get("publisher") or _domain(canonical_url))
     )
-    title = _candidate_value(extracted.title_candidates, raw.get("title") or raw.get("headline") or "Untitled Page") or "Untitled Page"
-    authors = _normalize_authors(extracted.author_candidates, raw, site_name)
+    title = _candidate_value(payload.title_candidates, raw.get("title") or raw.get("headline") or "Untitled Page") or "Untitled Page"
+    authors = _normalize_authors(payload.author_candidates, raw, site_name)
     lead_author = authors[0] if authors else _parse_author_object(site_name)
-    date_raw = _candidate_value(extracted.date_candidates, raw.get("datePublished") or raw.get("date") or raw.get("year"))
+    date_raw = _candidate_value(payload.date_candidates, raw.get("datePublished") or raw.get("date") or raw.get("year"))
     year = _parse_year(date_raw)
-    source_type = _normalize_source_type(_candidate_value(extracted.source_type_candidates, raw.get("source_type") or raw.get("@type") or "webpage"))
-    container_title = _candidate_value(extracted.container_candidates, raw.get("container_title") or raw.get("journalTitle") or raw.get("journal_title"))
-    publisher = _normalize_org_name(_candidate_value(extracted.publisher_candidates, raw.get("publisher") or site_name)) or site_name
+    source_type = _normalize_source_type(_candidate_value(payload.source_type_candidates, raw.get("source_type") or raw.get("@type") or "webpage"))
+    container_title = _candidate_value(payload.container_candidates, raw.get("container_title") or raw.get("journalTitle") or raw.get("journal_title"))
+    publisher = _normalize_org_name(_candidate_value(payload.publisher_candidates, raw.get("publisher") or site_name)) or site_name
 
-    locator = dict(extracted.locator or {})
+    locator = dict(payload.locator or {})
     paragraph = locator.get("paragraph")
     if paragraph and str(paragraph).isdigit():
         locator["paragraph"] = int(paragraph)
@@ -328,11 +308,11 @@ def normalize_citation_payload(payload: ExtractionPayload | dict[str, Any]) -> d
         "publisher": publisher,
         "site_name": site_name,
         "issued": issued,
-        "identifiers": {key.lower(): value for key, value in (extracted.identifiers or {}).items() if _clean(value)},
+        "identifiers": {key.lower(): value for key, value in (payload.identifiers or {}).items() if _clean(value)},
         "canonical_url": canonical_url,
         "page_url": page_url or canonical_url,
         "metadata": raw,
-        "raw_extraction": extracted.model_dump(mode="json"),
+        "raw_extraction": payload.model_dump(mode="json"),
         "normalization_version": NORMALIZATION_VERSION,
         "metadata_schema_version": METADATA_SCHEMA_VERSION,
     }
@@ -340,8 +320,8 @@ def normalize_citation_payload(payload: ExtractionPayload | dict[str, Any]) -> d
     source["source_version"] = compute_source_version(source)
 
     context = {
-        "quote": _clean(raw.get("quote") or extracted.selection_text or raw.get("selected_text") or ""),
-        "excerpt": _clean(raw.get("excerpt") or extracted.selection_text or ""),
+        "quote": _clean(raw.get("quote") or payload.selection_text or raw.get("selected_text") or ""),
+        "excerpt": _clean(raw.get("excerpt") or payload.selection_text or ""),
         "annotation": _clean(raw.get("annotation") or ""),
         "locator": locator,
     }

@@ -15,21 +15,6 @@ class SourcesService:
     def __init__(self, *, repository: SourcesRepository):
         self.repository = repository
 
-    def build_extraction_payload(
-        self,
-        *,
-        extraction_payload: dict[str, Any] | None,
-    ) -> ExtractionPayload:
-        if extraction_payload is None:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "EXTRACTION_PAYLOAD_REQUIRED",
-                    "message": "Canonical extraction payload is required.",
-                },
-            )
-        return ExtractionPayload.model_validate(extraction_payload)
-
     def normalize_source(self, payload: ExtractionPayload) -> dict[str, Any]:
         return normalize_citation_payload(payload)["source"]
 
@@ -37,10 +22,17 @@ class SourcesService:
         self,
         *,
         access_token: str | None,
-        extraction_payload: dict[str, Any] | None,
+        extraction_payload: ExtractionPayload,
     ) -> dict:
-        extraction = self.build_extraction_payload(extraction_payload=extraction_payload)
-        normalized_source = self.normalize_source(extraction)
+        if not isinstance(extraction_payload, ExtractionPayload):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "EXTRACTION_PAYLOAD_REQUIRED",
+                    "message": "Canonical extraction payload is required.",
+                },
+            )
+        normalized_source = self.normalize_source(extraction_payload)
         existing = await self.repository.get_source_by_fingerprint(fingerprint=normalized_source["fingerprint"])
         row = existing
         if row is None:

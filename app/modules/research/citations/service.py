@@ -9,7 +9,13 @@ from app.core.serialization import serialize_paging_meta
 from app.core.serialization import serialize_citation, serialize_citation_template, serialize_source_summary
 from app.modules.research.citations.repo import CitationsRepository
 from app.modules.research.sources.service import SourcesService
-from app.services.citation_domain import RENDER_VERSION, SUPPORTED_STYLES, compute_citation_version, generate_render_bundle
+from app.services.citation_domain import (
+    ExtractionPayload,
+    RENDER_VERSION,
+    SUPPORTED_STYLES,
+    compute_citation_version,
+    generate_render_bundle,
+)
 from app.services.citation_templates import validate_template
 from app.services.free_tier_gating import allowed_citation_formats
 
@@ -310,18 +316,31 @@ class CitationsService:
         user_id: str,
         access_token: str | None,
         account_type: str,
-        payload: dict[str, Any],
+        extraction_payload: ExtractionPayload,
+        excerpt: str | None = None,
+        locator: dict[str, Any] | None = None,
+        annotation: str | None = None,
+        quote: str | None = None,
+        style: str | None = None,
     ) -> dict:
-        self._ensure_style_allowed(account_type=account_type, style=payload.get("style"))
+        if not isinstance(extraction_payload, ExtractionPayload):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "EXTRACTION_PAYLOAD_REQUIRED",
+                    "message": "Canonical extraction payload is required.",
+                },
+            )
+        self._ensure_style_allowed(account_type=account_type, style=style)
         source = await self.sources_service.resolve_or_create_source(
             access_token=access_token,
-            extraction_payload=payload.get("extraction_payload"),
+            extraction_payload=extraction_payload,
         )
         citation_context = {
-            "locator": payload.get("locator") or {},
-            "annotation": payload.get("annotation") or None,
-            "excerpt": payload.get("excerpt") or payload.get("quote") or "",
-            "quote_text": payload.get("quote") or None,
+            "locator": locator or {},
+            "annotation": annotation or None,
+            "excerpt": excerpt or quote or "",
+            "quote_text": quote or None,
         }
         citation_context["citation_version"] = compute_citation_version(
             {

@@ -255,7 +255,7 @@ def _canonical_extraction_payload(
     quote: str = "Quoted sentence",
     paragraph: int | str = 4,
     date_published: str = "2024-02-03",
-) -> dict:
+) -> ExtractionPayload:
     return ExtractionPayload(
         canonical_url=url,
         page_url=url,
@@ -267,7 +267,7 @@ def _canonical_extraction_payload(
             "quote": quote,
             "excerpt": excerpt,
         },
-    ).model_dump()
+    )
 
 
 def test_source_fingerprint_priority_is_deterministic():
@@ -323,13 +323,11 @@ async def test_citation_create_get_list_update_delete_and_shape_are_canonical(ci
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={
-            "extraction_payload": _canonical_extraction_payload(),
-            "excerpt": "Quoted sentence",
-            "quote": "Quoted sentence",
-            "locator": {"paragraph": 4},
-            "style": "mla",
-        },
+        extraction_payload=_canonical_extraction_payload(),
+        excerpt="Quoted sentence",
+        quote="Quoted sentence",
+        locator={"paragraph": 4},
+        style="mla",
     )
     sources_service.repository.citation_counts[created["source_id"]] = 1
     citations_service.repository.quote_counts[created["id"]] = 2
@@ -368,14 +366,14 @@ async def test_citation_create_rejects_legacy_metadata_only_payload(citations_se
             user_id="user-1",
             access_token=None,
             account_type="pro",
-            payload={
+            extraction_payload={
                 "url": "https://example.com/paper",
                 "metadata": {"title": "Paper title", "author": "Ada Lovelace"},
-                "excerpt": "Quoted sentence",
-                "quote": "Quoted sentence",
-                "locator": {"paragraph": 4},
-                "style": "mla",
             },
+            excerpt="Quoted sentence",
+            quote="Quoted sentence",
+            locator={"paragraph": 4},
+            style="mla",
         )
     assert exc.value.status_code == 422
 
@@ -386,13 +384,19 @@ async def test_citation_create_allows_multiple_contexts_per_user_and_source(cita
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"extraction_payload": _canonical_extraction_payload(excerpt="First", quote="First"), "excerpt": "First", "quote": "First", "style": "mla"},
+        extraction_payload=_canonical_extraction_payload(excerpt="First", quote="First"),
+        excerpt="First",
+        quote="First",
+        style="mla",
     )
     second = await citations_service.create_citation(
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"extraction_payload": _canonical_extraction_payload(excerpt="Second", quote="Second"), "excerpt": "Second", "quote": "Second", "style": "mla"},
+        extraction_payload=_canonical_extraction_payload(excerpt="Second", quote="Second"),
+        excerpt="Second",
+        quote="Second",
+        style="mla",
     )
 
     assert first["id"] != second["id"]
@@ -408,7 +412,10 @@ async def test_cross_user_citation_access_is_denied(citations_service):
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"extraction_payload": _canonical_extraction_payload(), "excerpt": "Excerpt", "quote": "Excerpt", "style": "mla"},
+        extraction_payload=_canonical_extraction_payload(),
+        excerpt="Excerpt",
+        quote="Excerpt",
+        style="mla",
     )
     with pytest.raises(HTTPException) as exc:
         await citations_service.get_citation(user_id="user-2", access_token=None, citation_id=created["id"], account_type="pro")
@@ -421,7 +428,10 @@ async def test_render_cache_populates_and_reuses(citations_service):
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"extraction_payload": _canonical_extraction_payload(), "excerpt": "Excerpt", "quote": "Excerpt", "style": "mla"},
+        extraction_payload=_canonical_extraction_payload(),
+        excerpt="Excerpt",
+        quote="Excerpt",
+        style="mla",
     )
     render_rows = list(citations_service.repository.renders[created["id"]])
     await citations_service.get_citation(user_id="user-1", access_token=None, citation_id=created["id"], account_type="pro")
@@ -434,13 +444,19 @@ async def test_stale_render_refresh_rereads_once_for_bulk_hydration(citations_se
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"extraction_payload": _canonical_extraction_payload(url="https://example.com/paper-1", title="Paper 1", excerpt="Excerpt 1", quote="Excerpt 1"), "excerpt": "Excerpt 1", "quote": "Excerpt 1", "style": "mla"},
+        extraction_payload=_canonical_extraction_payload(url="https://example.com/paper-1", title="Paper 1", excerpt="Excerpt 1", quote="Excerpt 1"),
+        excerpt="Excerpt 1",
+        quote="Excerpt 1",
+        style="mla",
     )
     second = await citations_service.create_citation(
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"extraction_payload": _canonical_extraction_payload(url="https://example.com/paper-2", title="Paper 2", excerpt="Excerpt 2", quote="Excerpt 2"), "excerpt": "Excerpt 2", "quote": "Excerpt 2", "style": "mla"},
+        extraction_payload=_canonical_extraction_payload(url="https://example.com/paper-2", title="Paper 2", excerpt="Excerpt 2", quote="Excerpt 2"),
+        excerpt="Excerpt 2",
+        quote="Excerpt 2",
+        style="mla",
     )
     citations_service.repository.list_renders_calls.clear()
     citations_service.repository.replace_renders_calls.clear()
@@ -466,7 +482,10 @@ async def test_render_endpoint_filters_to_requested_allowed_style_and_reuses_cac
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"extraction_payload": _canonical_extraction_payload(), "excerpt": "Excerpt", "quote": "Excerpt", "style": "mla"},
+        extraction_payload=_canonical_extraction_payload(),
+        excerpt="Excerpt",
+        quote="Excerpt",
+        style="mla",
     )
 
     rendered = await citations_service.render_citation(
@@ -531,13 +550,19 @@ async def test_research_list_pages_return_cursor_meta_for_citations(citations_se
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"extraction_payload": _canonical_extraction_payload(url="https://example.com/paper-1", title="Paper 1", excerpt="Excerpt 1", quote="Excerpt 1"), "excerpt": "Excerpt 1", "quote": "Excerpt 1", "style": "mla"},
+        extraction_payload=_canonical_extraction_payload(url="https://example.com/paper-1", title="Paper 1", excerpt="Excerpt 1", quote="Excerpt 1"),
+        excerpt="Excerpt 1",
+        quote="Excerpt 1",
+        style="mla",
     )
     second = await citations_service.create_citation(
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"extraction_payload": _canonical_extraction_payload(url="https://example.com/paper-2", title="Paper 2", excerpt="Excerpt 2", quote="Excerpt 2"), "excerpt": "Excerpt 2", "quote": "Excerpt 2", "style": "mla"},
+        extraction_payload=_canonical_extraction_payload(url="https://example.com/paper-2", title="Paper 2", excerpt="Excerpt 2", quote="Excerpt 2"),
+        excerpt="Excerpt 2",
+        quote="Excerpt 2",
+        style="mla",
     )
     page = await citations_service.list_citations_page(
         user_id="user-1",

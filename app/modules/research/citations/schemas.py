@@ -5,11 +5,12 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.services.citation_domain import SUPPORTED_STYLES
+from app.services.citation_domain import ExtractionPayload
 
 
 class CitationCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    extraction_payload: dict[str, Any]
+    extraction_payload: ExtractionPayload
     excerpt: str | None = None
     locator: dict[str, Any] = Field(default_factory=dict)
     annotation: str | None = None

@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from app.core.serialization import serialize_ok_envelope
 from app.core.serialization import serialize_research_graph
 from app.modules.research.common import normalize_uuid
+from app.services.citation_domain import ExtractionPayload
 
 
 class ResearchGraphService:
@@ -517,14 +518,12 @@ class ResearchGraphService:
             user_id=user_id,
             access_token=access_token,
             account_type=capability_state.tier,
-            payload={
-                "excerpt": payload.selected_text,
-                "quote": payload.selected_text,
-                "locator": payload.locator,
-                "style": payload.citation_format,
-                "annotation": None,
-                "extraction_payload": payload.extraction_payload,
-            },
+            extraction_payload=ExtractionPayload.model_validate(payload.extraction_payload),
+            excerpt=payload.selected_text,
+            quote=payload.selected_text,
+            locator=payload.locator,
+            annotation=None,
+            style=payload.citation_format,
         )
         quote = None
         if payload.selected_text:

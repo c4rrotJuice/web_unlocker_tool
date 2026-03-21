@@ -1,3 +1,8 @@
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
 from app.services.citation_domain import (
     ExtractionCandidate,
     ExtractionPayload,
@@ -23,13 +28,9 @@ def _canonical_payload() -> ExtractionPayload:
     )
 
 
-def test_normalize_citation_payload_rejects_legacy_metadata_dicts():
-    try:
-        normalize_citation_payload({"title": "Paper title", "author": "Alice Doe"})
-    except ValueError as exc:
-        assert "canonical extraction payload required" in str(exc)
-    else:
-        raise AssertionError("legacy metadata dict should not be normalized")
+def test_extraction_payload_rejects_legacy_metadata_dicts():
+    with pytest.raises(ValidationError):
+        ExtractionPayload.model_validate({"title": "Paper title", "author": "Alice Doe"})
 
 
 def test_normalize_citation_payload_separates_source_from_context():
@@ -48,3 +49,13 @@ def test_generate_render_bundle_covers_all_supported_styles_and_render_kinds():
 
     assert set(bundle["renders"].keys()) == SUPPORTED_STYLES
     assert set(bundle["renders"]["mla"].keys()) == SUPPORTED_RENDER_KINDS
+
+
+def test_app_source_files_do_not_reference_citation_engine_module():
+    hits = []
+    for path in Path("app").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        if "citation_engine" in text:
+            hits.append(str(path))
+
+    assert hits == []

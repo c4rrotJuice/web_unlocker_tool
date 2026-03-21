@@ -48,6 +48,11 @@ PADDLE_SUBSCRIPTION_EVENTS = {
     "subscription.renewed",
     "subscription.activated",
 } | PADDLE_CANCEL_EVENTS
+PADDLE_TRANSACTION_FINALIZATION_EVENTS = {
+    "transaction.completed",
+    "transaction.paid",
+}
+PADDLE_WEBHOOK_EVENTS = PADDLE_SUBSCRIPTION_EVENTS | PADDLE_TRANSACTION_FINALIZATION_EVENTS
 
 
 class BillingWebhookError(AppError):
@@ -475,6 +480,8 @@ class BillingService:
     def _entitlement_status(event_type: str, subscription_status: str | None) -> str:
         if event_type in PADDLE_CANCEL_EVENTS:
             return "canceled"
+        if event_type in PADDLE_TRANSACTION_FINALIZATION_EVENTS:
+            return "active"
         normalized = (subscription_status or "").strip().lower()
         if normalized in PADDLE_ACTIVE_STATUSES:
             return "active"
@@ -506,6 +513,11 @@ class BillingService:
         if not isinstance(data, dict):
             raise BillingWebhookError("billing_webhook_invalid_payload", "Webhook payload data is invalid.", 400)
         occurred_at = self._normalize_timestamp(self._extract_occurred_at(payload, data))
+        request_id = getattr(request.state, "request_id", None)
+        logger.info(
+            "billing.webhook.received",
+            extra={"event_id": event_id, "event_type": event_type or "unknown", "request_id": request_id},
+        )
         event_record, created = await self.repository.create_webhook_event(
             event_id=event_id,
             event_type=event_type or "unknown",
@@ -516,8 +528,11 @@ class BillingService:
             return serialize_ok_envelope({"status": "deduped", "event_id": event_id})
 
         try:
-            if event_type not in PADDLE_SUBSCRIPTION_EVENTS:
-                logger.info("billing.webhook.ignored", extra={"event_type": event_type, "event_id": event_id})
+            if event_type not in PADDLE_WEBHOOK_EVENTS:
+                logger.info(
+                    "billing.webhook.ignored",
+                    extra={"event_type": event_type, "event_id": event_id, "request_id": request_id},
+                )
                 if event_record and event_record.get("id"):
                     await self.repository.mark_webhook_event_processed(record_id=str(event_record["id"]))
                 return serialize_ok_envelope({"status": "ignored", "reason": "unsupported_event", "event_id": event_id})
@@ -531,9 +546,15 @@ class BillingService:
                 subscription_id=subscription_id,
             )
             if not user_id:
-                if event_record and event_record.get("id"):
-                    await self.repository.mark_webhook_event_processed(record_id=str(event_record["id"]))
-                return serialize_ok_envelope({"status": "ignored", "reason": "missing_user_id", "event_id": event_id})
+                raise BillingWebhookError(
+                    "billing_webhook_missing_user_reference",
+                    "Webhook payload did not include a resolvable user reference.",
+                    422,
+                )
+            logger.info(
+                "billing.webhook.user_resolved",
+                extra={"event_id": event_id, "event_type": event_type or "unknown", "user_id": user_id, "request_id": request_id},
+            )
 
             existing_subscription = None
             if subscription_id:
@@ -547,6 +568,16 @@ class BillingService:
                         return serialize_ok_envelope({"status": "ignored", "reason": "stale_event", "event_id": event_id})
 
             if customer_id:
+                logger.info(
+                    "billing.webhook.upsert_customer",
+                    extra={
+                        "event_id": event_id,
+                        "event_type": event_type or "unknown",
+                        "user_id": user_id,
+                        "provider_customer_id": customer_id,
+                        "request_id": request_id,
+                    },
+                )
                 await self.repository.upsert_billing_customer(user_id=user_id, provider_customer_id=customer_id)
 
             subscription_status = str(data.get("status") or "").strip().lower() or None
@@ -554,13 +585,35 @@ class BillingService:
             price_id = self._extract_price_id(data)
             tier, _interval = self._resolve_tier_interval_from_price_id(price_id)
             if tier is None:
+                custom_tier = custom_data.get("tier")
+                if isinstance(custom_tier, str) and custom_tier in SUPPORTED_TIERS:
+                    tier = custom_tier
+            if tier is None:
                 tier = existing_subscription.get("tier") if isinstance(existing_subscription, dict) else None
+            if tier not in {"standard", "pro"} and event_type not in PADDLE_CANCEL_EVENTS:
+                raise BillingWebhookError(
+                    "billing_webhook_unknown_tier",
+                    "Webhook payload did not resolve to a supported billing tier.",
+                    422,
+                )
             period_end = self._normalize_timestamp(self._extract_period_end(data))
             cancel_at_period_end = bool(data.get("cancel_at_period_end") or data.get("scheduled_change"))
             if event_type in PADDLE_CANCEL_EVENTS:
                 cancel_at_period_end = False
 
             if subscription_id and tier in {"standard", "pro"}:
+                logger.info(
+                    "billing.webhook.upsert_subscription",
+                    extra={
+                        "event_id": event_id,
+                        "event_type": event_type or "unknown",
+                        "user_id": user_id,
+                        "provider_subscription_id": subscription_id,
+                        "provider_price_id": price_id,
+                        "tier": tier,
+                        "request_id": request_id,
+                    },
+                )
                 await self.repository.upsert_billing_subscription(
                     user_id=user_id,
                     provider_subscription_id=subscription_id,
@@ -582,14 +635,23 @@ class BillingService:
                 paid_until = None
                 auto_renew = False
             else:
-                if tier not in {"standard", "pro"}:
-                    if event_record and event_record.get("id"):
-                        await self.repository.mark_webhook_event_processed(record_id=str(event_record["id"]))
-                    return serialize_ok_envelope({"status": "ignored", "reason": "unknown_tier", "event_id": event_id})
                 entitlement_tier = tier if entitlement_status in {"active", "grace_period"} else "free"
                 paid_until = period_end if entitlement_status in {"active", "grace_period"} else None
                 auto_renew = entitlement_status in {"active", "grace_period"} and not cancel_at_period_end
 
+            logger.info(
+                "billing.webhook.update_entitlement",
+                extra={
+                    "event_id": event_id,
+                    "event_type": event_type or "unknown",
+                    "user_id": user_id,
+                    "tier": entitlement_tier,
+                    "status": entitlement_status,
+                    "paid_until": paid_until,
+                    "auto_renew": auto_renew,
+                    "request_id": request_id,
+                },
+            )
             await self.repository.update_entitlement(
                 user_id=user_id,
                 tier=entitlement_tier,
@@ -599,6 +661,17 @@ class BillingService:
             )
             if event_record and event_record.get("id"):
                 await self.repository.mark_webhook_event_processed(record_id=str(event_record["id"]))
+            logger.info(
+                "billing.webhook.processed",
+                extra={
+                    "event_id": event_id,
+                    "event_type": event_type or "unknown",
+                    "user_id": user_id,
+                    "tier": entitlement_tier,
+                    "status": entitlement_status,
+                    "request_id": request_id,
+                },
+            )
             return serialize_ok_envelope(
                 {
                     "status": "processed",
@@ -615,4 +688,8 @@ class BillingService:
         except Exception as exc:
             if event_record and event_record.get("id"):
                 await self.repository.mark_webhook_event_failed(record_id=str(event_record["id"]), last_error=str(exc))
+            logger.exception(
+                "billing.webhook.failed",
+                extra={"event_id": event_id, "event_type": event_type or "unknown", "request_id": request_id},
+            )
             raise

@@ -516,15 +516,15 @@ async def test_webhook_mutation_is_reflected_in_entitlement_readback(monkeypatch
     app, _state, _paddle = _load_app(monkeypatch, state=state)
     payload = {
         "event_id": "evt-42",
-        "event_type": "subscription.created",
+        "event_type": "transaction.completed",
         "occurred_at": "2026-03-17T00:00:00Z",
         "data": {
             "customer_id": "cust-42",
             "subscription_id": "sub-42",
-            "status": "active",
+            "status": "completed",
             "items": [{"price_id": "price_pro_yearly"}],
             "current_billing_period": {"ends_at": "2027-03-17T00:00:00Z"},
-            "custom_data": {"user_id": "user-1"},
+            "custom_data": {"user_id": "user-1", "tier": "pro"},
         },
     }
 
@@ -538,10 +538,16 @@ async def test_webhook_mutation_is_reflected_in_entitlement_readback(monkeypatch
             "/api/entitlements/current",
             headers={"Authorization": "Bearer valid-token"},
         )
+        me_response = await client.get(
+            "/api/me",
+            headers={"Authorization": "Bearer valid-token"},
+        )
 
     assert webhook_response.status_code == 200
     assert entitlement_response.status_code == 200
+    assert me_response.status_code == 200
     entitlement_payload = entitlement_response.json()["data"]["entitlement"]
     assert entitlement_payload["tier"] == "pro"
     assert entitlement_payload["status"] == "active"
     assert entitlement_payload["paid_until"] == "2027-03-17T00:00:00Z"
+    assert me_response.json()["data"]["entitlement"]["tier"] == "pro"

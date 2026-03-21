@@ -191,6 +191,43 @@ async def test_verified_subscription_event_mutates_only_canonical_billing_state(
 
 
 @pytest.mark.anyio
+async def test_transaction_completed_event_finalizes_canonical_billing_state(monkeypatch):
+    app, repo = _load_app(monkeypatch)
+    payload = {
+        "event_id": "evt-transaction-completed",
+        "event_type": "transaction.completed",
+        "occurred_at": "2026-03-17T00:00:00Z",
+        "data": {
+            "customer_id": "cust-2",
+            "subscription_id": "sub-2",
+            "status": "completed",
+            "items": [{"price_id": "price_pro_yearly"}],
+            "current_billing_period": {"ends_at": "2027-03-17T00:00:00Z"},
+            "custom_data": {"user_id": "user-1", "tier": "pro"},
+        },
+    }
+
+    async with async_test_client(app) as client:
+        response = await client.post(
+            "/api/webhooks/paddle",
+            headers={"Paddle-Signature": _signature("secret", payload)},
+            content=json.dumps(payload),
+        )
+
+    assert response.status_code == 200
+    assert repo.customers["user-1"]["provider_customer_id"] == "cust-2"
+    assert repo.subscriptions["sub-2"]["tier"] == "pro"
+    assert repo.entitlement_updates[-1] == {
+        "user_id": "user-1",
+        "tier": "pro",
+        "status": "active",
+        "paid_until": "2027-03-17T00:00:00Z",
+        "auto_renew": True,
+        "source": "paddle",
+    }
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     ("price_id", "expected_tier"),
     [
@@ -283,7 +320,7 @@ async def test_unsupported_event_is_logged_safely_and_does_not_mutate(monkeypatc
     app, repo = _load_app(monkeypatch)
     payload = {
         "event_id": "evt-4",
-        "event_type": "transaction.completed",
+        "event_type": "customer.created",
         "data": {"custom_data": {"user_id": "user-1"}},
     }
 
@@ -297,6 +334,57 @@ async def test_unsupported_event_is_logged_safely_and_does_not_mutate(monkeypatc
     assert response.status_code == 200
     assert response.json()["data"]["status"] == "ignored"
     assert repo.entitlement_updates == []
+
+
+@pytest.mark.anyio
+async def test_missing_user_reference_fails_loudly_and_marks_event_failed(monkeypatch):
+    app, repo = _load_app(monkeypatch)
+    payload = {
+        "event_id": "evt-5",
+        "event_type": "transaction.completed",
+        "data": {
+            "status": "completed",
+            "items": [{"price_id": "price_pro_yearly"}],
+        },
+    }
+
+    async with async_test_client(app) as client:
+        response = await client.post(
+            "/api/webhooks/paddle",
+            headers={"Paddle-Signature": _signature("secret", payload)},
+            content=json.dumps(payload),
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "billing_webhook_missing_user_reference"
+    assert repo.entitlement_updates == []
+    assert repo.webhook_events["evt-5"]["last_error"]
+
+
+@pytest.mark.anyio
+async def test_unmapped_price_id_fails_loudly_and_marks_event_failed(monkeypatch):
+    app, repo = _load_app(monkeypatch)
+    payload = {
+        "event_id": "evt-6",
+        "event_type": "transaction.completed",
+        "data": {
+            "status": "completed",
+            "items": [{"price_id": "price_unknown"}],
+            "custom_data": {"user_id": "user-1"},
+        },
+    }
+
+    async with async_test_client(app) as client:
+        response = await client.post(
+            "/api/webhooks/paddle",
+            headers={"Paddle-Signature": _signature("secret", payload)},
+            content=json.dumps(payload),
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "billing_webhook_unknown_tier"
+    assert repo.entitlement_updates == []
+    assert repo.webhook_events["evt-6"]["last_error"]
 
 
 @pytest.mark.anyio

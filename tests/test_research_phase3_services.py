@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from app.modules.research.citations.service import CitationsService
 from app.modules.research.sources.service import SourcesService
 from app.modules.research.taxonomy.service import TaxonomyService
-from app.services.citation_domain import build_source_fingerprint
+from app.services.citation_domain import ExtractionCandidate, ExtractionPayload, build_source_fingerprint
 
 
 class FakeTaxonomyRepository:
@@ -246,6 +246,30 @@ def citations_service(sources_service):
     return CitationsService(repository=FakeCitationsRepository(), sources_service=sources_service)
 
 
+def _canonical_extraction_payload(
+    *,
+    url: str = "https://example.com/paper",
+    title: str = "Paper title",
+    author: str = "Ada Lovelace",
+    excerpt: str = "Quoted sentence",
+    quote: str = "Quoted sentence",
+    paragraph: int | str = 4,
+    date_published: str = "2024-02-03",
+) -> dict:
+    return ExtractionPayload(
+        canonical_url=url,
+        page_url=url,
+        title_candidates=[ExtractionCandidate(value=title, confidence=1.0)],
+        author_candidates=[ExtractionCandidate(value=author, confidence=1.0)],
+        date_candidates=[ExtractionCandidate(value=date_published, confidence=1.0)],
+        locator={"paragraph": paragraph},
+        raw_metadata={
+            "quote": quote,
+            "excerpt": excerpt,
+        },
+    ).model_dump()
+
+
 def test_source_fingerprint_priority_is_deterministic():
     assert build_source_fingerprint({"identifiers": {"doi": "https://doi.org/10.1000/Test"}}) == "doi:10.1000/test"
     assert build_source_fingerprint({"canonical_url": "https://example.com/path#fragment"}) == "url:https://example.com/path"
@@ -277,23 +301,20 @@ async def test_tag_resolve_returns_reusable_canonical_tags(taxonomy_service):
 async def test_source_resolve_deduplicates_same_source_correctly(sources_service):
     first = await sources_service.resolve_or_create_source(
         access_token=None,
-        extraction_payload=None,
-        url="https://doi.org/10.1000/test",
-        metadata={"doi": "10.1000/test", "title": "Paper"},
-        excerpt="Excerpt",
-        quote="Excerpt",
-        locator={},
+        extraction_payload=_canonical_extraction_payload(url="https://doi.org/10.1000/test", title="Paper"),
     )
     second = await sources_service.resolve_or_create_source(
         access_token=None,
-        extraction_payload=None,
-        url="https://doi.org/10.1000/test",
-        metadata={"doi": "10.1000/test", "title": "Paper"},
-        excerpt="Excerpt",
-        quote="Excerpt",
-        locator={},
+        extraction_payload=_canonical_extraction_payload(url="https://doi.org/10.1000/test", title="Paper"),
     )
     assert first["id"] == second["id"]
+
+
+@pytest.mark.anyio
+async def test_source_resolve_rejects_missing_canonical_payload(sources_service):
+    with pytest.raises(HTTPException) as exc:
+        await sources_service.resolve_or_create_source(access_token=None, extraction_payload=None)
+    assert exc.value.status_code == 422
 
 
 @pytest.mark.anyio
@@ -303,8 +324,7 @@ async def test_citation_create_get_list_update_delete_and_shape_are_canonical(ci
         access_token=None,
         account_type="pro",
         payload={
-            "url": "https://example.com/paper",
-            "metadata": {"title": "Paper title", "author": "Ada Lovelace", "datePublished": "2024-02-03"},
+            "extraction_payload": _canonical_extraction_payload(),
             "excerpt": "Quoted sentence",
             "quote": "Quoted sentence",
             "locator": {"paragraph": 4},
@@ -342,18 +362,37 @@ async def test_citation_create_get_list_update_delete_and_shape_are_canonical(ci
 
 
 @pytest.mark.anyio
+async def test_citation_create_rejects_legacy_metadata_only_payload(citations_service):
+    with pytest.raises(HTTPException) as exc:
+        await citations_service.create_citation(
+            user_id="user-1",
+            access_token=None,
+            account_type="pro",
+            payload={
+                "url": "https://example.com/paper",
+                "metadata": {"title": "Paper title", "author": "Ada Lovelace"},
+                "excerpt": "Quoted sentence",
+                "quote": "Quoted sentence",
+                "locator": {"paragraph": 4},
+                "style": "mla",
+            },
+        )
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.anyio
 async def test_citation_create_allows_multiple_contexts_per_user_and_source(citations_service):
     first = await citations_service.create_citation(
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"url": "https://example.com/paper", "metadata": {"title": "Paper"}, "excerpt": "First", "quote": "First", "style": "mla"},
+        payload={"extraction_payload": _canonical_extraction_payload(excerpt="First", quote="First"), "excerpt": "First", "quote": "First", "style": "mla"},
     )
     second = await citations_service.create_citation(
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"url": "https://example.com/paper", "metadata": {"title": "Paper"}, "excerpt": "Second", "quote": "Second", "style": "mla"},
+        payload={"extraction_payload": _canonical_extraction_payload(excerpt="Second", quote="Second"), "excerpt": "Second", "quote": "Second", "style": "mla"},
     )
 
     assert first["id"] != second["id"]
@@ -369,7 +408,7 @@ async def test_cross_user_citation_access_is_denied(citations_service):
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"url": "https://example.com/paper", "metadata": {"title": "Paper"}, "excerpt": "Excerpt", "quote": "Excerpt", "style": "mla"},
+        payload={"extraction_payload": _canonical_extraction_payload(), "excerpt": "Excerpt", "quote": "Excerpt", "style": "mla"},
     )
     with pytest.raises(HTTPException) as exc:
         await citations_service.get_citation(user_id="user-2", access_token=None, citation_id=created["id"], account_type="pro")
@@ -382,7 +421,7 @@ async def test_render_cache_populates_and_reuses(citations_service):
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"url": "https://example.com/paper", "metadata": {"title": "Paper"}, "excerpt": "Excerpt", "quote": "Excerpt", "style": "mla"},
+        payload={"extraction_payload": _canonical_extraction_payload(), "excerpt": "Excerpt", "quote": "Excerpt", "style": "mla"},
     )
     render_rows = list(citations_service.repository.renders[created["id"]])
     await citations_service.get_citation(user_id="user-1", access_token=None, citation_id=created["id"], account_type="pro")
@@ -395,13 +434,13 @@ async def test_stale_render_refresh_rereads_once_for_bulk_hydration(citations_se
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"url": "https://example.com/paper-1", "metadata": {"title": "Paper 1"}, "excerpt": "Excerpt 1", "quote": "Excerpt 1", "style": "mla"},
+        payload={"extraction_payload": _canonical_extraction_payload(url="https://example.com/paper-1", title="Paper 1", excerpt="Excerpt 1", quote="Excerpt 1"), "excerpt": "Excerpt 1", "quote": "Excerpt 1", "style": "mla"},
     )
     second = await citations_service.create_citation(
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"url": "https://example.com/paper-2", "metadata": {"title": "Paper 2"}, "excerpt": "Excerpt 2", "quote": "Excerpt 2", "style": "mla"},
+        payload={"extraction_payload": _canonical_extraction_payload(url="https://example.com/paper-2", title="Paper 2", excerpt="Excerpt 2", quote="Excerpt 2"), "excerpt": "Excerpt 2", "quote": "Excerpt 2", "style": "mla"},
     )
     citations_service.repository.list_renders_calls.clear()
     citations_service.repository.replace_renders_calls.clear()
@@ -427,7 +466,7 @@ async def test_render_endpoint_filters_to_requested_allowed_style_and_reuses_cac
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"url": "https://example.com/paper", "metadata": {"title": "Paper"}, "excerpt": "Excerpt", "quote": "Excerpt", "style": "mla"},
+        payload={"extraction_payload": _canonical_extraction_payload(), "excerpt": "Excerpt", "quote": "Excerpt", "style": "mla"},
     )
 
     rendered = await citations_service.render_citation(
@@ -469,21 +508,11 @@ async def test_pro_only_template_behavior_is_enforced(citations_service):
 async def test_research_list_pages_return_cursor_meta_for_sources(sources_service):
     await sources_service.resolve_or_create_source(
         access_token=None,
-        extraction_payload=None,
-        url="https://example.com/1",
-        metadata={"title": "One"},
-        excerpt="",
-        quote="",
-        locator={},
+        extraction_payload=_canonical_extraction_payload(url="https://example.com/1", title="One", excerpt="", quote="", paragraph=1),
     )
     await sources_service.resolve_or_create_source(
         access_token=None,
-        extraction_payload=None,
-        url="https://example.com/2",
-        metadata={"title": "Two"},
-        excerpt="",
-        quote="",
-        locator={},
+        extraction_payload=_canonical_extraction_payload(url="https://example.com/2", title="Two", excerpt="", quote="", paragraph=2),
     )
     page = await sources_service.list_sources_page(
         user_id="user-1",
@@ -502,13 +531,13 @@ async def test_research_list_pages_return_cursor_meta_for_citations(citations_se
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"url": "https://example.com/paper-1", "metadata": {"title": "Paper 1"}, "excerpt": "Excerpt 1", "quote": "Excerpt 1", "style": "mla"},
+        payload={"extraction_payload": _canonical_extraction_payload(url="https://example.com/paper-1", title="Paper 1", excerpt="Excerpt 1", quote="Excerpt 1"), "excerpt": "Excerpt 1", "quote": "Excerpt 1", "style": "mla"},
     )
     second = await citations_service.create_citation(
         user_id="user-1",
         access_token=None,
         account_type="pro",
-        payload={"url": "https://example.com/paper-2", "metadata": {"title": "Paper 2"}, "excerpt": "Excerpt 2", "quote": "Excerpt 2", "style": "mla"},
+        payload={"extraction_payload": _canonical_extraction_payload(url="https://example.com/paper-2", title="Paper 2", excerpt="Excerpt 2", quote="Excerpt 2"), "excerpt": "Excerpt 2", "quote": "Excerpt 2", "style": "mla"},
     )
     page = await citations_service.list_citations_page(
         user_id="user-1",

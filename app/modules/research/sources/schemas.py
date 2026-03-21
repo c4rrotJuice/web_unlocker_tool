@@ -2,16 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class SourceResolveRequest(BaseModel):
-    extraction_payload: dict[str, Any] | None = None
-    url: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    excerpt: str | None = None
-    quote: str | None = None
-    locator: dict[str, Any] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid")
+    extraction_payload: dict[str, Any]
 
 
 class SourceListQuery(BaseModel):

@@ -24,7 +24,7 @@ High-confidence truths from code:
 - Unlocking exists on both web and extension, with different guest and authenticated limits (`app/routes/render.py`, `app/routes/extension.py`, `app/services/IP_usage_limit.py`).
 - The editor is a real document workspace with autosave/update, citations, quote workflows, note attachment, checkpoints, restore, and export (`app/routes/editor.py`, `app/static/js/editor.js`).
 - Notes, projects, tags, note sources, note links, document-note links, document-tag links, and document-citation links are all implemented server-side, though some are schema-fallback tolerant and therefore transitional (`app/routes/extension.py`, `app/services/research_entities.py`, `sql/*`).
-- Billing updates `user_meta.account_type`, `paid_until`, and Paddle identifiers via webhook (`app/routes/payments.py`).
+- Billing entitlement mutation is webhook-driven through the canonical billing module (`app/modules/billing/service.py`).
 
 Main inconsistencies to preserve consciously, not accidentally:
 
@@ -152,7 +152,7 @@ How auth works today:
   - `/static`
   - `/api/auth/handoff/exchange`
   - `/api/public-config`
-  - `/webhooks/paddle`
+  - `/api/webhooks/paddle`
 - Middleware does not hard-block most pages; many endpoints self-enforce auth by checking `request.state.user_id`.
 - `/editor` is server-protected and redirects to `/auth` if unauthenticated (`app/routes/editor.py`).
 - `/dashboard` HTML is public, but its JS immediately redirects to `/auth?next=/dashboard` when it cannot fetch a token (`app/templates/dashboard.html`).
@@ -1025,31 +1025,25 @@ Entitlement checks are not fully centralized. Current additional scattered enfor
 
 ### Billing
 
-Primary file: `app/routes/payments.py`
+Primary file: `app/modules/billing/routes.py`
 
 Implemented billing abilities:
 
-- `GET /get_paddle_token`
-- `POST /create_paddle_checkout`
-- `POST /webhooks/paddle`
+- `POST /api/billing/checkout`
+- `POST /api/webhooks/paddle`
 
 Paddle plan mapping:
 
-- Standard monthly / quarterly price ids
-- Pro monthly / quarterly price ids
+- Standard monthly / yearly price ids
+- Pro monthly / yearly price ids
 
-Webhook effects on `user_meta`:
+Webhook effects on canonical billing and entitlement tables:
 
-- set `account_type`
-- set/clear `paid_until`
-- set `auto_renew`
-- set `paddle_customer_id`
-- set `paddle_subscription_id`
-- set `paddle_price_id`
+- set entitlement tier, status, paid_until, and auto_renew
+- set billing customer and subscription provider ids
+- persist event payloads and dedupe webhook processing
 
-Redis cache update:
-
-- `user_meta:{user_id}` refreshed with account_type and paid_until
+Checkout initiation is server-authoritative and auth-protected; the frontend only opens the Paddle transaction created by `/api/billing/checkout`.
 
 ### Ads / no-ads
 
@@ -1218,8 +1212,8 @@ These are current capabilities because users experience them, but they are imple
 | Extension local notes workspace | Guest and auth users | Extension | popup/sidepanel | local message handlers | `notes_state`, IndexedDB `notes` | solid | Preserve |
 | Extension local citations cache | Guest and auth users | Extension | content/popup/sidepanel | local message handlers | IndexedDB `citations` | solid | Preserve |
 | Extension background sync queues | Auth users | Extension | background | `/api/citations`, `/api/notes`, `/api/extension/usage-event` | `notes_sync_queue`, `background_sync_queue` | solid | Preserve |
-| Billing checkout | Auth users | Web | pricing/dashboard | `/get_paddle_token`, `/create_paddle_checkout` | Paddle + `user_meta` | solid | Preserve |
-| Billing webhook entitlement mutation | system | Backend | webhook | `/webhooks/paddle` | `user_meta` | solid | Preserve |
+| Billing checkout | Auth users | Web | pricing/dashboard | `/api/billing/checkout` | Paddle transactions + canonical billing tables | solid | Preserve |
+| Billing webhook entitlement mutation | system | Backend | webhook | `/api/webhooks/paddle` | canonical billing and entitlement tables | solid | Preserve |
 
 ## 19. Route/Page/Script Appendix
 
@@ -1248,7 +1242,7 @@ These are current capabilities because users experience them, but they are imple
 | `app/routes/editor.py` | `/editor`, `/api/editor/access`, `/api/docs*` |
 | `app/routes/citations.py` | `/api/citations*`, `/api/quotes*`, `/api/citation-templates*` |
 | `app/routes/extension.py` | `/api/extension/*`, `/api/notes*`, `/api/projects*`, `/api/tags*` |
-| `app/routes/payments.py` | `/get_paddle_token`, `/create_paddle_checkout`, `/webhooks/paddle` |
+| `app/modules/billing/routes.py` | `/api/billing/checkout`, `/api/webhooks/paddle` |
 
 ### Major extension scripts
 

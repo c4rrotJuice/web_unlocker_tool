@@ -254,11 +254,6 @@ async def resolve_source(payload: SourceResolveRequest, access=Depends(_access))
     return await sources_service.resolve_or_create_source(
         access_token=access.access_token,
         extraction_payload=payload.extraction_payload,
-        url=payload.url,
-        metadata=payload.metadata,
-        excerpt=payload.excerpt,
-        quote=payload.quote,
-        locator=payload.locator,
     )
 
 

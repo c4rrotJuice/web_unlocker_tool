@@ -535,29 +535,20 @@
             },
             body: JSON.stringify({ tier: plan, interval }),
           });
-          if (data.checkout_url && typeof data.checkout_url === "string" && !data.transaction_id) {
-            window.location.href = data.checkout_url;
-            return;
-          }
-          if (!data.transaction_id) {
+          if (!data?.transaction_id) {
             throw new Error("Missing Paddle transaction ID");
           }
-          if (window.Paddle && typeof window.Paddle.Checkout?.open === "function") {
-            window.Paddle.Checkout.open({
-              transactionId: data.transaction_id,
-              settings: {
-                theme: "light",
-                displayMode: "overlay",
-                successUrl: checkoutSuccessUrl,
-              },
-            });
-            return;
+          if (!window.Paddle || typeof window.Paddle.Checkout?.open !== "function") {
+            throw new Error("Paddle checkout widget is unavailable.");
           }
-          if (data.checkout_url) {
-            window.location.href = data.checkout_url;
-            return;
-          }
-          throw new Error("Missing Paddle checkout URL");
+          window.Paddle.Checkout.open({
+            transactionId: data.transaction_id,
+            settings: {
+              theme: "light",
+              displayMode: "overlay",
+              successUrl: checkoutSuccessUrl,
+            },
+          });
         } catch (err) {
           console.error("❌ Failed to open Paddle checkout:", err);
           if (window.webUnlockerAuth?.isAuthSessionError?.(err)) {

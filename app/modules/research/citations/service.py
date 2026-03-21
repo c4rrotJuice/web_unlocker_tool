@@ -318,11 +318,6 @@ class CitationsService:
         source = await self.sources_service.resolve_or_create_source(
             access_token=access_token,
             extraction_payload=payload.get("extraction_payload"),
-            url=payload.get("url"),
-            metadata=payload.get("metadata"),
-            excerpt=payload.get("excerpt"),
-            quote=payload.get("quote"),
-            locator=payload.get("locator"),
         )
         citation_context = {
             "locator": payload.get("locator") or {},

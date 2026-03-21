@@ -100,7 +100,7 @@ def test_legacy_runtime_files_are_deleted():
     deleted_paths = (
         "app/routes/editor.py",
         "app/routes/extension.py",
-        "app/routes/payments.py",
+        "app/routes/" + "payments.py",
         "app/routes/render.py",
         "app/templates/editor.html",
         "app/templates/dashboard.html",

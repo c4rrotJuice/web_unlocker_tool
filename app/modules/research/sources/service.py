@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from app.core.serialization import serialize_paging_meta
 from app.core.serialization import serialize_source_detail, serialize_source_summary
 from app.modules.research.sources.repo import SourcesRepository
-from app.services.citation_domain import ExtractionPayload, legacy_metadata_to_payload, normalize_citation_payload
+from app.services.citation_domain import ExtractionPayload, normalize_citation_payload
 
 
 class SourcesService:
@@ -18,23 +18,16 @@ class SourcesService:
         self,
         *,
         extraction_payload: dict[str, Any] | None,
-        url: str | None,
-        metadata: dict[str, Any] | None,
-        excerpt: str | None,
-        quote: str | None,
-        locator: dict[str, Any] | None,
     ) -> ExtractionPayload:
-        if extraction_payload:
-            payload = dict(extraction_payload)
-            raw_metadata = payload.get("raw_metadata") if isinstance(payload.get("raw_metadata"), dict) else {}
-            raw_metadata = {**raw_metadata, **(metadata or {}), "excerpt": excerpt, "quote": quote, "locator": locator or {}}
-            payload["raw_metadata"] = raw_metadata
-            return ExtractionPayload.model_validate(payload)
-        return legacy_metadata_to_payload(
-            url=url or "",
-            excerpt=excerpt or quote or "",
-            metadata={**(metadata or {}), "quote": quote, "locator": locator or {}},
-        )
+        if extraction_payload is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "EXTRACTION_PAYLOAD_REQUIRED",
+                    "message": "Canonical extraction payload is required.",
+                },
+            )
+        return ExtractionPayload.model_validate(extraction_payload)
 
     def normalize_source(self, payload: ExtractionPayload) -> dict[str, Any]:
         return normalize_citation_payload(payload)["source"]
@@ -44,20 +37,8 @@ class SourcesService:
         *,
         access_token: str | None,
         extraction_payload: dict[str, Any] | None,
-        url: str | None,
-        metadata: dict[str, Any] | None,
-        excerpt: str | None,
-        quote: str | None,
-        locator: dict[str, Any] | None,
     ) -> dict:
-        extraction = self.build_extraction_payload(
-            extraction_payload=extraction_payload,
-            url=url,
-            metadata=metadata,
-            excerpt=excerpt,
-            quote=quote,
-            locator=locator,
-        )
+        extraction = self.build_extraction_payload(extraction_payload=extraction_payload)
         normalized_source = self.normalize_source(extraction)
         existing = await self.repository.get_source_by_fingerprint(fingerprint=normalized_source["fingerprint"])
         row = existing

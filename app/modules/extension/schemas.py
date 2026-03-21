@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.modules.research.notes.schemas import NoteSourceInput
 
@@ -60,10 +60,9 @@ class AuthAttemptCompleteRequest(BaseModel):
 
 
 class ExtensionCitationCaptureRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     source_id: str | None = None
-    extraction_payload: dict[str, Any] | None = None
-    url: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    extraction_payload: dict[str, Any]
     excerpt: str | None = None
     locator: dict[str, Any] = Field(default_factory=dict)
     annotation: str | None = None

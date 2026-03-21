@@ -1,26 +1,39 @@
 from app.services.citation_engine import (
-    METADATA_SCHEMA_VERSION,
     build_source_fingerprint,
     compute_source_version,
     generate_citation_outputs,
     generate_render_bundle,
     normalize_metadata,
 )
+from app.services.citation_domain import ExtractionCandidate, ExtractionPayload, METADATA_SCHEMA_VERSION, normalize_citation_payload
+
+
+def _canonical_payload() -> tuple[dict[str, object], dict[str, object]]:
+    normalized = normalize_citation_payload(
+        ExtractionPayload(
+            canonical_url="https://www.who.int/example",
+            page_url="https://www.who.int/example",
+            title_candidates=[ExtractionCandidate(value="Public health update", confidence=1.0)],
+            author_candidates=[ExtractionCandidate(value="World Health Organization", confidence=1.0)],
+            date_candidates=[ExtractionCandidate(value="2024-03-10", confidence=1.0)],
+            locator={"paragraph": 6},
+            raw_metadata={
+                "quote": "Selected sentence",
+                "excerpt": "Selected sentence",
+            },
+        )
+    )
+    return normalized["source"], normalized["context"]
 
 
 def test_normalize_metadata_dedupes_institutional_author_and_publisher():
-    meta = normalize_metadata(
-        {
-            "author": "WHO",
-            "publisher": "World Health Organization",
-            "siteName": "World Health Organization",
-            "title": "Fact sheet",
-            "datePublished": "n.d.",
-            "paragraph": "6",
-        },
-        url="https://www.who.int/news-room/fact-sheets/detail/example",
-        excerpt="sample",
-    )
+    source, context = _canonical_payload()
+    source = {
+        **source,
+        "publisher": "World Health Organization",
+        "site_name": "World Health Organization",
+    }
+    meta = normalize_metadata(source, context)
 
     assert meta["author"] == "World Health Organization"
     assert len(meta["authors"]) == 1
@@ -32,17 +45,8 @@ def test_normalize_metadata_dedupes_institutional_author_and_publisher():
 
 
 def test_generate_citation_outputs_separates_inline_and_full():
-    outputs = generate_citation_outputs(
-        "apa",
-        {
-            "author": "World Health Organization",
-            "title": "Public health update",
-            "siteName": "World Health Organization",
-            "url": "https://www.who.int/example",
-            "datePublished": "2024-03-10",
-            "paragraph": 6,
-        },
-    )
+    source, context = _canonical_payload()
+    outputs = generate_citation_outputs("apa", source, context)
 
     assert outputs["inline_citation"] == "(World Health Organization, 2024, para. 6)"
     assert "World Health Organization. (2024)." in outputs["full_citation"]
@@ -74,16 +78,8 @@ def test_source_version_changes_when_canonical_metadata_changes():
 
 
 def test_generate_render_bundle_contains_multi_style_cache_ready_payload():
-    bundle = generate_render_bundle(
-        {
-            "title": "Public health update",
-            "author": "World Health Organization",
-            "siteName": "WHO",
-            "url": "https://www.who.int/example",
-            "datePublished": "2024-03-10",
-            "excerpt": "Selected sentence",
-        },
-    )
+    source, context = _canonical_payload()
+    bundle = generate_render_bundle(source, context)
 
     assert set(bundle["renders"].keys()) == {"apa", "chicago", "harvard", "mla"}
     assert bundle["source"]["source_version"] == bundle["source_version"]

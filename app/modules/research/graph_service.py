@@ -517,8 +517,6 @@ class ResearchGraphService:
             access_token=access_token,
             account_type=capability_state.tier,
             payload={
-                "url": payload.url,
-                "metadata": payload.metadata,
                 "excerpt": payload.selected_text,
                 "quote": payload.selected_text,
                 "locator": payload.locator,

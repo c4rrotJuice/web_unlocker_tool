@@ -126,6 +126,27 @@ def _candidate_value(candidates: list[ExtractionCandidate], fallback: str = "") 
     return best or _clean(fallback)
 
 
+def _is_canonical_extraction_payload(payload: dict[str, Any]) -> bool:
+    return any(
+        key in payload
+        for key in (
+            "identifiers",
+            "canonical_url",
+            "page_url",
+            "title_candidates",
+            "author_candidates",
+            "date_candidates",
+            "publisher_candidates",
+            "container_candidates",
+            "source_type_candidates",
+            "selection_text",
+            "locator",
+            "extraction_evidence",
+            "raw_metadata",
+        )
+    )
+
+
 def _parse_author_object(raw: Any) -> dict[str, Any] | None:
     if isinstance(raw, dict):
         full = _clean(raw.get("fullName") or raw.get("name") or raw.get("author"))
@@ -266,50 +287,9 @@ def compute_citation_version(context: dict[str, Any]) -> str:
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()  # noqa: S324
 
 
-def legacy_metadata_to_payload(*, url: str, excerpt: str, metadata: dict[str, Any] | None = None, full_text: str | None = None) -> ExtractionPayload:
-    raw = dict(metadata or {})
-    page_url = raw.get("page_url") or raw.get("url") or url
-    canonical_url = raw.get("canonical_url") or raw.get("url") or url
-
-    title_values = [raw.get("title"), raw.get("headline"), raw.get("source_title")]
-    author_values = raw.get("authors") if isinstance(raw.get("authors"), list) else [raw.get("author"), raw.get("creator")]
-    date_values = [raw.get("datePublished"), raw.get("date_published"), raw.get("date"), raw.get("year")]
-    publisher_values = [raw.get("publisher"), raw.get("siteName"), raw.get("site_name")]
-    container_values = [raw.get("journalTitle"), raw.get("journal_title"), raw.get("container_title"), raw.get("siteName")]
-    source_type_values = [raw.get("source_type"), raw.get("@type"), raw.get("type")]
-
-    identifiers: dict[str, Any] = {}
-    for key in ("doi", "DOI", "isbn", "pmid"):
-        value = raw.get(key)
-        if value:
-            identifiers[key.lower()] = value
-
-    locator = raw.get("locator") if isinstance(raw.get("locator"), dict) else {}
-    paragraph = raw.get("paragraph") or raw.get("paragraph_number")
-    if paragraph and "paragraph" not in locator:
-        locator["paragraph"] = paragraph
-    if raw.get("page") and "page" not in locator:
-        locator["page"] = raw.get("page")
-
-    payload = ExtractionPayload(
-        identifiers=identifiers,
-        canonical_url=canonical_url,
-        page_url=page_url,
-        title_candidates=[ExtractionCandidate(value=value, confidence=0.8, source="legacy_metadata") for value in title_values if _clean(value)],
-        author_candidates=[ExtractionCandidate(value=value, confidence=0.8, source="legacy_metadata") for value in author_values if _clean(value)],
-        date_candidates=[ExtractionCandidate(value=value, confidence=0.7, source="legacy_metadata") for value in date_values if _clean(value)],
-        publisher_candidates=[ExtractionCandidate(value=value, confidence=0.7, source="legacy_metadata") for value in publisher_values if _clean(value)],
-        container_candidates=[ExtractionCandidate(value=value, confidence=0.6, source="legacy_metadata") for value in container_values if _clean(value)],
-        source_type_candidates=[ExtractionCandidate(value=value, confidence=0.6, source="legacy_metadata") for value in source_type_values if _clean(value)],
-        selection_text=raw.get("selection_text") or excerpt or full_text or "",
-        locator=locator,
-        extraction_evidence=raw.get("extraction_evidence") if isinstance(raw.get("extraction_evidence"), dict) else {},
-        raw_metadata=raw,
-    )
-    return payload
-
-
 def normalize_citation_payload(payload: ExtractionPayload | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(payload, dict) and not _is_canonical_extraction_payload(payload):
+        raise ValueError("canonical extraction payload required")
     extracted = payload if isinstance(payload, ExtractionPayload) else ExtractionPayload.model_validate(payload)
     raw = dict(extracted.raw_metadata or {})
 

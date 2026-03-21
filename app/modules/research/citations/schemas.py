@@ -2,15 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.services.citation_domain import SUPPORTED_STYLES
 
 
 class CitationCreateRequest(BaseModel):
-    extraction_payload: dict[str, Any] | None = None
-    url: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="forbid")
+    extraction_payload: dict[str, Any]
     excerpt: str | None = None
     locator: dict[str, Any] = Field(default_factory=dict)
     annotation: str | None = None

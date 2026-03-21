@@ -3,23 +3,16 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.citation_domain import (
-    METADATA_SCHEMA_VERSION,
     SUPPORTED_STYLES,
     build_source_fingerprint,
     compute_source_version,
     generate_render_bundle as _generate_render_bundle,
-    legacy_metadata_to_payload,
-    normalize_citation_payload,
     render_citation,
 )
 
 
-def normalize_metadata(metadata: dict[str, Any] | None, *, url: str = "", excerpt: str = "") -> dict[str, Any]:
-    normalized = normalize_citation_payload(
-        legacy_metadata_to_payload(url=url, excerpt=excerpt, metadata=metadata or {}),
-    )
-    source = normalized["source"]
-    context = normalized["context"]
+def normalize_metadata(source: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
+    context = context or {}
     return {
         **(source.get("metadata") or {}),
         "url": source.get("canonical_url") or source.get("page_url"),
@@ -58,28 +51,12 @@ def normalize_metadata(metadata: dict[str, Any] | None, *, url: str = "", excerp
     }
 
 
-def generate_citation_outputs(style: str, metadata: dict[str, Any]) -> dict[str, str]:
-    normalized = normalize_citation_payload(
-        legacy_metadata_to_payload(
-            url=metadata.get("url", ""),
-            excerpt=metadata.get("excerpt", ""),
-            metadata=metadata,
-        ),
-    )
-    source = normalized["source"]
-    context = normalized["context"]
+def generate_citation_outputs(style: str, source: dict[str, Any], context: dict[str, Any]) -> dict[str, str]:
     return {
         "inline_citation": render_citation(source, context, style=style, render_kind="inline"),
         "full_citation": render_citation(source, context, style=style, render_kind="bibliography"),
     }
 
 
-def generate_render_bundle(metadata: dict[str, Any], styles: list[str] | None = None) -> dict[str, Any]:
-    normalized = normalize_citation_payload(
-        legacy_metadata_to_payload(
-            url=metadata.get("url", ""),
-            excerpt=metadata.get("excerpt", ""),
-            metadata=metadata,
-        ),
-    )
-    return _generate_render_bundle(normalized["source"], normalized["context"], styles=styles, render_kinds=["inline", "bibliography"])
+def generate_render_bundle(source: dict[str, Any], context: dict[str, Any], styles: list[str] | None = None) -> dict[str, Any]:
+    return _generate_render_bundle(source, context, styles=styles, render_kinds=["inline", "bibliography"])

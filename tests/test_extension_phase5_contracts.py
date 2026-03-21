@@ -3,6 +3,7 @@ import importlib
 import pytest
 import supabase
 
+from app.core.auth import RequestAuthContext
 from tests.conftest import async_test_client
 
 
@@ -35,6 +36,18 @@ class ValidAuth:
 class DummyClient:
     def __init__(self, auth):
         self.auth = auth
+
+
+class ValidTokenVerifier:
+    def verify(self, token):
+        return RequestAuthContext(
+            authenticated=True,
+            user_id="user-1",
+            supabase_subject="user-1",
+            email=f"{token}@example.com",
+            access_token=token,
+            token_claims={"sub": "user-1"},
+        )
 
 
 class StoredIdentityRepository:
@@ -83,6 +96,7 @@ def _load_app(monkeypatch):
     core_auth.get_token_verifier.cache_clear()
     extension_routes = importlib.reload(extension_routes)
     main = importlib.reload(main)
+    monkeypatch.setattr(core_auth, "get_token_verifier", lambda: ValidTokenVerifier())
     extension_routes.identity_service.repository = StoredIdentityRepository()
     extension_routes.service.identity_service.repository = StoredIdentityRepository()
     return main.app, extension_routes

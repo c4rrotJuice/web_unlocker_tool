@@ -7,8 +7,8 @@ import pytest
 
 from app.core.auth import RequestAuthContext
 from app.core.config import RateLimitSettings, Settings
-from app.modules.extension.schemas import AuthAttemptCompleteRequest, AuthAttemptCreateRequest, HandoffExchangeRequest
-from app.modules.extension.service import ExtensionService
+from app.modules.extension.schemas import AuthAttemptCompleteRequest, AuthAttemptCreateRequest, HandoffExchangeRequest, WorkInEditorRequest
+from app.modules.extension.service import ExtensionAccessContext, ExtensionService
 
 
 class AllowAllRateLimiter:
@@ -181,6 +181,7 @@ def _service() -> ExtensionService:
         quotes_service=SimpleNamespace(),
         notes_service=SimpleNamespace(),
         workspace_service=SimpleNamespace(),
+        graph_service=SimpleNamespace(),
         auth_client=FakeAuthClient(),
     )
 
@@ -241,3 +242,117 @@ async def test_auth_attempt_status_rejects_invalid_token():
             attempt_token="wrong-token",
         )
     assert getattr(exc.value, "code", "") == "auth_attempt_invalid"
+
+
+@pytest.mark.anyio
+async def test_handoff_exchange_rejects_missing_and_expired_codes_explicitly():
+    service = _service()
+    request = _request()
+
+    with pytest.raises(Exception) as missing:
+        await service.exchange_handoff(request, HandoffExchangeRequest(code="missing-code"))
+    assert getattr(missing.value, "code", "") == "handoff_invalid"
+
+    await service.repository.create_handoff_code(
+        code="expired-code",
+        user_id="user-1",
+        redirect_path="/editor",
+        session_payload={
+            "access_token": "access-token",
+            "refresh_token": "refresh-token",
+            "expires_in": 300,
+            "token_type": "bearer",
+        },
+        expires_at="2000-01-01T00:00:00+00:00",
+    )
+
+    with pytest.raises(Exception) as expired:
+        await service.exchange_handoff(request, HandoffExchangeRequest(code="expired-code"))
+    assert getattr(expired.value, "code", "") == "handoff_expired"
+
+
+@pytest.mark.anyio
+async def test_handoff_exchange_rejects_reuse_after_one_time_consumption():
+    service = _service()
+    request = _request()
+    access = RequestAuthContext(
+        authenticated=True,
+        user_id="user-1",
+        supabase_subject="user-1",
+        email="user@example.com",
+        access_token="access-token",
+        token_claims={"sub": "user-1"},
+    )
+
+    issued = await service.issue_handoff(
+        request,
+        access,
+        SimpleNamespace(redirect_path="/editor", refresh_token="refresh-token", expires_in=300, token_type="bearer"),
+    )
+    code = issued["data"]["code"]
+
+    exchanged = await service.exchange_handoff(request, HandoffExchangeRequest(code=code))
+    assert exchanged["ok"] is True
+
+    with pytest.raises(Exception) as replay:
+        await service.exchange_handoff(request, HandoffExchangeRequest(code=code))
+    assert getattr(replay.value, "code", "") == "handoff_already_used"
+
+
+@pytest.mark.anyio
+async def test_work_in_editor_returns_canonical_seeded_editor_launch_contract():
+    class GraphService:
+        async def orchestrate_work_in_editor(self, *, user_id, access_token, capability_state, payload, default_document_title):
+            assert user_id == "user-1"
+            assert access_token == "access-token"
+            assert capability_state.tier == "standard"
+            assert default_document_title == "Example article"
+            return {
+                "document_id": "doc-1",
+                "document": {"id": "doc-1", "title": "Example article"},
+                "citation": {"id": "citation-1"},
+                "quote": {"id": "quote-1"},
+                "note": {"id": "note-1"},
+                "seed": {
+                    "document_id": "doc-1",
+                    "source_id": "source-1",
+                    "citation_id": "citation-1",
+                    "quote_id": "quote-1",
+                    "note_id": "note-1",
+                    "mode": "quote_focus",
+                },
+            }
+
+    service = _service()
+    service.graph_service = GraphService()
+    request = _request()
+    access = ExtensionAccessContext(
+        auth_context=RequestAuthContext(
+            authenticated=True,
+            user_id="user-1",
+            supabase_subject="user-1",
+            email="user@example.com",
+            access_token="access-token",
+            token_claims={"sub": "user-1"},
+        ),
+        account_state=SimpleNamespace(profile=SimpleNamespace(), entitlement=SimpleNamespace()),
+        capability_state=SimpleNamespace(tier="standard", capabilities={"documents": {}, "exports": []}),
+    )
+    payload = WorkInEditorRequest(
+        url="https://example.com/article",
+        title="Example article",
+        selected_text="Quoted text",
+        extraction_payload={},
+        citation_text="Example citation text",
+        project_id="project-1",
+    )
+
+    response = await service.work_in_editor(request, access, payload)
+
+    assert response["ok"] is True
+    assert response["data"]["document_id"] == "doc-1"
+    assert response["data"]["seed"]["document_id"] == "doc-1"
+    assert response["data"]["seed"]["citation_id"] == "citation-1"
+    assert response["data"]["editor_path"] == "/editor?document_id=doc-1&seeded=1&seed_source_id=source-1&seed_citation_id=citation-1&seed_quote_id=quote-1&seed_note_id=note-1&seed_mode=quote_focus"
+    assert response["data"]["redirect_path"] == response["data"]["editor_path"]
+    assert response["data"]["editor_url"] == response["data"]["editor_path"]

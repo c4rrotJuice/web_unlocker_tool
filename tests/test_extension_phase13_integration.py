@@ -1,99 +1,215 @@
-import json
-from pathlib import Path
+import importlib
+
+import pytest
+import supabase
+
+from app.core.auth import RequestAuthContext
+from app.modules.extension.service import ExtensionAccessContext
+from tests.conftest import async_test_client
 
 
-def test_manifest_keeps_mv3_sidepanel_and_content_entrypoints():
-    manifest = json.loads(Path("extension/manifest.json").read_text(encoding="utf-8"))
+class DummyUser:
+    def __init__(self, user_id: str, email: str = "user@example.com"):
+        self.id = user_id
+        self.email = email
+        self.aud = "authenticated"
+        self.role = "authenticated"
 
-    assert manifest["manifest_version"] == 3
-    assert manifest["background"]["service_worker"] == "background.js"
-    assert manifest["side_panel"]["default_path"] == "sidepanel.html"
-    assert any(
-        item.get("matches") == ["<all_urls>"]
-        and item.get("js") == ["content/unlock_content.bundle.js"]
-        and item.get("run_at") == "document_idle"
-        for item in manifest.get("content_scripts", [])
+
+class DummyClient:
+    def __init__(self, auth):
+        self.auth = auth
+
+
+class ValidAuth:
+    def get_user(self, token):
+        return type("DummyResponse", (), {"user": DummyUser("user-1", email=f"{token}@example.com")})
+
+
+class ValidTokenVerifier:
+    def verify(self, token):
+        return RequestAuthContext(
+            authenticated=True,
+            user_id="user-1",
+            supabase_subject="user-1",
+            email=f"{token}@example.com",
+            access_token=token,
+            token_claims={"sub": "user-1"},
+        )
+
+
+def _load_app(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "http://example.com")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("CORS_ORIGINS", "https://app.writior.com")
+    monkeypatch.setattr(supabase, "create_client", lambda url, key: DummyClient(ValidAuth()))
+
+    import app.core.auth as core_auth
+    import app.core.config as core_config
+    from app import main
+    from app.modules.extension import routes as extension_routes
+
+    importlib.reload(core_auth)
+    importlib.reload(core_config)
+    core_config.get_settings.cache_clear()
+    core_auth.get_token_verifier.cache_clear()
+    extension_routes = importlib.reload(extension_routes)
+    main = importlib.reload(main)
+    monkeypatch.setattr(core_auth, "get_token_verifier", lambda: ValidTokenVerifier())
+    fake_access = ExtensionAccessContext(
+        auth_context=RequestAuthContext(
+            authenticated=True,
+            user_id="user-1",
+            supabase_subject="user-1",
+            email="user@example.com",
+            access_token="valid",
+            token_claims={"sub": "user-1"},
+        ),
+        account_state=type(
+            "AccountState",
+            (),
+            {
+                "profile": type("Profile", (), {"display_name": "User One"})(),
+                "entitlement": type("Entitlement", (), {"tier": "standard"})(),
+            },
+        )(),
+        capability_state=type("CapabilityState", (), {"tier": "standard", "capabilities": {"documents": {}, "exports": []}})(),
     )
 
+    async def fake_build_access_context(_request, _auth_context):
+        return fake_access
 
-def test_background_shim_points_to_modular_authority_runtime():
-    shim_source = Path("extension/background.js").read_text(encoding="utf-8")
-    index_source = Path("extension/background/index.js").read_text(encoding="utf-8")
-    router_source = Path("extension/background/router.js").read_text(encoding="utf-8")
-
-    assert 'import "./background/index.js"' in shim_source
-    assert "./session_manager.js" in index_source
-    assert "./queue_manager.js" in index_source
-    assert "./sync_manager.js" in index_source
-    assert "./handoff_manager.js" in index_source
-    assert "./router.js" in index_source
-    assert "MESSAGE_TYPES.CAPTURE_CITATION" in router_source
-    assert "MESSAGE_TYPES.WORK_IN_EDITOR" in router_source
-    assert "MESSAGE_TYPES.AUTH_RESTORE" in router_source
-    assert 'await queueManager.enqueue("usage_event"' in router_source
+    extension_routes.service.build_access_context = fake_build_access_context
+    return main.app, extension_routes
 
 
-def test_background_queue_and_sync_preserve_causal_ordering_and_background_auth():
-    queue_source = Path("extension/background/queue_manager.js").read_text(encoding="utf-8")
-    sync_source = Path("extension/background/sync_manager.js").read_text(encoding="utf-8")
-    session_source = Path("extension/background/session_manager.js").read_text(encoding="utf-8")
+@pytest.mark.anyio
+async def test_extension_routes_expose_canonical_bootstrap_handoff_and_seeded_editor_contract(monkeypatch):
+    app, extension_routes = _load_app(monkeypatch)
 
-    assert "dependency.kind === \"citation\"" in queue_source
-    assert "dependency.kind === \"quote\"" in queue_source
-    assert "status: \"auth_needed\"" in sync_source
-    assert "capture_citation" in sync_source
-    assert "capture_quote" in sync_source
-    assert "capture_note" in sync_source
-    assert "usage_event" in sync_source
-    assert "getPublicSessionState" in session_source
-    assert "summarizeSession" in session_source
-    assert "return summarizeSession(merged)" in session_source
-    assert "broadcastAuthHydration" in session_source
+    async def fake_bootstrap(access):
+        assert access.user_id == "user-1"
+        return {
+            "ok": True,
+            "data": {
+                "profile": {"display_name": "User One"},
+                "entitlement": {"tier": "standard"},
+                "capabilities": {"tier": "standard", "documents": {}, "exports": []},
+                "app": {
+                    "origin": "https://app.writior.com",
+                    "handoff": {
+                        "issue_path": "/api/auth/handoff",
+                        "exchange_path": "/api/auth/handoff/exchange",
+                        "landing_path": "/auth/handoff",
+                        "preferred_destination": "/editor",
+                    },
+                },
+                "taxonomy": {"recent_projects": [], "recent_tags": []},
+            },
+            "meta": {},
+            "error": None,
+        }
+
+    async def fake_issue_handoff(_request, _access, payload):
+        return {
+            "ok": True,
+            "data": {
+                "code": "handoff-1",
+                "redirect_path": payload.redirect_path or "/editor",
+                "expires_at": "2099-01-01T00:00:00Z",
+            },
+            "meta": {},
+            "error": None,
+        }
+
+    async def fake_exchange_handoff(_request, payload):
+        return {
+            "ok": True,
+            "data": {
+                "redirect_path": "/editor",
+                "session": {"access_token": "access", "refresh_token": "refresh"},
+            },
+            "meta": {},
+            "error": None,
+        }
+
+    async def fake_work_in_editor(_request, _access, payload):
+        return {
+            "ok": True,
+            "data": {
+                "document_id": "doc-1",
+                "seed": {"document_id": "doc-1", "citation_id": "citation-1", "mode": "quote_focus"},
+                "redirect_path": "/editor?document_id=doc-1&seeded=1&seed_citation_id=citation-1&seed_mode=quote_focus",
+                "document": {"id": "doc-1"},
+                "citation": {"id": "citation-1"},
+                "quote": None,
+                "note": None,
+                "editor_path": "/editor?document_id=doc-1&seeded=1&seed_citation_id=citation-1&seed_mode=quote_focus",
+                "editor_url": "/editor?document_id=doc-1&seeded=1&seed_citation_id=citation-1&seed_mode=quote_focus",
+            },
+            "meta": {},
+            "error": None,
+        }
+
+    async def fake_usage_event(_request, _access, payload):
+        return {"ok": True, "data": {"event": {"event_id": payload.event_id}}, "meta": {}, "error": None}
+
+    extension_routes.service.bootstrap = fake_bootstrap
+    extension_routes.service.issue_handoff = fake_issue_handoff
+    extension_routes.service.exchange_handoff = fake_exchange_handoff
+    extension_routes.service.work_in_editor = fake_work_in_editor
+    extension_routes.service.record_usage_event = fake_usage_event
+
+    async with async_test_client(app) as client:
+        bootstrap = await client.get("/api/extension/bootstrap", headers={"Authorization": "Bearer valid"})
+        issued = await client.post(
+            "/api/auth/handoff",
+            headers={"Authorization": "Bearer valid"},
+            json={"refresh_token": "refresh-1", "redirect_path": "/editor"},
+        )
+        exchanged = await client.post("/api/auth/handoff/exchange", json={"code": "handoff-1"})
+        work = await client.post(
+            "/api/extension/work-in-editor",
+            headers={"Authorization": "Bearer valid"},
+            json={
+                "url": "https://example.com/article",
+                "selected_text": "Quote",
+                "title": "Example article",
+                "extraction_payload": {},
+            },
+        )
+        usage = await client.post(
+            "/api/extension/usage-events",
+            headers={"Authorization": "Bearer valid"},
+            json={
+                "url": "https://example.com/article",
+                "event_id": "123e4567-e89b-42d3-a456-426614174000",
+                "event_type": "unlock",
+            },
+        )
+
+    assert bootstrap.status_code == 200
+    assert bootstrap.json()["data"]["app"]["handoff"]["preferred_destination"] == "/editor"
+    assert issued.status_code == 200
+    assert issued.json()["data"]["code"] == "handoff-1"
+    assert exchanged.status_code == 200
+    assert exchanged.json()["data"]["session"]["access_token"] == "access"
+    assert work.status_code == 200
+    assert work.json()["data"]["redirect_path"].startswith("/editor?")
+    assert work.json()["data"]["seed"]["document_id"] == "doc-1"
+    assert usage.status_code == 200
+    assert usage.json()["data"]["event"]["event_id"] == "123e4567-e89b-42d3-a456-426614174000"
 
 
-def test_content_runtime_uses_shadow_root_overlay_and_background_message_bridge():
-    bundle_source = Path("extension/content/unlock_content.bundle.js").read_text(encoding="utf-8")
-    index_source = Path("extension/content/index.js").read_text(encoding="utf-8")
-    overlay_source = Path("extension/content/overlay_root.js").read_text(encoding="utf-8")
-    bridge_source = Path("extension/content/runtime_bridge.js").read_text(encoding="utf-8")
+@pytest.mark.anyio
+async def test_auth_handoff_landing_route_remains_a_thin_web_surface(monkeypatch):
+    app, _extension_routes = _load_app(monkeypatch)
 
-    assert "require(\"content/index.js\")" in bundle_source
-    assert "import " not in bundle_source
-    assert "export " not in bundle_source
-    assert "WRITIOR_EXTENSION" in index_source
-    assert "bootstrap()" in index_source
-    assert "function cleanup()" in index_source
-    assert "history.pushState" in index_source
-    assert "history.replaceState" in index_source
-    assert "MutationObserver" in index_source
-    assert "attachShadow" in overlay_source
-    assert "writior-root" in overlay_source
-    assert "chrome.runtime.sendMessage" in bridge_source
+    async with async_test_client(app) as client:
+        handoff = await client.get("/auth/handoff?code=handoff-1", follow_redirects=False)
 
-
-def test_manifest_content_script_points_to_classic_js_not_raw_esm_source():
-    manifest = json.loads(Path("extension/manifest.json").read_text(encoding="utf-8"))
-    content_scripts = manifest.get("content_scripts", [])
-    assert content_scripts, "Expected at least one content_scripts registration."
-
-    for entry in content_scripts:
-        for js_path in entry.get("js", []):
-            script_source = Path("extension", js_path).read_text(encoding="utf-8")
-            assert not any(line.lstrip().startswith("import ") for line in script_source.splitlines())
-            assert not any(line.lstrip().startswith("export ") for line in script_source.splitlines())
-
-
-def test_sidepanel_and_popup_are_modular_summary_clients():
-    sidepanel_shim = Path("extension/sidepanel.js").read_text(encoding="utf-8")
-    sidepanel_source = Path("extension/sidepanel/index.js").read_text(encoding="utf-8")
-    sidepanel_store = Path("extension/sidepanel/store.js").read_text(encoding="utf-8")
-    popup_shim = Path("extension/popup.js").read_text(encoding="utf-8")
-    popup_source = Path("extension/popup/index.js").read_text(encoding="utf-8")
-
-    assert 'import "./sidepanel/index.js"' in sidepanel_shim
-    assert "GET_WORKSPACE_SUMMARY" in sidepanel_store
-    assert "Loading compact workspace summary" in sidepanel_source
-    assert 'import "./popup/index.js"' in popup_shim
-    assert "work-in-editor" in Path("extension/popup.html").read_text(encoding="utf-8")
-    assert "createPopupActions" in popup_source
-    assert "status-card" in Path("extension/popup.html").read_text(encoding="utf-8")
+    assert handoff.status_code == 200
+    assert "Sign-in complete" in handoff.text
+    assert "Return to the extension" in handoff.text

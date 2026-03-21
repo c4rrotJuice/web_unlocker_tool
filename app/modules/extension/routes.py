@@ -200,6 +200,8 @@ async def handoff_landing(
     code: str | None = Query(default=None, min_length=1),
     attempt: str | None = Query(default=None, min_length=1),
 ):
+    # Compatibility seam only: the new extension should talk to backend auth/handoff
+    # endpoints directly and must not depend on this page for required session logic.
     return templates.TemplateResponse(
         request,
         "auth_handoff.html",

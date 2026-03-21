@@ -55,6 +55,11 @@
     </div>
   </main>
 
+  <!--
+    Compatibility seam only.
+    The new extension must use backend auth handoff endpoints directly and must not
+    depend on this page's injected bridge behavior as required architecture.
+  -->
   <script>
     window.WRITIOR_SUPABASE_URL = {{ supabase_url | tojson }};
     window.WRITIOR_SUPABASE_ANON_KEY = {{ supabase_key | tojson }};
@@ -99,6 +104,7 @@
           setStatus("Extension bridge unavailable. Reopen the extension and retry sign-in.", true);
           return;
         }
+        // Legacy bridge path kept only for older web-tab handoff behavior.
         chrome.runtime.sendMessage(
           { type: "AUTH_RESTORE", payload: { code: handoffCode } },
           async (response) => {

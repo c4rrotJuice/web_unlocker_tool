@@ -39,6 +39,11 @@ def test_extension_backend_contract_map_is_owned_by_backend_modules():
 def test_auth_handoff_template_stays_generic_and_backend_terminated():
     template = _read("app/templates/auth_handoff.html")
 
+    assert "Compatibility seam only." in template
+    assert "new extension must use backend auth handoff endpoints directly" in template
+    assert "chrome.runtime.sendMessage" in template
+    assert "auth.setSession" in template
+    assert "web_auth_client_missing" in template
     assert "Retry sign-in" in template
     assert "Missing handoff details" in template
     assert "Waiting for extension bridge timed out" not in template

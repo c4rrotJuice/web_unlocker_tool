@@ -432,6 +432,10 @@
 
       let currentUserId = null;
       let currentUserLoaded = false;
+      let paddleInitPromise = null;
+      let paddleInitError = null;
+      let paddleReady = false;
+      let paddlePublicConfig = null;
       const checkoutStatus = document.getElementById("checkout-status");
       const checkoutSuccessUrl = new URL("/pricing/success", window.location.origin).toString();
       const checkoutSuccessMarker = "checkout=success";
@@ -456,6 +460,63 @@
         checkoutStatus.hidden = false;
         checkoutStatus.dataset.tone = tone;
         checkoutStatus.textContent = message;
+      }
+
+      async function loadPublicConfig() {
+        if (paddlePublicConfig) {
+          return paddlePublicConfig;
+        }
+        const response = await fetch("/api/public-config", {
+          method: "GET",
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) {
+          throw new Error("Unable to load Paddle configuration.");
+        }
+        const data = await response.json();
+        paddlePublicConfig = {
+          clientSideToken: data?.paddle_client_side_token || null,
+          environment: data?.paddle_environment || "live",
+        };
+        return paddlePublicConfig;
+      }
+
+      function initializePaddle(config) {
+        if (paddleReady) {
+          return;
+        }
+        if (!window.Paddle || typeof window.Paddle.Initialize !== "function") {
+          throw new Error("Paddle checkout widget is unavailable.");
+        }
+        if (!config?.clientSideToken) {
+          throw new Error("Paddle client-side token is not configured.");
+        }
+        if (config.environment === "sandbox" && window.Paddle.Environment?.set) {
+          window.Paddle.Environment.set("sandbox");
+        }
+        window.Paddle.Initialize({
+          token: config.clientSideToken,
+        });
+        paddleReady = true;
+      }
+
+      async function ensurePaddleInitialized() {
+        if (paddleReady) {
+          return;
+        }
+        if (paddleInitError) {
+          throw paddleInitError;
+        }
+        if (!paddleInitPromise) {
+          paddleInitPromise = (async () => {
+            const config = await loadPublicConfig();
+            initializePaddle(config);
+          })().catch((err) => {
+            paddleInitError = err;
+            throw err;
+          });
+        }
+        return paddleInitPromise;
       }
 
       async function authJson(path, options = {}) {
@@ -509,6 +570,15 @@
       document.addEventListener("DOMContentLoaded", async () => {
         setActiveInterval("monthly");
         await loadCurrentUser();
+        try {
+          await ensurePaddleInitialized();
+        } catch (err) {
+          console.error("❌ Failed to initialize Paddle:", err);
+          showCheckoutStatus(
+            "Billing checkout is not available yet because Paddle could not be initialized.",
+            "error",
+          );
+        }
         if (window.location.search.includes(checkoutSuccessMarker)) {
           await refreshEntitlementState();
           window.history.replaceState({}, "", "/pricing");
@@ -526,6 +596,7 @@
         }
 
         try {
+          await ensurePaddleInitialized();
           const data = await authJson("/api/billing/checkout", {
             method: "POST",
             credentials: "include",

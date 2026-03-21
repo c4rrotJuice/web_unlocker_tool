@@ -50,6 +50,8 @@ def create_app() -> FastAPI:
             "cors_origins": list(settings.cors_origins),
             "supabase_url": settings.supabase_url,
             "supabase_anon_key": settings.supabase_anon_key,
+            "paddle_client_side_token": settings.paddle_client_side_token,
+            "paddle_environment": settings.paddle_environment,
         }
 
     app.mount("/static", StaticFiles(directory=static_dir), name="static")

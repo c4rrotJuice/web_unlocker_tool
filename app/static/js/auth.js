@@ -5,6 +5,31 @@
   let refreshInFlight = null;
   let resumeRefreshBound = false;
   let protectedRequestObserver = null;
+  let cachedSession = null;
+  const runtimeDebugEnabled = !!window.__WRITIOR_RUNTIME_DEBUG__;
+  const runtimeDebugCounts = {
+    clientCreated: 0,
+    subscriberRegistered: 0,
+    getSessionCalls: 0,
+    waitForSessionReadyCalls: 0,
+    authFetchCalls: 0,
+    authJsonCalls: 0,
+  };
+
+  function debugAuth(event, details = {}) {
+    if (!runtimeDebugEnabled || typeof console === "undefined" || typeof console.debug !== "function") {
+      return;
+    }
+    console.debug("[writior:auth]", event, details);
+  }
+
+  function rememberSession(session) {
+    cachedSession = session && session.access_token ? { ...session } : null;
+  }
+
+  function clearSessionCache() {
+    cachedSession = null;
+  }
 
   function readConfigFromWindow() {
     return {
@@ -64,6 +89,8 @@
           window.WRITIOR_SUPABASE_URL = config.url;
           window.WRITIOR_SUPABASE_ANON_KEY = config.key;
           supabaseClient = window.supabase.createClient(config.url, config.key);
+          runtimeDebugCounts.clientCreated += 1;
+          debugAuth("client_created", { count: runtimeDebugCounts.clientCreated });
         }
 
         return supabaseClient;
@@ -73,38 +100,78 @@
     return bootPromise;
   }
 
-  async function getSession() {
+  async function getSession({ forceRefresh = false } = {}) {
+    runtimeDebugCounts.getSessionCalls += 1;
+    debugAuth("get_session_enter", {
+      count: runtimeDebugCounts.getSessionCalls,
+      cached: !!cachedSession?.access_token,
+      forceRefresh,
+      refreshPending: !!refreshInFlight,
+    });
+    if (!forceRefresh && cachedSession?.access_token) {
+      debugAuth("get_session_cache_hit", { count: runtimeDebugCounts.getSessionCalls });
+      return {
+        data: { session: cachedSession },
+        error: null,
+      };
+    }
     if (sessionReadInFlight) {
       return sessionReadInFlight;
     }
     sessionReadInFlight = (async () => {
-    const client = await ensureSupabaseClient();
-    if (!client) {
-      return {
-        data: { session: null },
-        error: new Error("Supabase client unavailable"),
-      };
-    }
-    const session = await client.auth.getSession();
-    if (session?.data?.session?.access_token || !client.auth.refreshSession) {
-      return session;
-    }
-    if (!refreshInFlight) {
-      refreshInFlight = client.auth.refreshSession().finally(() => {
-        refreshInFlight = null;
+      const client = await ensureSupabaseClient();
+      if (!client) {
+        return {
+          data: { session: null },
+          error: new Error("Supabase client unavailable"),
+        };
+      }
+      const session = await client.auth.getSession();
+      const currentSession = session?.data?.session || null;
+      rememberSession(currentSession);
+      if (currentSession?.access_token || !client.auth.refreshSession) {
+        debugAuth("get_session_exit", {
+          count: runtimeDebugCounts.getSessionCalls,
+          cached: !!cachedSession?.access_token,
+          refreshed: false,
+        });
+        return session;
+      }
+      if (!refreshInFlight) {
+        refreshInFlight = client.auth.refreshSession().finally(() => {
+          refreshInFlight = null;
+        });
+      }
+      const refreshed = await refreshInFlight.catch((error) => ({ error }));
+      const refreshedSession = refreshed?.data?.session || null;
+      if (refreshedSession?.access_token) {
+        rememberSession(refreshedSession);
+        debugAuth("get_session_exit", {
+          count: runtimeDebugCounts.getSessionCalls,
+          cached: !!cachedSession?.access_token,
+          refreshed: true,
+        });
+        return refreshed;
+      }
+      if (refreshed?.error) {
+        clearSessionCache();
+        debugAuth("get_session_exit", {
+          count: runtimeDebugCounts.getSessionCalls,
+          cached: false,
+          refreshed: false,
+          error: refreshed.error?.message || "refresh_failed",
+        });
+        return {
+          data: { session: null },
+          error: refreshed.error,
+        };
+      }
+      debugAuth("get_session_exit", {
+        count: runtimeDebugCounts.getSessionCalls,
+        cached: !!cachedSession?.access_token,
+        refreshed: false,
       });
-    }
-    const refreshed = await refreshInFlight.catch((error) => ({ error }));
-    if (refreshed?.data?.session?.access_token) {
-      return refreshed;
-    }
-    if (refreshed?.error) {
-      return {
-        data: { session: null },
-        error: refreshed.error,
-      };
-    }
-    return session;
+      return session;
     })().finally(() => {
       sessionReadInFlight = null;
     });
@@ -119,7 +186,9 @@
         error: new Error("Supabase client unavailable"),
       };
     }
-    return client.auth.setSession(tokens);
+    const result = await client.auth.setSession(tokens);
+    rememberSession(result?.data?.session || null);
+    return result;
   }
 
   async function onAuthStateChange(callback) {
@@ -127,7 +196,16 @@
     if (!client) {
       return { data: { subscription: { unsubscribe() {} } }, error: null };
     }
-    return client.auth.onAuthStateChange(callback);
+    runtimeDebugCounts.subscriberRegistered += 1;
+    debugAuth("subscriber_registered", { count: runtimeDebugCounts.subscriberRegistered });
+    return client.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT" || event === "TOKEN_REFRESH_FAILED") {
+        clearSessionCache();
+      } else if (session?.access_token) {
+        rememberSession(session);
+      }
+      return callback(event, session);
+    });
   }
 
   async function getAccessToken() {
@@ -146,7 +224,12 @@
   }
 
   async function waitForSessionReady({ timeoutMs = 900 } = {}) {
-    void timeoutMs;
+    runtimeDebugCounts.waitForSessionReadyCalls += 1;
+    debugAuth("wait_for_session_ready", {
+      count: runtimeDebugCounts.waitForSessionReadyCalls,
+      timeoutMs,
+      cached: !!cachedSession?.access_token,
+    });
     return getSession();
   }
 
@@ -214,13 +297,19 @@
   }
 
   async function authFetch(url, options = {}) {
-    const sessionResult = await waitForSessionReady();
-    const token = sessionResult?.data?.session?.access_token || null;
+    runtimeDebugCounts.authFetchCalls += 1;
+    let token = cachedSession?.access_token || null;
+    let sessionError = null;
     if (!token) {
-      const errorMessage = sessionResult?.error?.message || "";
+      const sessionResult = await waitForSessionReady();
+      token = sessionResult?.data?.session?.access_token || null;
+      sessionError = sessionResult?.error || null;
+    }
+    if (!token) {
+      const errorMessage = sessionError?.message || "Missing bearer token.";
       const code = /expired/i.test(String(errorMessage)) ? "expired_token" : "missing_credentials";
       throw createAuthSessionError(code, code === "expired_token" ? "Session expired. Please sign in again." : "Missing bearer token.", {
-        payload: sessionResult?.error ? { error: { message: errorMessage } } : null,
+        payload: sessionError ? { error: { message: errorMessage } } : null,
       });
     }
     const headers = new Headers(options.headers || {});
@@ -239,6 +328,7 @@
   }
 
   async function authJson(url, options = {}, { unwrapEnvelope = true } = {}) {
+    runtimeDebugCounts.authJsonCalls += 1;
     const res = await authFetch(url, options);
     const payload = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -266,7 +356,7 @@
       return;
     }
     const refresh = () => {
-      void getSession().catch(() => {});
+      void getSession({ forceRefresh: true }).catch(() => {});
     };
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) {
@@ -285,6 +375,9 @@
   window.webUnlockerAuth = {
     get client() {
       return supabaseClient;
+    },
+    get sessionSnapshot() {
+      return cachedSession;
     },
     ready: ensureSupabaseClient,
     getSession,

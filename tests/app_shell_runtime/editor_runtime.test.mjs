@@ -64,7 +64,7 @@ function installWindow(overrides = {}) {
   return globalThis.window;
 }
 
-function loadAuthRuntime({ client, fetchImpl }) {
+function loadAuthRuntime({ client, fetchImpl, createClientHook = null }) {
   const listeners = new Map();
   const documentListeners = new Map();
   const window = {
@@ -72,6 +72,7 @@ function loadAuthRuntime({ client, fetchImpl }) {
     WRITIOR_SUPABASE_ANON_KEY: "anon-key",
     supabase: {
       createClient() {
+        createClientHook?.();
         return client;
       },
     },
@@ -137,6 +138,116 @@ function loadAuthRuntime({ client, fetchImpl }) {
         listener(event);
       }
     },
+  };
+}
+
+function loadThemeRuntime({
+  authJson,
+  onAuthStateChange,
+  readyState = "complete",
+  localStorageSeed = {},
+  themeToggle = makeElement(),
+  matchMediaMatches = false,
+} = {}) {
+  const listeners = new Map();
+  const storage = new Map(Object.entries(localStorageSeed));
+  const documentElement = {
+    dataset: {},
+    style: {},
+    classList: {
+      toggle() {},
+    },
+  };
+  const document = {
+    readyState,
+    documentElement,
+    addEventListener(type, listener) {
+      const entries = listeners.get(type) || [];
+      entries.push(listener);
+      listeners.set(type, entries);
+    },
+    getElementById(id) {
+      if (id === "themeToggle") return themeToggle;
+      return null;
+    },
+  };
+  const window = {
+    localStorage: {
+      getItem(key) {
+        return storage.has(key) ? storage.get(key) : null;
+      },
+      setItem(key, value) {
+        storage.set(key, String(value));
+      },
+    },
+    matchMedia() {
+      return {
+        matches: matchMediaMatches,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+      };
+    },
+    webUnlockerAuth: {
+      authJson,
+      onAuthStateChange,
+      isAuthSessionError() {
+        return false;
+      },
+    },
+    addEventListener() {},
+    removeEventListener() {},
+    document,
+    console,
+    setTimeout: globalThis.setTimeout.bind(globalThis),
+    clearTimeout: globalThis.clearTimeout.bind(globalThis),
+  };
+  const context = {
+    window,
+    document,
+    console,
+    Error,
+    setTimeout: globalThis.setTimeout.bind(globalThis),
+    clearTimeout: globalThis.clearTimeout.bind(globalThis),
+    URLSearchParams,
+  };
+  context.globalThis = context;
+  vm.runInNewContext(readFileSync("app/static/js/theme.js", "utf8"), context, { filename: "app/static/js/theme.js" });
+  return {
+    window: context.window,
+    document,
+    themeToggle,
+    storage,
+    emitDOMContentLoaded() {
+      for (const listener of listeners.get("DOMContentLoaded") || []) {
+        listener({ type: "DOMContentLoaded" });
+      }
+    },
+  };
+}
+
+function createSidebarDom() {
+  const shell = makeElement();
+  shell.dataset = {};
+  const sidebar = makeElement();
+  const sidebarToggle = makeElement();
+  const sidebarAutoHideToggle = makeElement();
+  const mobileToggle = makeElement();
+  const backdrop = makeElement();
+  const body = makeElement();
+  const documentElement = { dataset: {} };
+  const navLink = makeElement({ getAttribute() { return null; } });
+  sidebar.querySelectorAll = () => [navLink];
+  return {
+    shell,
+    sidebar,
+    sidebarToggle,
+    sidebarAutoHideToggle,
+    mobileToggle,
+    backdrop,
+    body,
+    documentElement,
   };
 }
 
@@ -546,6 +657,297 @@ test("concurrent auth fetches share a single session lookup", async () => {
 
   assert.equal(getSessionCalls, 1);
   assert.equal(refreshSessionCalls, 1);
+});
+
+test("auth fetch reuses a cached session snapshot after bootstrap", async () => {
+  let createClientCalls = 0;
+  let getSessionCalls = 0;
+  const runtime = loadAuthRuntime({
+    client: {
+      auth: {
+        async getSession() {
+          getSessionCalls += 1;
+          return {
+            data: {
+              session: {
+                access_token: "token-cached",
+                refresh_token: "refresh-cached",
+              },
+            },
+            error: null,
+          };
+        },
+        async refreshSession() {
+          return { data: { session: null }, error: null };
+        },
+        async onAuthStateChange() {
+          return { data: { subscription: { unsubscribe() {} } }, error: null };
+        },
+        async setSession() {
+          return { data: { session: null }, error: null };
+        },
+        async signOut() {},
+      },
+    },
+    fetchImpl: async () => okResponse({ ok: true }),
+    createClientHook() {
+      createClientCalls += 1;
+    },
+  });
+
+  await runtime.window.webUnlockerAuth.getAccessToken();
+  await runtime.window.webUnlockerAuth.authFetch("/api/docs", {
+    headers: { Accept: "application/json" },
+  });
+  await runtime.window.webUnlockerAuth.authFetch("/api/docs", {
+    headers: { Accept: "application/json" },
+  });
+
+  assert.equal(createClientCalls, 1);
+  assert.equal(getSessionCalls, 1);
+});
+
+test("auth state callbacks can refresh preferences without re-entering session reads", async () => {
+  let getSessionCalls = 0;
+  let authCallback = null;
+  const runtime = loadAuthRuntime({
+    client: {
+      auth: {
+        async getSession() {
+          getSessionCalls += 1;
+          return {
+            data: {
+              session: {
+                access_token: "token-stable",
+                refresh_token: "refresh-stable",
+              },
+            },
+            error: null,
+          };
+        },
+        async refreshSession() {
+          return { data: { session: null }, error: null };
+        },
+        async onAuthStateChange(callback) {
+          authCallback = callback;
+          return { data: { subscription: { unsubscribe() {} } }, error: null };
+        },
+        async setSession() {
+          return { data: { session: null }, error: null };
+        },
+        async signOut() {},
+      },
+    },
+    fetchImpl: async () => okResponse({ ok: true }),
+  });
+
+  await runtime.window.webUnlockerAuth.getAccessToken();
+  await runtime.window.webUnlockerAuth.onAuthStateChange(async (event, session) => {
+    if (event === "SIGNED_IN" && session?.access_token) {
+      await runtime.window.webUnlockerAuth.authJson("/api/preferences", { headers: { Accept: "application/json" } });
+    }
+  });
+  await authCallback("SIGNED_IN", {
+    access_token: "token-stable",
+    refresh_token: "refresh-stable",
+  });
+  await runtime.window.webUnlockerAuth.authJson("/api/preferences", { headers: { Accept: "application/json" } });
+
+  assert.equal(getSessionCalls, 1);
+});
+
+test("theme init and sync are singleflight across repeated startup calls", async () => {
+  let getCalls = 0;
+  let subscriptionCalls = 0;
+  let releaseGet = null;
+  const getGate = new Promise((resolve) => {
+    releaseGet = resolve;
+  });
+  const runtime = loadThemeRuntime({
+    authJson: async (path, options = {}) => {
+      if (path === "/api/preferences" && options.method === "GET") {
+        getCalls += 1;
+        await getGate;
+        return { theme: "dark" };
+      }
+      return { theme: "dark" };
+    },
+    onAuthStateChange: async () => {
+      subscriptionCalls += 1;
+      return { data: { subscription: { unsubscribe() {} } }, error: null };
+    },
+    readyState: "complete",
+  });
+
+  const second = runtime.window.webUnlockerTheme.initTheme();
+  releaseGet();
+  await second;
+
+  assert.equal(getCalls, 1);
+  assert.equal(subscriptionCalls, 1);
+  assert.equal(runtime.themeToggle.dataset.bound, "true");
+});
+
+test("sidebar init does not register duplicate auth listeners on repeated startup", async () => {
+  let preferenceGets = 0;
+  let subscriptionCalls = 0;
+  let releaseGet = null;
+  const getGate = new Promise((resolve) => {
+    releaseGet = resolve;
+  });
+  const dom = createSidebarDom();
+  const documentListeners = new Map();
+  globalThis.document = {
+    ...dom,
+    body: dom.body,
+    documentElement: dom.documentElement,
+    getElementById(id) {
+      return {
+        "app-shell": dom.shell,
+        "app-sidebar": dom.sidebar,
+        "app-sidebar-toggle": dom.sidebarToggle,
+        "app-sidebar-autohide-toggle": dom.sidebarAutoHideToggle,
+        "app-sidebar-mobile-toggle": dom.mobileToggle,
+        "app-sidebar-backdrop": dom.backdrop,
+      }[id] || null;
+    },
+    addEventListener(type, listener) {
+      const entries = documentListeners.get(type) || [];
+      entries.push(listener);
+      documentListeners.set(type, entries);
+    },
+    removeEventListener(type, listener) {
+      const entries = documentListeners.get(type) || [];
+      documentListeners.set(type, entries.filter((entry) => entry !== listener));
+    },
+  };
+  globalThis.window = {
+    document: globalThis.document,
+    localStorage: {
+      getItem() {
+        return null;
+      },
+      setItem() {},
+    },
+    matchMedia() {
+      return {
+        matches: false,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+      };
+    },
+    addEventListener() {},
+    removeEventListener() {},
+    webUnlockerAuth: {
+      async authJson(path, options = {}) {
+        if (path === "/api/preferences" && options.method === "GET") {
+          preferenceGets += 1;
+          await getGate;
+          return { sidebar_collapsed: false, sidebar_auto_hide: false };
+        }
+        return {};
+      },
+      async onAuthStateChange(callback) {
+        subscriptionCalls += 1;
+        return { data: { subscription: { unsubscribe() {} } }, error: null };
+      },
+    },
+  };
+
+  const first = initSidebarShell({ page: "editor" });
+  const second = initSidebarShell({ page: "editor" });
+  releaseGet();
+  await first;
+  await second;
+
+  assert.equal(preferenceGets, 1);
+  assert.equal(subscriptionCalls, 1);
+  assert.equal(dom.shell.dataset.sidebarInitialized, "true");
+});
+
+test("autosave flush can wait for an auth bootstrap without deadlocking", async () => {
+  let getSessionCalls = 0;
+  let refreshSessionCalls = 0;
+  let fetchCalls = 0;
+  let releaseRefresh = null;
+  const refreshGate = new Promise((resolve) => {
+    releaseRefresh = resolve;
+  });
+  const runtime = loadAuthRuntime({
+    client: {
+      auth: {
+        async getSession() {
+          getSessionCalls += 1;
+          return { data: { session: null }, error: null };
+        },
+        async refreshSession() {
+          refreshSessionCalls += 1;
+          await refreshGate;
+          return {
+            data: {
+              session: {
+                access_token: "token-autosave",
+                refresh_token: "refresh-autosave",
+              },
+            },
+            error: null,
+          };
+        },
+        async onAuthStateChange() {
+          return { data: { subscription: { unsubscribe() {} } }, error: null };
+        },
+        async setSession() {
+          return { data: { session: null }, error: null };
+        },
+        async signOut() {},
+      },
+    },
+    fetchImpl: async (_url, options = {}) => {
+      fetchCalls += 1;
+      assert.equal(options.headers.get("Authorization"), "Bearer token-autosave");
+      return okResponse({ ok: true });
+    },
+  });
+  globalThis.window = runtime.window;
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft 1",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft 1\n" }] },
+    content_html: "<p>Draft 1</p>",
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  workspaceState.markDirty({ title: "Updated title" });
+  const autosave = createAutosaveController({
+    workspaceState,
+    workspaceApi: {
+      async updateDocument(documentId, payload) {
+        assert.equal(documentId, "doc-1");
+        return runtime.window.webUnlockerAuth.authJson("/api/docs/doc-1", {
+          method: "PATCH",
+          body: payload,
+        });
+      },
+    },
+    eventBus: { emit() {} },
+    snapshotProvider: () => ({ content_html: "<p>Updated title</p>" }),
+  });
+
+  const pending = autosave.flush();
+  await Promise.resolve();
+  assert.equal(fetchCalls, 0);
+  releaseRefresh();
+  await pending;
+
+  assert.equal(getSessionCalls, 1);
+  assert.equal(refreshSessionCalls, 1);
+  assert.equal(fetchCalls, 1);
+  assert.equal(workspaceState.getState().save_status, "saved");
 });
 
 test("auth resume hooks refresh the session on visibility change", async () => {

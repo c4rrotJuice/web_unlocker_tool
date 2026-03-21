@@ -4,9 +4,25 @@
   const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 
   let initialized = false;
+  let initInFlight = null;
   let mediaQueryList = null;
   let mediaQueryListenerAttached = false;
   let authSubscription = null;
+  let syncInFlight = null;
+  const runtimeDebugEnabled = !!window.__WRITIOR_RUNTIME_DEBUG__;
+  const runtimeDebugCounts = {
+    initCalls: 0,
+    syncCalls: 0,
+    authEvents: 0,
+    subscriptionRegistered: 0,
+  };
+
+  function debugTheme(event, details = {}) {
+    if (!runtimeDebugEnabled || typeof console === "undefined" || typeof console.debug !== "function") {
+      return;
+    }
+    console.debug("[writior:theme]", event, details);
+  }
 
   function isValidTheme(mode) {
     return VALID_THEMES.has(mode);
@@ -90,6 +106,12 @@
   }
 
   async function syncThemeFromDatabase() {
+    if (syncInFlight) {
+      return syncInFlight;
+    }
+    runtimeDebugCounts.syncCalls += 1;
+    debugTheme("sync_enter", { count: runtimeDebugCounts.syncCalls, cachedTheme: getStoredTheme() });
+    syncInFlight = (async () => {
     const localTheme = getStoredTheme();
 
     try {
@@ -114,7 +136,12 @@
         return;
       }
       console.error("Theme preference sync failed:", error);
+    } finally {
+      debugTheme("sync_exit", { count: runtimeDebugCounts.syncCalls });
+      syncInFlight = null;
     }
+    })();
+    return syncInFlight;
   }
 
   function attachSystemThemeListener() {
@@ -177,6 +204,18 @@
   }
 
   async function initTheme() {
+    runtimeDebugCounts.initCalls += 1;
+    debugTheme("init_enter", { count: runtimeDebugCounts.initCalls, initialized });
+    if (initialized && initInFlight) {
+      return initInFlight;
+    }
+    if (initialized) {
+      return { unsubscribe: () => authSubscription?.unsubscribe?.() };
+    }
+    if (initInFlight) {
+      return initInFlight;
+    }
+    initInFlight = (async () => {
     applyTheme(getStoredTheme());
 
     bindThemeToggle();
@@ -189,15 +228,23 @@
 
       if (window.webUnlockerAuth?.onAuthStateChange) {
         const { data: subscriptionData } = await window.webUnlockerAuth.onAuthStateChange(async (event) => {
-          if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+          runtimeDebugCounts.authEvents += 1;
+          debugTheme("auth_event", { count: runtimeDebugCounts.authEvents, event });
+          if (event === "SIGNED_IN") {
             await syncThemeFromDatabase();
           }
         });
+        runtimeDebugCounts.subscriptionRegistered += 1;
+        debugTheme("subscription_registered", { count: runtimeDebugCounts.subscriptionRegistered });
         authSubscription = subscriptionData?.subscription || null;
       }
     }
 
     return { unsubscribe: () => authSubscription?.unsubscribe?.() };
+    })().finally(() => {
+      initInFlight = null;
+    });
+    return initInFlight;
   }
 
   window.webUnlockerTheme = {

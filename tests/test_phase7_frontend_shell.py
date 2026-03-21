@@ -21,6 +21,7 @@ def _load_main(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "http://example.com")
     monkeypatch.setenv("SUPABASE_KEY", "anon")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
+    monkeypatch.setenv("PADDLE_CLIENT_SIDE_TOKEN", "test-client-token")
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("CORS_ORIGINS", "https://app.writior.com")
 
@@ -48,6 +49,8 @@ async def test_public_config_exposes_canonical_boot_keys(monkeypatch):
     assert payload["supabase_url"] == "http://example.com"
     assert payload["supabase_anon_key"] == "anon"
     assert payload["canonical_app_origin"] == "https://app.writior.com"
+    assert payload["paddle_client_side_token"] == "test-client-token"
+    assert payload["paddle_environment"] == "live"
 
 
 @pytest.mark.anyio

@@ -24,16 +24,25 @@ def _parse_int_env(name: str, default: int) -> int:
     return int(raw)
 
 
-def _resolve_paddle_api_base_url() -> str:
+def _resolve_paddle_api_settings() -> tuple[str, str]:
+    paddle_environment = (os.getenv("PADDLE_ENVIRONMENT") or "").strip().lower()
     explicit_base_url = (os.getenv("PADDLE_API_BASE_URL") or "").strip().rstrip("/")
     if explicit_base_url:
-        return explicit_base_url
+        if explicit_base_url not in {"https://api.paddle.com", "https://sandbox-api.paddle.com"}:
+            raise RuntimeError(
+                "PADDLE_API_BASE_URL must be https://api.paddle.com or https://sandbox-api.paddle.com."
+            )
+        inferred_environment = "sandbox" if explicit_base_url == "https://sandbox-api.paddle.com" else "live"
+        if paddle_environment and paddle_environment != inferred_environment:
+            raise RuntimeError(
+                "PADDLE_ENVIRONMENT does not match PADDLE_API_BASE_URL."
+            )
+        return explicit_base_url, inferred_environment
 
-    paddle_environment = (os.getenv("PADDLE_ENVIRONMENT") or "").strip().lower()
     if paddle_environment == "sandbox":
-        return "https://sandbox-api.paddle.com"
+        return "https://sandbox-api.paddle.com", "sandbox"
     if paddle_environment == "live" or not paddle_environment:
-        return "https://api.paddle.com"
+        return "https://api.paddle.com", "live"
     raise RuntimeError("PADDLE_ENVIRONMENT must be 'live' or 'sandbox'.")
 
 
@@ -57,7 +66,9 @@ class Settings:
     supabase_service_role_key: str | None
     paddle_webhook_secret: str | None
     paddle_api_key: str | None
+    paddle_client_side_token: str | None
     paddle_api_base_url: str
+    paddle_environment: str
     paddle_standard_monthly_price_id: str | None
     paddle_standard_yearly_price_id: str | None
     paddle_pro_monthly_price_id: str | None
@@ -88,6 +99,7 @@ def _validate_settings(settings: Settings) -> Settings:
         required = {
             "PADDLE_WEBHOOK_SECRET": settings.paddle_webhook_secret,
             "PADDLE_API_KEY": settings.paddle_api_key,
+            "PADDLE_CLIENT_SIDE_TOKEN": settings.paddle_client_side_token,
             "PADDLE_STANDARD_MONTHLY_PRICE_ID": settings.paddle_standard_monthly_price_id,
             "PADDLE_STANDARD_YEARLY_PRICE_ID": settings.paddle_standard_yearly_price_id,
             "PADDLE_PRO_MONTHLY_PRICE_ID": settings.paddle_pro_monthly_price_id,
@@ -110,6 +122,7 @@ def get_settings() -> Settings:
     migration_pack_dir = repo_root / "writior_migration_pack"
     trusted_proxy_cidrs = _parse_csv(os.getenv("TRUSTED_PROXY_CIDRS"))
     trusted_proxy_nets = tuple(ipaddress.ip_network(value, strict=False) for value in trusted_proxy_cidrs)
+    paddle_api_base_url, paddle_environment = _resolve_paddle_api_settings()
     settings = Settings(
         env=(os.getenv("ENV") or "dev").strip().lower(),
         supabase_url=(os.getenv("SUPABASE_URL") or "").strip() or None,
@@ -117,7 +130,9 @@ def get_settings() -> Settings:
         supabase_service_role_key=(os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip() or None,
         paddle_webhook_secret=(os.getenv("PADDLE_WEBHOOK_SECRET") or "").strip() or None,
         paddle_api_key=(os.getenv("PADDLE_API_KEY") or "").strip() or None,
-        paddle_api_base_url=_resolve_paddle_api_base_url(),
+        paddle_client_side_token=(os.getenv("PADDLE_CLIENT_SIDE_TOKEN") or "").strip() or None,
+        paddle_api_base_url=paddle_api_base_url,
+        paddle_environment=paddle_environment,
         paddle_standard_monthly_price_id=(os.getenv("PADDLE_STANDARD_MONTHLY_PRICE_ID") or "").strip() or None,
         paddle_standard_yearly_price_id=(os.getenv("PADDLE_STANDARD_YEARLY_PRICE_ID") or "").strip() or None,
         paddle_pro_monthly_price_id=(os.getenv("PADDLE_PRO_MONTHLY_PRICE_ID") or "").strip() or None,

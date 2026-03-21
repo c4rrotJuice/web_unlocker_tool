@@ -34,6 +34,9 @@ function nextFocusable(root) {
 }
 
 export async function initSidebarShell({ page }) {
+  if (window.document?.documentElement?.dataset?.sidebarInitialized === "true") {
+    return { unsubscribe() {} };
+  }
   const shell = document.getElementById("app-shell");
   const sidebar = document.getElementById("app-sidebar");
   const sidebarToggle = document.getElementById("app-sidebar-toggle");
@@ -43,6 +46,11 @@ export async function initSidebarShell({ page }) {
   if (!shell || !sidebar || !sidebarToggle || !mobileToggle || !backdrop || !sidebarAutoHideToggle) {
     return;
   }
+
+  if (shell.dataset.sidebarInitialized === "true") {
+    return { unsubscribe() {} };
+  }
+  shell.dataset.sidebarInitialized = "true";
 
   const storedCollapsed = readStoredBoolean(COLLAPSED_STORAGE_KEY);
   const storedAutoHide = readStoredBoolean(AUTO_HIDE_STORAGE_KEY);
@@ -56,6 +64,21 @@ export async function initSidebarShell({ page }) {
   };
 
   let syncInFlight = null;
+  let initInFlight = null;
+  const runtimeDebugEnabled = !!window.__WRITIOR_RUNTIME_DEBUG__;
+  const runtimeDebugCounts = {
+    initCalls: 0,
+    syncCalls: 0,
+    authEvents: 0,
+    subscriptionRegistered: 0,
+  };
+
+  function debugSidebar(event, details = {}) {
+    if (!runtimeDebugEnabled || typeof console === "undefined" || typeof console.debug !== "function") {
+      return;
+    }
+    console.debug("[writior:sidebar]", event, details);
+  }
   let mobileKeydownBound = false;
 
   const setBodyScrollLock = () => {
@@ -122,6 +145,8 @@ export async function initSidebarShell({ page }) {
     if (syncInFlight) {
       return syncInFlight;
     }
+    runtimeDebugCounts.syncCalls += 1;
+    debugSidebar("sync_enter", { count: runtimeDebugCounts.syncCalls });
     syncInFlight = (async () => {
       try {
         const preferences = await window.webUnlockerAuth?.authJson?.("/api/preferences", {
@@ -143,6 +168,7 @@ export async function initSidebarShell({ page }) {
       } catch (error) {
         // ignore startup sync failures
       } finally {
+        debugSidebar("sync_exit", { count: runtimeDebugCounts.syncCalls });
         syncInFlight = null;
       }
     })();
@@ -219,22 +245,35 @@ export async function initSidebarShell({ page }) {
     state.mobileMatch.addListener(mediaListener);
   }
 
-  if (window.webUnlockerAuth?.onAuthStateChange) {
-    try {
-      const { data } = await window.webUnlockerAuth.onAuthStateChange((eventName) => {
-        if (eventName === "SIGNED_IN" || eventName === "TOKEN_REFRESHED") {
-          syncFromRemotePreferences();
-        }
-      });
-      window.addEventListener("beforeunload", () => {
-        data?.subscription?.unsubscribe?.();
-      }, { once: true });
-    } catch (_error) {
-      // ignore auth state hookup errors
+  initInFlight = (async () => {
+    runtimeDebugCounts.initCalls += 1;
+    debugSidebar("init_enter", { count: runtimeDebugCounts.initCalls });
+    if (window.webUnlockerAuth?.onAuthStateChange) {
+      try {
+        const { data } = await window.webUnlockerAuth.onAuthStateChange((eventName) => {
+          runtimeDebugCounts.authEvents += 1;
+          debugSidebar("auth_event", { count: runtimeDebugCounts.authEvents, eventName });
+          if (eventName === "SIGNED_IN") {
+            syncFromRemotePreferences();
+          }
+        });
+        runtimeDebugCounts.subscriptionRegistered += 1;
+        debugSidebar("subscription_registered", { count: runtimeDebugCounts.subscriptionRegistered });
+        window.addEventListener("beforeunload", () => {
+          data?.subscription?.unsubscribe?.();
+        }, { once: true });
+      } catch (_error) {
+        // ignore auth state hookup errors
+      }
     }
-  }
 
-  applyState();
-  await syncFromRemotePreferences();
+    applyState();
+    await syncFromRemotePreferences();
+    debugSidebar("init_exit", { count: runtimeDebugCounts.initCalls });
+    return { unsubscribe() {} };
+  })().finally(() => {
+    initInFlight = null;
+  });
+
+  return initInFlight;
 }
-import { isAuthSessionError } from "../../shared/auth/session.js";

@@ -73,6 +73,9 @@ def test_editor_runtime_uses_canonical_authenticated_request_path_for_protected_
     assert "apiFetchJson(\"/api/editor/access\")" in capability_source
     assert 'authJson("/api/me"' in pricing_source
     assert 'authJson("/api/billing/checkout"' in pricing_source
+    assert "Paddle.Initialize({" in pricing_source
+    assert "ensurePaddleInitialized" in pricing_source
+    assert "loadPublicConfig" in pricing_source
     assert 'data?.user?.id' in pricing_source
     assert 'body: JSON.stringify({ tier: plan, interval })' in pricing_source
     assert "get_" + "paddle_token" not in pricing_source

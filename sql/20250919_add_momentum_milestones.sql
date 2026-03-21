@@ -13,8 +13,8 @@ create index if not exists user_milestones_user_id_awarded_at_idx
 create index if not exists unlock_history_user_id_unlocked_at_idx
   on public.unlock_history (user_id, unlocked_at desc);
 
-create index if not exists citations_user_id_cited_at_idx
-  on public.citations (user_id, cited_at desc);
+create index if not exists document_citations_user_id_attached_at_idx
+  on public.document_citations (user_id, attached_at desc);
 
 create or replace function public.get_unlock_days(p_user_id uuid)
 returns table(day date)
@@ -52,7 +52,7 @@ as $$
 $$;
 
 create or replace function public.get_monthly_citation_breakdown(p_user_id uuid, p_month date)
-returns table(format text, citations integer)
+returns table(style text, citation_count bigint)
 language sql
 stable
 as $$
@@ -60,12 +60,17 @@ as $$
     select p_month as month_start,
            (p_month + interval '1 month')::date as month_end
   )
-  select coalesce(format, 'unknown') as format,
-         count(*)::int as citations
-  from public.citations, month_window
-  where user_id = p_user_id
-    and cited_at >= month_window.month_start
-    and cited_at < month_window.month_end
-  group by format
-  order by citations desc;
+  select cr.style,
+         count(distinct dc.citation_id)::bigint as citation_count
+  from public.document_citations dc
+  join public.citation_instances ci
+    on ci.id = dc.citation_id
+  join public.citation_renders cr
+    on cr.citation_instance_id = ci.id, month_window
+  where dc.user_id = p_user_id
+    and dc.attached_at >= month_window.month_start
+    and dc.attached_at < month_window.month_end
+    and ci.user_id = p_user_id
+  group by cr.style
+  order by citation_count desc, cr.style asc;
 $$;

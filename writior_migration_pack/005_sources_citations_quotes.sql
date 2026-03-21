@@ -106,14 +106,28 @@ language sql
 security definer
 set search_path = public
 as $$
-  select cr.style, count(distinct cr.citation_instance_id)::bigint as citation_count
-  from public.citation_renders cr
-  join public.citation_instances ci
-    on ci.id = cr.citation_instance_id
-  where ci.user_id = p_user_id
-    and date(ci.created_at) between p_month_start and p_month_end
-  group by cr.style
-  order by citation_count desc, cr.style asc;
+  -- Count citations that were attached to documents during the month.
+  -- Each citation instance is bucketed by the canonical render styles available for that citation.
+  with attached_citations as (
+    select distinct dc.citation_id
+    from public.document_citations dc
+    where dc.user_id = p_user_id
+      and dc.attached_at >= p_month_start::timestamptz
+      and dc.attached_at < (p_month_end + interval '1 day')::timestamptz
+  ),
+  styled_citations as (
+    select distinct ac.citation_id, cr.style
+    from attached_citations ac
+    join public.citation_instances ci
+      on ci.id = ac.citation_id
+     and ci.user_id = p_user_id
+    join public.citation_renders cr
+      on cr.citation_instance_id = ci.id
+  )
+  select style, count(*)::bigint as citation_count
+  from styled_citations
+  group by style
+  order by citation_count desc, style asc;
 $$;
 
 commit;

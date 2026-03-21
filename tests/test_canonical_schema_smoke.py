@@ -40,3 +40,13 @@ def test_canonical_pack_allows_multiple_citations_per_source():
 
     assert "create table if not exists public.citation_instances" in citations_migration
     assert "citation_instances_user_id_source_id_key" not in citations_migration
+
+
+def test_monthly_citation_breakdown_uses_canonical_relation_tables():
+    citations_migration = Path("writior_migration_pack/005_sources_citations_quotes.sql").read_text(encoding="utf-8")
+
+    assert "create or replace function public.get_monthly_citation_breakdown" in citations_migration
+    assert "public.document_citations" in citations_migration
+    assert "public.citation_instances" in citations_migration
+    assert "public.citation_renders" in citations_migration
+    assert "public.citations" not in citations_migration

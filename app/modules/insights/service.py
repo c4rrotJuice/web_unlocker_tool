@@ -155,7 +155,7 @@ class InsightsService:
             month_end=bounds["next_month_date"] - timedelta(days=1),
         )
         data = [
-            serialize_citation_style_insight({"style": row.get("style"), "count": row.get("citation_count") or row.get("count")})
+            serialize_citation_style_insight({"style": row.get("style"), "count": row.get("citation_count")})
             for row in rows
             if row.get("style")
         ]

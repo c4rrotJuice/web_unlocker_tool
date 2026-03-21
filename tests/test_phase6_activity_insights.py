@@ -209,8 +209,8 @@ def _load_app(monkeypatch, *, tier: str = "standard"):
     from app.modules.insights import routes as insights_routes
     from app.modules.unlock import routes as unlock_routes
 
-    importlib.reload(core_auth)
     importlib.reload(core_config)
+    importlib.reload(core_auth)
     core_config.get_settings.cache_clear()
     core_auth.get_token_verifier.cache_clear()
     unlock_routes = importlib.reload(unlock_routes)

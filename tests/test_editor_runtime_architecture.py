@@ -72,10 +72,18 @@ def test_editor_runtime_uses_canonical_authenticated_request_path_for_protected_
     assert "apiFetchJson(" in research_source
     assert "apiFetchJson(\"/api/editor/access\")" in capability_source
     assert 'authJson("/api/me"' in pricing_source
-    assert 'authJson("/get_paddle_token"' in pricing_source
-    assert 'authJson("/create_paddle_checkout"' in pricing_source
+    assert 'authJson("/api/billing/checkout"' in pricing_source
+    assert 'data?.user?.id' in pricing_source
+    assert 'body: JSON.stringify({ tier: plan, interval })' in pricing_source
+    assert 'get_paddle_token' not in pricing_source
+    assert 'create_paddle_checkout' not in pricing_source
+    assert '/pricing/success' in pricing_source
+    assert 'checkout=success' in pricing_source
     assert "authHeaders" not in pricing_source
     assert "fetch(\"/api/me\"" not in pricing_source
+    assert "Quarterly" not in pricing_source
+    assert "/3months" not in pricing_source
+    assert "Pay Yearly" in pricing_source
     assert "visibilitychange" in auth_source
     assert "pageshow" in auth_source
     assert "waitForSessionReady" in auth_source

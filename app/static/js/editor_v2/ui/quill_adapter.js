@@ -25,6 +25,20 @@ function stripGrammarMarkers(html) {
   return next;
 }
 
+export function composeEditorDelta(currentDelta, changeDelta) {
+  if (typeof window === "undefined" || !window.Quill || typeof window.Quill.import !== "function") {
+    return currentDelta || { ops: [{ insert: "\n" }] };
+  }
+  const Delta = window.Quill.import("delta");
+  if (typeof Delta !== "function") {
+    return currentDelta || { ops: [{ insert: "\n" }] };
+  }
+  const base = new Delta(currentDelta || { ops: [{ insert: "\n" }] });
+  const change = new Delta(changeDelta || { ops: [] });
+  const composed = base.compose(change);
+  return { ops: Array.isArray(composed.ops) ? composed.ops.slice() : [] };
+}
+
 export function sanitizeEditorHtml(html) {
   if (!html) return "";
   if (typeof document === "undefined" || typeof document.createElement !== "function") {

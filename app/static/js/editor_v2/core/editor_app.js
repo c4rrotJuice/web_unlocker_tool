@@ -8,7 +8,7 @@ import { bindKeyboardShortcuts } from "./keyboard.js";
 import { createWorkspaceApi } from "../api/workspace_api.js";
 import { createResearchApi } from "../api/research_api.js";
 import { getEditorAccess } from "../api/capability_api.js";
-import { createQuillAdapter } from "../ui/quill_adapter.js";
+import { composeEditorDelta, createQuillAdapter } from "../ui/quill_adapter.js";
 import { getFocusedInlineEntity } from "../ui/inline_affordances.js";
 import { renderDocumentList, renderExplorerList } from "../ui/explorer_renderer.js";
 import { renderContextRail } from "../ui/context_rail_renderer.js";
@@ -104,9 +104,9 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     toolbarSelector: refs.toolbar,
     onTextChange: ({ delta, source }) => {
       if (source !== "user") return;
+      const nextDelta = composeEditorDelta(workspaceState.getState().active_document?.content_delta, delta);
       workspaceState.markDirty({
-        content_delta: quillAdapter.getContents(),
-        content_html: quillAdapter.getHTML(),
+        content_delta: nextDelta,
       });
       workspaceState.setSaveStatus("saving");
       autosaveController.schedule();
@@ -127,7 +127,14 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     },
   });
 
-  const autosaveController = createAutosaveController({ workspaceState, workspaceApi, eventBus });
+  const autosaveController = createAutosaveController({
+    workspaceState,
+    workspaceApi,
+    eventBus,
+    snapshotProvider: () => ({
+      content_html: quillAdapter.getHTML(),
+    }),
+  });
   const outlineController = createOutlineController({ refs, quillAdapter });
   const exportController = createExportController({ workspaceState, quillAdapter, eventBus });
   const checkpointController = createCheckpointController({ workspaceState, workspaceApi, refs, eventBus });

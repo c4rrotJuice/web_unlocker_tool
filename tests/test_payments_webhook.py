@@ -121,6 +121,10 @@ def _load_app(monkeypatch):
     monkeypatch.setenv("SUPABASE_ANON_KEY", "anon")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "secret")
+    monkeypatch.setenv("PADDLE_STANDARD_MONTHLY_PRICE_ID", "price_standard_monthly")
+    monkeypatch.setenv("PADDLE_STANDARD_YEARLY_PRICE_ID", "price_standard_yearly")
+    monkeypatch.setenv("PADDLE_PRO_MONTHLY_PRICE_ID", "price_pro_monthly")
+    monkeypatch.setenv("PADDLE_PRO_YEARLY_PRICE_ID", "price_pro_yearly")
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("CORS_ORIGINS", "https://app.writior.com")
     monkeypatch.setattr(supabase, "create_client", lambda url, key: DummyClient())
@@ -184,6 +188,45 @@ async def test_verified_subscription_event_mutates_only_canonical_billing_state(
         "auto_renew": True,
         "source": "paddle",
     }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("price_id", "expected_tier"),
+    [
+        ("price_standard_monthly", "standard"),
+        ("price_standard_yearly", "standard"),
+        ("price_pro_monthly", "pro"),
+        ("price_pro_yearly", "pro"),
+    ],
+)
+async def test_supported_price_ids_map_to_canonical_tiers(monkeypatch, price_id, expected_tier):
+    app, repo = _load_app(monkeypatch)
+    payload = {
+        "event_id": f"evt-{price_id}",
+        "event_type": "subscription.updated",
+        "occurred_at": "2026-03-17T00:00:00Z",
+        "data": {
+            "customer_id": "cust-1",
+            "subscription_id": "sub-1",
+            "status": "active",
+            "items": [{"price_id": price_id}],
+            "current_billing_period": {"ends_at": "2026-04-17T00:00:00Z"},
+            "custom_data": {"user_id": "user-1"},
+        },
+    }
+
+    async with async_test_client(app) as client:
+        response = await client.post(
+            "/api/webhooks/paddle",
+            headers={"Paddle-Signature": _signature("secret", payload)},
+            content=json.dumps(payload),
+        )
+
+    assert response.status_code == 200
+    assert repo.subscriptions["sub-1"]["tier"] == expected_tier
+    assert repo.subscriptions["sub-1"]["provider_price_id"] == price_id
+    assert repo.entitlement_updates[-1]["tier"] == expected_tier
 
 
 @pytest.mark.anyio

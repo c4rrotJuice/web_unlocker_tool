@@ -9,6 +9,7 @@ import logging
 from fastapi import Request
 
 from app.core.account_state import BillingCustomer, BillingSubscription
+from app.core.auth import RequestAuthContext
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.core.serialization import (
@@ -18,11 +19,14 @@ from app.core.serialization import (
     serialize_ok_envelope,
 )
 from app.modules.billing.repo import BillingRepository
+from app.routes.http import http_client
 
 
 logger = logging.getLogger(__name__)
 
-PRICE_ID_TO_TIER = {
+SUPPORTED_TIERS = {"standard", "pro"}
+SUPPORTED_INTERVALS = {"monthly", "yearly"}
+LEGACY_PRICE_ID_TO_TIER = {
     "pri_01kf77v5j5j1b0fkwb95p0wxew": "standard",
     "pri_01kf77xyfjdh0rr66caz2dnye7": "standard",
     "pri_01kf781jrxcwtg70bxky3316fr": "pro",
@@ -30,6 +34,7 @@ PRICE_ID_TO_TIER = {
 }
 PADDLE_ACTIVE_STATUSES = {"active", "trialing"}
 PADDLE_GRACE_STATUSES = {"past_due"}
+PADDLE_API_BASE_URL = "https://api.paddle.com"
 PADDLE_CANCEL_EVENTS = {
     "subscription.canceled",
     "subscription.cancelled",
@@ -49,18 +54,75 @@ class BillingWebhookError(AppError):
         super().__init__(code, message, status_code)
 
 
+class BillingCheckoutError(AppError):
+    def __init__(self, code: str, message: str, status_code: int = 400) -> None:
+        super().__init__(code, message, status_code)
+
+
+def _as_str(value: object | None) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None
+
+
 class BillingService:
     def __init__(self, *, repository: BillingRepository):
         self.repository = repository
+        self.settings = get_settings()
+
+    def _plan_catalog(self) -> dict[tuple[str, str], str | None]:
+        return {
+            ("standard", "monthly"): self.settings.paddle_standard_monthly_price_id,
+            ("standard", "yearly"): self.settings.paddle_standard_yearly_price_id,
+            ("pro", "monthly"): self.settings.paddle_pro_monthly_price_id,
+            ("pro", "yearly"): self.settings.paddle_pro_yearly_price_id,
+        }
+
+    def _legacy_plan_catalog(self) -> dict[str, tuple[str, str]]:
+        return {
+            "pri_01kf77v5j5j1b0fkwb95p0wxew": ("standard", "monthly"),
+            "pri_01kf77xyfjdh0rr66caz2dnye7": ("standard", "yearly"),
+            "pri_01kf781jrxcwtg70bxky3316fr": ("pro", "monthly"),
+            "pri_01kf7839fptpnr6wtgwcnkwe1r": ("pro", "yearly"),
+        }
+
+    def _resolve_price_id(self, tier: str, interval: str) -> str | None:
+        return self._plan_catalog().get((tier, interval))
+
+    def _resolve_tier_interval_from_price_id(self, price_id: str | None) -> tuple[str | None, str | None]:
+        if not price_id:
+            return None, None
+        for (tier, interval), configured_price_id in self._plan_catalog().items():
+            if configured_price_id and configured_price_id == price_id:
+                return tier, interval
+        legacy = self._legacy_plan_catalog().get(price_id)
+        if legacy:
+            return legacy
+        tier = LEGACY_PRICE_ID_TO_TIER.get(price_id)
+        if tier:
+            return tier, "monthly"
+        return None, None
+
+    def _missing_checkout_configuration(self) -> list[str]:
+        missing: list[str] = []
+        if not self.settings.paddle_api_key:
+            missing.append("PADDLE_API_KEY")
+        for env_name, price_id in (
+            ("PADDLE_STANDARD_MONTHLY_PRICE_ID", self.settings.paddle_standard_monthly_price_id),
+            ("PADDLE_STANDARD_YEARLY_PRICE_ID", self.settings.paddle_standard_yearly_price_id),
+            ("PADDLE_PRO_MONTHLY_PRICE_ID", self.settings.paddle_pro_monthly_price_id),
+            ("PADDLE_PRO_YEARLY_PRICE_ID", self.settings.paddle_pro_yearly_price_id),
+        ):
+            if not price_id:
+                missing.append(env_name)
+        return missing
 
     def status(self) -> dict[str, object]:
-        settings = get_settings()
         return serialize_module_status(
             module="billing",
-            contract=str(settings.migration_pack_dir),
+            contract=str(self.settings.migration_pack_dir),
             notes=[
                 "Billing reads come from billing_customers and billing_subscriptions only.",
                 "Billing webhook mutation is limited to canonical billing and entitlement tables.",
+                "Checkout initiation is server-authoritative through Paddle transactions.",
             ],
         )
 
@@ -97,8 +159,93 @@ class BillingService:
             )
         return serialize_ok_envelope(serialize_billing_subscription(subscription))
 
+    async def create_checkout(self, auth_context: RequestAuthContext, tier: str, interval: str) -> dict[str, object]:
+        if tier not in SUPPORTED_TIERS:
+            raise BillingCheckoutError("billing_checkout_invalid_tier", "Unsupported billing tier.", 422)
+        if interval not in SUPPORTED_INTERVALS:
+            raise BillingCheckoutError("billing_checkout_invalid_interval", "Unsupported billing interval.", 422)
+
+        missing = self._missing_checkout_configuration()
+        if missing:
+            raise BillingCheckoutError(
+                "billing_checkout_config_missing",
+                f"Missing billing configuration: {', '.join(missing)}",
+                500,
+            )
+
+        price_id = self._resolve_price_id(tier, interval)
+        if not price_id:
+            raise BillingCheckoutError(
+                "billing_checkout_price_missing",
+                f"No Paddle price id configured for {tier}/{interval}.",
+                500,
+            )
+
+        response = await http_client.post(
+            f"{PADDLE_API_BASE_URL}/transactions",
+            json={
+                "items": [
+                    {
+                        "price_id": price_id,
+                        "quantity": 1,
+                    }
+                ],
+                "collection_mode": "automatic",
+                "custom_data": {
+                    "user_id": auth_context.user_id,
+                    "tier": tier,
+                    "interval": interval,
+                    "email": auth_context.email,
+                },
+            },
+            headers={
+                "Authorization": f"Bearer {self.settings.paddle_api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        if response.status_code >= 400:
+            message = ""
+            try:
+                body = response.json()
+            except Exception:
+                body = None
+            if isinstance(body, dict):
+                message = str(body.get("error") or body.get("message") or body.get("detail") or "")
+            if not message:
+                message = response.text.strip() or "Paddle checkout creation failed."
+            raise BillingCheckoutError("billing_checkout_provider_error", message, response.status_code)
+
+        try:
+            payload = response.json()
+        except Exception as exc:
+            raise BillingCheckoutError("billing_checkout_provider_error", "Paddle checkout response was invalid.", 502) from exc
+
+        data = payload.get("data") if isinstance(payload, dict) else payload
+        if not isinstance(data, dict):
+            raise BillingCheckoutError("billing_checkout_provider_error", "Paddle checkout response was invalid.", 502)
+
+        transaction_id = _as_str(data.get("id"))
+        if not transaction_id:
+            raise BillingCheckoutError("billing_checkout_provider_error", "Paddle checkout response was missing a transaction id.", 502)
+
+        checkout_url = None
+        checkout = data.get("checkout")
+        if isinstance(checkout, dict):
+            checkout_url = _as_str(checkout.get("url"))
+
+        return serialize_ok_envelope(
+            {
+                "provider": "paddle",
+                "tier": tier,
+                "interval": interval,
+                "transaction_id": transaction_id,
+                "checkout_url": checkout_url,
+            }
+        )
+
     def _verify_signature(self, raw_body: bytes, signature_header: str | None) -> None:
-        secret = get_settings().paddle_webhook_secret
+        secret = self.settings.paddle_webhook_secret
         if not secret:
             raise BillingWebhookError("billing_webhook_secret_missing", "Billing webhook secret is not configured.", 500)
         normalized = (signature_header or "").replace(";", ",")
@@ -294,7 +441,9 @@ class BillingService:
             subscription_status = str(data.get("status") or "").strip().lower() or None
             entitlement_status = self._entitlement_status(event_type, subscription_status)
             price_id = self._extract_price_id(data)
-            tier = PRICE_ID_TO_TIER.get(price_id) or (existing_subscription.get("tier") if isinstance(existing_subscription, dict) else None)
+            tier, _interval = self._resolve_tier_interval_from_price_id(price_id)
+            if tier is None:
+                tier = existing_subscription.get("tier") if isinstance(existing_subscription, dict) else None
             period_end = self._normalize_timestamp(self._extract_period_end(data))
             cancel_at_period_end = bool(data.get("cancel_at_period_end") or data.get("scheduled_change"))
             if event_type in PADDLE_CANCEL_EVENTS:

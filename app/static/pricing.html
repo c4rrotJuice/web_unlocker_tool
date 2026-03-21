@@ -71,17 +71,18 @@
             Purpose-built plans for everything from light academic testing to
             high-volume publishing workflows.
           </p>
+          <p id="checkout-status" class="cs-text" hidden></p>
           <div class="cs-toggle-group">
-            <span id="cs-option1-1387" class="cs-plan">Pay Quarterly</span>
+            <span id="cs-option1-1387" class="cs-plan">Pay Monthly</span>
             <div class="cs-toggle" aria-label="click to switch plans pricing">
               <span aria-hidden="true" class="cs-toggle-switch"></span>
             </div>
-            <span id="cs-option2-1387" class="cs-plan">Pay Monthly</span>
+            <span id="cs-option2-1387" class="cs-plan">Pay Yearly</span>
           </div>
         </div>
 
         <!-- Monthly -->
-        <ul class="cs-card-group cs-option1">
+        <ul class="cs-card-group cs-option1" data-interval="monthly">
           <li class="cs-item">
             <div class="cs-flex">
               <span class="cs-package">Freemium — Starter</span>
@@ -185,7 +186,7 @@
               <p class="cs-value-line">Built for consistent academic productivity.</p>
               <a
                 href="javascript:void(0)"
-                onclick="openCheckout('standard', 'Monthly')"
+                onclick="openCheckout('standard', 'monthly')"
                 class="cs-button-transparent"
                 >Get Now</a
               >
@@ -244,7 +245,7 @@
               <p class="cs-value-line">Zero limits. Maximum workflow speed.</p>
               <a
                 href="javascript:void(0)"
-                onclick="openCheckout('pro', 'Monthly')"
+                onclick="openCheckout('pro', 'monthly')"
                 class="cs-button-transparent"
                 >Get Now</a
               >
@@ -252,13 +253,13 @@
           </li>
         </ul>
 
-        <!-- Annual -->
-        <ul class="cs-card-group cs-option2">
+        <!-- Yearly -->
+        <ul class="cs-card-group cs-option2" data-interval="yearly">
           <li class="cs-item cs-popular">
             <div class="cs-flex">
-              <span class="cs-package">Researcher Quarterly</span>
+              <span class="cs-package">Researcher Yearly</span>
               <span class="cs-price"
-                >$12 <span class="cs-duration">/3months</span></span
+                >$12 <span class="cs-duration">/Year</span></span
               >
               <div class="cs-tag">
                 <img
@@ -290,7 +291,7 @@
                       <li class="cs-li">Bookmarks &amp; history search</li>
                       <li class="cs-li">Monthly usage reports</li>
                       <li class="cs-li">Anti-bot protection support (Cloudscraper enabled/extension)</li>
-                      <li class="cs-li">Billed per 3 months</li>
+                      <li class="cs-li">Billed yearly</li>
                     </ul>
                   </details>
                 </div>
@@ -306,7 +307,7 @@
               <p class="cs-value-line">Built for consistent academic productivity.</p>
               <a
                 href="javascript:void(0)"
-                onclick="openCheckout('standard', 'Quarterly')"
+                onclick="openCheckout('standard', 'yearly')"
                 class="cs-button-transparent"
                 >Get Now</a
               >
@@ -314,9 +315,9 @@
           </li>
           <li class="cs-item">
             <div class="cs-flex">
-              <span class="cs-package">Professional Quarterly</span>
+              <span class="cs-package">Professional Yearly</span>
               <span class="cs-price"
-                >$20 <span class="cs-duration">/3months</span></span
+                >$20 <span class="cs-duration">/Year</span></span
               >
               <div class="cs-tag">
                 <img
@@ -349,7 +350,7 @@
                       <li class="cs-li">Custom citation templates</li>
                       <li class="cs-li">Modular citation builder</li>
                       <li class="cs-li">Unlimited document exports</li>
-                      <li class="cs-li">Billed per 3 months</li>
+                      <li class="cs-li">Billed yearly</li>
                     </ul>
                   </details>
                 </div>
@@ -365,7 +366,7 @@
               <p class="cs-value-line">Zero limits. Maximum workflow speed.</p>
               <a
                 href="javascript:void(0)"
-                onclick="openCheckout('pro', 'Quarterly')"
+                onclick="openCheckout('pro', 'yearly')"
                 class="cs-button-transparent"
                 >Get Now</a
               >
@@ -414,32 +415,48 @@
         "#pricing-1387 #cs-option2-1387",
       );
       const toggle = document.querySelector("#pricing-1387 .cs-toggle");
-      const cardGroup = Array.from(
+      const cardGroups = Array.from(
         document.querySelectorAll("#pricing-1387 .cs-card-group"),
       );
 
       toggle.addEventListener("click", () => {
-        cardGroup.forEach((item) => item.classList.toggle("cs-active"));
-        toggle.classList.toggle("active");
+        setActiveInterval(getActiveInterval() === "monthly" ? "yearly" : "monthly");
       });
       leftOption.addEventListener("click", () => {
-        cardGroup.forEach((item) => item.classList.remove("cs-active"));
-        toggle.classList.remove("active");
+        setActiveInterval("monthly");
       });
       rightOption.addEventListener("click", () => {
-        cardGroup.forEach((item) => item.classList.add("cs-active"));
-        toggle.classList.add("active");
+        setActiveInterval("yearly");
       });
       //===========================================================================================================================
 
-      const CONFIG = {
-        environment: "sandbox",
-      };
-
       let currentUserId = null;
-      let currentUserEmail = null;
-      let paddleReady = false;
-      let paddleInitError = null;
+      let currentUserLoaded = false;
+      const checkoutStatus = document.getElementById("checkout-status");
+      const checkoutSuccessUrl = new URL("/pricing/success", window.location.origin).toString();
+      const checkoutSuccessMarker = "checkout=success";
+
+      function getActiveInterval() {
+        const activeGroup = cardGroups.find((item) => item.classList.contains("cs-active"));
+        return activeGroup?.dataset.interval || "monthly";
+      }
+
+      function setActiveInterval(interval) {
+        const nextInterval = interval === "yearly" ? "yearly" : "monthly";
+        cardGroups.forEach((item) => {
+          item.classList.toggle("cs-active", item.dataset.interval === nextInterval);
+        });
+        toggle.classList.toggle("active", nextInterval === "yearly");
+      }
+
+      function showCheckoutStatus(message, tone = "info") {
+        if (!checkoutStatus) {
+          return;
+        }
+        checkoutStatus.hidden = false;
+        checkoutStatus.dataset.tone = tone;
+        checkoutStatus.textContent = message;
+      }
 
       async function authJson(path, options = {}) {
         return window.webUnlockerAuth?.authJson?.(path, options);
@@ -452,98 +469,105 @@
             credentials: "include",
             headers: { Accept: "application/json" },
           });
-          currentUserId = data?.user_id || null;
-          currentUserEmail = data?.email || null;
+          currentUserId = data?.user?.id || null;
         } catch (err) {
           console.error("❌ Failed to load user info:", err);
           currentUserId = null;
-          currentUserEmail = null;
+        } finally {
+          currentUserLoaded = true;
         }
       }
 
-      async function initPaddle() {
+      async function refreshEntitlementState() {
         try {
-          const data = await authJson("/get_paddle_token", {
+          const data = await authJson("/api/entitlements/current", {
             method: "GET",
             credentials: "include",
             headers: { Accept: "application/json" },
           });
-
-          if (!data.token) {
-            throw new Error("No Paddle token returned");
+          const entitlement = data?.entitlement || {};
+          if (entitlement.tier && entitlement.tier !== "free") {
+            showCheckoutStatus(
+              `Your ${entitlement.tier} subscription is active. Canonical entitlement state has been refreshed.`,
+              "success",
+            );
+            return;
           }
-
-          const paddleEnv = data.environment || CONFIG.environment;
-          Paddle.Environment.set(paddleEnv);
-          Paddle.Initialize({
-            token: data.token,
-            eventCallback: (event) => {
-              console.log("🔔 Paddle event:", event);
-            },
-          });
-
-          console.log("✅ Paddle initialized with backend token");
-          paddleReady = true;
+          showCheckoutStatus(
+            "Checkout completed. We are still waiting for Paddle webhook confirmation, so the tier may take a moment to update.",
+            "pending",
+          );
         } catch (err) {
-          paddleReady = false;
-          paddleInitError = err;
-          console.error("❌ Paddle init failed:", err);
+          console.error("❌ Failed to refresh entitlement state:", err);
+          showCheckoutStatus(
+            "Checkout completed, but we could not refresh entitlement state yet. Please reload in a moment.",
+            "pending",
+          );
         }
       }
 
       document.addEventListener("DOMContentLoaded", async () => {
+        setActiveInterval("monthly");
         await loadCurrentUser();
-        await initPaddle();
+        if (window.location.search.includes(checkoutSuccessMarker)) {
+          await refreshEntitlementState();
+          window.history.replaceState({}, "", "/pricing");
+        }
       });
       // Open checkout for a plan
-      function openCheckout(plan, cycle) {
-        if (!currentUserId) {
-          alert("Please log in before subscribing.");
-          window.location.href = "/auth";
-          return;
+      async function openCheckout(plan, cycle) {
+        const interval = (cycle || getActiveInterval() || "monthly").toLowerCase();
+        if (!currentUserLoaded) {
+          await loadCurrentUser();
         }
-        if (!paddleReady) {
-          alert(
-            "Billing isn't ready yet. Please refresh the page or try again later.",
-          );
-          if (paddleInitError) {
-            console.error("Paddle init error:", paddleInitError);
-          }
+        if (!currentUserId) {
+          window.location.href = `/auth?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
           return;
         }
 
-        (async () => {
-          try {
-            const data = await authJson("/create_paddle_checkout", {
-              method: "POST",
-              credentials: "include",
-              headers: {
-                "Content-Type": "application/json",
-                Accept: "application/json",
-              },
-              body: JSON.stringify({ plan, cycle }),
-            });
-            if (!data.transaction_id) {
-              throw new Error("Missing Paddle transaction ID");
-            }
-            Paddle.Checkout.open({
+        try {
+          const data = await authJson("/api/billing/checkout", {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify({ tier: plan, interval }),
+          });
+          if (data.checkout_url && typeof data.checkout_url === "string" && !data.transaction_id) {
+            window.location.href = data.checkout_url;
+            return;
+          }
+          if (!data.transaction_id) {
+            throw new Error("Missing Paddle transaction ID");
+          }
+          if (window.Paddle && typeof window.Paddle.Checkout?.open === "function") {
+            window.Paddle.Checkout.open({
               transactionId: data.transaction_id,
-              customer: currentUserEmail
-                ? { email: currentUserEmail }
-                : undefined,
               settings: {
                 theme: "light",
                 displayMode: "overlay",
-                successUrl: "https://citeunlock.choneize.com/success",
+                successUrl: checkoutSuccessUrl,
               },
             });
-          } catch (err) {
-            console.error("❌ Failed to open Paddle checkout:", err);
-            alert(
-              "We couldn't start the checkout. Please refresh and try again.",
-            );
+            return;
           }
-        })();
+          if (data.checkout_url) {
+            window.location.href = data.checkout_url;
+            return;
+          }
+          throw new Error("Missing Paddle checkout URL");
+        } catch (err) {
+          console.error("❌ Failed to open Paddle checkout:", err);
+          if (window.webUnlockerAuth?.isAuthSessionError?.(err)) {
+            window.location.href = `/auth?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+            return;
+          }
+          alert(
+            "We couldn't start the checkout. Please refresh and try again.",
+          );
+        }
       }
     </script>
       <script src="/static/js/nav.js"></script>

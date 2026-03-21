@@ -2,7 +2,7 @@ import { withTimeout } from "../core/async_operation.js";
 import { isAuthSessionError } from "../../shared/auth/session.js";
 import { getWorkspaceConflictSnapshot, isWorkspaceConflictError } from "../core/workspace_conflicts.js";
 
-export function createAutosaveController({ workspaceState, workspaceApi, eventBus }) {
+export function createAutosaveController({ workspaceState, workspaceApi, eventBus, snapshotProvider = null }) {
   let timer = null;
   let disposed = false;
   let requestSeq = 0;
@@ -38,6 +38,7 @@ export function createAutosaveController({ workspaceState, workspaceApi, eventBu
       return state.active_document;
     }
     if (inFlight) return inFlight;
+    const snapshot = typeof snapshotProvider === "function" ? snapshotProvider() || {} : {};
     requestSeq += 1;
     const currentSeq = requestSeq;
     workspaceState.setSaveStatus("saving");
@@ -50,7 +51,7 @@ export function createAutosaveController({ workspaceState, workspaceApi, eventBu
             revision: state.active_document.revision || state.active_document.updated_at,
             title: state.active_document.title,
             content_delta: state.active_document.content_delta,
-            content_html: state.active_document.content_html,
+            content_html: snapshot.content_html ?? state.active_document.content_html,
             project_id: state.active_document.project_id || null,
           }),
           { label: "Save" },

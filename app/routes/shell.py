@@ -65,6 +65,11 @@ async def pricing_redirect():
     return RedirectResponse(url="/static/pricing.html", status_code=307)
 
 
+@router.get("/pricing/success", response_class=HTMLResponse)
+async def pricing_success():
+    return RedirectResponse(url="/static/pricing.html?checkout=success", status_code=307)
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     return templates.TemplateResponse(

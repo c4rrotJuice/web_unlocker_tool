@@ -43,6 +43,11 @@ class Settings:
     supabase_anon_key: str | None
     supabase_service_role_key: str | None
     paddle_webhook_secret: str | None
+    paddle_api_key: str | None
+    paddle_standard_monthly_price_id: str | None
+    paddle_standard_yearly_price_id: str | None
+    paddle_pro_monthly_price_id: str | None
+    paddle_pro_yearly_price_id: str | None
     migration_pack_dir: Path
     schema_contract_source: str
     enable_docs: bool
@@ -65,8 +70,18 @@ def _validate_settings(settings: Settings) -> Settings:
             raise RuntimeError("CORS_ORIGINS must be configured in staging/prod.")
         if any(origin == "*" for origin in settings.cors_origins):
             raise RuntimeError("CORS_ORIGINS cannot contain '*'.")
-    if settings.env == "prod" and not settings.paddle_webhook_secret:
-        raise RuntimeError("PADDLE_WEBHOOK_SECRET must be configured in prod.")
+    if settings.env == "prod":
+        required = {
+            "PADDLE_WEBHOOK_SECRET": settings.paddle_webhook_secret,
+            "PADDLE_API_KEY": settings.paddle_api_key,
+            "PADDLE_STANDARD_MONTHLY_PRICE_ID": settings.paddle_standard_monthly_price_id,
+            "PADDLE_STANDARD_YEARLY_PRICE_ID": settings.paddle_standard_yearly_price_id,
+            "PADDLE_PRO_MONTHLY_PRICE_ID": settings.paddle_pro_monthly_price_id,
+            "PADDLE_PRO_YEARLY_PRICE_ID": settings.paddle_pro_yearly_price_id,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise RuntimeError(f"Missing required billing configuration in prod: {', '.join(missing)}")
     return settings
 
 
@@ -82,6 +97,11 @@ def get_settings() -> Settings:
         supabase_anon_key=((os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY") or "").strip() or None),
         supabase_service_role_key=(os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip() or None,
         paddle_webhook_secret=(os.getenv("PADDLE_WEBHOOK_SECRET") or "").strip() or None,
+        paddle_api_key=(os.getenv("PADDLE_API_KEY") or "").strip() or None,
+        paddle_standard_monthly_price_id=(os.getenv("PADDLE_STANDARD_MONTHLY_PRICE_ID") or "").strip() or None,
+        paddle_standard_yearly_price_id=(os.getenv("PADDLE_STANDARD_YEARLY_PRICE_ID") or "").strip() or None,
+        paddle_pro_monthly_price_id=(os.getenv("PADDLE_PRO_MONTHLY_PRICE_ID") or "").strip() or None,
+        paddle_pro_yearly_price_id=(os.getenv("PADDLE_PRO_YEARLY_PRICE_ID") or "").strip() or None,
         migration_pack_dir=migration_pack_dir,
         schema_contract_source=str(migration_pack_dir),
         enable_docs=(os.getenv("ENABLE_DOCS") or "true").strip().lower() in {"1", "true", "yes"},

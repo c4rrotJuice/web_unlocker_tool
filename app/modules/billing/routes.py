@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Request
 from app.core.auth import RequestAuthContext, require_request_auth_context
 from app.core.config import get_settings
 from app.modules.billing.repo import BillingRepository
+from app.modules.billing.schemas import BillingCheckoutRequest
 from app.modules.billing.service import BillingService
 from app.services.supabase_rest import SupabaseRestRepository
 
@@ -33,6 +34,14 @@ async def get_billing_subscription(
     auth_context: RequestAuthContext = Depends(require_request_auth_context),
 ) -> dict[str, object]:
     return await service.subscription(auth_context.user_id)
+
+
+@router.post("/api/billing/checkout")
+async def create_billing_checkout(
+    payload: BillingCheckoutRequest,
+    auth_context: RequestAuthContext = Depends(require_request_auth_context),
+) -> dict[str, object]:
+    return await service.create_checkout(auth_context, payload.tier, payload.interval)
 
 
 @router.post("/api/webhooks/paddle")

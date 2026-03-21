@@ -13,7 +13,7 @@ import { createNoteStore } from "../../app/static/js/editor_v2/research/note_sto
 import { createOutlineController } from "../../app/static/js/editor_v2/document/outline_controller.js";
 import { createDocumentController } from "../../app/static/js/editor_v2/document/document_controller.js";
 import { createAutosaveController } from "../../app/static/js/editor_v2/document/autosave_controller.js";
-import { sanitizeEditorHtml } from "../../app/static/js/editor_v2/ui/quill_adapter.js";
+import { composeEditorDelta, sanitizeEditorHtml } from "../../app/static/js/editor_v2/ui/quill_adapter.js";
 import { createAttachActions } from "../../app/static/js/editor_v2/actions/attach_actions.js";
 import { renderContextRail } from "../../app/static/js/editor_v2/ui/context_rail_renderer.js";
 import { createExplorerController } from "../../app/static/js/editor_v2/research/explorer_controller.js";
@@ -292,6 +292,37 @@ test("editor html sanitization strips Grammarly artifacts before save", () => {
   assert.equal(sanitized.includes("data-gr-id"), false);
   assert.match(sanitized, /Draft/);
   assert.match(sanitized, /Text/);
+});
+
+test("editor delta composes incrementally without reading the live DOM", () => {
+  const previousWindow = globalThis.window;
+  try {
+    installWindow({
+      Quill: {
+        import(name) {
+          assert.equal(name, "delta");
+          return class MockDelta {
+            constructor(value = { ops: [] }) {
+              this.ops = Array.isArray(value.ops) ? value.ops.slice() : [];
+            }
+
+            compose(change) {
+              return { ops: [...this.ops, ...(change?.ops || [])] };
+            }
+          };
+        },
+      },
+    });
+
+    const next = composeEditorDelta(
+      { ops: [{ insert: "Hello\n" }] },
+      { ops: [{ retain: 5 }, { insert: " world" }] },
+    );
+
+    assert.deepEqual(next.ops, [{ insert: "Hello\n" }, { retain: 5 }, { insert: " world" }]);
+  } finally {
+    globalThis.window = previousWindow;
+  }
 });
 
 test("auth fetch waits for session rehydration before issuing a protected request", async () => {
@@ -929,6 +960,7 @@ test("autosave flush settles to idle after success", async () => {
   installWindow();
   globalThis.navigator = { onLine: true };
   const events = [];
+  const snapshots = [];
   const workspaceState = createWorkspaceState();
   workspaceState.setDocument({
     id: "doc-1",
@@ -944,7 +976,8 @@ test("autosave flush settles to idle after success", async () => {
   const autosave = createAutosaveController({
     workspaceState,
     workspaceApi: {
-      async updateDocument() {
+      async updateDocument(documentId, payload) {
+        snapshots.push({ documentId, payload });
         return {
           id: "doc-1",
           title: "Updated title",
@@ -957,6 +990,7 @@ test("autosave flush settles to idle after success", async () => {
         };
       },
     },
+    snapshotProvider: () => ({ content_html: "<p>Updated title</p>" }),
     eventBus: { emit(name) { events.push(name); } },
   });
 
@@ -965,6 +999,7 @@ test("autosave flush settles to idle after success", async () => {
   assert.equal(workspaceState.getState().save_status, "saved");
   assert.equal(workspaceState.getState().runtime_activity.save.phase, "idle");
   assert.equal(workspaceState.getState().runtime_activity.flush.phase, "idle");
+  assert.equal(snapshots[0].payload.content_html, "<p>Updated title</p>");
   assert.deepEqual(events, ["doc.flush.started", "doc.save.started", "doc.save.succeeded", "doc.flush.succeeded"]);
 });
 

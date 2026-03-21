@@ -85,6 +85,7 @@ async def test_route_surface_keeps_expected_public_and_shell_entries(monkeypatch
         dashboard = await client.get("/dashboard")
         editor = await client.get("/editor")
         pricing = await client.get("/pricing", follow_redirects=False)
+        pricing_success = await client.get("/pricing/success", follow_redirects=False)
         handoff = await client.get("/auth/handoff?code=handoff-1", follow_redirects=False)
 
     assert auth.status_code == 200
@@ -92,6 +93,8 @@ async def test_route_surface_keeps_expected_public_and_shell_entries(monkeypatch
     assert editor.status_code == 200
     assert pricing.status_code == 307
     assert pricing.headers["location"] == "/static/pricing.html"
+    assert pricing_success.status_code == 307
+    assert pricing_success.headers["location"] == "/static/pricing.html?checkout=success"
     assert handoff.status_code == 200
     assert "Sign-in complete" in handoff.text
     assert "Return to the extension" in handoff.text

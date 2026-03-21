@@ -282,17 +282,6 @@
     resumeRefreshBound = true;
   }
 
-  async function writeLegacyToken(token) {
-    const client = await ensureSupabaseClient();
-    if (!token && client) {
-      client.auth.signOut().catch(() => {});
-    }
-  }
-
-  async function syncLegacyTokenFromSession() {
-    return getAccessToken();
-  }
-
   window.webUnlockerAuth = {
     get client() {
       return supabaseClient;
@@ -308,8 +297,6 @@
     isAuthSessionError,
     createAuthSessionError,
     setProtectedRequestObserver,
-    syncLegacyTokenFromSession,
-    writeLegacyToken,
   };
 
   ensureSupabaseClient().catch(() => {});

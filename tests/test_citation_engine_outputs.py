@@ -1,11 +1,13 @@
-from app.services.citation_engine import (
+from app.services.citation_domain import (
+    ExtractionCandidate,
+    ExtractionPayload,
+    METADATA_SCHEMA_VERSION,
     build_source_fingerprint,
     compute_source_version,
-    generate_citation_outputs,
     generate_render_bundle,
-    normalize_metadata,
+    normalize_citation_payload,
+    render_citation,
 )
-from app.services.citation_domain import ExtractionCandidate, ExtractionPayload, METADATA_SCHEMA_VERSION, normalize_citation_payload
 
 
 def _canonical_payload() -> tuple[dict[str, object], dict[str, object]]:
@@ -26,27 +28,47 @@ def _canonical_payload() -> tuple[dict[str, object], dict[str, object]]:
     return normalized["source"], normalized["context"]
 
 
-def test_normalize_metadata_dedupes_institutional_author_and_publisher():
+def test_normalize_citation_payload_dedupes_institutional_author_and_publisher():
     source, context = _canonical_payload()
     source = {
         **source,
         "publisher": "World Health Organization",
         "site_name": "World Health Organization",
     }
-    meta = normalize_metadata(source, context)
+    payload = {
+        "identifiers": source.get("identifiers", {}),
+        "canonical_url": source.get("canonical_url"),
+        "page_url": source.get("page_url"),
+        "title_candidates": [ExtractionCandidate(value=source["title"], confidence=1.0)],
+        "author_candidates": [ExtractionCandidate(value="World Health Organization", confidence=1.0)],
+        "date_candidates": [ExtractionCandidate(value=source["issued"]["raw"], confidence=1.0)],
+        "publisher_candidates": [ExtractionCandidate(value="World Health Organization", confidence=1.0)],
+        "selection_text": context["quote"],
+        "locator": context["locator"],
+        "raw_metadata": {
+            "quote": context["quote"],
+            "excerpt": context["excerpt"],
+            "siteName": "World Health Organization",
+            "publisher": "World Health Organization",
+        },
+    }
+    normalized = normalize_citation_payload(ExtractionPayload.model_validate(payload))
 
-    assert meta["author"] == "World Health Organization"
-    assert len(meta["authors"]) == 1
-    assert meta["paragraph"] == 6
-    assert meta["metadata_schema_version"] == METADATA_SCHEMA_VERSION
-    assert meta["source_fingerprint"].startswith("url:")
-    assert meta["source"]["fingerprint"] == meta["source_fingerprint"]
-    assert meta["quote"]["locator"] == {"paragraph": 6}
+    assert normalized["source"]["author"] == "World Health Organization"
+    assert len(normalized["source"]["authors"]) == 1
+    assert normalized["context"]["locator"] == {"paragraph": 6}
+    assert normalized["source"]["metadata_schema_version"] == METADATA_SCHEMA_VERSION
+    assert normalized["source"]["fingerprint"].startswith("url:")
+    assert normalized["source"]["source_version"]
+    assert normalized["context"]["citation_version"]
 
 
-def test_generate_citation_outputs_separates_inline_and_full():
+def test_render_citation_separates_inline_and_full():
     source, context = _canonical_payload()
-    outputs = generate_citation_outputs("apa", source, context)
+    outputs = {
+        "inline_citation": render_citation(source, context, style="apa", render_kind="inline"),
+        "full_citation": render_citation(source, context, style="apa", render_kind="bibliography"),
+    }
 
     assert outputs["inline_citation"] == "(World Health Organization, 2024, para. 6)"
     assert "World Health Organization. (2024)." in outputs["full_citation"]

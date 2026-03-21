@@ -8,7 +8,6 @@ def test_backend_exposes_metadata_first_render_endpoint_and_render_cache_payload
     service_source = Path("app/modules/research/citations/service.py").read_text(encoding="utf-8")
     repo_source = Path("app/modules/research/citations/repo.py").read_text(encoding="utf-8")
     domain_source = Path("app/services/citation_domain.py").read_text(encoding="utf-8")
-    engine_source = Path("app/services/citation_engine.py").read_text(encoding="utf-8")
     sources_service = Path("app/modules/research/sources/service.py").read_text(encoding="utf-8")
 
     assert "@router.post(\"/api/citations/render\")" in source
@@ -17,7 +16,6 @@ def test_backend_exposes_metadata_first_render_endpoint_and_render_cache_payload
     assert "source_version" in source or "source_version" in service_source
     assert "citation_version" in service_source
     assert "legacy_metadata_to_payload" not in domain_source
-    assert "legacy_metadata_to_payload" not in engine_source
     assert "legacy_metadata_to_payload" not in sources_service
 
 

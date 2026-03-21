@@ -26,7 +26,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     authButton.href = "#";
     authButton.addEventListener("click", async (event) => {
       event.preventDefault();
-      window.webUnlockerAuth?.writeLegacyToken?.(null);
       if (window.webUnlockerAuth?.client) {
         await window.webUnlockerAuth.client.auth.signOut().catch(() => {});
       }

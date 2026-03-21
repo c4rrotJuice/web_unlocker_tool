@@ -140,6 +140,72 @@ function loadAuthRuntime({ client, fetchImpl }) {
   };
 }
 
+function loadNavRuntime({ auth, ui } = {}) {
+  const listeners = new Map();
+  const navLinks = makeElement({ appendChild() {} });
+  const authButton = makeElement();
+  const dashboardLink = makeElement();
+  const editorLink = makeElement();
+  const elements = {
+    authButton,
+    dashboardLink,
+    editorLink,
+  };
+  const document = {
+    readyState: "loading",
+    addEventListener(type, listener) {
+      const entries = listeners.get(type) || [];
+      entries.push(listener);
+      listeners.set(type, entries);
+    },
+    removeEventListener(type, listener) {
+      const entries = listeners.get(type) || [];
+      listeners.set(type, entries.filter((entry) => entry !== listener));
+    },
+    querySelector(selector) {
+      if (selector === ".nav-links") return navLinks;
+      return null;
+    },
+    createElement() {
+      return makeElement({ appendChild() {} });
+    },
+    getElementById(id) {
+      return elements[id] || null;
+    },
+  };
+  const window = {
+    webUnlockerAuth: auth,
+    webUnlockerUI: ui,
+    location: {
+      pathname: "/auth",
+      search: "",
+      href: "http://example.test/auth",
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const context = {
+    window,
+    document,
+    console,
+    Error,
+    setTimeout: globalThis.setTimeout.bind(globalThis),
+    clearTimeout: globalThis.clearTimeout.bind(globalThis),
+  };
+  context.globalThis = context;
+  vm.runInNewContext(readFileSync("app/static/js/nav.js", "utf8"), context, { filename: "app/static/js/nav.js" });
+  for (const listener of listeners.get("DOMContentLoaded") || []) {
+    listener({ type: "DOMContentLoaded" });
+  }
+  return {
+    window: context.window,
+    document,
+    authButton,
+    dashboardLink,
+    editorLink,
+  };
+}
+
 async function flush(times = 6) {
   for (let index = 0; index < times; index += 1) {
     await Promise.resolve();
@@ -150,6 +216,7 @@ function makeElement(extra = {}) {
   const listeners = new Map();
   return {
     hidden: false,
+    style: {},
     innerHTML: "",
     textContent: "",
     value: "",
@@ -167,8 +234,11 @@ function makeElement(extra = {}) {
     },
     dispatch(type, target) {
       const entries = listeners.get(type) || [];
+      const event = target && typeof target === "object" && ("target" in target || "preventDefault" in target || "defaultPrevented" in target)
+        ? { type, ...target }
+        : { type, target };
       for (const listener of entries) {
-        listener({ type, target });
+        listener(event);
       }
     },
     focus() {
@@ -281,6 +351,40 @@ test("auth fetch refreshes a resumed session and keeps bearer credentials attach
   });
 
   assert.equal(requests[0].headers.get("Authorization"), "Bearer token-resumed");
+});
+
+test("nav sign-out uses canonical session handling without legacy token bridge", async () => {
+  let signOutCalls = 0;
+  const runtime = loadNavRuntime({
+    auth: {
+      async getAccessToken() {
+        return "token-present";
+      },
+      client: {
+        auth: {
+          async signOut() {
+            signOutCalls += 1;
+          },
+        },
+      },
+    },
+    ui: {
+      createToastManager() {
+        return { show() {} };
+      },
+      COPY: { success: { LOGOUT_SUCCESS: "Signed out." } },
+    },
+  });
+
+  await flush();
+  runtime.authButton.dispatch("click", {
+    preventDefault() {},
+    target: runtime.authButton,
+  });
+  await flush();
+
+  assert.equal(signOutCalls, 1);
+  assert.equal(runtime.window.location.href, "/");
 });
 
 test("editor html sanitization strips Grammarly artifacts before save", () => {

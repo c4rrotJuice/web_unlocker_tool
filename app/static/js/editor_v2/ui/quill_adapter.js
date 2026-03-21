@@ -11,6 +11,63 @@ const FONT_FAMILIES = [
 ];
 const FONT_SIZES = ["12px", "13px", "14px", "16px", "18px", "20px", "24px", "28px", "32px"];
 
+const GRAMMARLY_STRIP_PATTERNS = [
+  /<grammarly-desktop-integration\b[^>]*>.*?<\/grammarly-desktop-integration>/gis,
+  /\sdata-gramm(?:="[^"]*")?/gi,
+  /\sdata-gr-(?:ext-installed|id|editor-state|focused|saved|ghost|check-loaded|loaded)="[^"]*"/gi,
+];
+
+function stripGrammarMarkers(html) {
+  let next = html || "";
+  for (const pattern of GRAMMARLY_STRIP_PATTERNS) {
+    next = next.replace(pattern, "");
+  }
+  return next;
+}
+
+export function sanitizeEditorHtml(html) {
+  if (!html) return "";
+  if (typeof document === "undefined" || typeof document.createElement !== "function") {
+    return stripGrammarMarkers(html);
+  }
+
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const root = template.content || template;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  const removals = [];
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const tagName = String(node.tagName || "").toLowerCase();
+    if (tagName === "grammarly-desktop-integration") {
+      removals.push(node);
+      continue;
+    }
+    const attributes = Array.from(node.attributes || []);
+    for (const attribute of attributes) {
+      const name = attribute.name.toLowerCase();
+      if (name === "data-gramm" || name.startsWith("data-gr-")) {
+        node.removeAttribute(attribute.name);
+      }
+    }
+    const classes = Array.from(node.classList || []);
+    if (classes.some((className) => /grammarly/i.test(className))) {
+      for (const className of classes) {
+        if (/grammarly/i.test(className)) {
+          node.classList.remove(className);
+        }
+      }
+    }
+  }
+
+  for (const node of removals) {
+    node.remove();
+  }
+
+  return template.innerHTML;
+}
+
 function registerEditorFormats(Quill) {
   if (registered) return;
   registered = true;
@@ -99,6 +156,11 @@ function registerEditorFormats(Quill) {
 export function createQuillAdapter({ element, toolbarSelector, onTextChange, onSelectionChange }) {
   const { Quill } = window;
   registerEditorFormats(Quill);
+  element.setAttribute("data-gramm", "false");
+  element.setAttribute("spellcheck", "false");
+  element.setAttribute("autocapitalize", "off");
+  element.setAttribute("autocomplete", "off");
+  element.setAttribute("autocorrect", "off");
   const quill = new Quill(element, {
     modules: { toolbar: toolbarSelector },
     theme: "snow",
@@ -117,7 +179,7 @@ export function createQuillAdapter({ element, toolbarSelector, onTextChange, onS
       return quill.getContents();
     },
     getHTML() {
-      return quill.root.innerHTML;
+      return sanitizeEditorHtml(quill.root.innerHTML);
     },
     getText(range = null) {
       if (range) return quill.getText(range.index, range.length);

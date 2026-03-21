@@ -13,6 +13,7 @@ import { createNoteStore } from "../../app/static/js/editor_v2/research/note_sto
 import { createOutlineController } from "../../app/static/js/editor_v2/document/outline_controller.js";
 import { createDocumentController } from "../../app/static/js/editor_v2/document/document_controller.js";
 import { createAutosaveController } from "../../app/static/js/editor_v2/document/autosave_controller.js";
+import { sanitizeEditorHtml } from "../../app/static/js/editor_v2/ui/quill_adapter.js";
 import { createAttachActions } from "../../app/static/js/editor_v2/actions/attach_actions.js";
 import { renderContextRail } from "../../app/static/js/editor_v2/ui/context_rail_renderer.js";
 import { createExplorerController } from "../../app/static/js/editor_v2/research/explorer_controller.js";
@@ -280,6 +281,17 @@ test("auth fetch refreshes a resumed session and keeps bearer credentials attach
   });
 
   assert.equal(requests[0].headers.get("Authorization"), "Bearer token-resumed");
+});
+
+test("editor html sanitization strips Grammarly artifacts before save", () => {
+  const rawHtml = '<p data-gramm="true">Draft</p><grammarly-desktop-integration><span>noise</span></grammarly-desktop-integration><span data-gr-id="x" class="grammarly-something">Text</span>';
+  const sanitized = sanitizeEditorHtml(rawHtml);
+
+  assert.equal(sanitized.includes("grammarly-desktop-integration"), false);
+  assert.equal(sanitized.includes("data-gramm"), false);
+  assert.equal(sanitized.includes("data-gr-id"), false);
+  assert.match(sanitized, /Draft/);
+  assert.match(sanitized, /Text/);
 });
 
 test("auth fetch waits for session rehydration before issuing a protected request", async () => {

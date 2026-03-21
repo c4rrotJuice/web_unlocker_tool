@@ -1,0 +1,32 @@
+export const MESSAGE_NAMES = Object.freeze({
+  AUTH_GET_STATE: "auth.get_state",
+  AUTH_RESTORE_SESSION: "auth.restore_session",
+  AUTH_SIGN_OUT: "auth.sign_out",
+  AUTH_ISSUE_HANDOFF: "auth.issue_handoff",
+  AUTH_EXCHANGE_HANDOFF: "auth.exchange_handoff",
+  AUTH_CREATE_ATTEMPT: "auth.create_attempt",
+  AUTH_GET_ATTEMPT_STATUS: "auth.get_attempt_status",
+  AUTH_COMPLETE_ATTEMPT: "auth.complete_attempt",
+  BOOTSTRAP_LOAD: "bootstrap.load",
+  BOOTSTRAP_GET_STATE: "bootstrap.get_state",
+  SIDEPANEL_STATE_CHANGED: "sidepanel.state_changed",
+  SIDEPANEL_LIST_CITATIONS: "sidepanel.list_citations",
+  SIDEPANEL_LIST_NOTES: "sidepanel.list_notes",
+  SIDEPANEL_OPEN_EDITOR: "sidepanel.open_editor",
+  SIDEPANEL_OPEN_DASHBOARD: "sidepanel.open_dashboard",
+  WORK_IN_EDITOR: "work_in_editor",
+  CAPTURE_CREATE_CITATION: "capture.create_citation",
+  CAPTURE_CREATE_QUOTE: "capture.create_quote",
+  CAPTURE_CREATE_NOTE: "capture.create_note",
+  CITATION_GET_STATE: "citation.get_state",
+  CITATION_RENDER: "citation.render",
+  CITATION_SAVE_STATE: "citation.save_state",
+  CITATION_STATE_CHANGED: "citation.state_changed",
+});
+
+export const MESSAGE_TOPICS = Object.freeze({
+  BACKGROUND: "background",
+  CONTENT: "content",
+  POPUP: "popup",
+  SIDEPANEL: "sidepanel",
+});

@@ -55,6 +55,7 @@ relation_validation = RelationValidator(
 )
 notes_service = NotesService(
     repository=notes_repository,
+    sources_service=sources_service,
     taxonomy_service=taxonomy_service,
     citations_service=citations_service,
     ownership=ownership,

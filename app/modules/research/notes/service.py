@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from app.core.serialization import serialize_paging_meta
+from app.core.serialization import serialize_ok_envelope
 from app.core.serialization import serialize_note, serialize_note_source
 from app.modules.common.ownership import OwnershipValidator
 from app.modules.common.relation_validation import RelationValidator, map_relation_error
@@ -17,12 +18,14 @@ class NotesService:
         self,
         *,
         repository: NotesRepository,
+        sources_service,
         taxonomy_service,
         citations_service,
         ownership: OwnershipValidator,
         relation_validation: RelationValidator,
     ):
         self.repository = repository
+        self.sources_service = sources_service
         self.taxonomy_service = taxonomy_service
         self.citations_service = citations_service
         self.ownership = ownership
@@ -56,7 +59,7 @@ class NotesService:
             )
         if source_ids:
             normalized_source_ids = self.relation_validation.normalize_relation_ids(source_ids, field_name="source_id")
-            source_rows = await self.citations_service.sources_service.repository.get_sources_by_ids(
+            source_rows = await self.sources_service.get_source_rows_by_ids(
                 source_ids=normalized_source_ids,
                 access_token=access_token,
             )
@@ -205,10 +208,7 @@ class NotesService:
         has_more = len(items) > limit
         page_items = items[:limit]
         next_cursor = str(offset + limit) if has_more else None
-        return {
-            "items": page_items,
-            "meta": serialize_paging_meta(next_cursor=next_cursor, has_more=has_more),
-        }
+        return serialize_ok_envelope(page_items, meta=serialize_paging_meta(next_cursor=next_cursor, has_more=has_more))
 
     async def get_note(self, *, user_id: str, access_token: str | None, note_id: str) -> dict:
         row = await self.ownership.load_owned_note(
@@ -390,6 +390,21 @@ class NotesService:
         if response.status_code != 200:
             raise map_relation_error(response, missing_parent_detail="Note not found", invalid_related_detail="Invalid linked note references")
         return await self.get_note(user_id=user_id, access_token=access_token, note_id=normalized_note_id)
+
+    async def list_note_sources_by_citation_ids(self, *, user_id: str, access_token: str | None, citation_ids: list[str]) -> list[dict]:
+        return await self.repository.list_note_sources_by_citation_ids(
+            user_id=user_id,
+            access_token=access_token,
+            citation_ids=citation_ids,
+        )
+
+    async def list_note_sources_by_source_ids(self, *, user_id: str, access_token: str | None, source_ids: list[str]) -> list[dict]:
+        return await self.repository.list_note_sources_by_source_ids(
+            user_id=user_id,
+            access_token=access_token,
+            source_ids=source_ids,
+        )
+
     async def _normalize_citation_lineage(
         self,
         *,

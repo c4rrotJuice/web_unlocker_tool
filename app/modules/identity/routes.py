@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
-from supabase import create_client
-from supabase.client import AuthApiError
+from fastapi import APIRouter, Depends
 
 from app.core.auth import RequestAuthContext, require_request_auth_context
 from app.core.config import get_settings
@@ -29,19 +27,6 @@ service = IdentityService(
         anon_key=settings.supabase_anon_key,
     )
 )
-supabase_admin = create_client(settings.supabase_url or "", settings.supabase_service_role_key or "")
-
-
-def _create_supabase_user(*, email: str | None, password: str | None):
-    if not email or not password:
-        raise HTTPException(status_code=422, detail="email and password are required when user_id is not provided.")
-    admin_api = getattr(getattr(supabase_admin, "auth", None), "admin", None)
-    if admin_api is not None and hasattr(admin_api, "create_user"):
-        created = admin_api.create_user({"email": email, "password": password, "email_confirm": False})
-        user = getattr(created, "user", None)
-        return user or created
-    created = supabase_admin.auth.sign_up({"email": email, "password": password})
-    return getattr(created, "user", None)
 
 
 @router.get("/api/identity/status")
@@ -51,10 +36,7 @@ async def identity_status() -> dict[str, object]:
 
 @router.post("/api/auth/signup")
 async def signup(payload: SignupRequest) -> dict[str, object]:
-    try:
-        return await service.signup(payload, create_user=_create_supabase_user)
-    except AuthApiError as exc:
-        raise HTTPException(status_code=400, detail=exc.message) from exc
+    return await service.signup(payload)
 
 
 @router.get("/api/me")

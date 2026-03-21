@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.core.serialization import serialize_ok_envelope
 from app.core.serialization import serialize_paging_meta
 from app.core.serialization import serialize_source_detail, serialize_source_summary
 from app.modules.research.sources.repo import SourcesRepository
@@ -121,10 +122,7 @@ class SourcesService:
         has_more = len(items) > limit
         page_items = items[:limit]
         next_cursor = str(offset + limit) if has_more else None
-        return {
-            "items": page_items,
-            "meta": serialize_paging_meta(next_cursor=next_cursor, has_more=has_more),
-        }
+        return serialize_ok_envelope(page_items, meta=serialize_paging_meta(next_cursor=next_cursor, has_more=has_more))
 
     async def get_source(self, *, user_id: str, access_token: str | None, source_id: str) -> dict:
         rows = await self.repository.get_sources_by_ids(source_ids=[source_id], access_token=access_token)
@@ -134,8 +132,11 @@ class SourcesService:
         counts = await self.repository.count_citations_for_sources(user_id=user_id, access_token=access_token, source_ids=[source_id])
         return serialize_source_detail(row, relationship_counts={"citation_count": counts.get(source_id, 0)})
 
+    async def get_source_rows_by_ids(self, *, source_ids: list[str], access_token: str | None) -> list[dict]:
+        return await self.repository.get_sources_by_ids(source_ids=source_ids, access_token=access_token)
+
     async def list_sources_by_ids(self, *, user_id: str, access_token: str | None, source_ids: list[str]) -> list[dict]:
-        rows = await self.repository.get_sources_by_ids(source_ids=source_ids, access_token=access_token)
+        rows = await self.get_source_rows_by_ids(source_ids=source_ids, access_token=access_token)
         counts = await self.repository.count_citations_for_sources(
             user_id=user_id,
             access_token=access_token,

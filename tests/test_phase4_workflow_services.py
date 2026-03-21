@@ -62,21 +62,12 @@ class FakeOwnership:
 
 class FakeCitationsService:
     def __init__(self):
-        class _FakeSourcesRepo:
-            async def get_sources_by_ids(self, *, source_ids, access_token=None):
-                del access_token
-                return [{"id": source_id} for source_id in source_ids if source_id == "source-a"]
-
         self.rows = {
             "citation-a": {"id": "citation-a", "source": {"id": "source-a", "title": "Source A"}},
             "citation-b": {"id": "citation-b", "source": {"id": "source-b", "title": "Source B"}},
         }
         self.repository = self
-        self.sources_service = type(
-            "FakeSourcesService",
-            (),
-            {"repository": _FakeSourcesRepo()},
-        )()
+        self.sources_service = type("FakeSourcesService", (), {})()
 
     async def list_citations(self, *, user_id, access_token, ids=None, limit=50, **kwargs):
         del user_id, access_token, limit, kwargs
@@ -88,13 +79,14 @@ class FakeCitationsService:
         rows = list(self.rows.items()) if citation_ids is None else [(citation_id, self.rows[citation_id]) for citation_id in citation_ids if citation_id in self.rows]
         return [{"id": citation_id, "source_id": "source-a" if citation_id == "citation-a" else "source-b"} for citation_id, _row in rows]
 
-    async def list_citations(self, *, user_id, access_token, ids=None, limit=50, **kwargs):
-        del user_id, access_token, limit, kwargs
-        ordered = ids or list(self.rows)
-        return [deepcopy(self.rows[citation_id]) for citation_id in ordered if citation_id in self.rows]
-
     async def list_citations_repo_passthrough(self, *, user_id, access_token, source_id=None, citation_ids=None, limit=500):
         return await self.list_citations_repo(user_id=user_id, access_token=access_token, source_id=source_id, citation_ids=citation_ids, limit=limit)
+
+
+class FakeSourcesService:
+    async def get_source_rows_by_ids(self, *, source_ids, access_token=None):
+        del access_token
+        return [{"id": source_id} for source_id in source_ids if source_id == "source-a"]
 
 
 class FakeTaxonomyService:
@@ -587,6 +579,7 @@ def notes_service():
     citations_service.repository.list_citations = citations_service.list_citations_repo_passthrough
     return NotesService(
         repository=repository,
+        sources_service=FakeSourcesService(),
         taxonomy_service=FakeTaxonomyService(),
         citations_service=citations_service,
         ownership=ownership,

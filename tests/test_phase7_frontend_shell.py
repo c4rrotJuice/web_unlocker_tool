@@ -219,4 +219,4 @@ def test_auth_handoff_page_is_minimal_success_fallback_not_bridge_wait():
 def test_research_routes_expose_cursor_pagination_for_all_knowledge_tabs():
     route_source = open("app/modules/research/routes.py", encoding="utf-8").read()
     assert "cursor: str | None = None" in route_source
-    assert "serialize_ok_envelope(page[\"items\"], meta=page[\"meta\"])" in route_source
+    assert "serialize_ok_envelope(page[\"items\"], meta=page[\"meta\"])" not in route_source

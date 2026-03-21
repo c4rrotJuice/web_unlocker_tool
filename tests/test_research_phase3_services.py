@@ -520,7 +520,7 @@ async def test_research_list_pages_return_cursor_meta_for_sources(sources_servic
         limit=1,
         cursor="0",
     )
-    assert len(page["items"]) == 1
+    assert len(page["data"]) == 1
     assert page["meta"]["has_more"] is True
     assert page["meta"]["next_cursor"] == "1"
 
@@ -546,7 +546,7 @@ async def test_research_list_pages_return_cursor_meta_for_citations(citations_se
         cursor="0",
         account_type="pro",
     )
-    assert len(page["items"]) == 1
-    assert page["items"][0]["id"] in {first["id"], second["id"]}
+    assert len(page["data"]) == 1
+    assert page["data"][0]["id"] in {first["id"], second["id"]}
     assert page["meta"]["has_more"] is True
     assert page["meta"]["next_cursor"] == "1"

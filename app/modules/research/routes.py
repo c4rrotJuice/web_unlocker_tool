@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.core.auth import RequestAuthContext, require_request_auth_context
 from app.core.config import get_settings
-from app.core.serialization import serialize_ok_envelope
 from app.modules.research.citations.repo import CitationsRepository
 from app.modules.research.citations.schemas import (
     CitationByIdsRequest,
@@ -76,6 +75,7 @@ relation_validation = RelationValidator(
 )
 notes_service = NotesService(
     repository=notes_repository,
+    sources_service=sources_service,
     taxonomy_service=taxonomy_service,
     citations_service=citations_service,
     ownership=ownership,
@@ -237,7 +237,7 @@ async def list_sources(
     limit: int = Query(default=50, le=100),
     access=Depends(_access),
 ):
-    page = await sources_service.list_sources_page(
+    return await sources_service.list_sources_page(
         user_id=access.user_id,
         access_token=access.access_token,
         query=query,
@@ -246,7 +246,6 @@ async def list_sources(
         cursor=cursor,
         limit=limit,
     )
-    return serialize_ok_envelope(page["items"], meta=page["meta"])
 
 
 @router.post("/api/sources/resolve")
@@ -275,7 +274,7 @@ async def list_citations(
     limit: int = Query(default=50, le=100),
     access=Depends(_access),
 ):
-    page = await citations_service.list_citations_page(
+    return await citations_service.list_citations_page(
         user_id=access.user_id,
         access_token=access.access_token,
         source_id=source_id,
@@ -284,7 +283,6 @@ async def list_citations(
         limit=limit,
         account_type=access.capability_state.tier,
     )
-    return serialize_ok_envelope(page["items"], meta=page["meta"])
 
 
 @router.post("/api/citations")
@@ -336,7 +334,7 @@ async def list_quotes(
     limit: int = Query(default=50, le=100),
     access=Depends(_access),
 ):
-    page = await quotes_service.list_quotes_page(
+    return await quotes_service.list_quotes_page(
         user_id=access.user_id,
         access_token=access.access_token,
         citation_id=citation_id,
@@ -346,35 +344,34 @@ async def list_quotes(
         cursor=cursor,
         limit=limit,
     )
-    return serialize_ok_envelope(page["items"], meta=page["meta"])
 
 
 @router.post("/api/quotes")
 async def create_quote(payload: QuoteCreateRequest, access=Depends(_access)):
-    return {"ok": True, "data": await quotes_service.create_quote(
+    return await quotes_service.create_quote(
         user_id=access.user_id,
         access_token=access.access_token,
         payload=payload.model_dump(exclude_none=True),
-    ), "meta": {}, "error": None}
+    )
 
 
 @router.get("/api/quotes/{quote_id}")
 async def get_quote(quote_id: str, access=Depends(_access)):
-    return {"ok": True, "data": await quotes_service.get_quote(
+    return await quotes_service.get_quote(
         user_id=access.user_id,
         access_token=access.access_token,
         quote_id=quote_id,
-    ), "meta": {}, "error": None}
+    )
 
 
 @router.patch("/api/quotes/{quote_id}")
 async def update_quote(quote_id: str, payload: QuoteUpdateRequest, access=Depends(_access)):
-    return {"ok": True, "data": await quotes_service.update_quote(
+    return await quotes_service.update_quote(
         user_id=access.user_id,
         access_token=access.access_token,
         quote_id=quote_id,
         payload=payload.model_dump(exclude_none=True),
-    ), "meta": {}, "error": None}
+    )
 
 
 @router.delete("/api/quotes/{quote_id}")
@@ -388,12 +385,12 @@ async def delete_quote(quote_id: str, access=Depends(_access)):
 
 @router.post("/api/quotes/{quote_id}/notes")
 async def create_note_from_quote(quote_id: str, payload: QuoteToNoteRequest, access=Depends(_access)):
-    return {"ok": True, "data": await quotes_service.create_note_from_quote(
+    return await quotes_service.create_note_from_quote(
         user_id=access.user_id,
         access_token=access.access_token,
         quote_id=quote_id,
         payload=payload.model_dump(exclude_none=True),
-    ), "meta": {}, "error": None}
+    )
 
 
 @router.get("/api/notes")
@@ -408,7 +405,7 @@ async def list_notes(
     limit: int = Query(default=50, le=100),
     access=Depends(_access),
 ):
-    page = await notes_service.list_notes_page(
+    return await notes_service.list_notes_page(
         user_id=access.user_id,
         access_token=access.access_token,
         project_id=project_id,
@@ -420,46 +417,45 @@ async def list_notes(
         cursor=cursor,
         limit=limit,
     )
-    return serialize_ok_envelope(page["items"], meta=page["meta"])
 
 
 @router.post("/api/notes")
 async def create_note(payload: NoteCreateRequest, access=Depends(_access)):
-    return {"ok": True, "data": await notes_service.create_note(
+    return await notes_service.create_note(
         user_id=access.user_id,
         access_token=access.access_token,
         payload=payload.model_dump(exclude_none=True),
-    ), "meta": {}, "error": None}
+    )
 
 
 @router.get("/api/notes/{note_id}")
 async def get_note(note_id: str, access=Depends(_access)):
-    return {"ok": True, "data": await notes_service.get_note(
+    return await notes_service.get_note(
         user_id=access.user_id,
         access_token=access.access_token,
         note_id=note_id,
-    ), "meta": {}, "error": None}
+    )
 
 
 @router.get("/api/research/{entity}/{entity_id}/graph")
 async def get_research_graph(entity: str, entity_id: str, access=Depends(_access)):
-    return {"ok": True, "data": await graph_service.get_graph(
+    return await graph_service.get_graph(
         user_id=access.user_id,
         access_token=access.access_token,
         capability_state=access.capability_state,
         entity=entity,
         entity_id=entity_id,
-    ), "meta": {}, "error": None}
+    )
 
 
 @router.patch("/api/notes/{note_id}")
 async def update_note(note_id: str, payload: NoteUpdateRequest, access=Depends(_access)):
-    return {"ok": True, "data": await notes_service.update_note(
+    return await notes_service.update_note(
         user_id=access.user_id,
         access_token=access.access_token,
         note_id=note_id,
         payload=payload.model_dump(exclude_none=True),
-    ), "meta": {}, "error": None}
+    )
 
 
 @router.delete("/api/notes/{note_id}")
@@ -473,50 +469,50 @@ async def delete_note(note_id: str, access=Depends(_access)):
 
 @router.post("/api/notes/{note_id}/archive")
 async def archive_note(note_id: str, access=Depends(_access)):
-    return {"ok": True, "data": await notes_service.archive_note(
+    return await notes_service.archive_note(
         user_id=access.user_id,
         access_token=access.access_token,
         note_id=note_id,
-    ), "meta": {}, "error": None}
+    )
 
 
 @router.post("/api/notes/{note_id}/restore")
 async def restore_note(note_id: str, access=Depends(_access)):
-    return {"ok": True, "data": await notes_service.restore_note(
+    return await notes_service.restore_note(
         user_id=access.user_id,
         access_token=access.access_token,
         note_id=note_id,
-    ), "meta": {}, "error": None}
+    )
 
 
 @router.put("/api/notes/{note_id}/tags")
 async def replace_note_tags(note_id: str, payload: NoteTagIdsReplaceRequest, access=Depends(_access)):
-    return {"ok": True, "data": await notes_service.replace_note_tags(
+    return await notes_service.replace_note_tags(
         user_id=access.user_id,
         access_token=access.access_token,
         note_id=note_id,
         tag_ids=payload.tag_ids,
-    ), "meta": {}, "error": None}
+    )
 
 
 @router.put("/api/notes/{note_id}/sources")
 async def replace_note_sources(note_id: str, payload: NoteSourcesReplaceRequest, access=Depends(_access)):
-    return {"ok": True, "data": await notes_service.replace_note_sources(
+    return await notes_service.replace_note_sources(
         user_id=access.user_id,
         access_token=access.access_token,
         note_id=note_id,
         sources=[item.model_dump(exclude_none=True) for item in payload.sources],
-    ), "meta": {}, "error": None}
+    )
 
 
 @router.put("/api/notes/{note_id}/links")
 async def replace_note_links(note_id: str, payload: NoteLinksReplaceRequest, access=Depends(_access)):
-    return {"ok": True, "data": await notes_service.replace_note_links(
+    return await notes_service.replace_note_links(
         user_id=access.user_id,
         access_token=access.access_token,
         note_id=note_id,
         linked_note_ids=payload.linked_note_ids,
-    ), "meta": {}, "error": None}
+    )
 
 
 @router.post("/api/citations/render")

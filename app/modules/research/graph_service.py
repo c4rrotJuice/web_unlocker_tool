@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.core.serialization import serialize_ok_envelope
 from app.core.serialization import serialize_research_graph
 from app.modules.research.common import normalize_uuid
 
@@ -84,12 +85,12 @@ class ResearchGraphService:
         citation_ids: list[str],
         note_ids: list[str],
     ) -> list[dict]:
-        citation_rows = await self.workspace_service.repository.list_documents_for_citation_ids(
+        citation_rows = await self.workspace_service.list_documents_for_citation_ids(
             user_id=user_id,
             access_token=access_token,
             citation_ids=citation_ids,
         )
-        note_rows = await self.workspace_service.repository.list_documents_for_note_ids(
+        note_rows = await self.workspace_service.list_documents_for_note_ids(
             user_id=user_id,
             access_token=access_token,
             note_ids=note_ids,
@@ -315,7 +316,7 @@ class ResearchGraphService:
                 seed=None,
             )
             data = payload["data"]
-            return await self._build_graph(
+            return serialize_ok_envelope(await self._build_graph(
                 user_id=user_id,
                 access_token=access_token,
                 capability_state=capability_state,
@@ -325,7 +326,7 @@ class ResearchGraphService:
                 quotes=data["attached_quotes"],
                 notes=data["attached_notes"],
                 documents=[data["document"]],
-            )
+            ))
 
         if normalized_entity == "note":
             note_id = normalize_uuid(entity_id, field_name="note_id")
@@ -355,7 +356,7 @@ class ResearchGraphService:
                 citation_ids=[citation.get("id") for citation in citations if citation.get("id")],
                 note_ids=[note_id],
             )
-            return await self._build_graph(
+            return serialize_ok_envelope(await self._build_graph(
                 user_id=user_id,
                 access_token=access_token,
                 capability_state=capability_state,
@@ -365,7 +366,7 @@ class ResearchGraphService:
                 quotes=quotes,
                 notes=[note, *linked_notes],
                 documents=documents,
-            )
+            ))
 
         if normalized_entity == "quote":
             quote_id = normalize_uuid(entity_id, field_name="quote_id")
@@ -384,7 +385,7 @@ class ResearchGraphService:
                 citation_ids=[citation.get("id")] if citation and citation.get("id") else [],
                 note_ids=[note.get("id") for note in notes if note.get("id")],
             )
-            return await self._build_graph(
+            return serialize_ok_envelope(await self._build_graph(
                 user_id=user_id,
                 access_token=access_token,
                 capability_state=capability_state,
@@ -394,7 +395,7 @@ class ResearchGraphService:
                 quotes=[quote],
                 notes=notes,
                 documents=documents,
-            )
+            ))
 
         if normalized_entity == "citation":
             citation_id = normalize_uuid(entity_id, field_name="citation_id")
@@ -416,7 +417,7 @@ class ResearchGraphService:
                 citation_id=citation_id,
                 limit=100,
             )
-            supporting_rows = await self.notes_repository.list_note_sources_by_citation_ids(
+            supporting_rows = await self.notes_service.list_note_sources_by_citation_ids(
                 user_id=user_id,
                 access_token=access_token,
                 citation_ids=[citation_id],
@@ -435,7 +436,7 @@ class ResearchGraphService:
                 citation_ids=[citation_id],
                 note_ids=[note.get("id") for note in all_notes if note.get("id")],
             )
-            return await self._build_graph(
+            return serialize_ok_envelope(await self._build_graph(
                 user_id=user_id,
                 access_token=access_token,
                 capability_state=capability_state,
@@ -446,7 +447,7 @@ class ResearchGraphService:
                 notes=all_notes,
                 documents=documents,
                 supporting_rows=supporting_rows,
-            )
+            ))
 
         source_id = normalize_uuid(entity_id, field_name="source_id")
         source = await self.sources_service.get_source(user_id=user_id, access_token=access_token, source_id=source_id)
@@ -471,7 +472,7 @@ class ResearchGraphService:
             limit=100,
         )
         direct_notes = [note for note in direct_notes if note.get("citation_id") in citation_id_set]
-        supporting_rows = await self.notes_repository.list_note_sources_by_source_ids(
+        supporting_rows = await self.notes_service.list_note_sources_by_source_ids(
             user_id=user_id,
             access_token=access_token,
             source_ids=[source_id],
@@ -490,7 +491,7 @@ class ResearchGraphService:
             citation_ids=citation_ids,
             note_ids=[note.get("id") for note in all_notes if note.get("id")],
         )
-        return await self._build_graph(
+        return serialize_ok_envelope(await self._build_graph(
             user_id=user_id,
             access_token=access_token,
             capability_state=capability_state,
@@ -501,7 +502,7 @@ class ResearchGraphService:
             notes=all_notes,
             documents=documents,
             supporting_rows=supporting_rows,
-        )
+        ))
 
     async def orchestrate_work_in_editor(
         self,

@@ -194,12 +194,9 @@ class FakePaddleResponse:
 
 
 class FakePaddleClient:
-    def __init__(self):
+    def __init__(self, response: FakePaddleResponse | None = None):
         self.calls: list[dict[str, object]] = []
-
-    async def post(self, url, json=None, headers=None):
-        self.calls.append({"url": url, "json": json, "headers": headers})
-        return FakePaddleResponse(
+        self.response = response or FakePaddleResponse(
             status_code=200,
             payload={
                 "data": {
@@ -209,6 +206,10 @@ class FakePaddleClient:
             },
         )
 
+    async def post(self, url, json=None, headers=None):
+        self.calls.append({"url": url, "json": json, "headers": headers})
+        return self.response
+
 
 def _load_app(monkeypatch, *, state: SharedBillingState | None = None, paddle_client: FakePaddleClient | None = None):
     monkeypatch.setenv("SUPABASE_URL", "http://example.com")
@@ -216,6 +217,7 @@ def _load_app(monkeypatch, *, state: SharedBillingState | None = None, paddle_cl
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
     monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "secret")
     monkeypatch.setenv("PADDLE_API_KEY", "paddle_api_key")
+    monkeypatch.setenv("PADDLE_API_BASE_URL", "https://api.paddle.com")
     monkeypatch.setenv("PADDLE_STANDARD_MONTHLY_PRICE_ID", "price_standard_monthly")
     monkeypatch.setenv("PADDLE_STANDARD_YEARLY_PRICE_ID", "price_standard_yearly")
     monkeypatch.setenv("PADDLE_PRO_MONTHLY_PRICE_ID", "price_pro_monthly")
@@ -379,6 +381,87 @@ async def test_checkout_rejects_missing_provider_config_clearly(monkeypatch):
     assert response.status_code == 500
     assert response.json()["error"]["code"] == "billing_checkout_config_missing"
     assert "PADDLE_API_KEY" in response.json()["error"]["message"]
+
+
+@pytest.mark.anyio
+async def test_checkout_rejects_paddle_environment_mismatch_clearly(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "http://example.com")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "secret")
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sdbx_test_api_key")
+    monkeypatch.setenv("PADDLE_API_BASE_URL", "https://api.paddle.com")
+    monkeypatch.setenv("PADDLE_STANDARD_MONTHLY_PRICE_ID", "price_standard_monthly")
+    monkeypatch.setenv("PADDLE_STANDARD_YEARLY_PRICE_ID", "price_standard_yearly")
+    monkeypatch.setenv("PADDLE_PRO_MONTHLY_PRICE_ID", "price_pro_monthly")
+    monkeypatch.setenv("PADDLE_PRO_YEARLY_PRICE_ID", "price_pro_yearly")
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("CORS_ORIGINS", "https://app.writior.com")
+    monkeypatch.setattr(supabase, "create_client", lambda url, key: DummyClient())
+
+    import app.core.auth as core_auth
+    import app.core.config as core_config
+    import app.modules.billing.routes as billing_routes
+    import app.modules.billing.service as billing_service
+    from app import main
+
+    importlib.reload(core_auth)
+    importlib.reload(core_config)
+    billing_service = importlib.reload(billing_service)
+    billing_routes = importlib.reload(billing_routes)
+    core_config.get_settings.cache_clear()
+    core_auth.get_token_verifier.cache_clear()
+    main = importlib.reload(main)
+    billing_routes.service.repository = SharedRepository(SharedBillingState())
+
+    paddle_client = FakePaddleClient()
+    monkeypatch.setattr(billing_service, "http_client", paddle_client)
+
+    async with async_test_client(main.app) as client:
+        response = await client.post(
+            "/api/billing/checkout",
+            headers={"Authorization": "Bearer valid-token"},
+            json={"tier": "standard", "interval": "monthly"},
+        )
+
+    assert response.status_code == 500
+    error = response.json()["error"]
+    assert error["code"] == "billing_checkout_config_mismatch"
+    assert "environment" in error["message"].lower()
+    assert error["details"]["paddle_environment"] == "live"
+    assert error["details"]["paddle_api_key_environment"] == "sandbox"
+    assert paddle_client.calls == []
+
+
+@pytest.mark.anyio
+async def test_checkout_maps_paddle_forbidden_into_useful_error(monkeypatch, caplog):
+    paddle_response = FakePaddleResponse(
+        status_code=403,
+        payload={
+            "type": "request_error",
+            "code": "forbidden",
+            "detail": "You aren't permitted to perform this request.",
+        },
+    )
+    paddle_client = FakePaddleClient(response=paddle_response)
+    app, _state, _ = _load_app(monkeypatch, paddle_client=paddle_client)
+
+    with caplog.at_level("WARNING"):
+        async with async_test_client(app) as client:
+            response = await client.post(
+                "/api/billing/checkout",
+                headers={"Authorization": "Bearer valid-token"},
+                json={"tier": "standard", "interval": "monthly"},
+            )
+
+    assert response.status_code == 502
+    error = response.json()["error"]
+    assert error["code"] == "billing_checkout_provider_forbidden"
+    assert error["details"]["upstream_status"] == 403
+    assert error["details"]["upstream_error_code"] == "forbidden"
+    assert error["details"]["paddle_environment"] == "live"
+    assert "paddle_api_key" not in json.dumps(error)
+    assert "paddle_api_key" not in caplog.text
 
 
 @pytest.mark.anyio

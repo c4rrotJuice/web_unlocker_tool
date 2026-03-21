@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.core.serialization import serialize_ok_envelope
 from app.core.serialization import serialize_paging_meta
 from app.core.serialization import serialize_citation, serialize_citation_template, serialize_source_summary
 from app.modules.research.citations.repo import CitationsRepository
@@ -145,7 +146,7 @@ class CitationsService:
             if source_id and source_id not in seen_source_ids:
                 seen_source_ids.add(source_id)
                 source_ids.append(source_id)
-        sources = await self.sources_service.repository.get_sources_by_ids(source_ids=source_ids, access_token=access_token)
+        sources = await self.sources_service.get_source_rows_by_ids(source_ids=source_ids, access_token=access_token)
         source_map = {row["id"]: row for row in sources if row.get("id")}
         citation_ids = [row["id"] for row in rows if row.get("id")]
         render_rows = await self.repository.list_renders(citation_ids=citation_ids, access_token=access_token)
@@ -280,10 +281,7 @@ class CitationsService:
         has_more = len(items) > limit
         page_items = items[:limit]
         next_cursor = str(offset + limit) if has_more else None
-        return {
-            "items": page_items,
-            "meta": serialize_paging_meta(next_cursor=next_cursor, has_more=has_more),
-        }
+        return serialize_ok_envelope(page_items, meta=serialize_paging_meta(next_cursor=next_cursor, has_more=has_more))
 
     async def get_citation(
         self,
@@ -340,7 +338,7 @@ class CitationsService:
         )
         if row is None:
             raise HTTPException(status_code=500, detail="Failed to create citation instance")
-        source_rows = await self.sources_service.repository.get_sources_by_ids(source_ids=[source["id"]], access_token=access_token)
+        source_rows = await self.sources_service.get_source_rows_by_ids(source_ids=[source["id"]], access_token=access_token)
         source_row = source_rows[0] if source_rows else self._source_detail_to_row(source)
         await self.refresh_renders(access_token=access_token, citation_row=row, source_row=source_row)
         return await self.get_citation(
@@ -383,7 +381,7 @@ class CitationsService:
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Citation not found")
-        source_row = (await self.sources_service.repository.get_sources_by_ids(source_ids=[row["source_id"]], access_token=access_token))[0]
+        source_row = (await self.sources_service.get_source_rows_by_ids(source_ids=[row["source_id"]], access_token=access_token))[0]
         await self.refresh_renders(access_token=access_token, citation_row=row, source_row=source_row)
         return await self.get_citation(user_id=user_id, access_token=access_token, citation_id=citation_id)
 

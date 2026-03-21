@@ -231,6 +231,20 @@ class WorkspaceService:
         by_id = {row.get("id"): row for row in hydrated if row.get("id")}
         return [by_id[document_id] for document_id in normalized_document_ids if document_id in by_id]
 
+    async def list_documents_for_citation_ids(self, *, user_id: str, access_token: str | None, citation_ids: list[str]) -> list[dict]:
+        return await self.repository.list_documents_for_citation_ids(
+            user_id=user_id,
+            access_token=access_token,
+            citation_ids=citation_ids,
+        )
+
+    async def list_documents_for_note_ids(self, *, user_id: str, access_token: str | None, note_ids: list[str]) -> list[dict]:
+        return await self.repository.list_documents_for_note_ids(
+            user_id=user_id,
+            access_token=access_token,
+            note_ids=note_ids,
+        )
+
     async def create_document(self, *, user_id: str, access_token: str | None, capability_state, payload: dict) -> dict:
         project_id = await self.taxonomy_service.ensure_project_exists(
             user_id=user_id,

@@ -109,7 +109,7 @@ def _load_identity(monkeypatch, repository):
     importlib.reload(core_config)
     core_config.get_settings.cache_clear()
     identity_routes.service.repository = repository
-    identity_routes.supabase_admin = DummySupabaseClient()
+    identity_routes.service.supabase_admin = DummySupabaseClient()
     return identity_routes, SignupRequest
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
+from app.core.serialization import serialize_ok_envelope
 from app.core.serialization import serialize_paging_meta
 from app.core.serialization import serialize_quote
 from app.modules.common.ownership import OwnershipValidator
@@ -132,10 +133,7 @@ class QuotesService:
         has_more = len(items) > limit
         page_items = items[:limit]
         next_cursor = str(offset + limit) if has_more else None
-        return {
-            "items": page_items,
-            "meta": serialize_paging_meta(next_cursor=next_cursor, has_more=has_more),
-        }
+        return serialize_ok_envelope(page_items, meta=serialize_paging_meta(next_cursor=next_cursor, has_more=has_more))
 
     async def _list_quotes_for_document(
         self,

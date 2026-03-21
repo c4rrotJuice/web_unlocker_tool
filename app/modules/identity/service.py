@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import logging
 
+from fastapi import HTTPException
+from supabase import create_client
+from supabase.client import AuthApiError
+
 from app.core.account_state import AccountState, UserEntitlement, UserPreferences, UserProfile
 from app.core.auth import RequestAuthContext
 from app.core.config import get_settings
@@ -23,8 +27,21 @@ logger = logging.getLogger(__name__)
 
 
 class IdentityService:
-    def __init__(self, *, repository: IdentityRepository):
+    def __init__(self, *, repository: IdentityRepository, supabase_admin=None):
         self.repository = repository
+        settings = get_settings()
+        self.supabase_admin = supabase_admin or create_client(settings.supabase_url or "", settings.supabase_service_role_key or "")
+
+    def _create_supabase_user(self, *, email: str | None, password: str | None):
+        if not email or not password:
+            raise HTTPException(status_code=422, detail="email and password are required when user_id is not provided.")
+        admin_api = getattr(getattr(self.supabase_admin, "auth", None), "admin", None)
+        if admin_api is not None and hasattr(admin_api, "create_user"):
+            created = admin_api.create_user({"email": email, "password": password, "email_confirm": False})
+            user = getattr(created, "user", None)
+            return user or created
+        created = self.supabase_admin.auth.sign_up({"email": email, "password": password})
+        return getattr(created, "user", None)
 
     def status(self) -> dict[str, object]:
         settings = get_settings()
@@ -37,10 +54,13 @@ class IdentityService:
             ],
         )
 
-    async def signup(self, payload: SignupRequest, *, create_user) -> dict[str, object]:
+    async def signup(self, payload: SignupRequest) -> dict[str, object]:
         user_id = payload.user_id
         if not user_id:
-            user = create_user(email=payload.email, password=payload.password)
+            try:
+                user = self._create_supabase_user(email=payload.email, password=payload.password)
+            except AuthApiError as exc:
+                raise HTTPException(status_code=400, detail=exc.message) from exc
             user_id = getattr(user, "id", None)
         if not user_id:
             raise AccountBootstrapFailedError("Signup succeeded but no canonical user id was returned.")

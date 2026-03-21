@@ -34,7 +34,8 @@ LEGACY_PRICE_ID_TO_TIER = {
 }
 PADDLE_ACTIVE_STATUSES = {"active", "trialing"}
 PADDLE_GRACE_STATUSES = {"past_due"}
-PADDLE_API_BASE_URL = "https://api.paddle.com"
+PADDLE_LIVE_API_BASE_URL = "https://api.paddle.com"
+PADDLE_SANDBOX_API_BASE_URL = "https://sandbox-api.paddle.com"
 PADDLE_CANCEL_EVENTS = {
     "subscription.canceled",
     "subscription.cancelled",
@@ -55,8 +56,15 @@ class BillingWebhookError(AppError):
 
 
 class BillingCheckoutError(AppError):
-    def __init__(self, code: str, message: str, status_code: int = 400) -> None:
-        super().__init__(code, message, status_code)
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        status_code: int = 400,
+        *,
+        extra: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(code, message, status_code, extra=extra or {})
 
 
 def _as_str(value: object | None) -> str | None:
@@ -115,6 +123,73 @@ class BillingService:
                 missing.append(env_name)
         return missing
 
+    @staticmethod
+    def _paddle_environment_from_base_url(base_url: str) -> str | None:
+        normalized = base_url.rstrip("/")
+        if normalized == PADDLE_LIVE_API_BASE_URL:
+            return "live"
+        if normalized == PADDLE_SANDBOX_API_BASE_URL:
+            return "sandbox"
+        return None
+
+    @staticmethod
+    def _paddle_environment_from_api_key(api_key: str | None) -> str | None:
+        key = (api_key or "").strip()
+        if not key:
+            return None
+        if key.startswith("pdl_sdbx_") or "_sdbx_" in key:
+            return "sandbox"
+        if key.startswith("pdl_live_") or "_live_" in key:
+            return "live"
+        return None
+
+    def _validate_checkout_environment(self) -> tuple[str, str | None]:
+        base_url = self.settings.paddle_api_base_url.rstrip("/")
+        paddle_environment = self._paddle_environment_from_base_url(base_url)
+        if paddle_environment is None:
+            raise BillingCheckoutError(
+                "billing_checkout_config_invalid",
+                "PADDLE_API_BASE_URL must target Paddle live or sandbox.",
+                500,
+                extra={"paddle_api_base_url": base_url},
+            )
+
+        api_key_environment = self._paddle_environment_from_api_key(self.settings.paddle_api_key)
+        if api_key_environment and api_key_environment != paddle_environment:
+            raise BillingCheckoutError(
+                "billing_checkout_config_mismatch",
+                "Paddle API key environment does not match the configured Paddle API base URL.",
+                500,
+                extra={
+                    "paddle_api_base_url": base_url,
+                    "paddle_environment": paddle_environment,
+                    "paddle_api_key_environment": api_key_environment,
+                },
+            )
+        return base_url, paddle_environment
+
+    @staticmethod
+    def _extract_paddle_error(response) -> tuple[str | None, str | None, str | None]:
+        error_type = None
+        error_code = None
+        detail = None
+        try:
+            body = response.json()
+        except Exception:
+            body = None
+        if isinstance(body, dict):
+            error_type = _as_str(body.get("type"))
+            error_code = _as_str(body.get("code"))
+            detail = _as_str(body.get("detail")) or _as_str(body.get("message"))
+            if not detail and isinstance(body.get("error"), dict):
+                nested_error = body.get("error")
+                error_type = error_type or _as_str(nested_error.get("type"))
+                error_code = error_code or _as_str(nested_error.get("code"))
+                detail = _as_str(nested_error.get("detail")) or _as_str(nested_error.get("message"))
+        if not detail:
+            detail = response.text.strip() or None
+        return error_type, error_code, detail
+
     def status(self) -> dict[str, object]:
         return serialize_module_status(
             module="billing",
@@ -171,7 +246,9 @@ class BillingService:
                 "billing_checkout_config_missing",
                 f"Missing billing configuration: {', '.join(missing)}",
                 500,
+                extra={"missing": missing},
             )
+        paddle_base_url, paddle_environment = self._validate_checkout_environment()
 
         price_id = self._resolve_price_id(tier, interval)
         if not price_id:
@@ -179,10 +256,11 @@ class BillingService:
                 "billing_checkout_price_missing",
                 f"No Paddle price id configured for {tier}/{interval}.",
                 500,
+                extra={"tier": tier, "interval": interval},
             )
 
         response = await http_client.post(
-            f"{PADDLE_API_BASE_URL}/transactions",
+            f"{paddle_base_url}/transactions",
             json={
                 "items": [
                     {
@@ -205,16 +283,49 @@ class BillingService:
             },
         )
         if response.status_code >= 400:
-            message = ""
-            try:
-                body = response.json()
-            except Exception:
-                body = None
-            if isinstance(body, dict):
-                message = str(body.get("error") or body.get("message") or body.get("detail") or "")
-            if not message:
-                message = response.text.strip() or "Paddle checkout creation failed."
-            raise BillingCheckoutError("billing_checkout_provider_error", message, response.status_code)
+            error_type, error_code, detail = self._extract_paddle_error(response)
+            logger.warning(
+                "billing.checkout.paddle_request_failed",
+                extra={
+                    "provider": "paddle",
+                    "paddle_environment": paddle_environment,
+                    "paddle_api_base_url": paddle_base_url,
+                    "upstream_status": response.status_code,
+                    "upstream_error_type": error_type,
+                    "upstream_error_code": error_code,
+                    "upstream_error_detail": detail,
+                    "price_id": price_id,
+                    "tier": tier,
+                    "interval": interval,
+                },
+            )
+            if response.status_code == 403:
+                raise BillingCheckoutError(
+                    "billing_checkout_provider_forbidden",
+                    "Paddle rejected the checkout request.",
+                    502,
+                    extra={
+                        "provider": "paddle",
+                        "upstream_status": response.status_code,
+                        "upstream_error_type": error_type,
+                        "upstream_error_code": error_code,
+                        "upstream_error_detail": detail,
+                        "paddle_environment": paddle_environment,
+                    },
+                )
+            raise BillingCheckoutError(
+                "billing_checkout_provider_error",
+                "Paddle checkout creation failed.",
+                502,
+                extra={
+                    "provider": "paddle",
+                    "upstream_status": response.status_code,
+                    "upstream_error_type": error_type,
+                    "upstream_error_code": error_code,
+                    "upstream_error_detail": detail,
+                    "paddle_environment": paddle_environment,
+                },
+            )
 
         try:
             payload = response.json()

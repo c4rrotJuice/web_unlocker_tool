@@ -235,6 +235,25 @@ class FakeNotesService:
         self.rows[row["id"]] = row
         return row
 
+    async def list_note_sources_by_citation_ids(self, *, user_id, access_token, citation_ids):
+        del user_id, access_token
+        if CITATION_ID not in citation_ids:
+            return []
+        return [
+            {
+                "id": "rel-1",
+                "note_id": NOTE_ID,
+                "source_id": SOURCE_ID,
+                "citation_id": CITATION_ID,
+                "relation_type": "citation",
+                "url": "https://example.com/source",
+                "position": 0,
+            }
+        ]
+
+    async def list_note_sources_by_source_ids(self, *, user_id, access_token, source_ids):
+        return await self.list_note_sources_by_citation_ids(user_id=user_id, access_token=access_token, citation_ids=[CITATION_ID] if SOURCE_ID in source_ids else [])
+
 
 class FakeNotesRepository:
     async def list_note_sources_by_citation_ids(self, *, user_id, access_token, citation_ids):
@@ -311,6 +330,12 @@ class FakeWorkspaceService:
         del user_id, access_token, capability_state
         return [deepcopy(self.document) for document_id in document_ids if document_id == DOCUMENT_ID]
 
+    async def list_documents_for_citation_ids(self, *, user_id, access_token, citation_ids):
+        return await self.repository.list_documents_for_citation_ids(user_id=user_id, access_token=access_token, citation_ids=citation_ids)
+
+    async def list_documents_for_note_ids(self, *, user_id, access_token, note_ids):
+        return await self.repository.list_documents_for_note_ids(user_id=user_id, access_token=access_token, note_ids=note_ids)
+
     async def create_document(self, *, user_id, access_token, capability_state, payload):
         del user_id, access_token, capability_state
         self.create_calls.append(deepcopy(payload))
@@ -361,6 +386,7 @@ async def test_citation_graph_returns_normalized_adjacency(graph_service):
         entity="citation",
         entity_id=CITATION_ID,
     )
+    payload = payload["data"]
 
     assert payload["node"]["type"] == "citation"
     assert payload["node"]["id"] == CITATION_ID
@@ -383,6 +409,7 @@ async def test_document_graph_returns_connected_sources_quotes_notes_and_citatio
         entity="document",
         entity_id=DOCUMENT_ID,
     )
+    payload = payload["data"]
 
     assert payload["node"]["type"] == "document"
     assert [item["id"] for item in payload["collections"]["sources"]] == [SOURCE_ID]
@@ -423,7 +450,7 @@ async def test_work_in_editor_orchestration_centralizes_lineage_and_document_att
     citations_service = graph_service.citations_service
     quotes_service = graph_service.quotes_service
 
-    assert citations_service.create_calls[0]["payload"]["url"] == "https://example.com/source"
+    assert citations_service.create_calls[0]["payload"]["extraction_payload"] is None
     assert quotes_service.create_calls[0]["citation_id"] == CITATION_ID
     assert notes_service.create_calls[0]["citation_id"] == CITATION_ID
     assert notes_service.create_calls[0]["quote_id"] == QUOTE_ID

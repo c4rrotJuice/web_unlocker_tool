@@ -347,6 +347,52 @@ async def test_checkout_maps_canonical_tier_interval_to_paddle_price(monkeypatch
 
 
 @pytest.mark.anyio
+async def test_checkout_can_switch_to_sandbox_via_environment_variable(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "http://example.com")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
+    monkeypatch.setenv("PADDLE_WEBHOOK_SECRET", "secret")
+    monkeypatch.setenv("PADDLE_API_KEY", "pdl_sdbx_test_api_key")
+    monkeypatch.setenv("PADDLE_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("PADDLE_STANDARD_MONTHLY_PRICE_ID", "price_standard_monthly")
+    monkeypatch.setenv("PADDLE_STANDARD_YEARLY_PRICE_ID", "price_standard_yearly")
+    monkeypatch.setenv("PADDLE_PRO_MONTHLY_PRICE_ID", "price_pro_monthly")
+    monkeypatch.setenv("PADDLE_PRO_YEARLY_PRICE_ID", "price_pro_yearly")
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("CORS_ORIGINS", "https://app.writior.com")
+    monkeypatch.setattr(supabase, "create_client", lambda url, key: DummyClient())
+
+    import app.core.auth as core_auth
+    import app.core.config as core_config
+    import app.modules.billing.routes as billing_routes
+    import app.modules.billing.service as billing_service
+    from app import main
+
+    importlib.reload(core_auth)
+    importlib.reload(core_config)
+    billing_service = importlib.reload(billing_service)
+    billing_routes = importlib.reload(billing_routes)
+    core_config.get_settings.cache_clear()
+    core_auth.get_token_verifier.cache_clear()
+    main = importlib.reload(main)
+    billing_routes.service.repository = SharedRepository(SharedBillingState())
+
+    paddle_client = FakePaddleClient()
+    monkeypatch.setattr(billing_service, "http_client", paddle_client)
+
+    async with async_test_client(main.app) as client:
+        response = await client.post(
+            "/api/billing/checkout",
+            headers={"Authorization": "Bearer valid-token"},
+            json={"tier": "standard", "interval": "monthly"},
+        )
+
+    assert response.status_code == 200
+    assert paddle_client.calls[0]["url"] == "https://sandbox-api.paddle.com/transactions"
+    assert paddle_client.calls[0]["headers"]["Authorization"] == "Bearer pdl_sdbx_test_api_key"
+
+
+@pytest.mark.anyio
 async def test_checkout_rejects_missing_provider_config_clearly(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "http://example.com")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "anon")

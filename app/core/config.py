@@ -24,6 +24,19 @@ def _parse_int_env(name: str, default: int) -> int:
     return int(raw)
 
 
+def _resolve_paddle_api_base_url() -> str:
+    explicit_base_url = (os.getenv("PADDLE_API_BASE_URL") or "").strip().rstrip("/")
+    if explicit_base_url:
+        return explicit_base_url
+
+    paddle_environment = (os.getenv("PADDLE_ENVIRONMENT") or "").strip().lower()
+    if paddle_environment == "sandbox":
+        return "https://sandbox-api.paddle.com"
+    if paddle_environment == "live" or not paddle_environment:
+        return "https://api.paddle.com"
+    raise RuntimeError("PADDLE_ENVIRONMENT must be 'live' or 'sandbox'.")
+
+
 @dataclass(frozen=True)
 class RateLimitSettings:
     anonymous_public_limit: int
@@ -104,7 +117,7 @@ def get_settings() -> Settings:
         supabase_service_role_key=(os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip() or None,
         paddle_webhook_secret=(os.getenv("PADDLE_WEBHOOK_SECRET") or "").strip() or None,
         paddle_api_key=(os.getenv("PADDLE_API_KEY") or "").strip() or None,
-        paddle_api_base_url=(os.getenv("PADDLE_API_BASE_URL") or "https://api.paddle.com").strip().rstrip("/"),
+        paddle_api_base_url=_resolve_paddle_api_base_url(),
         paddle_standard_monthly_price_id=(os.getenv("PADDLE_STANDARD_MONTHLY_PRICE_ID") or "").strip() or None,
         paddle_standard_yearly_price_id=(os.getenv("PADDLE_STANDARD_YEARLY_PRICE_ID") or "").strip() or None,
         paddle_pro_monthly_price_id=(os.getenv("PADDLE_PRO_MONTHLY_PRICE_ID") or "").strip() or None,

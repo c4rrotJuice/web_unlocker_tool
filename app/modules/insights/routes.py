@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, Header
 
 from app.core.auth import RequestAuthContext, require_request_auth_context
 from app.core.config import get_settings
-from app.core.entitlements import derive_capability_state
 from app.modules.identity.repo import IdentityRepository
 from app.modules.identity.service import IdentityService
 from app.modules.insights.repo import InsightsRepository
@@ -29,13 +28,7 @@ service = InsightsService(repository=InsightsRepository(supabase_repo=supabase_r
 
 
 async def _insight_access(auth_context: RequestAuthContext = Depends(require_request_auth_context)):
-    account_state = await identity_service.ensure_account_bootstrapped(auth_context)
-    capability_state = derive_capability_state(
-        user_id=account_state.profile.user_id,
-        tier=account_state.entitlement.tier,
-        status=account_state.entitlement.status,
-        paid_until=account_state.entitlement.paid_until,
-    )
+    _account_state, capability_state = await identity_service.resolve_access_state(auth_context)
     return {
         "user_id": auth_context.user_id,
         "capability_state": capability_state,

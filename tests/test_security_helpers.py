@@ -58,6 +58,8 @@ def test_route_classifier_is_authoritative_for_mounted_v2_routes():
 
     assert classifier.classify("/api/public-config") == RouteAccess.PUBLIC
     assert classifier.classify("/api/me") == RouteAccess.AUTH_REQUIRED
+    assert classifier.classify("/api/research/status") == RouteAccess.PUBLIC
+    assert classifier.classify("/api/workspace/status") == RouteAccess.PUBLIC
     assert classifier.classify("/api/unknown") == RouteAccess.PUBLIC
 
 

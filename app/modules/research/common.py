@@ -7,7 +7,8 @@ from uuid import UUID
 from fastapi import HTTPException, Request
 
 from app.core.auth import RequestAuthContext
-from app.core.entitlements import CapabilityState, derive_capability_state
+from app.core.entitlements import CapabilityState
+from app.modules.identity.service import IdentityService
 from app.services.supabase_rest import SupabaseRestRepository, response_error_code, response_error_text, response_json
 
 
@@ -102,21 +103,12 @@ def raise_for_write_failure(
 async def load_capability_state_from_request(
     request: Request,
     auth_context: RequestAuthContext,
+    *,
+    identity_service: IdentityService,
 ) -> ResearchAccessContext:
-    if auth_context.capability_state is not None:
-        capability_state = auth_context.capability_state
-    elif getattr(request.state, "capability_state", None) is not None:
-        capability_state = request.state.capability_state
-    else:
-        cached_tier = getattr(request.state, "account_type", None)
-        capability_state = derive_capability_state(
-            user_id=auth_context.user_id,
-            tier=str(cached_tier or "free"),
-            status="active",
-            paid_until=None,
-        )
+    account_state, capability_state = await identity_service.resolve_access_state(auth_context)
+    request.state.auth_context = auth_context.with_account_state(account_state).with_capability_state(capability_state)
     request.state.capability_state = capability_state
-    request.state.account_type = capability_state.tier
     return ResearchAccessContext(
         user_id=auth_context.user_id,
         access_token=auth_context.access_token,

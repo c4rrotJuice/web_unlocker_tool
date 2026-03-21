@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.core.auth import RequestAuthContext, require_request_auth_context
 from app.core.config import get_settings
-from app.core.entitlements import derive_capability_state
+from app.core.entitlements import capability_state_from_account_state
 from app.modules.identity.repo import IdentityRepository
 from app.modules.identity.service import IdentityService
 from app.modules.unlock.repo import UnlockRepository
@@ -31,12 +31,7 @@ service = UnlockService(repository=UnlockRepository(supabase_repo=supabase_repo)
 
 async def _activity_access(auth_context: RequestAuthContext = Depends(require_request_auth_context)):
     account_state = await identity_service.ensure_account_bootstrapped(auth_context)
-    capability_state = derive_capability_state(
-        user_id=account_state.profile.user_id,
-        tier=account_state.entitlement.tier,
-        status=account_state.entitlement.status,
-        paid_until=account_state.entitlement.paid_until,
-    )
+    capability_state = capability_state_from_account_state(account_state)
     return {
         "user_id": auth_context.user_id,
         "access_token": auth_context.access_token,

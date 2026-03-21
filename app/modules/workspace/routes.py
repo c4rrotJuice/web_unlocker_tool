@@ -4,6 +4,8 @@ from app.core.auth import RequestAuthContext, require_request_auth_context
 from app.core.config import get_settings
 from app.modules.common.ownership import OwnershipValidator
 from app.modules.common.relation_validation import RelationValidator
+from app.modules.identity.repo import IdentityRepository
+from app.modules.identity.service import IdentityService
 from app.modules.research.citations.repo import CitationsRepository
 from app.modules.research.citations.service import CitationsService
 from app.modules.research.common import load_capability_state_from_request
@@ -35,6 +37,13 @@ settings = get_settings()
 supabase_repo = SupabaseRestRepository(
     base_url=settings.supabase_url,
     service_role_key=settings.supabase_service_role_key,
+)
+identity_service = IdentityService(
+    repository=IdentityRepository(
+        user_supabase_repo=supabase_repo,
+        bootstrap_supabase_repo=supabase_repo,
+        anon_key=settings.supabase_anon_key,
+    )
 )
 taxonomy_service = TaxonomyService(
     repository=TaxonomyRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
@@ -85,7 +94,7 @@ async def workspace_status() -> dict[str, object]:
 
 
 async def _access(request: Request, auth_context: RequestAuthContext = Depends(require_request_auth_context)):
-    return await load_capability_state_from_request(request, auth_context)
+    return await load_capability_state_from_request(request, auth_context, identity_service=identity_service)
 
 
 @router.get("/api/editor/access")

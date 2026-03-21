@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.core.account_state import AccountState
 from app.core.errors import CapabilityForbiddenError
 
 
@@ -89,6 +90,15 @@ def derive_capability_state(
         status=normalized_status,
         paid_until=paid_until,
         capabilities=capabilities,
+    )
+
+
+def capability_state_from_account_state(account_state: AccountState) -> CapabilityState:
+    return derive_capability_state(
+        user_id=account_state.profile.user_id,
+        tier=account_state.entitlement.tier,
+        status=account_state.entitlement.status,
+        paid_until=account_state.entitlement.paid_until,
     )
 
 

@@ -9,7 +9,7 @@ from supabase.client import AuthApiError
 from app.core.account_state import AccountState, UserEntitlement, UserPreferences, UserProfile
 from app.core.auth import RequestAuthContext
 from app.core.config import get_settings
-from app.core.entitlements import derive_capability_state
+from app.core.entitlements import CapabilityState, capability_state_from_account_state
 from app.core.errors import AccountBootstrapFailedError
 from app.core.serialization import (
     serialize_account_bootstrap,
@@ -79,8 +79,7 @@ class IdentityService:
         )
 
     async def me(self, auth_context: RequestAuthContext) -> dict[str, object]:
-        account_state = await self.ensure_account_bootstrapped(auth_context)
-        capability_state = self._capability_state(account_state)
+        account_state, capability_state = await self.resolve_access_state(auth_context)
         return serialize_ok_envelope(serialize_account_bootstrap(account_state, capability_state))
 
     async def profile(self, auth_context: RequestAuthContext) -> dict[str, object]:
@@ -124,8 +123,7 @@ class IdentityService:
         return serialize_ok_envelope(serialize_preferences(account_state.preferences))
 
     async def current_entitlement(self, auth_context: RequestAuthContext) -> dict[str, object]:
-        account_state = await self.ensure_account_bootstrapped(auth_context)
-        capability_state = self._capability_state(account_state)
+        account_state, capability_state = await self.resolve_access_state(auth_context)
         return serialize_ok_envelope(
             {
                 "entitlement": serialize_entitlement(account_state.entitlement),
@@ -219,10 +217,7 @@ class IdentityService:
             billing_subscription=None,
         )
 
-    def _capability_state(self, account_state: AccountState):
-        return derive_capability_state(
-            user_id=account_state.profile.user_id,
-            tier=account_state.entitlement.tier,
-            status=account_state.entitlement.status,
-            paid_until=account_state.entitlement.paid_until,
-        )
+    async def resolve_access_state(self, auth_context: RequestAuthContext) -> tuple[AccountState, CapabilityState]:
+        account_state = await self.ensure_account_bootstrapped(auth_context)
+        capability_state = capability_state_from_account_state(account_state)
+        return account_state, capability_state

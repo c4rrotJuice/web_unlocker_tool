@@ -14,7 +14,7 @@ from fastapi import Request
 
 from app.core.auth import RequestAuthContext
 from app.core.config import Settings, get_settings
-from app.core.entitlements import derive_capability_state
+from app.core.entitlements import capability_state_from_account_state
 from app.core.errors import (
     AppError,
     InvalidTokenError,
@@ -142,12 +142,7 @@ class ExtensionService:
 
     async def build_access_context(self, request: Request, auth_context: RequestAuthContext) -> ExtensionAccessContext:
         account_state = await self.identity_service.ensure_account_bootstrapped(auth_context)
-        capability_state = derive_capability_state(
-            user_id=account_state.profile.user_id,
-            tier=account_state.entitlement.tier,
-            status=account_state.entitlement.status,
-            paid_until=account_state.entitlement.paid_until,
-        )
+        capability_state = capability_state_from_account_state(account_state)
         request.state.auth_context = auth_context
         request.state.capability_state = capability_state
         return ExtensionAccessContext(

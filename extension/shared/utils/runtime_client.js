@@ -1,6 +1,17 @@
 import { SURFACE_NAMES, createAuthLogoutRequest, createAuthStartRequest, createAuthStatusGetRequest, createBootstrapFetchRequest, createSidepanelListRecentCitationsRequest, createSidepanelListRecentNotesRequest, createSidepanelOpenDashboardRequest, createSidepanelOpenEditorRequest, createCaptureCreateCitationRequest, createCaptureCreateNoteRequest, createCaptureCreateQuoteRequest, createCitationPreviewRequest, createCitationRenderRequest, createCitationSaveRequest, createOpenSidepanelRequest, createPingRequest, createWorkInEditorRequest, } from "../contracts/messages.js";
 import { createRequestId } from "./request_id.js";
 import { sendRuntimeMessage } from "./runtime_message.js";
+function withOptionalQuery(payload) {
+    const normalizedQuery = typeof payload?.query === "string" ? payload.query.trim() : payload?.query;
+    if (!normalizedQuery) {
+        const { query: _query, ...rest } = payload || {};
+        return rest;
+    }
+    return {
+        ...(payload || {}),
+        query: normalizedQuery,
+    };
+}
 export function createRuntimeClient(chromeApi, surface) {
     return {
         ping(payload = {}) {
@@ -32,21 +43,21 @@ export function createRuntimeClient(chromeApi, surface) {
         },
         listRecentCitations({ limit = 8, offset = 0, query = "" } = {}) {
             const requestId = createRequestId(`${surface}-list-recent-citations`);
-            return sendRuntimeMessage(chromeApi, createSidepanelListRecentCitationsRequest(requestId, {
+            return sendRuntimeMessage(chromeApi, createSidepanelListRecentCitationsRequest(requestId, withOptionalQuery({
                 surface,
                 limit,
                 offset,
                 query,
-            }));
+            })));
         },
         listRecentNotes({ limit = 8, offset = 0, query = "" } = {}) {
             const requestId = createRequestId(`${surface}-list-recent-notes`);
-            return sendRuntimeMessage(chromeApi, createSidepanelListRecentNotesRequest(requestId, {
+            return sendRuntimeMessage(chromeApi, createSidepanelListRecentNotesRequest(requestId, withOptionalQuery({
                 surface,
                 limit,
                 offset,
                 query,
-            }));
+            })));
         },
         openEditor() {
             const requestId = createRequestId(`${surface}-open-editor`);

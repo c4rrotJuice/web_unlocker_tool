@@ -912,6 +912,17 @@ const messages_ts_1 = require("../contracts/messages.ts");
 Object.defineProperty(exports, "SURFACE_NAMES", { enumerable: true, get: function () { return messages_ts_1.SURFACE_NAMES; } });
 const request_id_ts_1 = require("./request_id.ts");
 const runtime_message_ts_1 = require("./runtime_message.ts");
+function withOptionalQuery(payload) {
+    const normalizedQuery = typeof payload?.query === "string" ? payload.query.trim() : payload?.query;
+    if (!normalizedQuery) {
+        const { query: _query, ...rest } = payload || {};
+        return rest;
+    }
+    return {
+        ...(payload || {}),
+        query: normalizedQuery,
+    };
+}
 function createRuntimeClient(chromeApi, surface) {
     return {
         ping(payload = {}) {
@@ -943,21 +954,21 @@ function createRuntimeClient(chromeApi, surface) {
         },
         listRecentCitations({ limit = 8, offset = 0, query = "" } = {}) {
             const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-list-recent-citations`);
-            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createSidepanelListRecentCitationsRequest)(requestId, {
+            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createSidepanelListRecentCitationsRequest)(requestId, withOptionalQuery({
                 surface,
                 limit,
                 offset,
                 query,
-            }));
+            })));
         },
         listRecentNotes({ limit = 8, offset = 0, query = "" } = {}) {
             const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-list-recent-notes`);
-            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createSidepanelListRecentNotesRequest)(requestId, {
+            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createSidepanelListRecentNotesRequest)(requestId, withOptionalQuery({
                 surface,
                 limit,
                 offset,
                 query,
-            }));
+            })));
         },
         openEditor() {
             const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-open-editor`);

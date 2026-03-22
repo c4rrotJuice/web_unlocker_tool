@@ -48,6 +48,7 @@ from app.modules.research.taxonomy.schemas import (
 from app.modules.research.taxonomy.service import TaxonomyService
 from app.modules.workspace.repo import WorkspaceRepository
 from app.modules.workspace.service import WorkspaceService
+from app.core.serialization import serialize_ok_envelope
 from app.services.supabase_rest import SupabaseRestRepository
 
 
@@ -297,7 +298,7 @@ async def list_citations(
 
 @router.post("/api/citations")
 async def create_citation(payload: CitationCreateRequest, access=Depends(_access)):
-    return await citations_service.create_citation(
+    citation = await citations_service.create_citation(
         user_id=access.user_id,
         access_token=access.access_token,
         account_type=access.capability_state.tier,
@@ -308,11 +309,12 @@ async def create_citation(payload: CitationCreateRequest, access=Depends(_access
         quote=payload.quote,
         style=payload.style,
     )
+    return serialize_ok_envelope(citation)
 
 
 @router.post("/api/citations/preview")
 async def preview_citation(payload: CitationPreviewRequest, access=Depends(_access)):
-    return await citations_service.preview_citation(
+    preview = await citations_service.preview_citation(
         account_type=access.capability_state.tier,
         extraction_payload=payload.extraction_payload,
         excerpt=payload.excerpt,
@@ -321,6 +323,7 @@ async def preview_citation(payload: CitationPreviewRequest, access=Depends(_acce
         quote=payload.quote,
         style=payload.style,
     )
+    return serialize_ok_envelope(preview)
 
 
 @router.get("/api/citations/{citation_id}")
@@ -545,13 +548,14 @@ async def replace_note_links(note_id: str, payload: NoteLinksReplaceRequest, acc
 
 @router.post("/api/citations/render")
 async def render_citation(payload: CitationRenderRequest, access=Depends(_access)):
-    return await citations_service.render_citation(
+    citation = await citations_service.render_citation(
         user_id=access.user_id,
         access_token=access.access_token,
         citation_id=normalize_uuid(payload.citation_id, field_name="citation_id"),
         style=payload.style,
         account_type=access.capability_state.tier,
     )
+    return serialize_ok_envelope(citation)
 
 
 @router.post("/api/citations/by-ids")

@@ -129,7 +129,8 @@ async def test_citation_create_handler_accepts_canonical_extraction_payload(monk
     )
     response = await create_citation(payload, access=_access_context())
 
-    assert response["id"] == "citation-1"
+    assert response["ok"] is True
+    assert response["data"]["id"] == "citation-1"
     assert captured["user_id"] == "user-1"
     assert captured["account_type"] == "pro"
     assert captured["extraction_payload"].canonical_url == "https://example.com/paper"
@@ -189,7 +190,8 @@ async def test_citation_preview_handler_accepts_canonical_extraction_payload(mon
     )
     response = await preview_citation(payload, access=_access_context())
 
-    assert response["citation"]["id"] is None
-    assert response["selected_style"] == "mla"
+    assert response["ok"] is True
+    assert response["data"]["citation"]["id"] is None
+    assert response["data"]["selected_style"] == "mla"
     assert captured["account_type"] == "pro"
     assert captured["extraction_payload"].canonical_url == "https://example.com/paper"

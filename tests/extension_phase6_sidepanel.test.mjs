@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { createBackgroundRuntime } from "../extension/background/index.js";
 import { MESSAGE_NAMES } from "../extension/shared/constants/message_names.js";
+import { createRuntimeClient } from "../extension/shared/utils/runtime_client.js";
 import { createSidepanelShell } from "../extension/sidepanel/app/index.js";
 
 class FakeEvent {
@@ -398,6 +399,23 @@ test("signed-out sidepanel stays background-only and does not fetch lists", asyn
     globalThis.document = previousDocument;
     globalThis.window = previousWindow;
   }
+});
+
+test("sidepanel runtime client omits blank query values from list requests", async () => {
+  let capturedMessage = null;
+  const chromeApi = {
+    runtime: {
+      lastError: null,
+      sendMessage(message, callback) {
+        capturedMessage = message;
+        callback?.({ ok: true, status: "ok", requestId: message.requestId, data: { items: [] } });
+      },
+    },
+  };
+  const client = createRuntimeClient(chromeApi, "sidepanel");
+  await client.listRecentCitations({ limit: 8, offset: 0, query: "" });
+  assert.ok(capturedMessage);
+  assert.equal(Object.prototype.hasOwnProperty.call(capturedMessage.payload, "query"), false);
 });
 
 test("signed-in sidepanel loads recent items, supports tabs, expand, copy, and background navigation", async () => {

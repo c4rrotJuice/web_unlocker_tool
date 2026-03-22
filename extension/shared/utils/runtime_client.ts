@@ -7,6 +7,8 @@ import {
   createCaptureCreateCitationRequest,
   createCaptureCreateNoteRequest,
   createCaptureCreateQuoteRequest,
+  createCitationRenderRequest,
+  createCitationSaveRequest,
   createOpenSidepanelRequest,
   createPingRequest,
   createWorkInEditorRequest,
@@ -60,6 +62,20 @@ export function createRuntimeClient(chromeApi, surface) {
     createNote(payload) {
       const requestId = createRequestId(`${surface}-create-note`);
       return sendRuntimeMessage(chromeApi, createCaptureCreateNoteRequest(requestId, {
+        surface,
+        ...payload,
+      }));
+    },
+    renderCitation(payload) {
+      const requestId = createRequestId(`${surface}-render-citation`);
+      return sendRuntimeMessage(chromeApi, createCitationRenderRequest(requestId, {
+        surface,
+        ...payload,
+      }));
+    },
+    saveCitation(payload) {
+      const requestId = createRequestId(`${surface}-save-citation`);
+      return sendRuntimeMessage(chromeApi, createCitationSaveRequest(requestId, {
         surface,
         ...payload,
       }));

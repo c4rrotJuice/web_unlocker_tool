@@ -45,6 +45,14 @@ export function createCaptureCreateNoteRequest(requestId, payload) {
   return createRequest(MESSAGE_NAMES.CAPTURE_CREATE_NOTE, requestId, payload);
 }
 
+export function createCitationRenderRequest(requestId, payload) {
+  return createRequest(MESSAGE_NAMES.CITATION_RENDER, requestId, payload);
+}
+
+export function createCitationSaveRequest(requestId, payload) {
+  return createRequest(MESSAGE_NAMES.CITATION_SAVE, requestId, payload);
+}
+
 export function createWorkInEditorRequest(requestId, payload) {
   return createRequest(MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST, requestId, payload);
 }

@@ -17,6 +17,10 @@ function createDefaultHandlers() {
             createQuote: (request) => createNotImplementedResult(request.type, request.requestId),
             createNote: (request) => createNotImplementedResult(request.type, request.requestId),
         },
+        citation: {
+            render: (request) => createNotImplementedResult(request.type, request.requestId),
+            save: (request) => createNotImplementedResult(request.type, request.requestId),
+        },
         editor: {
             requestWorkInEditor: (request) => createNotImplementedResult(request.type, request.requestId),
         },
@@ -37,6 +41,8 @@ function createRouteTable(handlers) {
         [MESSAGE_NAMES.CAPTURE_CREATE_CITATION]: handlers.capture.createCitation,
         [MESSAGE_NAMES.CAPTURE_CREATE_QUOTE]: handlers.capture.createQuote,
         [MESSAGE_NAMES.CAPTURE_CREATE_NOTE]: handlers.capture.createNote,
+        [MESSAGE_NAMES.CITATION_RENDER]: handlers.citation.render,
+        [MESSAGE_NAMES.CITATION_SAVE]: handlers.citation.save,
         [MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST]: handlers.editor.requestWorkInEditor,
     };
 }

@@ -4,6 +4,7 @@ export const MESSAGE_TOPICS = Object.freeze({
     AUTH: "auth",
     BOOTSTRAP: "bootstrap",
     CAPTURE: "capture",
+    CITATION: "citation",
     EDITOR: "editor",
 });
 export const SURFACE_NAMES = Object.freeze({
@@ -57,6 +58,16 @@ export const MESSAGE_CONTRACTS = Object.freeze({
         topic: MESSAGE_TOPICS.CAPTURE,
         payloadShape: "surface:string, noteText?:string, capture?:{selectionText?:string, pageTitle?:string, pageUrl?:string, pageDomain?:string}",
         resultShape: "note:canonical backend response",
+    }),
+    [MESSAGE_NAMES.CITATION_RENDER]: Object.freeze({
+        topic: MESSAGE_TOPICS.CITATION,
+        payloadShape: "surface:string, citationId:string, style:string",
+        resultShape: "renders:{apa|mla|chicago|harvard:{inline|footnote|bibliography:string}}",
+    }),
+    [MESSAGE_NAMES.CITATION_SAVE]: Object.freeze({
+        topic: MESSAGE_TOPICS.CITATION,
+        payloadShape: "surface:string, citationId:string, style:string, format:string, copy?:boolean",
+        resultShape: "saved:boolean, citationId:string, style:string, format:string, copy:boolean",
     }),
     [MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST]: Object.freeze({
         topic: MESSAGE_TOPICS.EDITOR,

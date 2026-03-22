@@ -14,6 +14,8 @@ exports.MESSAGE_NAMES = Object.freeze({
     CAPTURE_CREATE_CITATION: "capture.create_citation",
     CAPTURE_CREATE_QUOTE: "capture.create_quote",
     CAPTURE_CREATE_NOTE: "capture.create_note",
+    CITATION_RENDER: "citation.render",
+    CITATION_SAVE: "citation.save",
     WORK_IN_EDITOR_REQUEST: "editor.work_in_editor_request",
 });
 
@@ -28,6 +30,7 @@ exports.MESSAGE_TOPICS = Object.freeze({
     AUTH: "auth",
     BOOTSTRAP: "bootstrap",
     CAPTURE: "capture",
+    CITATION: "citation",
     EDITOR: "editor",
 });
 exports.SURFACE_NAMES = Object.freeze({
@@ -82,6 +85,16 @@ exports.MESSAGE_CONTRACTS = Object.freeze({
         payloadShape: "surface:string, noteText?:string, capture?:{selectionText?:string, pageTitle?:string, pageUrl?:string, pageDomain?:string}",
         resultShape: "note:canonical backend response",
     }),
+    [message_names_ts_1.MESSAGE_NAMES.CITATION_RENDER]: Object.freeze({
+        topic: exports.MESSAGE_TOPICS.CITATION,
+        payloadShape: "surface:string, citationId:string, style:string",
+        resultShape: "renders:{apa|mla|chicago|harvard:{inline|footnote|bibliography:string}}",
+    }),
+    [message_names_ts_1.MESSAGE_NAMES.CITATION_SAVE]: Object.freeze({
+        topic: exports.MESSAGE_TOPICS.CITATION,
+        payloadShape: "surface:string, citationId:string, style:string, format:string, copy?:boolean",
+        resultShape: "saved:boolean, citationId:string, style:string, format:string, copy:boolean",
+    }),
     [message_names_ts_1.MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST]: Object.freeze({
         topic: exports.MESSAGE_TOPICS.EDITOR,
         payloadShape: "surface:string, sourceId:string",
@@ -103,6 +116,8 @@ exports.createBootstrapFetchRequest = createBootstrapFetchRequest;
 exports.createCaptureCreateCitationRequest = createCaptureCreateCitationRequest;
 exports.createCaptureCreateQuoteRequest = createCaptureCreateQuoteRequest;
 exports.createCaptureCreateNoteRequest = createCaptureCreateNoteRequest;
+exports.createCitationRenderRequest = createCitationRenderRequest;
+exports.createCitationSaveRequest = createCitationSaveRequest;
 exports.createWorkInEditorRequest = createWorkInEditorRequest;
 const message_names_ts_1 = require("../constants/message_names.ts");
 const contracts_ts_1 = require("../types/contracts.ts");
@@ -140,6 +155,12 @@ function createCaptureCreateQuoteRequest(requestId, payload) {
 }
 function createCaptureCreateNoteRequest(requestId, payload) {
     return createRequest(message_names_ts_1.MESSAGE_NAMES.CAPTURE_CREATE_NOTE, requestId, payload);
+}
+function createCitationRenderRequest(requestId, payload) {
+    return createRequest(message_names_ts_1.MESSAGE_NAMES.CITATION_RENDER, requestId, payload);
+}
+function createCitationSaveRequest(requestId, payload) {
+    return createRequest(message_names_ts_1.MESSAGE_NAMES.CITATION_SAVE, requestId, payload);
 }
 function createWorkInEditorRequest(requestId, payload) {
     return createRequest(message_names_ts_1.MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST, requestId, payload);
@@ -218,6 +239,58 @@ function isErrorResult(result) {
 }
 function isOkResult(result) {
     return result.ok === true;
+}
+
+},
+"shared/types/citation.ts": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CITATION_FORMATS = exports.CITATION_STYLES = void 0;
+exports.normalizeCitationStyle = normalizeCitationStyle;
+exports.normalizeCitationFormat = normalizeCitationFormat;
+exports.getLockedCitationStyles = getLockedCitationStyles;
+exports.getCitationPreviewText = getCitationPreviewText;
+exports.CITATION_STYLES = Object.freeze(["apa", "mla", "chicago", "harvard"]);
+exports.CITATION_FORMATS = Object.freeze(["inline", "footnote", "bibliography"]);
+function normalizeCitationStyle(value, fallback = "apa") {
+    const normalized = String(value || fallback).trim().toLowerCase();
+    return exports.CITATION_STYLES.includes(normalized) ? normalized : fallback;
+}
+function normalizeCitationFormat(value, fallback = "bibliography") {
+    const normalized = String(value || fallback).trim().toLowerCase();
+    return exports.CITATION_FORMATS.includes(normalized) ? normalized : fallback;
+}
+function getLockedCitationStyles(allowedStyles) {
+    const allowed = Array.isArray(allowedStyles)
+        ? allowedStyles
+            .map((style) => normalizeCitationStyle(style, ""))
+            .filter(Boolean)
+        : [];
+    if (!allowed.length) {
+        return [];
+    }
+    return exports.CITATION_STYLES.filter((style) => !allowed.includes(style));
+}
+function getCitationPreviewText(record, style = "apa", format = "bibliography") {
+    const normalizedStyle = normalizeCitationStyle(style);
+    const normalizedFormat = normalizeCitationFormat(format);
+    const styleBundle = record?.render_bundle?.renders?.[normalizedStyle] || record?.renders?.[normalizedStyle] || null;
+    if (styleBundle && typeof styleBundle[normalizedFormat] === "string" && styleBundle[normalizedFormat].trim()) {
+        return styleBundle[normalizedFormat].trim();
+    }
+    if (record?.citation?.style === normalizedStyle || record?.style === normalizedStyle) {
+        if (normalizedFormat === "inline" && typeof (record?.citation?.inline_citation || record?.inline_citation) === "string") {
+            return String(record?.citation?.inline_citation || record?.inline_citation).trim();
+        }
+        if (normalizedFormat === "footnote" && typeof (record?.citation?.footnote || record?.footnote) === "string") {
+            return String(record?.citation?.footnote || record?.footnote).trim();
+        }
+        if (normalizedFormat === "bibliography") {
+            const value = record?.citation?.full_citation || record?.citation?.full_text || record?.full_citation || record?.full_text || "";
+            return String(value).trim();
+        }
+    }
+    return "";
 }
 
 },
@@ -362,12 +435,14 @@ function buildNoteCaptureRequest({ selectionText, noteText, pageTitle, pageUrl, 
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.REQUEST_PAYLOAD_VALIDATORS = void 0;
+exports.validateCitationRenderBundle = validateCitationRenderBundle;
 exports.validateMessageEnvelope = validateMessageEnvelope;
 exports.validateMessageResult = validateMessageResult;
 exports.validateResultEnvelope = validateResultEnvelope;
 exports.validateBootstrapSnapshot = validateBootstrapSnapshot;
 const message_names_ts_1 = require("../constants/message_names.ts");
 const contracts_ts_1 = require("../types/contracts.ts");
+const citation_ts_1 = require("../types/citation.ts");
 const capture_ts_1 = require("../types/capture.ts");
 const messages_ts_1 = require("../types/messages.ts");
 const KNOWN_MESSAGE_TYPES = new Set(Object.values(message_names_ts_1.MESSAGE_NAMES));
@@ -470,6 +545,38 @@ function validateEditorPayload(payload) {
     }
     return null;
 }
+function validateCitationRenderPayload(payload) {
+    const surfaceError = validateSurface(payload);
+    if (surfaceError) {
+        return surfaceError;
+    }
+    if (!isNonEmptyString(payload.citationId)) {
+        return "payload.citationId must be a non-empty string.";
+    }
+    if (!isNonEmptyString(payload.style)) {
+        return "payload.style must be a non-empty string.";
+    }
+    if ((0, citation_ts_1.normalizeCitationStyle)(payload.style, "") !== payload.style.trim().toLowerCase()) {
+        return "payload.style must be one of the supported citation styles.";
+    }
+    return null;
+}
+function validateCitationSavePayload(payload) {
+    const renderError = validateCitationRenderPayload(payload);
+    if (renderError) {
+        return renderError;
+    }
+    if (!isNonEmptyString(payload.format)) {
+        return "payload.format must be a non-empty string.";
+    }
+    if ((0, citation_ts_1.normalizeCitationFormat)(payload.format, "") !== payload.format.trim().toLowerCase()) {
+        return "payload.format must be one of the supported citation formats.";
+    }
+    if (payload.copy != null && typeof payload.copy !== "boolean") {
+        return "payload.copy must be a boolean when provided.";
+    }
+    return null;
+}
 exports.REQUEST_PAYLOAD_VALIDATORS = Object.freeze({
     [message_names_ts_1.MESSAGE_NAMES.PING]: validatePingPayload,
     [message_names_ts_1.MESSAGE_NAMES.OPEN_SIDEPANEL]: validateOpenSidepanelPayload,
@@ -480,8 +587,54 @@ exports.REQUEST_PAYLOAD_VALIDATORS = Object.freeze({
     [message_names_ts_1.MESSAGE_NAMES.CAPTURE_CREATE_CITATION]: (payload) => validateCaptureEntityPayload(payload, "selectionText"),
     [message_names_ts_1.MESSAGE_NAMES.CAPTURE_CREATE_QUOTE]: (payload) => validateCaptureEntityPayload(payload, "selectionText"),
     [message_names_ts_1.MESSAGE_NAMES.CAPTURE_CREATE_NOTE]: validateCaptureNotePayload,
+    [message_names_ts_1.MESSAGE_NAMES.CITATION_RENDER]: validateCitationRenderPayload,
+    [message_names_ts_1.MESSAGE_NAMES.CITATION_SAVE]: validateCitationSavePayload,
     [message_names_ts_1.MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST]: validateEditorPayload,
 });
+function validateCitationRenderBundle(payload) {
+    if (!isPlainObject(payload)) {
+        return (0, messages_ts_1.createErrorResult)(messages_ts_1.ERROR_CODES.INVALID_PAYLOAD, "Citation render bundle must be a JSON object.");
+    }
+    if (!isPlainObject(payload.renders)) {
+        return (0, messages_ts_1.createErrorResult)(messages_ts_1.ERROR_CODES.INVALID_PAYLOAD, "Citation render bundle must include renders.");
+    }
+    const renders = {};
+    let hasRenderableText = false;
+    for (const [style, bundle] of Object.entries(payload.renders)) {
+        if (!citation_ts_1.CITATION_STYLES.includes(style)) {
+            return (0, messages_ts_1.createErrorResult)(messages_ts_1.ERROR_CODES.INVALID_PAYLOAD, `Unsupported citation style: ${style}.`);
+        }
+        if (!isPlainObject(bundle)) {
+            return (0, messages_ts_1.createErrorResult)(messages_ts_1.ERROR_CODES.INVALID_PAYLOAD, `Citation render bundle for ${style} must be an object.`);
+        }
+        renders[style] = {};
+        for (const format of citation_ts_1.CITATION_FORMATS) {
+            if (bundle[format] == null) {
+                continue;
+            }
+            if (typeof bundle[format] !== "string") {
+                return (0, messages_ts_1.createErrorResult)(messages_ts_1.ERROR_CODES.INVALID_PAYLOAD, `Citation render bundle for ${style}.${format} must be a string.`);
+            }
+            renders[style][format] = bundle[format];
+            if (bundle[format].trim()) {
+                hasRenderableText = true;
+            }
+        }
+    }
+    if (!hasRenderableText) {
+        return (0, messages_ts_1.createErrorResult)(messages_ts_1.ERROR_CODES.INVALID_PAYLOAD, "Citation render bundle did not include any render text.");
+    }
+    return {
+        ok: true,
+        status: messages_ts_1.RESULT_STATUS.OK,
+        data: {
+            ...payload,
+            renders,
+            cache_hit: Boolean(payload.cache_hit),
+        },
+        meta: payload.meta ?? null,
+    };
+}
 function validateMessageEnvelope(message, { allowedTypes = null } = {}) {
     if (!isPlainObject(message)) {
         return (0, messages_ts_1.createErrorResult)(messages_ts_1.ERROR_CODES.INVALID_PAYLOAD, "Invalid message envelope.");
@@ -680,6 +833,20 @@ function createRuntimeClient(chromeApi, surface) {
         createNote(payload) {
             const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-create-note`);
             return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createCaptureCreateNoteRequest)(requestId, {
+                surface,
+                ...payload,
+            }));
+        },
+        renderCitation(payload) {
+            const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-render-citation`);
+            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createCitationRenderRequest)(requestId, {
+                surface,
+                ...payload,
+            }));
+        },
+        saveCitation(payload) {
+            const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-save-citation`);
+            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createCitationSaveRequest)(requestId, {
                 surface,
                 ...payload,
             }));
@@ -2259,6 +2426,531 @@ function createSelectionActionPill({ documentRef = globalThis.document, windowRe
 }
 
 },
+"sidepanel/components/citation_format_tabs.ts": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createCitationFormatTabs = createCitationFormatTabs;
+const citation_ts_1 = require("../../shared/types/citation.ts");
+const FORMAT_LABELS = {
+    inline: "Inline",
+    footnote: "Footnote",
+    bibliography: "Bibliography",
+};
+function createCitationFormatTabs({ documentRef = globalThis.document, formats = citation_ts_1.CITATION_FORMATS, selectedFormat = "bibliography", onSelect, } = {}) {
+    const root = documentRef.createElement("div");
+    root.setAttribute("data-citation-format-tabs", "true");
+    root.style.display = "flex";
+    root.style.flexWrap = "wrap";
+    root.style.gap = "8px";
+    function render(nextSelectedFormat = selectedFormat) {
+        root.innerHTML = "";
+        formats.forEach((format) => {
+            const button = documentRef.createElement("button");
+            button.type = "button";
+            button.textContent = FORMAT_LABELS[format] || String(format || "").toUpperCase();
+            button.setAttribute("data-format", format);
+            button.setAttribute("aria-pressed", String(format === nextSelectedFormat));
+            button.style.padding = "8px 10px";
+            button.style.borderRadius = "999px";
+            button.style.border = "1px solid rgba(148, 163, 184, 0.28)";
+            button.style.background = format === nextSelectedFormat ? "rgba(59, 130, 246, 0.2)" : "rgba(15, 23, 42, 0.72)";
+            button.style.color = "#e2e8f0";
+            button.style.cursor = "pointer";
+            button.addEventListener("click", (event) => {
+                event.preventDefault?.();
+                onSelect?.(format);
+            });
+            root.appendChild(button);
+        });
+    }
+    render(selectedFormat);
+    return {
+        root,
+        render,
+    };
+}
+
+},
+"sidepanel/components/citation_preview_card.ts": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createCitationPreviewCard = createCitationPreviewCard;
+function createCitationPreviewCard({ documentRef = globalThis.document, title = "Backend-derived preview", } = {}) {
+    const root = documentRef.createElement("section");
+    const heading = documentRef.createElement("div");
+    const body = documentRef.createElement("div");
+    root.setAttribute("data-citation-preview-card", "true");
+    root.style.display = "grid";
+    root.style.gap = "12px";
+    root.style.padding = "16px";
+    root.style.borderRadius = "18px";
+    root.style.border = "1px solid rgba(148, 163, 184, 0.2)";
+    root.style.background = "rgba(15, 23, 42, 0.72)";
+    root.style.minHeight = "144px";
+    heading.textContent = title;
+    heading.style.fontSize = "12px";
+    heading.style.letterSpacing = "0.08em";
+    heading.style.textTransform = "uppercase";
+    heading.style.color = "#94a3b8";
+    body.setAttribute("data-citation-preview-body", "true");
+    body.style.whiteSpace = "pre-wrap";
+    body.style.wordBreak = "break-word";
+    body.style.overflowWrap = "anywhere";
+    body.style.userSelect = "text";
+    body.style.webkitUserSelect = "text";
+    body.style.lineHeight = "1.65";
+    body.style.color = "#f8fafc";
+    body.style.fontSize = "15px";
+    root.append(heading, body);
+    return {
+        root,
+        body,
+        render({ text = "", loading = false, error = null } = {}) {
+            if (loading) {
+                body.textContent = "Loading citation preview";
+                body.style.color = "#cbd5e1";
+                return;
+            }
+            if (error) {
+                body.textContent = error.message || "Citation preview unavailable.";
+                body.style.color = "#fca5a5";
+                return;
+            }
+            body.textContent = text || "No citation preview available.";
+            body.style.color = "#f8fafc";
+        },
+    };
+}
+
+},
+"sidepanel/components/citation_style_tabs.ts": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createCitationStyleTabs = createCitationStyleTabs;
+const citation_ts_1 = require("../../shared/types/citation.ts");
+const STYLE_LABELS = {
+    apa: "APA",
+    mla: "MLA",
+    chicago: "Chicago",
+    harvard: "Harvard",
+};
+function createCitationStyleTabs({ documentRef = globalThis.document, styles = citation_ts_1.CITATION_STYLES, selectedStyle = "apa", lockedStyles = [], onSelect, } = {}) {
+    const root = documentRef.createElement("div");
+    root.setAttribute("data-citation-style-tabs", "true");
+    root.style.display = "flex";
+    root.style.flexWrap = "wrap";
+    root.style.gap = "8px";
+    function render(nextSelectedStyle = selectedStyle) {
+        root.innerHTML = "";
+        styles.forEach((style) => {
+            const button = documentRef.createElement("button");
+            const locked = Array.isArray(lockedStyles) && lockedStyles.includes(style);
+            button.type = "button";
+            button.textContent = STYLE_LABELS[style] || String(style || "").toUpperCase();
+            button.setAttribute("data-style", style);
+            button.setAttribute("aria-pressed", String(style === nextSelectedStyle));
+            button.style.padding = "8px 10px";
+            button.style.borderRadius = "999px";
+            button.style.border = "1px solid rgba(148, 163, 184, 0.28)";
+            button.style.background = style === nextSelectedStyle ? "rgba(14, 165, 233, 0.18)" : "rgba(15, 23, 42, 0.72)";
+            button.style.color = "#e2e8f0";
+            button.style.opacity = locked ? "0.52" : "1";
+            button.style.cursor = locked ? "not-allowed" : "pointer";
+            button.disabled = locked;
+            if (locked) {
+                button.setAttribute("data-locked", "true");
+                button.setAttribute("aria-disabled", "true");
+            }
+            button.addEventListener("click", (event) => {
+                event.preventDefault?.();
+                if (!locked) {
+                    onSelect?.(style);
+                }
+            });
+            root.appendChild(button);
+        });
+    }
+    render(selectedStyle);
+    return {
+        root,
+        render,
+    };
+}
+
+},
+"sidepanel/app/citation_modal.ts": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.renderCitationModal = renderCitationModal;
+const citation_ts_1 = require("../../shared/types/citation.ts");
+const citation_format_tabs_ts_1 = require("../components/citation_format_tabs.ts");
+const citation_preview_card_ts_1 = require("../components/citation_preview_card.ts");
+const citation_style_tabs_ts_1 = require("../components/citation_style_tabs.ts");
+function setButtonDisabled(button, disabled) {
+    button.disabled = disabled;
+    if (disabled) {
+        button.setAttribute("aria-disabled", "true");
+    }
+    else if (typeof button.removeAttribute === "function") {
+        button.removeAttribute("aria-disabled");
+    }
+}
+function renderCitationModal(root, snapshot = {}, options = {}) {
+    const { documentRef = globalThis.document, navigatorRef = globalThis.navigator, onRequestRender, onSave, onDismiss, } = options;
+    if (!root) {
+        return { mounted: false };
+    }
+    const state = {
+        citation: snapshot?.citation || null,
+        renderBundle: snapshot?.render_bundle || null,
+        selectedStyle: (0, citation_ts_1.normalizeCitationStyle)(snapshot?.selected_style || snapshot?.citation?.style || "apa"),
+        selectedFormat: (0, citation_ts_1.normalizeCitationFormat)(snapshot?.selected_format || snapshot?.citation?.format || "bibliography"),
+        lockedStyles: Array.isArray(snapshot?.locked_styles) ? snapshot.locked_styles.slice() : [],
+        loading: Boolean(snapshot?.loading),
+        error: snapshot?.error || null,
+        saveStatus: "idle",
+    };
+    const wrapper = documentRef.createElement("section");
+    const title = documentRef.createElement("div");
+    const headline = documentRef.createElement("h2");
+    const sourceMeta = documentRef.createElement("p");
+    const actions = documentRef.createElement("div");
+    const copyButton = documentRef.createElement("button");
+    const saveButton = documentRef.createElement("button");
+    const closeButton = documentRef.createElement("button");
+    const statusLine = documentRef.createElement("p");
+    wrapper.setAttribute("data-citation-modal", "true");
+    wrapper.setAttribute("tabindex", "0");
+    wrapper.style.display = "grid";
+    wrapper.style.gap = "14px";
+    wrapper.style.padding = "16px";
+    wrapper.style.borderRadius = "18px";
+    wrapper.style.border = "1px solid rgba(148, 163, 184, 0.24)";
+    wrapper.style.background = "rgba(2, 6, 23, 0.98)";
+    wrapper.style.color = "#e2e8f0";
+    wrapper.style.boxShadow = "0 18px 48px rgba(15, 23, 42, 0.28)";
+    wrapper.style.fontFamily = "Georgia, 'Times New Roman', serif";
+    wrapper.style.maxWidth = "min(560px, calc(100vw - 24px))";
+    title.textContent = "Citation";
+    title.style.fontSize = "12px";
+    title.style.textTransform = "uppercase";
+    title.style.letterSpacing = "0.08em";
+    title.style.color = "#94a3b8";
+    headline.style.margin = "0";
+    headline.style.fontSize = "22px";
+    headline.style.lineHeight = "1.15";
+    headline.style.overflowWrap = "anywhere";
+    sourceMeta.style.margin = "0";
+    sourceMeta.style.fontSize = "12px";
+    sourceMeta.style.lineHeight = "1.5";
+    sourceMeta.style.color = "#94a3b8";
+    statusLine.style.margin = "0";
+    statusLine.style.minHeight = "18px";
+    statusLine.style.fontSize = "12px";
+    statusLine.style.lineHeight = "1.35";
+    actions.style.display = "flex";
+    actions.style.flexWrap = "wrap";
+    actions.style.gap = "8px";
+    for (const button of [copyButton, saveButton, closeButton]) {
+        button.type = "button";
+        button.style.padding = "9px 12px";
+        button.style.borderRadius = "999px";
+        button.style.border = "1px solid rgba(148, 163, 184, 0.28)";
+        button.style.color = "#f8fafc";
+    }
+    copyButton.textContent = "Copy";
+    copyButton.setAttribute("data-citation-copy", "true");
+    copyButton.style.background = "rgba(14, 165, 233, 0.2)";
+    saveButton.textContent = "Save";
+    saveButton.setAttribute("data-citation-save", "true");
+    saveButton.style.background = "rgba(15, 23, 42, 0.72)";
+    closeButton.textContent = "Close";
+    closeButton.style.background = "rgba(15, 23, 42, 0.72)";
+    const styleTabs = (0, citation_style_tabs_ts_1.createCitationStyleTabs)({
+        documentRef,
+        selectedStyle: state.selectedStyle,
+        lockedStyles: state.lockedStyles,
+        onSelect: async (style) => {
+            if (style === state.selectedStyle) {
+                return;
+            }
+            state.selectedStyle = (0, citation_ts_1.normalizeCitationStyle)(style);
+            state.loading = !getCurrentText();
+            state.error = null;
+            render();
+            if (!state.citation?.id) {
+                state.loading = false;
+                state.error = { code: "invalid_payload", message: "Missing citation id." };
+                render();
+                return;
+            }
+            const result = await onRequestRender?.({
+                citationId: state.citation.id,
+                style: state.selectedStyle,
+            });
+            if (result?.ok) {
+                state.renderBundle = result.data || null;
+                state.loading = false;
+                state.error = null;
+            }
+            else {
+                state.loading = false;
+                state.error = result?.error || { code: "citation_error", message: "Citation preview failed." };
+            }
+            render();
+        },
+    });
+    const formatTabs = (0, citation_format_tabs_ts_1.createCitationFormatTabs)({
+        documentRef,
+        selectedFormat: state.selectedFormat,
+        onSelect: async (format) => {
+            state.selectedFormat = (0, citation_ts_1.normalizeCitationFormat)(format);
+            state.error = null;
+            render();
+        },
+    });
+    const previewCard = (0, citation_preview_card_ts_1.createCitationPreviewCard)({ documentRef });
+    function getCurrentText() {
+        return (0, citation_ts_1.getCitationPreviewText)({
+            citation: state.citation,
+            render_bundle: state.renderBundle,
+        }, state.selectedStyle, state.selectedFormat);
+    }
+    async function saveSelection(copy = false) {
+        if (!state.citation?.id) {
+            state.error = { code: "invalid_payload", message: "Missing citation id." };
+            render();
+            return { ok: false, error: state.error };
+        }
+        state.saveStatus = copy ? "copying" : "saving";
+        render();
+        const result = await onSave?.({
+            citationId: state.citation.id,
+            style: state.selectedStyle,
+            format: state.selectedFormat,
+            copy,
+        });
+        if (result?.ok) {
+            state.saveStatus = copy ? "copied" : "saved";
+            state.error = null;
+            render();
+            return result;
+        }
+        state.saveStatus = "idle";
+        state.error = result?.error || { code: "save_failed", message: copy ? "Copy failed." : "Save failed." };
+        render();
+        return result;
+    }
+    copyButton.addEventListener("click", async (event) => {
+        event.preventDefault?.();
+        const text = getCurrentText();
+        if (!text) {
+            state.error = { code: "invalid_payload", message: "No citation text is available." };
+            render();
+            return;
+        }
+        try {
+            if (navigatorRef?.clipboard?.writeText) {
+                await navigatorRef.clipboard.writeText(text);
+            }
+        }
+        catch (error) {
+            state.error = { code: "copy_failed", message: error?.message || "Copy failed." };
+            render();
+            return;
+        }
+        await saveSelection(true);
+    });
+    saveButton.addEventListener("click", async (event) => {
+        event.preventDefault?.();
+        await saveSelection(false);
+    });
+    closeButton.addEventListener("click", (event) => {
+        event.preventDefault?.();
+        onDismiss?.();
+    });
+    wrapper.addEventListener("keydown", (event) => {
+        const key = String(event?.key || "").toLowerCase();
+        if (key === "escape") {
+            event.preventDefault?.();
+            onDismiss?.();
+            return;
+        }
+        if ((event?.ctrlKey || event?.metaKey) && key === "enter") {
+            event.preventDefault?.();
+            copyButton.click?.();
+            return;
+        }
+        if ((event?.ctrlKey || event?.metaKey) && key === "s") {
+            event.preventDefault?.();
+            saveButton.click?.();
+        }
+    });
+    function render() {
+        headline.textContent = state.citation?.metadata?.title || state.citation?.source?.title || "Citation preview";
+        sourceMeta.textContent = [
+            state.citation?.metadata?.author || state.citation?.source?.author || "",
+            state.citation?.metadata?.canonical_url || state.citation?.source?.canonical_url || "",
+        ].filter(Boolean).join(" • ");
+        styleTabs.render(state.selectedStyle);
+        formatTabs.render(state.selectedFormat);
+        previewCard.render({
+            text: getCurrentText(),
+            loading: state.loading,
+            error: state.error,
+        });
+        if (state.error) {
+            statusLine.textContent = state.error.message || "Citation preview failed.";
+            statusLine.style.color = "#fca5a5";
+        }
+        else if (state.saveStatus === "copied") {
+            statusLine.textContent = "Citation copied.";
+            statusLine.style.color = "#86efac";
+        }
+        else if (state.saveStatus === "saved") {
+            statusLine.textContent = "Citation saved.";
+            statusLine.style.color = "#86efac";
+        }
+        else if (state.saveStatus === "copying") {
+            statusLine.textContent = "Saving copy action...";
+            statusLine.style.color = "#93c5fd";
+        }
+        else if (state.saveStatus === "saving") {
+            statusLine.textContent = "Saving citation...";
+            statusLine.style.color = "#93c5fd";
+        }
+        else {
+            statusLine.textContent = "";
+            statusLine.style.color = "#94a3b8";
+        }
+        const actionBusy = state.loading || state.saveStatus === "copying" || state.saveStatus === "saving";
+        setButtonDisabled(copyButton, actionBusy);
+        setButtonDisabled(saveButton, actionBusy);
+        copyButton.textContent = state.saveStatus === "copied" ? "Copied" : "Copy";
+        saveButton.textContent = state.saveStatus === "saved" ? "Saved" : "Save";
+        actions.innerHTML = "";
+        actions.append(copyButton, saveButton, closeButton);
+        wrapper.innerHTML = "";
+        wrapper.append(title, headline, sourceMeta, styleTabs.root, formatTabs.root, previewCard.root, statusLine, actions);
+        if (typeof root.replaceChildren === "function") {
+            root.replaceChildren(wrapper);
+        }
+        else {
+            root.innerHTML = "";
+            root.appendChild(wrapper);
+        }
+    }
+    render();
+    return {
+        root,
+        render,
+        getState() {
+            return {
+                selectedStyle: state.selectedStyle,
+                selectedFormat: state.selectedFormat,
+                text: getCurrentText(),
+                loading: state.loading,
+                error: state.error,
+                lockedStyles: state.lockedStyles.slice(),
+                saveStatus: state.saveStatus,
+            };
+        },
+    };
+}
+
+},
+"content/ui/citation_modal_host.ts": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createCitationModalHost = createCitationModalHost;
+const citation_modal_ts_1 = require("../../sidepanel/app/citation_modal.ts");
+const EXTENSION_UI_ATTR = "data-writior-extension-ui";
+function createCitationModalHost({ documentRef = globalThis.document, onRequestRender, onSave, onDismiss, navigatorRef = globalThis.navigator, } = {}) {
+    const host = documentRef.createElement("div");
+    const backdrop = documentRef.createElement("div");
+    const surface = documentRef.createElement("div");
+    host.setAttribute(EXTENSION_UI_ATTR, "true");
+    host.setAttribute("data-citation-modal-host", "true");
+    host.style.position = "fixed";
+    host.style.inset = "0";
+    host.style.zIndex = "2147483647";
+    host.style.display = "none";
+    host.style.pointerEvents = "none";
+    backdrop.setAttribute(EXTENSION_UI_ATTR, "true");
+    backdrop.style.position = "absolute";
+    backdrop.style.inset = "0";
+    backdrop.style.background = "rgba(2, 6, 23, 0.38)";
+    backdrop.style.pointerEvents = "auto";
+    surface.setAttribute(EXTENSION_UI_ATTR, "true");
+    surface.style.position = "absolute";
+    surface.style.top = "50%";
+    surface.style.left = "50%";
+    surface.style.transform = "translate(-50%, -50%)";
+    surface.style.width = "min(560px, calc(100vw - 24px))";
+    surface.style.maxHeight = "calc(100vh - 24px)";
+    surface.style.overflow = "auto";
+    surface.style.pointerEvents = "auto";
+    host.append(backdrop, surface);
+    let visible = false;
+    let modal = null;
+    function ensureMounted() {
+        if (host.parentNode || host.parentElement) {
+            return;
+        }
+        (documentRef.body || documentRef.documentElement)?.appendChild(host);
+    }
+    function render(snapshot) {
+        ensureMounted();
+        visible = true;
+        host.style.display = "block";
+        modal = (0, citation_modal_ts_1.renderCitationModal)(surface, snapshot, {
+            documentRef,
+            navigatorRef,
+            onRequestRender,
+            onSave,
+            onDismiss,
+        });
+        return modal;
+    }
+    backdrop.addEventListener("click", (event) => {
+        event.preventDefault?.();
+        onDismiss?.();
+    });
+    return {
+        host,
+        surface,
+        render,
+        hide() {
+            visible = false;
+            host.style.display = "none";
+            surface.innerHTML = "";
+        },
+        isVisible() {
+            return visible;
+        },
+        isInside(target) {
+            let current = target || null;
+            while (current) {
+                if (current === host || current === surface) {
+                    return true;
+                }
+                if (typeof current.getAttribute === "function" && current.getAttribute(EXTENSION_UI_ATTR) === "true") {
+                    return true;
+                }
+                current = current.parentNode || current.parentElement || null;
+            }
+            return false;
+        },
+        getState() {
+            return modal?.getState?.() || { visible };
+        },
+        destroy() {
+            host.remove?.();
+        },
+    };
+}
+
+},
 "content/ui/highlight_preview.ts": function(module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -2629,8 +3321,10 @@ const context_ts_1 = require("./context.ts");
 const extraction_ts_1 = require("./extraction.ts");
 const page_metadata_ts_1 = require("./page_metadata.ts");
 const selection_action_pill_ts_1 = require("../ui/selection_action_pill.ts");
+const citation_modal_host_ts_1 = require("../ui/citation_modal_host.ts");
 const quick_note_panel_ts_1 = require("../ui/quick_note_panel.ts");
 const toast_ts_1 = require("../ui/toast.ts");
+const citation_ts_1 = require("../../shared/types/citation.ts");
 const contracts_ts_1 = require("../../shared/types/contracts.ts");
 const runtime_client_ts_1 = require("../../shared/utils/runtime_client.ts");
 function isCommandShortcut(event) {
@@ -2711,6 +3405,7 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         noteStatus: "closed",
         noteText: "",
         noteError: "",
+        citationModalSnapshot: null,
     };
     const listeners = [];
     const pill = (0, selection_action_pill_ts_1.createSelectionActionPill)({
@@ -2737,6 +3432,15 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         },
         onSave: async () => {
             await saveQuickNote();
+        },
+    });
+    const citationModal = (0, citation_modal_host_ts_1.createCitationModalHost)({
+        documentRef,
+        navigatorRef,
+        onRequestRender: async (payload) => runtimeClient?.renderCitation(payload),
+        onSave: async (payload) => runtimeClient?.saveCitation(payload),
+        onDismiss: () => {
+            closeCitationModal("dismiss");
         },
     });
     let observer = null;
@@ -2770,7 +3474,9 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         state.noteStatus = "closed";
         state.noteText = "";
         state.noteError = "";
+        state.citationModalSnapshot = null;
         quickNotePanel.hide();
+        citationModal.hide();
         if (wasVisible) {
             state.dismissCount += 1;
         }
@@ -2790,6 +3496,9 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         });
     }
     function inspectSelection() {
+        if (citationModal.isVisible() && state.currentSnapshot) {
+            return state.currentSnapshot;
+        }
         if (quickNotePanel.isVisible() && state.currentSnapshot) {
             renderQuickNotePanel();
             return state.currentSnapshot;
@@ -2821,6 +3530,37 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         }
         show(snapshot);
         return state.currentSnapshot;
+    }
+    async function resolveLockedCitationStyles() {
+        if (!runtimeClient?.authStatusGet) {
+            return [];
+        }
+        const result = await runtimeClient.authStatusGet();
+        const allowedStyles = result?.ok
+            ? result.data?.auth?.bootstrap?.capabilities?.citation_styles
+            : null;
+        return (0, citation_ts_1.getLockedCitationStyles)(allowedStyles);
+    }
+    function renderCitationModal(snapshot = state.citationModalSnapshot) {
+        if (!snapshot) {
+            return;
+        }
+        state.citationModalSnapshot = snapshot;
+        citationModal.render(snapshot);
+    }
+    function closeCitationModal(reason = "citation_closed") {
+        state.citationModalSnapshot = null;
+        citationModal.hide();
+        if (state.currentSnapshot) {
+            pill.render({
+                ...state.currentSnapshot,
+                actions: buildSelectionActions(),
+            });
+            state.visible = true;
+        }
+        else {
+            pill.hide(reason);
+        }
     }
     function scheduleInspect(delay = 30) {
         if (state.isPointerSelecting) {
@@ -2961,6 +3701,81 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         if (action === "note") {
             return openQuickNotePanel();
         }
+        if (action === "cite") {
+            if (!runtimeClient || !state.currentSnapshot?.payload?.capture) {
+                pill.flash("Failed");
+                toast.show("Capture unavailable");
+                return { ok: false, error: { code: "capture_unavailable" } };
+            }
+            if (state.pendingAction) {
+                return { ok: false, error: { code: "capture_pending" } };
+            }
+            state.pendingAction = action;
+            pill.hide("citation_modal_open");
+            state.citationModalSnapshot = {
+                citation: null,
+                render_bundle: null,
+                selected_style: "apa",
+                selected_format: "bibliography",
+                locked_styles: [],
+                loading: true,
+                error: null,
+            };
+            renderCitationModal();
+            try {
+                const [captureResultRaw, lockedStyles] = await Promise.all([
+                    runtimeClient.createCitation(state.currentSnapshot.payload),
+                    resolveLockedCitationStyles(),
+                ]);
+                const captureResult = captureResultRaw;
+                if (!captureResult?.ok) {
+                    state.citationModalSnapshot = {
+                        ...state.citationModalSnapshot,
+                        loading: false,
+                        error: captureResult?.error || { code: "citation_error", message: "Citation capture failed." },
+                        locked_styles: lockedStyles,
+                    };
+                    renderCitationModal();
+                    return captureResult;
+                }
+                const citation = captureResult.data;
+                const selectedStyle = String(citation?.style || "apa").trim().toLowerCase() || "apa";
+                const selectedFormat = "bibliography";
+                state.citationModalSnapshot = {
+                    citation,
+                    render_bundle: null,
+                    selected_style: selectedStyle,
+                    selected_format: selectedFormat,
+                    locked_styles: lockedStyles,
+                    loading: false,
+                    error: null,
+                };
+                renderCitationModal();
+                if (!citationModal.getState()?.text && citation?.id) {
+                    state.citationModalSnapshot = {
+                        ...state.citationModalSnapshot,
+                        loading: true,
+                    };
+                    renderCitationModal();
+                    const renderResult = await runtimeClient.renderCitation({
+                        citationId: citation.id,
+                        style: selectedStyle,
+                    });
+                    state.citationModalSnapshot = {
+                        ...state.citationModalSnapshot,
+                        loading: false,
+                        render_bundle: renderResult?.ok ? renderResult.data : null,
+                        error: renderResult?.ok ? null : renderResult?.error || { code: "citation_error", message: "Citation preview failed." },
+                    };
+                    renderCitationModal();
+                    return renderResult?.ok ? captureResult : renderResult;
+                }
+                return captureResult;
+            }
+            finally {
+                state.pendingAction = "";
+            }
+        }
         if (!runtimeClient || !state.currentSnapshot?.payload?.capture) {
             pill.flash("Failed");
             toast.show("Capture unavailable");
@@ -2992,6 +3807,12 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         }
     }
     function onKeydown(event) {
+        if (citationModal.isVisible()) {
+            if (String(event?.key || "").toLowerCase() === "escape") {
+                closeCitationModal("escape");
+            }
+            return;
+        }
         if (quickNotePanel.isVisible()) {
             if (String(event?.key || "").toLowerCase() === "escape") {
                 closeQuickNotePanel("escape");
@@ -3017,6 +3838,13 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
     }
     function onPointerDown(event) {
         state.isPointerSelecting = true;
+        if (citationModal.isVisible()) {
+            if (citationModal.isInside(event?.target)) {
+                return;
+            }
+            closeCitationModal("outside_click");
+            return;
+        }
         if (quickNotePanel.isVisible()) {
             if (quickNotePanel.isInsidePanel(event?.target)) {
                 return;
@@ -3053,6 +3881,7 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
             noteSuccessTimer = null;
         }
         toast.destroy();
+        citationModal.destroy();
         quickNotePanel.destroy();
         pill.destroy();
         state.enabled = false;
@@ -3099,6 +3928,7 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
             currentSignature: state.currentSignature,
             currentSnapshot: state.currentSnapshot,
             pill: pill.getState(),
+            citationModal: citationModal.getState(),
             quickNotePanel: quickNotePanel.getState(),
         };
     }
@@ -3109,6 +3939,7 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         scheduleInspect,
         getState,
         pill,
+        citationModal,
         quickNotePanel,
     };
 }

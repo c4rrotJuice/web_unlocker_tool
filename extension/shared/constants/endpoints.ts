@@ -5,6 +5,7 @@ export const ENDPOINTS = Object.freeze({
   CAPTURE_CITATION: "/api/extension/captures/citation",
   CAPTURE_QUOTE: "/api/extension/captures/quote",
   CAPTURE_NOTE: "/api/extension/captures/note",
+  CITATION_RENDER: "/api/citations/render",
   AUTH_HANDOFF: "/api/auth/handoff",
   AUTH_HANDOFF_EXCHANGE: "/api/auth/handoff/exchange",
   AUTH_HANDOFF_ATTEMPTS: "/api/auth/handoff/attempts",

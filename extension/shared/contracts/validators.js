@@ -1,5 +1,6 @@
 import { MESSAGE_NAMES } from "../constants/message_names.js";
 import { SURFACE_NAMES } from "../types/contracts.js";
+import { CITATION_FORMATS, CITATION_STYLES, normalizeCitationFormat, normalizeCitationStyle } from "../types/citation.js";
 import { normalizeCaptureContext } from "../types/capture.js";
 import { ERROR_CODES, RESULT_STATUS, createErrorResult } from "../types/messages.js";
 const KNOWN_MESSAGE_TYPES = new Set(Object.values(MESSAGE_NAMES));
@@ -102,6 +103,38 @@ function validateEditorPayload(payload) {
     }
     return null;
 }
+function validateCitationRenderPayload(payload) {
+    const surfaceError = validateSurface(payload);
+    if (surfaceError) {
+        return surfaceError;
+    }
+    if (!isNonEmptyString(payload.citationId)) {
+        return "payload.citationId must be a non-empty string.";
+    }
+    if (!isNonEmptyString(payload.style)) {
+        return "payload.style must be a non-empty string.";
+    }
+    if (normalizeCitationStyle(payload.style, "") !== payload.style.trim().toLowerCase()) {
+        return "payload.style must be one of the supported citation styles.";
+    }
+    return null;
+}
+function validateCitationSavePayload(payload) {
+    const renderError = validateCitationRenderPayload(payload);
+    if (renderError) {
+        return renderError;
+    }
+    if (!isNonEmptyString(payload.format)) {
+        return "payload.format must be a non-empty string.";
+    }
+    if (normalizeCitationFormat(payload.format, "") !== payload.format.trim().toLowerCase()) {
+        return "payload.format must be one of the supported citation formats.";
+    }
+    if (payload.copy != null && typeof payload.copy !== "boolean") {
+        return "payload.copy must be a boolean when provided.";
+    }
+    return null;
+}
 export const REQUEST_PAYLOAD_VALIDATORS = Object.freeze({
     [MESSAGE_NAMES.PING]: validatePingPayload,
     [MESSAGE_NAMES.OPEN_SIDEPANEL]: validateOpenSidepanelPayload,
@@ -112,8 +145,54 @@ export const REQUEST_PAYLOAD_VALIDATORS = Object.freeze({
     [MESSAGE_NAMES.CAPTURE_CREATE_CITATION]: (payload) => validateCaptureEntityPayload(payload, "selectionText"),
     [MESSAGE_NAMES.CAPTURE_CREATE_QUOTE]: (payload) => validateCaptureEntityPayload(payload, "selectionText"),
     [MESSAGE_NAMES.CAPTURE_CREATE_NOTE]: validateCaptureNotePayload,
+    [MESSAGE_NAMES.CITATION_RENDER]: validateCitationRenderPayload,
+    [MESSAGE_NAMES.CITATION_SAVE]: validateCitationSavePayload,
     [MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST]: validateEditorPayload,
 });
+export function validateCitationRenderBundle(payload) {
+    if (!isPlainObject(payload)) {
+        return createErrorResult(ERROR_CODES.INVALID_PAYLOAD, "Citation render bundle must be a JSON object.");
+    }
+    if (!isPlainObject(payload.renders)) {
+        return createErrorResult(ERROR_CODES.INVALID_PAYLOAD, "Citation render bundle must include renders.");
+    }
+    const renders = {};
+    let hasRenderableText = false;
+    for (const [style, bundle] of Object.entries(payload.renders)) {
+        if (!CITATION_STYLES.includes(style)) {
+            return createErrorResult(ERROR_CODES.INVALID_PAYLOAD, `Unsupported citation style: ${style}.`);
+        }
+        if (!isPlainObject(bundle)) {
+            return createErrorResult(ERROR_CODES.INVALID_PAYLOAD, `Citation render bundle for ${style} must be an object.`);
+        }
+        renders[style] = {};
+        for (const format of CITATION_FORMATS) {
+            if (bundle[format] == null) {
+                continue;
+            }
+            if (typeof bundle[format] !== "string") {
+                return createErrorResult(ERROR_CODES.INVALID_PAYLOAD, `Citation render bundle for ${style}.${format} must be a string.`);
+            }
+            renders[style][format] = bundle[format];
+            if (bundle[format].trim()) {
+                hasRenderableText = true;
+            }
+        }
+    }
+    if (!hasRenderableText) {
+        return createErrorResult(ERROR_CODES.INVALID_PAYLOAD, "Citation render bundle did not include any render text.");
+    }
+    return {
+        ok: true,
+        status: RESULT_STATUS.OK,
+        data: {
+            ...payload,
+            renders,
+            cache_hit: Boolean(payload.cache_hit),
+        },
+        meta: payload.meta ?? null,
+    };
+}
 export function validateMessageEnvelope(message, { allowedTypes = null } = {}) {
     if (!isPlainObject(message)) {
         return createErrorResult(ERROR_CODES.INVALID_PAYLOAD, "Invalid message envelope.");

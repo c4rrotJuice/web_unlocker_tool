@@ -4,22 +4,26 @@ import { createErrorResult, createOkResult, ERROR_CODES } from "../../shared/typ
 import { createLogger } from "../../shared/utils/logger.js";
 import { createApiClient } from "../api/client.js";
 import { createCaptureApi } from "../api/captures.js";
+import { createCitationApi } from "../api/citations.js";
 import { createSessionStore } from "../auth/session_store.js";
-import { createAuthHandler, createBootstrapHandler, createCaptureHandler, createEditorHandler, createUiHandler, } from "../handlers/index.js";
+import { createAuthHandler, createBootstrapHandler, createCaptureHandler, createCitationHandler, createEditorHandler, createUiHandler, } from "../handlers/index.js";
 import { createBackgroundRouter } from "../messaging/router.js";
 import { createBackgroundStateStore } from "../state/index.js";
+import { createCitationStateStore } from "../state/citation_state.js";
 const logger = createLogger("background");
 export function createBackgroundRuntime(deps = {}) {
     const typedDeps = deps;
     const chromeApi = typedDeps.chromeApi || globalThis.chrome;
     const sessionStore = typedDeps.sessionStore || createSessionStore({ chromeApi });
     const stateStore = typedDeps.stateStore || createBackgroundStateStore();
+    const citationStateStore = typedDeps.citationStateStore || createCitationStateStore();
     const apiClient = typedDeps.apiClient || createApiClient({
         baseUrl: typedDeps.baseUrl || API_ORIGIN,
         fetchImpl: typedDeps.fetchImpl || globalThis.fetch,
         getAccessToken: () => sessionStore.getToken(),
     });
     const captureApi = typedDeps.captureApi || createCaptureApi(apiClient);
+    const citationApi = typedDeps.citationApi || createCitationApi(apiClient);
     const bootstrapHandler = typedDeps.bootstrapHandler || createBootstrapHandler({
         apiClient,
         sessionStore,
@@ -38,6 +42,7 @@ export function createBackgroundRuntime(deps = {}) {
         }),
         bootstrap: bootstrapHandler,
         capture: createCaptureHandler({ captureApi }),
+        citation: createCitationHandler({ citationApi, citationStateStore }),
         editor: createEditorHandler(),
         ui: createUiHandler({ chromeApi }),
     };
@@ -51,6 +56,7 @@ export function createBackgroundRuntime(deps = {}) {
         stateStore,
         apiClient,
         captureApi,
+        citationApi,
         handlers,
         router,
         dispatch(message, sender = {}) {

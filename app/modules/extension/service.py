@@ -254,6 +254,25 @@ class ExtensionService:
     def _attempt_secret_hash(self, attempt_secret: str) -> str:
         return hashlib.sha256(attempt_secret.encode("utf-8")).hexdigest()
 
+    def _parse_utc_datetime(self, value: object) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            normalized = str(value).strip()
+            if not normalized:
+                return None
+            if normalized.endswith("Z"):
+                normalized = normalized[:-1] + "+00:00"
+            try:
+                parsed = datetime.fromisoformat(normalized)
+            except ValueError:
+                return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
     async def _clear_handoff_session_payload_safely(self, *, record_id: str, request_id: str | None, phase: str) -> None:
         try:
             await self.repository.clear_handoff_session_payload(record_id=record_id)
@@ -381,10 +400,9 @@ class ExtensionService:
         if attempt is None:
             raise HandoffAttemptInvalidError()
         now = datetime.now(timezone.utc)
-        try:
-            expires_at = datetime.fromisoformat(str(attempt.get("expires_at")).replace("Z", "+00:00"))
-        except Exception as exc:
-            raise HandoffAttemptInvalidError("Auth attempt expiry is invalid.") from exc
+        expires_at = self._parse_utc_datetime(attempt.get("expires_at"))
+        if expires_at is None:
+            raise HandoffAttemptInvalidError("Auth attempt expiry is invalid.")
         if expires_at <= now:
             raise HandoffAttemptExpiredError()
         if attempt.get("status") == "ready" and attempt.get("handoff_code"):
@@ -446,10 +464,9 @@ class ExtensionService:
         if not expected_hash or not hmac.compare_digest(expected_hash, provided_hash):
             raise HandoffAttemptInvalidError("Auth attempt token is invalid.")
         now = datetime.now(timezone.utc)
-        try:
-            expires_at = datetime.fromisoformat(str(attempt.get("expires_at")).replace("Z", "+00:00"))
-        except Exception as exc:
-            raise HandoffAttemptInvalidError("Auth attempt expiry is invalid.") from exc
+        expires_at = self._parse_utc_datetime(attempt.get("expires_at"))
+        if expires_at is None:
+            raise HandoffAttemptInvalidError("Auth attempt expiry is invalid.")
         if expires_at <= now:
             raise HandoffAttemptExpiredError()
         status = str(attempt.get("status") or "pending")
@@ -547,10 +564,8 @@ class ExtensionService:
                     phase=phase,
                 )
                 raise HandoffCodeUsedError()
-            expires_at_raw = record.get("expires_at")
-            try:
-                expires_at = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
-            except Exception:
+            expires_at = self._parse_utc_datetime(record.get("expires_at"))
+            if expires_at is None:
                 phase = "invalidate_bad_expiry"
                 await self.repository.invalidate_handoff_code(record_id=str(record["id"]), used_at=now.isoformat())
                 raise HandoffPayloadInvalidError("Stored handoff expiry is invalid.")

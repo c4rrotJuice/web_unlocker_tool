@@ -2,8 +2,10 @@ import { buildSelectionContextPayload } from "./context.js";
 import { extractNormalizedSelection, selectionSignature } from "./extraction.js";
 import { extractPageMetadata } from "./page_metadata.js";
 import { createSelectionActionPill } from "../ui/selection_action_pill.js";
+import { createCitationModalHost } from "../ui/citation_modal_host.js";
 import { createQuickNotePanel } from "../ui/quick_note_panel.js";
 import { createContentToastController } from "../ui/toast.js";
+import { getLockedCitationStyles } from "../../shared/types/citation.js";
 import { SURFACE_NAMES } from "../../shared/types/contracts.js";
 import { createRuntimeClient } from "../../shared/utils/runtime_client.js";
 function isCommandShortcut(event) {
@@ -84,6 +86,7 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         noteStatus: "closed",
         noteText: "",
         noteError: "",
+        citationModalSnapshot: null,
     };
     const listeners = [];
     const pill = createSelectionActionPill({
@@ -110,6 +113,15 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         },
         onSave: async () => {
             await saveQuickNote();
+        },
+    });
+    const citationModal = createCitationModalHost({
+        documentRef,
+        navigatorRef,
+        onRequestRender: async (payload) => runtimeClient?.renderCitation(payload),
+        onSave: async (payload) => runtimeClient?.saveCitation(payload),
+        onDismiss: () => {
+            closeCitationModal("dismiss");
         },
     });
     let observer = null;
@@ -143,7 +155,9 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         state.noteStatus = "closed";
         state.noteText = "";
         state.noteError = "";
+        state.citationModalSnapshot = null;
         quickNotePanel.hide();
+        citationModal.hide();
         if (wasVisible) {
             state.dismissCount += 1;
         }
@@ -163,6 +177,9 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         });
     }
     function inspectSelection() {
+        if (citationModal.isVisible() && state.currentSnapshot) {
+            return state.currentSnapshot;
+        }
         if (quickNotePanel.isVisible() && state.currentSnapshot) {
             renderQuickNotePanel();
             return state.currentSnapshot;
@@ -194,6 +211,37 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         }
         show(snapshot);
         return state.currentSnapshot;
+    }
+    async function resolveLockedCitationStyles() {
+        if (!runtimeClient?.authStatusGet) {
+            return [];
+        }
+        const result = await runtimeClient.authStatusGet();
+        const allowedStyles = result?.ok
+            ? result.data?.auth?.bootstrap?.capabilities?.citation_styles
+            : null;
+        return getLockedCitationStyles(allowedStyles);
+    }
+    function renderCitationModal(snapshot = state.citationModalSnapshot) {
+        if (!snapshot) {
+            return;
+        }
+        state.citationModalSnapshot = snapshot;
+        citationModal.render(snapshot);
+    }
+    function closeCitationModal(reason = "citation_closed") {
+        state.citationModalSnapshot = null;
+        citationModal.hide();
+        if (state.currentSnapshot) {
+            pill.render({
+                ...state.currentSnapshot,
+                actions: buildSelectionActions(),
+            });
+            state.visible = true;
+        }
+        else {
+            pill.hide(reason);
+        }
     }
     function scheduleInspect(delay = 30) {
         if (state.isPointerSelecting) {
@@ -334,6 +382,81 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         if (action === "note") {
             return openQuickNotePanel();
         }
+        if (action === "cite") {
+            if (!runtimeClient || !state.currentSnapshot?.payload?.capture) {
+                pill.flash("Failed");
+                toast.show("Capture unavailable");
+                return { ok: false, error: { code: "capture_unavailable" } };
+            }
+            if (state.pendingAction) {
+                return { ok: false, error: { code: "capture_pending" } };
+            }
+            state.pendingAction = action;
+            pill.hide("citation_modal_open");
+            state.citationModalSnapshot = {
+                citation: null,
+                render_bundle: null,
+                selected_style: "apa",
+                selected_format: "bibliography",
+                locked_styles: [],
+                loading: true,
+                error: null,
+            };
+            renderCitationModal();
+            try {
+                const [captureResultRaw, lockedStyles] = await Promise.all([
+                    runtimeClient.createCitation(state.currentSnapshot.payload),
+                    resolveLockedCitationStyles(),
+                ]);
+                const captureResult = captureResultRaw;
+                if (!captureResult?.ok) {
+                    state.citationModalSnapshot = {
+                        ...state.citationModalSnapshot,
+                        loading: false,
+                        error: captureResult?.error || { code: "citation_error", message: "Citation capture failed." },
+                        locked_styles: lockedStyles,
+                    };
+                    renderCitationModal();
+                    return captureResult;
+                }
+                const citation = captureResult.data;
+                const selectedStyle = String(citation?.style || "apa").trim().toLowerCase() || "apa";
+                const selectedFormat = "bibliography";
+                state.citationModalSnapshot = {
+                    citation,
+                    render_bundle: null,
+                    selected_style: selectedStyle,
+                    selected_format: selectedFormat,
+                    locked_styles: lockedStyles,
+                    loading: false,
+                    error: null,
+                };
+                renderCitationModal();
+                if (!citationModal.getState()?.text && citation?.id) {
+                    state.citationModalSnapshot = {
+                        ...state.citationModalSnapshot,
+                        loading: true,
+                    };
+                    renderCitationModal();
+                    const renderResult = await runtimeClient.renderCitation({
+                        citationId: citation.id,
+                        style: selectedStyle,
+                    });
+                    state.citationModalSnapshot = {
+                        ...state.citationModalSnapshot,
+                        loading: false,
+                        render_bundle: renderResult?.ok ? renderResult.data : null,
+                        error: renderResult?.ok ? null : renderResult?.error || { code: "citation_error", message: "Citation preview failed." },
+                    };
+                    renderCitationModal();
+                    return renderResult?.ok ? captureResult : renderResult;
+                }
+                return captureResult;
+            }
+            finally {
+                state.pendingAction = "";
+            }
+        }
         if (!runtimeClient || !state.currentSnapshot?.payload?.capture) {
             pill.flash("Failed");
             toast.show("Capture unavailable");
@@ -365,6 +488,12 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         }
     }
     function onKeydown(event) {
+        if (citationModal.isVisible()) {
+            if (String(event?.key || "").toLowerCase() === "escape") {
+                closeCitationModal("escape");
+            }
+            return;
+        }
         if (quickNotePanel.isVisible()) {
             if (String(event?.key || "").toLowerCase() === "escape") {
                 closeQuickNotePanel("escape");
@@ -390,6 +519,13 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
     }
     function onPointerDown(event) {
         state.isPointerSelecting = true;
+        if (citationModal.isVisible()) {
+            if (citationModal.isInside(event?.target)) {
+                return;
+            }
+            closeCitationModal("outside_click");
+            return;
+        }
         if (quickNotePanel.isVisible()) {
             if (quickNotePanel.isInsidePanel(event?.target)) {
                 return;
@@ -426,6 +562,7 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
             noteSuccessTimer = null;
         }
         toast.destroy();
+        citationModal.destroy();
         quickNotePanel.destroy();
         pill.destroy();
         state.enabled = false;
@@ -472,6 +609,7 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
             currentSignature: state.currentSignature,
             currentSnapshot: state.currentSnapshot,
             pill: pill.getState(),
+            citationModal: citationModal.getState(),
             quickNotePanel: quickNotePanel.getState(),
         };
     }
@@ -482,6 +620,7 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         scheduleInspect,
         getState,
         pill,
+        citationModal,
         quickNotePanel,
     };
 }

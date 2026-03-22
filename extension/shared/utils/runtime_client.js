@@ -1,4 +1,4 @@
-import { SURFACE_NAMES, createAuthLogoutRequest, createAuthStartRequest, createAuthStatusGetRequest, createBootstrapFetchRequest, createCaptureCreateCitationRequest, createCaptureCreateNoteRequest, createCaptureCreateQuoteRequest, createOpenSidepanelRequest, createPingRequest, createWorkInEditorRequest, } from "../contracts/messages.js";
+import { SURFACE_NAMES, createAuthLogoutRequest, createAuthStartRequest, createAuthStatusGetRequest, createBootstrapFetchRequest, createCaptureCreateCitationRequest, createCaptureCreateNoteRequest, createCaptureCreateQuoteRequest, createCitationRenderRequest, createCitationSaveRequest, createOpenSidepanelRequest, createPingRequest, createWorkInEditorRequest, } from "../contracts/messages.js";
 import { createRequestId } from "./request_id.js";
 import { sendRuntimeMessage } from "./runtime_message.js";
 export function createRuntimeClient(chromeApi, surface) {
@@ -47,6 +47,20 @@ export function createRuntimeClient(chromeApi, surface) {
         createNote(payload) {
             const requestId = createRequestId(`${surface}-create-note`);
             return sendRuntimeMessage(chromeApi, createCaptureCreateNoteRequest(requestId, {
+                surface,
+                ...payload,
+            }));
+        },
+        renderCitation(payload) {
+            const requestId = createRequestId(`${surface}-render-citation`);
+            return sendRuntimeMessage(chromeApi, createCitationRenderRequest(requestId, {
+                surface,
+                ...payload,
+            }));
+        },
+        saveCitation(payload) {
+            const requestId = createRequestId(`${surface}-save-citation`);
+            return sendRuntimeMessage(chromeApi, createCitationSaveRequest(requestId, {
                 surface,
                 ...payload,
             }));

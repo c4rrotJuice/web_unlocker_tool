@@ -320,6 +320,15 @@ function createCaptureFetchStub() {
         data: {
           id: "cit-1",
           source: { title: payload.extraction_payload?.title_candidates?.[0]?.value || "" },
+          style: "apa",
+          format: "bibliography",
+          inline_citation: "(Capture Demo, 2026)",
+          full_citation: "Capture Demo. Example citation output.",
+          footnote: "Capture Demo. Example footnote output.",
+          metadata: {
+            title: payload.extraction_payload?.title_candidates?.[0]?.value || "",
+            canonical_url: payload.extraction_payload?.page_url || "",
+          },
         },
       });
     },
@@ -448,7 +457,8 @@ test("capture actions are typed content messages and the background is the sole 
 
   await citeButton.dispatchEvent(new FakeEvent("click", citeButton));
   await tick();
-  assert.equal(selectionRuntime.pill.getState().lastMessage, "Saved");
+  assert.equal(selectionRuntime.citationModal.getState().selectedStyle, "apa");
+  assert.match(selectionRuntime.citationModal.getState().text, /Example citation output/);
   await noteButton.dispatchEvent(new FakeEvent("click", noteButton));
   await tick();
   assert.equal(selectionRuntime.quickNotePanel.getState().status, "editing");
@@ -638,9 +648,8 @@ test("content capture surfaces extension context invalidation explicitly", async
   await citeButton.dispatchEvent(new FakeEvent("click", citeButton));
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  const toastHost = documentRef.body.children.find((node) => node.getAttribute?.("data-writior-toast-host") === "true");
-  assert.equal(selectionRuntime.pill.getState().lastMessage, "Failed");
-  assert.equal(toastHost?.children?.[0]?.textContent, "Extension updated. Reload page.");
+  assert.equal(selectionRuntime.citationModal.getState().loading, false);
+  assert.match(selectionRuntime.citationModal.getState().error?.message || "", /Reload the page and try again/);
 });
 
 test("content capture surfaces unauthorized errors explicitly", async () => {
@@ -671,9 +680,8 @@ test("content capture surfaces unauthorized errors explicitly", async () => {
   await citeButton.dispatchEvent(new FakeEvent("click", citeButton));
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  const toastHost = documentRef.body.children.find((node) => node.getAttribute?.("data-writior-toast-host") === "true");
-  assert.equal(selectionRuntime.pill.getState().lastMessage, "Failed");
-  assert.equal(toastHost?.children?.[0]?.textContent, "Sign in required");
+  assert.equal(selectionRuntime.citationModal.getState().loading, false);
+  assert.match(selectionRuntime.citationModal.getState().error?.message || "", /No bearer token is available|Sign in required/);
 });
 
 test("quote capture routes through citation then canonical quote endpoint", async () => {

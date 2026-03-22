@@ -1,15 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
 
 import { createBackgroundRuntime } from "../extension/background/index.js";
 import { MESSAGE_NAMES } from "../extension/shared/constants/message_names.js";
 import { renderCitationModal } from "../extension/sidepanel/app/citation_modal.js";
 
 class FakeEvent {
-  constructor(type, target) {
+  constructor(type, target, init = {}) {
     this.type = type;
     this.target = target;
+    this.key = init.key || "";
+    this.ctrlKey = Boolean(init.ctrlKey);
+    this.metaKey = Boolean(init.metaKey);
     this.defaultPrevented = false;
   }
 
@@ -48,7 +50,35 @@ class FakeElement extends FakeEventTarget {
     this.attributes = new Map();
     this.style = {};
     this.textContent = "";
+    this.disabled = false;
     this._innerHTML = "";
+  }
+
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+  }
+
+  getAttribute(name) {
+    return this.attributes.has(name) ? this.attributes.get(name) : null;
+  }
+
+  removeAttribute(name) {
+    this.attributes.delete(name);
+  }
+
+  appendChild(child) {
+    child.parentNode = this;
+    this.children.push(child);
+    return child;
+  }
+
+  append(...children) {
+    children.forEach((child) => this.appendChild(child));
+  }
+
+  replaceChildren(...children) {
+    this.children = [];
+    children.forEach((child) => this.appendChild(child));
   }
 
   set innerHTML(value) {
@@ -60,32 +90,16 @@ class FakeElement extends FakeEventTarget {
     return this._innerHTML;
   }
 
-  setAttribute(name, value) {
-    this.attributes.set(name, String(value));
-  }
-
-  getAttribute(name) {
-    return this.attributes.get(name) || null;
-  }
-
-  appendChild(child) {
-    child.parentNode = this;
-    this.children.push(child);
-    return child;
-  }
-
-  remove() {
-    if (!this.parentNode) {
-      return;
-    }
-    this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
-    this.parentNode = null;
+  click() {
+    this.dispatchEvent(new FakeEvent("click", this));
   }
 }
 
 class FakeDocument {
   constructor() {
     this.body = new FakeElement("body", this);
+    this.documentElement = new FakeElement("html", this);
+    this.documentElement.appendChild(this.body);
   }
 
   createElement(tagName) {
@@ -93,96 +107,94 @@ class FakeDocument {
   }
 }
 
-function createChromeStub() {
-  const messages = [];
-  const sidePanelOpenCalls = [];
-  return {
-    messages,
-    sidePanelOpenCalls,
-    runtime: {
-      lastError: null,
-      sendMessage(message) {
-        messages.push(message);
-      },
-    },
-    storage: {
-      local: {
-        async get(defaults) {
-          return { ...defaults };
-        },
-        async set() {},
-        async remove() {},
-      },
-    },
-    sidePanel: {
-      open(args) {
-        sidePanelOpenCalls.push(args);
-      },
-    },
-  };
+function findByAttr(node, name, value) {
+  if (!node) {
+    return null;
+  }
+  if (typeof node.getAttribute === "function" && node.getAttribute(name) === value) {
+    return node;
+  }
+  for (const child of node.children || []) {
+    const match = findByAttr(child, name, value);
+    if (match) {
+      return match;
+    }
+  }
+  return null;
 }
 
-function createResponse(data) {
-  return { ok: true, data, meta: {} };
-}
-
-function createRuntime() {
-  const captureCalls = [];
-  const renderCalls = [];
-  const chromeApi = createChromeStub();
-  const captureApi = {
-    async createCitation(payload) {
-      captureCalls.push(payload);
-      return createResponse({
-        id: "citation-1",
-        style: "apa",
-        format: "bibliography",
-        inline_citation: "(World Health Organization, 2024, para. 6)",
-        full_citation: "World Health Organization. (2024). Public health update. WHO.",
-        footnote: "World Health Organization. (2024). Public health update. WHO.",
-        quote_attribution: "\"Selected sentence\" (World Health Organization, 2024, para. 6)",
-        metadata: {
-          title: "Public health update",
-          author: "World Health Organization",
-          site_name: "WHO",
-          canonical_url: payload.pageUrl,
-        },
-      });
-    },
-  };
-  const citationApi = {
-    async renderCitation(payload) {
-      renderCalls.push(payload);
-      return createResponse({
-        renders: {
-          apa: {
-            inline: "(World Health Organization, 2024, para. 6)",
-            bibliography: "World Health Organization. (2024). Public health update. WHO.",
-            footnote: "World Health Organization. (2024). Public health update. WHO.",
+function createRuntime({ renderResult, renderError } = {}) {
+  return createBackgroundRuntime({
+    chromeApi: {
+      runtime: {
+        lastError: null,
+        sendMessage() {},
+      },
+      storage: {
+        local: {
+          async get(defaults) {
+            return {
+              ...defaults,
+              writior_auth_session: {
+                access_token: "token-1",
+                token_type: "bearer",
+                user_id: "user-1",
+                email: "user@example.com",
+              },
+            };
           },
-          mla: {
-            inline: "(World Health Organization 6)",
-            bibliography: "World Health Organization. \"Public Health Update.\" WHO.",
-            footnote: "World Health Organization. \"Public Health Update.\" WHO.",
-          },
+          async set() {},
+          async remove() {},
         },
-        cache_hit: false,
-      });
+      },
     },
-  };
-  const runtime = createBackgroundRuntime({
-    chromeApi,
-    captureApi,
-    citationApi,
-    baseUrl: "https://app.writior.com",
+    captureApi: {
+      createCitation() {
+        throw new Error("captureCitation should not run in phase5 citation tests");
+      },
+      createQuote() {
+        throw new Error("createQuote should not run");
+      },
+      createNote() {
+        throw new Error("createNote should not run");
+      },
+    },
+    citationApi: {
+      async renderCitation(payload) {
+        if (renderError) {
+          return {
+            ok: false,
+            status: "error",
+            error: renderError,
+          };
+        }
+        return {
+          ok: true,
+          status: "ok",
+          data: renderResult || {
+            renders: {
+              mla: {
+                inline: "(WHO 6)",
+                bibliography: "World Health Organization. \"Public Health Update.\" WHO.",
+                footnote: "World Health Organization. \"Public Health Update.\" WHO.",
+              },
+            },
+            cache_hit: false,
+          },
+        };
+      },
+    },
   });
-  return { runtime, chromeApi, captureCalls, renderCalls };
 }
 
-function createSelectedCitationState() {
-  return {
-    status: "ready",
-    visible: true,
+test("citation modal switches style and format using backend-derived previews only", async () => {
+  const documentRef = new FakeDocument();
+  const root = documentRef.createElement("div");
+  const renderCalls = [];
+  const saveCalls = [];
+  const clipboardWrites = [];
+
+  const modal = renderCitationModal(root, {
     citation: {
       id: "citation-1",
       style: "apa",
@@ -193,7 +205,6 @@ function createSelectedCitationState() {
       metadata: {
         title: "Public health update",
         author: "World Health Organization",
-        site_name: "WHO",
         canonical_url: "https://example.com/articles/demo",
       },
     },
@@ -203,129 +214,174 @@ function createSelectedCitationState() {
     locked_styles: ["chicago", "harvard"],
     loading: false,
     error: null,
-    saved: false,
-    saved_at: null,
-  };
-}
-
-test("citation modal opens from cite action and uses backend-rendered text only", async () => {
-  const { runtime, chromeApi, captureCalls, renderCalls } = createRuntime();
-  const captureResult = await runtime.dispatch({
-    type: MESSAGE_NAMES.CAPTURE_CREATE_CITATION,
-    payload: {
-      surface: "content",
-      capture: {
-        selectionText: "Selected sentence",
-        pageTitle: "Public health update",
-        pageUrl: "https://example.com/articles/demo",
-        pageDomain: "example.com",
-      },
-    },
-  }, { tab: { windowId: 7 } });
-
-  assert.equal(captureResult.ok, true);
-  assert.equal(captureCalls.length, 1);
-  assert.equal(chromeApi.sidePanelOpenCalls.length, 1);
-
-  const stateResult = await runtime.dispatch({ type: MESSAGE_NAMES.CITATION_GET_STATE });
-  const documentRef = new FakeDocument();
-  const root = documentRef.createElement("div");
-  const navigatorRef = {
-    clipboard: {
-      lastText: "",
-      async writeText(text) {
-        this.lastText = text;
-      },
-    },
-  };
-  const modal = renderCitationModal(root, stateResult.data.citation, {
+  }, {
     documentRef,
-    navigatorRef,
-    onRequestRender: (payload) => runtime.dispatch({ type: MESSAGE_NAMES.CITATION_RENDER, payload }),
-    onSave: (payload) => runtime.dispatch({ type: MESSAGE_NAMES.CITATION_SAVE_STATE, payload }),
+    navigatorRef: {
+      clipboard: {
+        async writeText(text) {
+          clipboardWrites.push(text);
+        },
+      },
+    },
+    onRequestRender: async (payload) => {
+      renderCalls.push(payload);
+      return {
+        ok: true,
+        data: {
+          renders: {
+            mla: {
+              inline: "(World Health Organization 6)",
+              bibliography: "World Health Organization. \"Public Health Update.\" WHO.",
+              footnote: "World Health Organization. \"Public Health Update.\" WHO.",
+            },
+          },
+          cache_hit: false,
+        },
+      };
+    },
+    onSave: async (payload) => {
+      saveCalls.push(payload);
+      return { ok: true, data: { saved: true } };
+    },
   });
 
-  const previewText = modal.getState().text;
-  assert.equal(previewText.includes("World Health Organization"), true);
-  assert.equal(root.children[0].children[2].children.length >= 1, true);
-  assert.equal(renderCalls.length, 0);
-  assert.equal(fs.readFileSync(new URL("../extension/sidepanel/app/citation_modal.ts", import.meta.url), "utf8").includes("render_citation"), false);
+  assert.match(modal.getState().text, /Public health update/);
+  const locked = root.children[0].children[3].children.filter((button) => button.getAttribute("data-locked") === "true");
+  assert.equal(locked.length, 2);
 
-  const styleButtons = root.children[0].children[2].children;
-  const mlaButton = styleButtons.find((button) => button.getAttribute("data-style") === "mla");
+  const styleTabs = findByAttr(root, "data-citation-style-tabs", "true");
+  const mlaButton = styleTabs.children.find((button) => button.getAttribute("data-style") === "mla");
   await mlaButton.dispatchEvent(new FakeEvent("click", mlaButton));
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await Promise.resolve();
+
   assert.equal(renderCalls.length, 1);
   assert.equal(modal.getState().selectedStyle, "mla");
   assert.match(modal.getState().text, /World Health Organization/);
-  const afterStyle = await runtime.dispatch({ type: MESSAGE_NAMES.CITATION_GET_STATE });
-  assert.equal(afterStyle.data.citation.selected_style, "mla");
 
-  const formatTabs = root.children[0].children[3].children;
-  const inlineButton = formatTabs.find((button) => button.getAttribute("data-format") === "inline");
+  const formatTabs = findByAttr(root, "data-citation-format-tabs", "true");
+  const inlineButton = formatTabs.children.find((button) => button.getAttribute("data-format") === "inline");
   await inlineButton.dispatchEvent(new FakeEvent("click", inlineButton));
-  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(modal.getState().selectedFormat, "inline");
+  assert.match(modal.getState().text, /\(World Health Organization 6\)/);
 
-  const copyButton = root.children[0].children[5].children[0];
+  const copyButton = findByAttr(root, "data-citation-copy", "true");
   await copyButton.dispatchEvent(new FakeEvent("click", copyButton));
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(modal.getState().selectedFormat, "inline");
-  assert.equal(modal.getState().text.length > 0, true);
-  assert.equal(navigatorRef.clipboard.lastText.includes("World Health Organization"), true);
-  const afterCopy = await runtime.dispatch({ type: MESSAGE_NAMES.CITATION_GET_STATE });
-  assert.equal(afterCopy.data.citation.saved, true);
+  await Promise.resolve();
+  assert.equal(clipboardWrites.at(-1), "(World Health Organization 6)");
+  assert.equal(saveCalls.at(-1)?.copy, true);
+
+  const saveButton = findByAttr(root, "data-citation-save", "true");
+  await saveButton.dispatchEvent(new FakeEvent("click", saveButton));
+  await Promise.resolve();
+  assert.equal(saveCalls.at(-1)?.copy, false);
+  assert.equal(saveCalls.at(-1)?.format, "inline");
 });
 
-test("locked styles remain visible from backend capability data", () => {
-  const documentRef = new FakeDocument();
-  const root = documentRef.createElement("div");
-  const modal = renderCitationModal(root, createSelectedCitationState(), {
-    documentRef,
+test("background citation render returns backend render bundles and save persists modal selection in background", async () => {
+  const runtime = createRuntime({
+    renderResult: {
+      renders: {
+        chicago: {
+          inline: "(World Health Organization 2024)",
+          bibliography: "World Health Organization. Public Health Update. WHO, 2024.",
+          footnote: "World Health Organization, Public Health Update (WHO, 2024).",
+        },
+      },
+      cache_hit: true,
+    },
   });
 
-  const styleButtons = root.children[0].children[2].children;
-  const locked = styleButtons.filter((button) => button.getAttribute("data-locked") === "true");
-  assert.equal(locked.length, 2);
-  assert.equal(modal.getState().lockedStyles.includes("chicago"), true);
-  assert.equal(modal.getState().lockedStyles.includes("harvard"), true);
-});
-
-test("background render request returns canonical backend render bundles", async () => {
-  const { runtime, renderCalls } = createRuntime();
-  const response = await runtime.dispatch({
+  const renderResult = await runtime.dispatch({
     type: MESSAGE_NAMES.CITATION_RENDER,
-    payload: { citation_id: "citation-1", style: "mla" },
+    requestId: "req-render",
+    payload: {
+      surface: "content",
+      citationId: "citation-1",
+      style: "chicago",
+    },
   });
 
-  assert.equal(response.ok, true);
-  assert.equal(renderCalls[0].citation_id, "citation-1");
-  assert.equal(response.data.renders.mla.bibliography.includes("WHO"), true);
+  assert.equal(renderResult.ok, true);
+  assert.match(renderResult.data.renders.chicago.bibliography, /WHO, 2024/);
+
+  const saveResult = await runtime.dispatch({
+    type: MESSAGE_NAMES.CITATION_SAVE,
+    requestId: "req-save",
+    payload: {
+      surface: "content",
+      citationId: "citation-1",
+      style: "chicago",
+      format: "footnote",
+      copy: true,
+    },
+  });
+
+  assert.equal(saveResult.ok, true);
+  assert.equal(saveResult.data.saved, true);
+  assert.equal(saveResult.data.style, "chicago");
+  assert.equal(saveResult.data.format, "footnote");
+  assert.equal(saveResult.data.copy, true);
 });
 
-test("citation modal shows loading and error states clearly", () => {
+test("citation modal shows loading and error states without collapsing", () => {
   const documentRef = new FakeDocument();
   const root = documentRef.createElement("div");
+
   renderCitationModal(root, {
-    status: "loading",
-    visible: true,
-    loading: true,
+    citation: null,
+    render_bundle: null,
     selected_style: "apa",
     selected_format: "bibliography",
-    citation: null,
+    locked_styles: [],
+    loading: true,
     error: null,
   }, { documentRef });
-  assert.match(root.children[0].children[4].children[1].textContent, /Loading citation preview/);
 
-  root.children = [];
+  assert.match(findByAttr(root, "data-citation-preview-body", "true").textContent, /Loading citation preview/);
+
   renderCitationModal(root, {
-    status: "error",
-    visible: true,
-    loading: false,
+    citation: null,
+    render_bundle: null,
     selected_style: "apa",
     selected_format: "bibliography",
-    citation: null,
+    locked_styles: [],
+    loading: false,
     error: { code: "citation_error", message: "Preview failed." },
   }, { documentRef });
-  assert.match(root.children[0].children[4].children[1].textContent, /Preview failed/);
+
+  assert.match(findByAttr(root, "data-citation-preview-body", "true").textContent, /Preview failed/);
+});
+
+test("backend citation render errors map cleanly and save rejects invalid payloads", async () => {
+  const runtime = createRuntime({
+    renderError: { code: "unauthorized", message: "No bearer token is available." },
+  });
+
+  const renderResult = await runtime.dispatch({
+    type: MESSAGE_NAMES.CITATION_RENDER,
+    requestId: "req-render-fail",
+    payload: {
+      surface: "content",
+      citationId: "citation-1",
+      style: "mla",
+    },
+  });
+
+  assert.equal(renderResult.ok, false);
+  assert.equal(renderResult.error.code, "unauthorized");
+  assert.match(renderResult.error.message, /No bearer token is available/);
+
+  const saveResult = await runtime.dispatch({
+    type: MESSAGE_NAMES.CITATION_SAVE,
+    requestId: "req-save-invalid",
+    payload: {
+      surface: "content",
+      citationId: "",
+      style: "mla",
+      format: "inline",
+    },
+  });
+
+  assert.equal(saveResult.ok, false);
+  assert.equal(saveResult.error.code, "invalid_payload");
 });

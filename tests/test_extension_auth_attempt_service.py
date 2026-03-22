@@ -277,6 +277,33 @@ async def test_handoff_exchange_rejects_missing_and_expired_codes_explicitly():
 
 
 @pytest.mark.anyio
+async def test_handoff_exchange_rejects_bad_expiry_with_payload_error():
+    service = _service()
+    request = _request()
+
+    await service.repository.create_handoff_code(
+        code="bad-expiry-code",
+        user_id="user-1",
+        redirect_path="/editor",
+        session_payload={
+            "access_token": "access-token",
+            "refresh_token": "refresh-token",
+            "expires_in": 300,
+            "token_type": "bearer",
+        },
+        expires_at="not-a-timestamp",
+    )
+
+    with pytest.raises(Exception) as invalid:
+        await service.exchange_handoff(request, HandoffExchangeRequest(code="bad-expiry-code"))
+
+    assert getattr(invalid.value, "code", "") == "handoff_payload_invalid"
+    record = await service.repository.get_handoff_code(code="bad-expiry-code")
+    assert record["used_at"] is not None
+    assert record["session_payload"] == {}
+
+
+@pytest.mark.anyio
 async def test_handoff_exchange_succeeds_even_if_cleanup_write_fails():
     service = _service()
     service.repository = CleanupFailingExtensionRepository()

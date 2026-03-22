@@ -1,22 +1,37 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import path from "node:path";
 
-import { createPageUnlockEngine } from "../extension/content/page/unlock_engine.js";
-import { probePageContext } from "../extension/content/dom/context_probe.js";
-import { createContentRuntime } from "../extension/content/index.js";
+import { createPageUnlockEngine } from "../extension/content/unlock/engine.js";
+import { bootstrapContent } from "../extension/content/index.js";
 
 class FakeEvent {
   constructor(type, target, init = {}) {
     this.type = type;
     this.target = target;
+    this.currentTarget = null;
     this.defaultPrevented = false;
     this.propagationStopped = false;
     this.immediatePropagationStopped = false;
     this.ctrlKey = Boolean(init.ctrlKey);
     this.metaKey = Boolean(init.metaKey);
     this.key = init.key || "";
+    this.clientX = init.clientX;
+    this.clientY = init.clientY;
+    this._path = init.path || null;
+  }
+
+  composedPath() {
+    if (Array.isArray(this._path)) {
+      return this._path;
+    }
+    const path = [];
+    let node = this.target;
+    while (node) {
+      path.push(node);
+      node = node.parentNode || null;
+    }
+    return path;
   }
 
   preventDefault() {
@@ -38,29 +53,47 @@ class FakeEventTarget {
     this.listeners = new Map();
   }
 
-  addEventListener(type, handler, options = {}) {
+  addEventListener(type, handler, options = false) {
     const list = this.listeners.get(type) || [];
-    list.push({ handler, capture: Boolean(options && options.capture) });
+    list.push({ handler, capture: options === true || Boolean(options?.capture) });
     this.listeners.set(type, list);
   }
 
-  removeEventListener(type, handler, options = {}) {
+  removeEventListener(type, handler, options = false) {
+    const capture = options === true || Boolean(options?.capture);
     const list = this.listeners.get(type) || [];
     this.listeners.set(
       type,
-      list.filter((entry) => entry.handler !== handler || entry.capture !== Boolean(options && options.capture)),
+      list.filter((entry) => entry.handler !== handler || entry.capture !== capture),
     );
   }
 
   dispatchEvent(event) {
-    const list = this.listeners.get(event.type) || [];
+    const list = [...(this.listeners.get(event.type) || [])];
     for (const entry of list) {
+      event.currentTarget = this;
+      entry.handler(event);
       if (event.immediatePropagationStopped) {
         break;
       }
-      entry.handler(event);
     }
     return !event.defaultPrevented;
+  }
+}
+
+class FakeStyle {
+  constructor() {
+    this.position = "";
+    this.opacity = "";
+    this.backgroundColor = "";
+    this.zIndex = "";
+    this.pointerEvents = "";
+    this.visibility = "";
+    this.display = "";
+  }
+
+  setProperty(name, value) {
+    this[name.replace(/-([a-z])/g, (_, char) => char.toUpperCase())] = value;
   }
 }
 
@@ -73,15 +106,34 @@ class FakeElement extends FakeEventTarget {
     this.parentNode = null;
     this.attributes = new Map();
     this.className = "";
-    this.innerHTML = "";
     this.id = "";
-    this.dataset = {};
+    this.style = new FakeStyle();
     this.textContent = "";
-    this.style = {};
-    this.oncontextmenu = null;
-    this.oncopy = null;
-    this.contentEditable = "";
     this.isContentEditable = false;
+    this.contentEditable = "";
+    this.open = false;
+    this.onclick = null;
+    this.onmousedown = null;
+    this.oncopy = null;
+    this.oncut = null;
+    this.onpaste = null;
+    this.oncontextmenu = null;
+    this.onselectstart = null;
+    this.ondragstart = null;
+  }
+
+  appendChild(child) {
+    child.parentNode = this;
+    this.children.push(child);
+    return child;
+  }
+
+  remove() {
+    if (!this.parentNode) {
+      return;
+    }
+    this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
+    this.parentNode = null;
   }
 
   setAttribute(name, value) {
@@ -100,25 +152,27 @@ class FakeElement extends FakeEventTarget {
   }
 
   getAttribute(name) {
-    if (name === "id") return this.id || null;
-    if (name === "class") return this.className || null;
+    if (name === "id") {
+      return this.id || null;
+    }
+    if (name === "class") {
+      return this.className || null;
+    }
     return this.attributes.has(name) ? this.attributes.get(name) : null;
   }
 
-  appendChild(child) {
-    child.parentNode = this;
-    this.children.push(child);
-    return child;
-  }
-
-  append(...children) {
-    children.forEach((child) => this.appendChild(child));
-  }
-
-  remove() {
-    if (!this.parentNode) return;
-    this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
-    this.parentNode = null;
+  removeAttribute(name) {
+    this.attributes.delete(name);
+    if (name === "id") {
+      this.id = "";
+    }
+    if (name === "class") {
+      this.className = "";
+    }
+    if (name === "contenteditable") {
+      this.contentEditable = "";
+      this.isContentEditable = false;
+    }
   }
 }
 
@@ -130,7 +184,7 @@ class FakeDocument extends FakeEventTarget {
     this.body = new FakeElement("body", this);
     this.documentElement.appendChild(this.head);
     this.documentElement.appendChild(this.body);
-    this.activeElement = null;
+    this._pointElements = [];
   }
 
   createElement(tagName) {
@@ -138,15 +192,45 @@ class FakeDocument extends FakeEventTarget {
   }
 
   getElementById(id) {
-    return this._walk(this.documentElement).find((node) => node.id === id) || null;
+    return this.walk().find((node) => node.id === id) || null;
   }
 
-  _walk(root) {
+  walk(root = this.documentElement) {
     const nodes = [root];
-    for (const child of root.children || []) {
-      nodes.push(...this._walk(child));
+    for (const child of root.children) {
+      nodes.push(...this.walk(child));
     }
     return nodes;
+  }
+
+  elementsFromPoint() {
+    return this._pointElements;
+  }
+}
+
+class FakeWindow extends FakeEventTarget {
+  constructor(documentRef) {
+    super();
+    this.document = documentRef;
+    this.location = { href: "https://example.com/article" };
+    this.history = {
+      pushState: (...args) => {
+        const nextUrl = args[2];
+        if (nextUrl) {
+          this.location.href = String(nextUrl);
+        }
+      },
+      replaceState: (...args) => {
+        const nextUrl = args[2];
+        if (nextUrl) {
+          this.location.href = String(nextUrl);
+        }
+      },
+    };
+  }
+
+  getComputedStyle(element) {
+    return element.style;
   }
 }
 
@@ -168,183 +252,172 @@ class FakeMutationObserver {
     this.disconnected = true;
   }
 
-  trigger(records = []) {
+  trigger(records) {
     this.callback(records, this);
   }
 }
 
-function createTimerHarness() {
-  const timers = [];
-  return {
-    setTimeoutRef(callback, delay) {
-      timers.push({ callback, delay });
-      return timers.length;
-    },
-    clearTimeoutRef() {},
-    flush() {
-      while (timers.length) {
-        const timer = timers.shift();
-        timer.callback();
-      }
-    },
-    get pending() {
-      return timers.length;
-    },
-  };
-}
-
 function installEnvironment() {
   const documentRef = new FakeDocument();
-  const windowRef = new FakeEventTarget();
-  windowRef.location = { href: "https://example.com/article" };
-  windowRef.getComputedStyle = (node) => node.style || {};
-  windowRef.setTimeout = globalThis.setTimeout;
-  windowRef.clearTimeout = globalThis.clearTimeout;
+  const windowRef = new FakeWindow(documentRef);
   return { documentRef, windowRef };
 }
 
-function readSource(file) {
-  return fs.readFileSync(path.join("extension", file), "utf8");
-}
-
-test("content runtime ships a browser-page utility engine and avoids backend calls", () => {
+test("content runtime ships autonomous unlock bootstrap without background coupling", () => {
   const manifest = JSON.parse(fs.readFileSync("extension/manifest.json", "utf8"));
-  const source = readSource("content/index.ts");
-  assert.equal(Array.isArray(manifest.content_scripts), true);
-  assert.equal(manifest.content_scripts[0].matches.includes("http://*/*"), true);
-  assert.equal(manifest.content_scripts[0].matches.includes("https://*/*"), true);
+  const source = fs.readFileSync("extension/content/index.ts", "utf8");
+  assert.equal(manifest.content_scripts[0].run_at, "document_start");
   assert.match(source, /createPageUnlockEngine/);
+  assert.equal(source.includes("runtime.sendMessage"), false);
   assert.equal(source.includes("fetch("), false);
-  assert.equal(source.includes("chrome.storage"), false);
 });
 
-test("blocked selection, copy, and right-click are restored without touching editable fields", () => {
+test("bootstrap is idempotent and injects one style tag plus one listener set", () => {
   const { documentRef, windowRef } = installEnvironment();
-  const timers = createTimerHarness();
-  const engine = createPageUnlockEngine({
-    documentRef,
-    windowRef,
-    MutationObserverRef: FakeMutationObserver,
-    setTimeoutRef: timers.setTimeoutRef,
-    clearTimeoutRef: timers.clearTimeoutRef,
-  });
-  engine.bootstrap();
+  const runtimeA = bootstrapContent({ documentRef, windowRef, MutationObserverRef: FakeMutationObserver });
+  const runtimeB = bootstrapContent({ documentRef, windowRef, MutationObserverRef: FakeMutationObserver });
 
-  const blockerCounts = { selectstart: 0, copy: 0, contextmenu: 0 };
-  documentRef.addEventListener("selectstart", (event) => {
-    blockerCounts.selectstart += 1;
-    event.preventDefault();
-  });
-  documentRef.addEventListener("copy", (event) => {
-    blockerCounts.copy += 1;
-    event.preventDefault();
-  });
-  documentRef.addEventListener("contextmenu", (event) => {
-    blockerCounts.contextmenu += 1;
-    event.preventDefault();
-  });
+  assert.equal(runtimeA, runtimeB);
+  assert.equal(documentRef.walk().filter((node) => node.id === "writior-copy-unlock-style").length, 1);
+  assert.equal(runtimeA.getState().bootstrapCount, 1);
+  assert.equal(runtimeA.getState().mode, "balanced");
+  assert.equal(runtimeA.getState().guardInstallCount, 1);
+  assert.equal(documentRef.listeners.get("copy").length, 1);
+  assert.equal(documentRef.listeners.get("contextmenu").length, 1);
+  assert.equal(documentRef.listeners.get("mouseup").length, 2);
+  assert.equal(documentRef.listeners.get("keyup").length, 2);
+});
 
-  const textTarget = documentRef.createElement("div");
-  documentRef.body.appendChild(textTarget);
+test("target classification stays conservative for safe content, inputs, and editors", () => {
+  const { documentRef, windowRef } = installEnvironment();
+  const engine = createPageUnlockEngine({ documentRef, windowRef, MutationObserverRef: FakeMutationObserver });
 
-  const selectionEvent = new FakeEvent("selectstart", textTarget);
-  const copyEvent = new FakeEvent("copy", textTarget);
-  const contextEvent = new FakeEvent("contextmenu", textTarget);
-
-  documentRef.dispatchEvent(selectionEvent);
-  documentRef.dispatchEvent(copyEvent);
-  documentRef.dispatchEvent(contextEvent);
-
-  assert.equal(blockerCounts.selectstart, 0);
-  assert.equal(blockerCounts.copy, 0);
-  assert.equal(blockerCounts.contextmenu, 0);
-  assert.equal(selectionEvent.defaultPrevented, false);
-  assert.equal(copyEvent.defaultPrevented, false);
-  assert.equal(contextEvent.defaultPrevented, false);
-  assert.match(documentRef.getElementById("writior-content-unlock-style").textContent, /user-select: text/);
-
+  const paragraph = documentRef.createElement("p");
   const input = documentRef.createElement("input");
-  documentRef.body.appendChild(input);
-  documentRef.activeElement = input;
-  const editableCopyEvent = new FakeEvent("copy", input);
-  let editablePageListenerHits = 0;
-  input.addEventListener("copy", () => {
-    editablePageListenerHits += 1;
-  });
-  input.dispatchEvent(editableCopyEvent);
+  const editor = documentRef.createElement("div");
+  editor.setAttribute("class", "ProseMirror editor-root");
+  const contentEditable = documentRef.createElement("div");
+  contentEditable.setAttribute("contenteditable", "true");
 
-  assert.equal(editablePageListenerHits, 1);
-  assert.equal(editableCopyEvent.defaultPrevented, false);
+  assert.equal(engine.classifyTarget(paragraph).kind, "safe-content");
+  assert.equal(engine.classifyTarget(input).kind, "form-control");
+  assert.equal(engine.classifyTarget(editor).kind, "editor");
+  assert.equal(engine.classifyTarget(contentEditable).kind, "contenteditable");
 });
 
-test("mutation observer reapplies safely and batches repeated changes", () => {
+test("capture guards restore copy, contextmenu, and shortcuts for safe content, inputs, and contenteditable", () => {
   const { documentRef, windowRef } = installEnvironment();
-  const timers = createTimerHarness();
+  const engine = createPageUnlockEngine({ documentRef, windowRef, MutationObserverRef: FakeMutationObserver });
+  engine.bootstrap();
+
+  const article = documentRef.createElement("div");
+  const input = documentRef.createElement("input");
+  const editor = documentRef.createElement("div");
+  editor.setAttribute("contenteditable", "true");
+  documentRef.body.appendChild(article);
+  documentRef.body.appendChild(input);
+  documentRef.body.appendChild(editor);
+
+  const articleCopy = new FakeEvent("copy", article);
+  const inputPaste = new FakeEvent("paste", input);
+  const articleContext = new FakeEvent("contextmenu", article);
+  const editorCopy = new FakeEvent("copy", editor);
+  const editorPaste = new FakeEvent("paste", editor);
+  const inputShortcut = new FakeEvent("keydown", input, { ctrlKey: true, key: "v" });
+  const editorShortcut = new FakeEvent("keydown", editor, { ctrlKey: true, key: "v" });
+
+  documentRef.dispatchEvent(articleCopy);
+  documentRef.dispatchEvent(inputPaste);
+  documentRef.dispatchEvent(articleContext);
+  documentRef.dispatchEvent(editorCopy);
+  documentRef.dispatchEvent(editorPaste);
+  documentRef.dispatchEvent(inputShortcut);
+  documentRef.dispatchEvent(editorShortcut);
+
+  assert.equal(articleCopy.immediatePropagationStopped, true);
+  assert.equal(inputPaste.immediatePropagationStopped, true);
+  assert.equal(articleContext.immediatePropagationStopped, true);
+  assert.equal(editorCopy.immediatePropagationStopped, true);
+  assert.equal(editorPaste.immediatePropagationStopped, false);
+  assert.equal(inputShortcut.immediatePropagationStopped, true);
+  assert.equal(editorShortcut.immediatePropagationStopped, false);
+});
+
+test("mutation batching deduplicates repeated nodes before autonomous inline cleanup", async () => {
+  const { documentRef, windowRef } = installEnvironment();
+  const queuedCallbacks = [];
   const engine = createPageUnlockEngine({
     documentRef,
     windowRef,
     MutationObserverRef: FakeMutationObserver,
-    setTimeoutRef: timers.setTimeoutRef,
-    clearTimeoutRef: timers.clearTimeoutRef,
+    queueMicrotaskRef(callback) {
+      queuedCallbacks.push(callback);
+    },
   });
   engine.bootstrap();
-  const styleBefore = documentRef.getElementById("writior-content-unlock-style");
-  styleBefore.remove();
+
+  const target = documentRef.createElement("div");
+  target.oncopy = () => false;
+  target.setAttribute("oncontextmenu", "return false");
+  target.style.userSelect = "none";
+  documentRef.body.appendChild(target);
 
   const observer = FakeMutationObserver.instances.at(-1);
-  observer.trigger([{ type: "childList" }]);
-  observer.trigger([{ type: "childList" }]);
-  assert.equal(engine.getState().appliedCount, 1);
-  assert.equal(timers.pending, 1);
+  observer.trigger([
+    { target, addedNodes: [target] },
+    { target, addedNodes: [] },
+  ]);
 
-  timers.flush();
-  assert.ok(documentRef.getElementById("writior-content-unlock-style"));
-  assert.equal(engine.getState().appliedCount, 2);
+  assert.equal(queuedCallbacks.length, 1);
+  queuedCallbacks.shift()();
+
+  assert.equal(target.oncopy, null);
+  assert.equal(target.getAttribute("oncontextmenu"), null);
+  assert.equal(target.style.userSelect, "text");
+  assert.equal(engine.getState().mutationBatchCount, 1);
+  assert.equal(engine.getState().inlineCleanupCount, 2);
+  assert.equal(engine.getState().styleRecoveryCount, 1);
 });
 
-test("soft ad cleanup hides obvious overlay candidates and leaves normal content intact", () => {
+test("overlay mitigation is event-triggered and conservative", () => {
   const { documentRef, windowRef } = installEnvironment();
-  const timers = createTimerHarness();
-  const engine = createPageUnlockEngine({
-    documentRef,
-    windowRef,
-    MutationObserverRef: FakeMutationObserver,
-    setTimeoutRef: timers.setTimeoutRef,
-    clearTimeoutRef: timers.clearTimeoutRef,
-  });
-
-  const ad = documentRef.createElement("div");
-  ad.id = "newsletter-banner";
-  ad.className = "sticky sponsor-unit";
-  ad.style.position = "fixed";
-  ad.style.zIndex = "1000";
-  documentRef.body.appendChild(ad);
-
-  const article = documentRef.createElement("article");
-  article.id = "main-story";
-  documentRef.body.appendChild(article);
-
+  const engine = createPageUnlockEngine({ documentRef, windowRef, MutationObserverRef: FakeMutationObserver });
   engine.bootstrap();
 
-  assert.equal(ad.getAttribute("data-writior-soft-hidden"), "true");
-  assert.equal(ad.style.display, "none");
-  assert.equal(article.getAttribute("data-writior-soft-hidden"), null);
+  const overlay = documentRef.createElement("div");
+  overlay.style.position = "fixed";
+  overlay.style.opacity = "0";
+  overlay.style.backgroundColor = "transparent";
+  overlay.style.zIndex = "999";
+  const article = documentRef.createElement("article");
+  documentRef._pointElements = [overlay, article];
+
+  const event = new FakeEvent("contextmenu", overlay, { clientX: 10, clientY: 12 });
+  documentRef.dispatchEvent(event);
+
+  assert.equal(overlay.style.pointerEvents, "none");
+  assert.equal(engine.getState().overlayMitigationCount, 1);
 });
 
-test("content runtime bootstrap remains local and reusable", () => {
-  const previousWindow = globalThis.window;
-  const previousDocument = globalThis.document;
-  const environment = installEnvironment();
-  globalThis.window = environment.windowRef;
-  globalThis.document = environment.documentRef;
-  try {
-    const runtime = createContentRuntime();
-    assert.equal(runtime.kind, "content-runtime");
-    assert.equal(runtime.messageNames.AUTH_GET_STATE, "auth.get_state");
-    assert.equal(runtime.storageKeys.AUTH_SESSION, "writior_auth_session");
-    assert.equal(runtime.utilities.probePageContext().location, "https://example.com/article");
-  } finally {
-    globalThis.window = previousWindow;
-    globalThis.document = previousDocument;
-  }
+test("root blocker cleanup clears document-level DOM0 handlers and route changes reprocess content", () => {
+  const { documentRef, windowRef } = installEnvironment();
+  documentRef.oncopy = () => false;
+  documentRef.body.oncontextmenu = () => false;
+  documentRef.documentElement.onselectstart = () => false;
+
+  const engine = createPageUnlockEngine({ documentRef, windowRef, MutationObserverRef: FakeMutationObserver });
+  engine.bootstrap();
+
+  assert.equal(documentRef.oncopy, null);
+  assert.equal(documentRef.body.oncontextmenu, null);
+  assert.equal(documentRef.documentElement.onselectstart, null);
+
+  const nextNode = documentRef.createElement("div");
+  nextNode.oncopy = () => false;
+  documentRef.body.appendChild(nextNode);
+  windowRef.history.pushState({}, "", "https://example.com/next");
+  engine.flushMutationBatch();
+
+  assert.equal(engine.getState().routeChangeCount, 1);
+  assert.equal(nextNode.oncopy, null);
 });

@@ -196,10 +196,13 @@ test("capture network failure surfaces as a network error", async () => {
   const result = await runtime.dispatch({
     type: MESSAGE_NAMES.CAPTURE_CREATE_CITATION,
     payload: {
-      selectionText: "Capture text",
-      pageTitle: "Demo",
-      pageUrl: "https://example.com/articles/demo",
-      pageDomain: "example.com",
+      surface: "content",
+      capture: {
+        selectionText: "Capture text",
+        pageTitle: "Demo",
+        pageUrl: "https://example.com/articles/demo",
+        pageDomain: "example.com",
+      },
     },
   }, { tab: { windowId: 1 } });
 

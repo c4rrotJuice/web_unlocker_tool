@@ -76,43 +76,45 @@
       statusEl.textContent = text;
       statusEl.classList.toggle("error", Boolean(isError));
     }
-    closeBtn?.addEventListener("click", () => {
-      window.close();
-    });
+    if (closeBtn) {
+      closeBtn.addEventListener("click", function onCloseClick() {
+        window.close();
+      });
+    }
 
     async function applyWebSession(session) {
-      if (!session?.access_token || !session?.refresh_token) {
+      if (!session || !session.access_token || !session.refresh_token) {
         throw new Error("handoff_session_missing");
       }
       const auth = window.webUnlockerAuth;
-      if (!auth?.setSession) {
+      if (!auth || typeof auth.setSession !== "function") {
         throw new Error("web_auth_client_missing");
       }
       const result = await auth.setSession({
         access_token: session.access_token,
         refresh_token: session.refresh_token,
       });
-      if (result?.error) {
-        throw new Error(result.error?.message || "handoff_session_apply_failed");
+      if (result && result.error) {
+        throw new Error((result.error && result.error.message) || "handoff_session_apply_failed");
       }
     }
 
     async function runCodeRestore() {
       setStatus("Restoring secure handoff…");
       try {
-        if (!window.chrome?.runtime?.sendMessage) {
+        if (!window.chrome || !window.chrome.runtime || typeof window.chrome.runtime.sendMessage !== "function") {
           setStatus("Extension bridge unavailable. Reopen the extension and retry sign-in.", true);
-          return;
+          return false;
         }
         // Legacy bridge path kept only for older web-tab handoff behavior.
         chrome.runtime.sendMessage(
           { type: "AUTH_RESTORE", payload: { code: handoffCode } },
-          async (response) => {
+          async function onRestoreResponse(response) {
             if (chrome.runtime.lastError) {
               setStatus("Extension bridge unavailable. Reopen the extension and retry sign-in.", true);
               return;
             }
-            if (!response?.ok) {
+            if (!response || !response.ok) {
               setStatus("Secure restore did not complete. Reopen the extension and retry.", true);
               return;
             }
@@ -125,22 +127,26 @@
             } catch (_error) {
               setStatus("Session restore failed in this tab. Return to /auth and retry.", true);
             }
-          },
+          }
         );
+        return true;
       } catch (_error) {
         setStatus("Secure restore failed. Return to /auth and retry.", true);
+        return false;
       }
     }
 
-    if (attemptId) {
-      setStatus("Sign-in complete. The extension will finish secure session restore automatically.");
-      return;
+    function bootstrapHandoffPage() {
+      if (attemptId) {
+        setStatus("Sign-in complete. The extension will finish secure session restore automatically.");
+      } else if (handoffCode) {
+        void runCodeRestore();
+      } else {
+        setStatus("Missing handoff details. Return to /auth and retry.", true);
+      }
     }
-    if (handoffCode) {
-      void runCodeRestore();
-      return;
-    }
-    setStatus("Missing handoff details. Return to /auth and retry.", true);
+
+    bootstrapHandoffPage();
   </script>
 </body>
 </html>

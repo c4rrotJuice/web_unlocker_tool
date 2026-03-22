@@ -115,6 +115,11 @@ class InMemoryExtensionRepository:
         return 0
 
 
+class CleanupFailingExtensionRepository(InMemoryExtensionRepository):
+    async def clear_handoff_session_payload(self, *, record_id):
+        raise RuntimeError("cleanup failed")
+
+
 class FakeAuthClient:
     class _Auth:
         def get_user(self, token):
@@ -269,6 +274,38 @@ async def test_handoff_exchange_rejects_missing_and_expired_codes_explicitly():
     with pytest.raises(Exception) as expired:
         await service.exchange_handoff(request, HandoffExchangeRequest(code="expired-code"))
     assert getattr(expired.value, "code", "") == "handoff_expired"
+
+
+@pytest.mark.anyio
+async def test_handoff_exchange_succeeds_even_if_cleanup_write_fails():
+    service = _service()
+    service.repository = CleanupFailingExtensionRepository()
+    request = _request()
+
+    created = await service.create_auth_attempt(request, AuthAttemptCreateRequest(redirect_path="/dashboard"))
+    attempt_id = created["data"]["attempt_id"]
+
+    auth_context = RequestAuthContext(
+        authenticated=True,
+        user_id="user-1",
+        supabase_subject="user-1",
+        email="user@example.com",
+        access_token="access-token",
+        token_claims={"sub": "user-1"},
+    )
+    await service.complete_auth_attempt(
+        request,
+        attempt_id=attempt_id,
+        auth_context=auth_context,
+        payload=AuthAttemptCompleteRequest(refresh_token="refresh-token", redirect_path="/dashboard"),
+    )
+
+    attempt_record = await service.repository.get_handoff_attempt(attempt_id=attempt_id)
+    exchange_code = attempt_record["handoff_code"]
+    exchanged = await service.exchange_handoff(request, HandoffExchangeRequest(code=exchange_code))
+
+    assert exchanged["ok"] is True
+    assert exchanged["data"]["session"]["access_token"] == "access-token"
 
 
 @pytest.mark.anyio

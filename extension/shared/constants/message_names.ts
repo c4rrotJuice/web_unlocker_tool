@@ -1,0 +1,12 @@
+export const MESSAGE_NAMES = Object.freeze({
+  PING: "runtime.ping",
+  OPEN_SIDEPANEL: "ui.open_sidepanel",
+  AUTH_START: "auth.start",
+  AUTH_STATUS_GET: "auth.status_get",
+  AUTH_LOGOUT: "auth.logout",
+  BOOTSTRAP_FETCH: "bootstrap.fetch",
+  CAPTURE_CREATE_CITATION: "capture.create_citation",
+  CAPTURE_CREATE_QUOTE: "capture.create_quote",
+  CAPTURE_CREATE_NOTE: "capture.create_note",
+  WORK_IN_EDITOR_REQUEST: "editor.work_in_editor_request",
+});

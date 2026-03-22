@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { createPageUnlockEngine } from "../extension/content/page/unlock_engine.js";
 import { createSelectionRuntime } from "../extension/content/selection/index.js";
+import { computePillPosition } from "../extension/content/selection/position.js";
 import { createContentRuntime } from "../extension/content/index.js";
 
 class FakeEvent {
@@ -378,15 +379,14 @@ test("pill appears near valid selections and exposes a copy-only capture payload
   const state = runtime.getState();
   assert.equal(state.visible, true);
   assert.equal(state.pill.visible, true);
-  assert.equal(state.pill.previewText.includes("Long selection"), true);
+  assert.equal(state.pill.previewText, "");
   assert.ok(state.pill.position.top < 180);
   assert.equal(documentRef.getElementById("writior-selection-pill") !== null, true);
   assert.equal(state.currentSnapshot.payload.version, 1);
-  assert.deepEqual(state.currentSnapshot.payload.ui.available_actions, ["copy"]);
-  assert.deepEqual(state.currentSnapshot.payload.ui.inactive_actions, ["cite", "note", "quote"]);
-  assert.equal(state.currentSnapshot.payload.page.title, "Demo Article");
-  assert.equal(state.currentSnapshot.payload.page.description, "Demo description");
-  assert.equal(state.currentSnapshot.payload.page.canonical_url, "https://example.com/articles/demo");
+  assert.equal(state.currentSnapshot.payload.capture.selectionText, "Long selection to copy for later capture");
+  assert.equal(state.currentSnapshot.payload.capture.pageTitle, "Demo Article");
+  assert.equal(state.currentSnapshot.payload.capture.pageUrl, "https://example.com/articles/demo");
+  assert.equal(state.currentSnapshot.payload.capture.pageDomain, "example.com");
 });
 
 test("short selection rejected and editable surfaces ignored", () => {
@@ -448,7 +448,7 @@ test("copy action is instant and feedback updates for success and failure", asyn
   });
   runtime.bootstrap();
 
-  const copyButton = runtime.pill.panel.children[1].children[0];
+  const copyButton = runtime.pill.panel.children[0].children[0];
   await copyButton.dispatchEvent(new FakeEvent("click", copyButton));
   await Promise.resolve();
   assert.equal(runtime.getState().pill.lastMessage, "Copied");
@@ -469,11 +469,69 @@ test("copy action is instant and feedback updates for success and failure", asyn
   });
   failingRuntime.bootstrap();
   failingRuntime.inspectSelection();
-  const failingButton = failingRuntime.pill.panel.children[1].children[0];
+  const failingButton = failingRuntime.pill.panel.children[0].children[0];
   documentRef.execCommandResult = false;
   await failingButton.dispatchEvent(new FakeEvent("click", failingButton));
   await Promise.resolve();
   assert.equal(failingRuntime.getState().pill.lastMessage, "Copy failed");
+});
+
+test("copy action falls back to execCommand with a hidden textarea when clipboard API is blocked", async () => {
+  const { documentRef } = createSelectionEnvironment();
+  const selectionHost = documentRef.createElement("div");
+  documentRef.body.appendChild(selectionHost);
+  setSelection(documentRef, {
+    text: "Fallback copy text",
+    rect: { left: 120, top: 200, right: 300, bottom: 224, width: 180, height: 24 },
+    anchorNode: selectionHost,
+    focusNode: selectionHost,
+  });
+
+  documentRef.execCommandResult = true;
+  const runtime = createSelectionRuntime({
+    documentRef,
+    windowRef: installEnvironment().windowRef,
+    MutationObserverRef: FakeMutationObserver,
+    navigatorRef: {
+      clipboard: {
+        async writeText() {
+          throw new Error("blocked");
+        },
+      },
+    },
+    setTimeoutRef: createTimerHarness().setTimeoutRef,
+    clearTimeoutRef: createTimerHarness().clearTimeoutRef,
+  });
+  runtime.bootstrap();
+  runtime.inspectSelection();
+
+  const copyButton = runtime.pill.panel.children[0].children[0];
+  await copyButton.dispatchEvent(new FakeEvent("click", copyButton));
+  await Promise.resolve();
+
+  assert.equal(documentRef.lastExecCommand, "copy");
+  assert.equal(runtime.getState().pill.lastMessage, "Copied");
+});
+
+test("pill waits until pointer selection settles before rendering", () => {
+  const { documentRef, runtime, timers } = createSelectionEnvironment();
+  const selectionHost = documentRef.createElement("div");
+  documentRef.body.appendChild(selectionHost);
+  runtime.bootstrap();
+
+  documentRef.dispatchEvent(new FakeEvent("pointerdown", selectionHost));
+  setSelection(documentRef, {
+    text: "Selection while dragging",
+    rect: { left: 140, top: 220, right: 320, bottom: 244, width: 180, height: 24 },
+    anchorNode: selectionHost,
+    focusNode: selectionHost,
+  });
+  timers.flush();
+  assert.equal(runtime.getState().visible, false);
+
+  documentRef.dispatchEvent(new FakeEvent("pointerup", selectionHost));
+  timers.flush();
+  assert.equal(runtime.getState().visible, true);
 });
 
 test("duplicate pills are avoided and positions update on repeated selection changes", () => {
@@ -505,6 +563,18 @@ test("duplicate pills are avoided and positions update on repeated selection cha
   assert.notDeepEqual(secondState.pill.position, firstPosition);
 });
 
+test("pill positioning utility prefers above selection and clamps within viewport", () => {
+  const position = computePillPosition({
+    rect: { left: 20, top: 80, bottom: 104, width: 40, height: 24 },
+    viewportWidth: 220,
+    viewportHeight: 180,
+    panelWidth: 180,
+    panelHeight: 48,
+  });
+
+  assert.deepEqual(position, { top: 20, left: 8 });
+});
+
 test("hostile pages still show the pill when unlock and selection engines cooperate", () => {
   const { documentRef, windowRef, timers, runtime, unlockEngine } = createSelectionEnvironment({ withUnlockEngine: true });
   documentRef.documentElement.setAttribute("style", "user-select: none;");
@@ -522,6 +592,6 @@ test("hostile pages still show the pill when unlock and selection engines cooper
   timers.flush();
 
   assert.equal(runtime.getState().visible, true);
-  assert.match(documentRef.getElementById("writior-content-unlock-style").textContent, /user-select: text/);
+  assert.match(documentRef.getElementById("writior-copy-unlock-style").textContent, /user-select: text/);
   assert.equal(windowRef.location.href, "https://example.com/articles/demo");
 });

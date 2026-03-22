@@ -213,11 +213,13 @@ test("citation modal opens from cite action and uses backend-rendered text only"
   const captureResult = await runtime.dispatch({
     type: MESSAGE_NAMES.CAPTURE_CREATE_CITATION,
     payload: {
-      selectionText: "Selected sentence",
-      pageTitle: "Public health update",
-      pageUrl: "https://example.com/articles/demo",
-      pageDomain: "example.com",
-      metadata: { description: "Demo" },
+      surface: "content",
+      capture: {
+        selectionText: "Selected sentence",
+        pageTitle: "Public health update",
+        pageUrl: "https://example.com/articles/demo",
+        pageDomain: "example.com",
+      },
     },
   }, { tab: { windowId: 7 } });
 

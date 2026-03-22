@@ -2,16 +2,21 @@
   "name": "writior-web-unlocker-tool",
   "private": true,
   "type": "module",
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  },
   "scripts": {
-    "build:extension": "node extension/scripts/build_content_bundle.mjs",
-    "build:extension:content": "node extension/scripts/build_content_bundle.mjs",
-    "test:extension-phase1": "node --test tests/extension_phase1_auth.test.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build:extension": "node extension/scripts/build_extension.mjs",
+    "build:extension:content": "node extension/scripts/build_extension.mjs",
+    "test:extension-phase1": "npm run build:extension && node --test tests/extension_phase1_auth.test.mjs",
     "test:extension-phase2": "node --test tests/extension_phase2_content.test.mjs",
-    "test:extension-phase0": "node --test tests/extension_phase0_skeleton.test.mjs",
+    "test:extension-phase0": "npm run build:extension && node --test tests/extension_phase0_skeleton.test.mjs tests/extension_phase0_runtime.test.mjs",
     "test:extension-phase3": "node --test tests/extension_phase3_selection.test.mjs",
     "test:extension-phase4": "node --test tests/extension_phase4_capture.test.mjs",
     "test:extension-phase5": "node --test tests/extension_phase5_citation.test.mjs",
     "test:extension-phase6": "node --test tests/extension_phase6_sidepanel.test.mjs",
+    "test:extension-phase11": "node --test tests/extension_phase11_notes.test.mjs",
     "test:research-runtime": "node --test tests/app_shell_runtime/research_runtime.test.mjs tests/app_shell_runtime/editor_runtime.test.mjs"
   }
 }

@@ -73,8 +73,8 @@ class HandoffAttemptExpiredError(AppError):
 
 
 class ExtensionPersistenceError(AppError):
-    def __init__(self, message: str = "Failed to persist extension data.") -> None:
-        super().__init__("extension_persistence_failed", message, 503)
+    def __init__(self, message: str = "Failed to persist extension data.", *, extra: dict[str, object] | None = None) -> None:
+        super().__init__("extension_persistence_failed", message, 503, extra=extra or {})
 
 
 class IdempotencyConflictError(AppError):
@@ -253,6 +253,27 @@ class ExtensionService:
 
     def _attempt_secret_hash(self, attempt_secret: str) -> str:
         return hashlib.sha256(attempt_secret.encode("utf-8")).hexdigest()
+
+    async def _clear_handoff_session_payload_safely(self, *, record_id: str, request_id: str | None, phase: str) -> None:
+        try:
+            await self.repository.clear_handoff_session_payload(record_id=record_id)
+        except Exception:
+            logger.warning(
+                "extension.handoff_exchange.cleanup_failed",
+                extra={"request_id": request_id, "phase": phase},
+            )
+
+    async def _mark_handoff_attempt_exchanged_safely(self, *, handoff_code: str, exchanged_at: str, request_id: str | None) -> None:
+        try:
+            await self.repository.mark_handoff_attempt_exchanged(
+                handoff_code=handoff_code,
+                exchanged_at=exchanged_at,
+            )
+        except Exception:
+            logger.warning(
+                "extension.handoff_exchange.attempt_mark_failed",
+                extra={"request_id": request_id},
+            )
 
     def _session_payload(self, *, access_token: str | None, refresh_token: str, expires_in: int | None, token_type: str | None) -> dict[str, Any]:
         return {
@@ -484,7 +505,10 @@ class ExtensionService:
         new_refresh_token = getattr(session, "refresh_token", None)
         if not new_access_token or not new_refresh_token:
             raise HandoffRefreshFailedError()
-        revalidated = self.auth_client.auth.get_user(new_access_token)
+        try:
+            revalidated = self.auth_client.auth.get_user(new_access_token)
+        except Exception as exc:
+            raise HandoffRefreshFailedError("Handoff session revalidation failed.") from exc
         user = getattr(revalidated, "user", None)
         if user is None or str(getattr(user, "id", "")) != expected_user_id:
             raise HandoffRefreshFailedError("Handoff session revalidation failed.")
@@ -496,6 +520,9 @@ class ExtensionService:
         }
 
     async def exchange_handoff(self, request: Request, payload) -> dict[str, object]:
+        phase = "rate_limit"
+        request_state = getattr(request, "state", None)
+        request_id = getattr(request_state, "request_id", None)
         try:
             await self._enforce_rate_limit(
                 request,
@@ -504,35 +531,50 @@ class ExtensionService:
                 limit=self.settings.rate_limits.auth_sensitive_limit,
                 window_seconds=self.settings.rate_limits.auth_sensitive_window_seconds,
             )
+            phase = "load_record"
             record = await self.repository.get_handoff_code(code=payload.code)
             if record is None:
                 raise HandoffCodeInvalidError()
+            phase = "validate_redirect"
             safe_redirect = self._safe_redirect_path(record.get("redirect_path"))
             now = datetime.now(timezone.utc)
             used_at = record.get("used_at")
             if used_at:
-                await self.repository.clear_handoff_session_payload(record_id=str(record["id"]))
+                phase = "clear_used_payload"
+                await self._clear_handoff_session_payload_safely(
+                    record_id=str(record["id"]),
+                    request_id=request_id,
+                    phase=phase,
+                )
                 raise HandoffCodeUsedError()
             expires_at_raw = record.get("expires_at")
             try:
                 expires_at = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
             except Exception:
+                phase = "invalidate_bad_expiry"
                 await self.repository.invalidate_handoff_code(record_id=str(record["id"]), used_at=now.isoformat())
                 raise HandoffPayloadInvalidError("Stored handoff expiry is invalid.")
             if expires_at <= now:
+                phase = "invalidate_expired"
                 await self.repository.invalidate_handoff_code(record_id=str(record["id"]), used_at=now.isoformat())
                 raise HandoffCodeExpiredError()
+            phase = "consume_code"
             consumed = await self.repository.consume_handoff_code(record_id=str(record["id"]), used_at=now.isoformat())
             if consumed is None:
                 raise HandoffCodeUsedError()
             try:
+                phase = "load_stored_session"
                 stored_session = self._load_stored_session(record)
+                phase = "refresh_or_validate_session"
                 session_payload = await self._refresh_or_validate_session(stored_session, expected_user_id=str(record["user_id"]))
-                await self.repository.mark_handoff_attempt_exchanged(
+                phase = "mark_attempt_exchanged"
+                await self._mark_handoff_attempt_exchanged_safely(
                     handoff_code=payload.code,
                     exchanged_at=datetime.now(timezone.utc).isoformat(),
+                    request_id=request_id,
                 )
                 logger.info("Handoff exchange succeeded")
+                phase = "serialize_success"
                 return serialize_ok_envelope(
                     {
                         "redirect_path": safe_redirect,
@@ -540,16 +582,30 @@ class ExtensionService:
                     }
                 )
             except AppError:
-                await self.repository.clear_handoff_session_payload(record_id=str(record["id"]))
+                phase = "clear_payload_after_app_error"
+                await self._clear_handoff_session_payload_safely(
+                    record_id=str(record["id"]),
+                    request_id=request_id,
+                    phase=phase,
+                )
                 raise
             finally:
-                await self.repository.clear_handoff_session_payload(record_id=str(record["id"]))
+                phase = "clear_payload_finally"
+                await self._clear_handoff_session_payload_safely(
+                    record_id=str(record["id"]),
+                    request_id=request_id,
+                    phase=phase,
+                )
         except RuntimeError:
             raise
         except AppError:
             raise
         except Exception as exc:
-            raise ExtensionPersistenceError("Handoff exchange failed.") from exc
+            logger.exception(
+                "extension.handoff_exchange.unexpected_failure",
+                extra={"request_id": request_id, "phase": phase},
+            )
+            raise ExtensionPersistenceError("Handoff exchange failed.", extra={"phase": phase}) from exc
 
     def handoff_redirect_url(self, code: str) -> str:
         normalized_code = (code or "").strip()

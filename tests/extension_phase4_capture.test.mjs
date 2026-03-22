@@ -76,6 +76,8 @@ class FakeElement extends FakeEventTarget {
     this.dataset = {};
     this.contentEditable = "";
     this.isContentEditable = false;
+    this.value = "";
+    this.disabled = false;
   }
 
   setAttribute(name, value) {
@@ -103,6 +105,10 @@ class FakeElement extends FakeEventTarget {
     return this.attributes.has(name) ? this.attributes.get(name) : null;
   }
 
+  removeAttribute(name) {
+    this.attributes.delete(name);
+  }
+
   appendChild(child) {
     child.parentNode = this;
     this.children.push(child);
@@ -110,6 +116,11 @@ class FakeElement extends FakeEventTarget {
   }
 
   append(...children) {
+    children.forEach((child) => this.appendChild(child));
+  }
+
+  replaceChildren(...children) {
+    this.children = [];
     children.forEach((child) => this.appendChild(child));
   }
 
@@ -303,15 +314,30 @@ function createCaptureFetchStub() {
     calls,
     createCitation(payload) {
       calls.push({ kind: "citation", payload });
-      return Promise.resolve({ ok: true, status: "ok", data: { id: "cit-1", title: payload.pageTitle, style: "apa", format: "bibliography" } });
+      return Promise.resolve({
+        ok: true,
+        status: "ok",
+        data: {
+          id: "cit-1",
+          source: { title: payload.extraction_payload?.title_candidates?.[0]?.value || "" },
+        },
+      });
     },
     createQuote(payload) {
       calls.push({ kind: "quote", payload });
-      return Promise.resolve({ ok: false, status: "error", error: { code: "quote_rejected", message: "Quote rejected." } });
+      return Promise.resolve({
+        ok: false,
+        status: "error",
+        error: { code: "quote_rejected", message: "Quote rejected." },
+      });
     },
     createNote(payload) {
       calls.push({ kind: "note", payload });
-      return Promise.resolve({ ok: true, status: "ok", data: { note: { id: "note-1", body: payload.noteText || payload.selectionText } } });
+      return Promise.resolve({
+        ok: true,
+        status: "ok",
+        data: { id: "note-1", note_body: payload.note_body, citation_id: payload.citation_id ?? null },
+      });
     },
   };
   return api;
@@ -324,6 +350,28 @@ function findChildByText(node, text) {
   for (const child of node.children || []) {
     if (typeof child.textContent === "string" && child.textContent === text) {
       return child;
+    }
+  }
+  return null;
+}
+
+function findByAttr(node, name, value) {
+  if (!node) {
+    return null;
+  }
+  if (typeof node.getAttribute === "function" && node.getAttribute(name) === value) {
+    return node;
+  }
+  for (const child of node.children || []) {
+    const match = findByAttr(child, name, value);
+    if (match) {
+      return match;
+    }
+  }
+  if (node.shadowRoot) {
+    const match = findByAttr(node.shadowRoot, name, value);
+    if (match) {
+      return match;
     }
   }
   return null;
@@ -391,7 +439,7 @@ test("capture actions are typed content messages and the background is the sole 
   selectionRuntime.bootstrap();
   timers.flush();
 
-  const menuRoot = selectionRuntime.pill.panel.children[1];
+  const menuRoot = selectionRuntime.pill.panel.children[0];
   const copyButton = findChildByText(menuRoot, "Copy");
   const citeButton = findChildByText(menuRoot, "Cite");
   const noteButton = findChildByText(menuRoot, "Note");
@@ -403,19 +451,30 @@ test("capture actions are typed content messages and the background is the sole 
   assert.equal(selectionRuntime.pill.getState().lastMessage, "Saved");
   await noteButton.dispatchEvent(new FakeEvent("click", noteButton));
   await tick();
-  assert.equal(selectionRuntime.pill.getState().lastMessage, "Saved");
+  assert.equal(selectionRuntime.quickNotePanel.getState().status, "editing");
+  const noteInput = selectionRuntime.quickNotePanel.textarea;
+  noteInput.value = "Highlight note body";
+  noteInput.dispatchEvent(new FakeEvent("input", noteInput));
+  const noteSaveButton = findByAttr(selectionRuntime.quickNotePanel.panel, "data-quick-note-save", "true");
+  await noteSaveButton.dispatchEvent(new FakeEvent("click", noteSaveButton));
+  await tick();
+  assert.equal(selectionRuntime.quickNotePanel.getState().status, "success");
   await quoteButton.dispatchEvent(new FakeEvent("click", quoteButton));
   await tick();
 
-  assert.equal(captureApi.calls.length, 3);
+  assert.equal(captureApi.calls.length, 4);
   assert.deepEqual(
     captureApi.calls.map((call) => call.kind),
-    ["citation", "note", "quote"],
+    ["citation", "note", "citation", "quote"],
   );
-  assert.equal(captureApi.calls[0].payload.selectionText, "Capture this citation text");
-  assert.equal(captureApi.calls[0].payload.pageTitle, "Capture Demo");
-  assert.equal(captureApi.calls[0].payload.pageUrl, "https://example.com/articles/demo");
-  assert.equal(captureApi.calls[0].payload.pageDomain, "example.com");
+  assert.equal(captureApi.calls[0].payload.extraction_payload.selection_text, "Capture this citation text");
+  assert.equal(captureApi.calls[0].payload.extraction_payload.title_candidates[0].value, "Capture Demo");
+  assert.equal(captureApi.calls[0].payload.extraction_payload.page_url, "https://example.com/articles/demo");
+  assert.equal(captureApi.calls[0].payload.extraction_payload.extraction_evidence.page_domain, "example.com");
+  assert.equal(captureApi.calls[1].payload.note_body, "Highlight note body");
+  assert.equal(captureApi.calls[1].payload.highlight_text, "Capture this citation text");
+  assert.equal(captureApi.calls[1].payload.citation_id, null);
+  assert.equal(captureApi.calls[1].payload.sources[0].url, "https://example.com/articles/demo");
   assert.equal(read("extension/content/selection/index.ts").includes("fetch("), false);
 });
 
@@ -443,7 +502,7 @@ test("capture payloads reject malformed input before the API call", async () => 
 
   const result = await runtime.dispatch({
     type: MESSAGE_NAMES.CAPTURE_CREATE_CITATION,
-    payload: { pageUrl: "", pageDomain: "", selectionText: "" },
+    payload: { surface: "content", capture: { pageUrl: "", pageDomain: "", selectionText: "" } },
   });
 
   assert.equal(result.ok, false);
@@ -476,28 +535,35 @@ test("canonical capture entity responses flow through background unchanged", asy
   const citation = await runtime.dispatch({
     type: MESSAGE_NAMES.CAPTURE_CREATE_CITATION,
     payload: {
-      selectionText: "Canonical citation text",
-      pageTitle: "Capture Demo",
-      pageUrl: "https://example.com/articles/demo",
-      pageDomain: "example.com",
-      metadata: { description: "Demo article" },
+      surface: "content",
+      capture: {
+        selectionText: "Canonical citation text",
+        pageTitle: "Capture Demo",
+        pageUrl: "https://example.com/articles/demo",
+        pageDomain: "example.com",
+      },
     },
   });
 
   const note = await runtime.dispatch({
     type: MESSAGE_NAMES.CAPTURE_CREATE_NOTE,
     payload: {
-      selectionText: "Plain note text",
-      pageTitle: "Capture Demo",
-      pageUrl: "https://example.com/articles/demo",
-      pageDomain: "example.com",
+      surface: "content",
+      capture: {
+        selectionText: "Plain note text",
+        pageTitle: "Capture Demo",
+        pageUrl: "https://example.com/articles/demo",
+        pageDomain: "example.com",
+      },
     },
   });
 
   assert.equal(citation.ok, true);
   assert.equal(citation.data.id, "cit-1");
   assert.equal(note.ok, true);
-  assert.equal(note.data.note.id, "note-1");
+  assert.equal(note.data.id, "note-1");
+  assert.equal(captureApi.calls[1].kind, "note");
+  assert.equal(captureApi.calls[1].payload.citation_id, null);
 });
 
 test("quote failures surface as traceable errors", async () => {
@@ -525,14 +591,319 @@ test("quote failures surface as traceable errors", async () => {
   const result = await runtime.dispatch({
     type: MESSAGE_NAMES.CAPTURE_CREATE_QUOTE,
     payload: {
-      selectionText: "Quote text",
-      pageTitle: "Capture Demo",
-      pageUrl: "https://example.com/articles/demo",
-      pageDomain: "example.com",
+      surface: "content",
+      capture: {
+        selectionText: "Quote text",
+        pageTitle: "Capture Demo",
+        pageUrl: "https://example.com/articles/demo",
+        pageDomain: "example.com",
+      },
     },
   });
 
   assert.equal(result.ok, false);
   assert.equal(result.error.code, "quote_rejected");
   assert.match(result.error.message, /Quote rejected/);
+});
+
+test("content capture surfaces extension context invalidation explicitly", async () => {
+  const { documentRef, windowRef } = installEnvironment();
+  const timers = createTimerHarness();
+  const chromeApi = {
+    runtime: {
+      lastError: null,
+      sendMessage(_message, callback) {
+        this.lastError = { message: "Extension context invalidated." };
+        callback(undefined);
+        this.lastError = null;
+      },
+    },
+  };
+  const selectionRuntime = createSelectionRuntime({
+    documentRef,
+    windowRef,
+    MutationObserverRef: FakeMutationObserver,
+    setTimeoutRef: timers.setTimeoutRef,
+    clearTimeoutRef: timers.clearTimeoutRef,
+    chromeApi,
+  });
+
+  setSelection(documentRef, "Capture this citation text");
+  selectionRuntime.bootstrap();
+  timers.flush();
+
+  const menuRoot = selectionRuntime.pill.panel.children[0];
+  const citeButton = findChildByText(menuRoot, "Cite");
+
+  await citeButton.dispatchEvent(new FakeEvent("click", citeButton));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const toastHost = documentRef.body.children.find((node) => node.getAttribute?.("data-writior-toast-host") === "true");
+  assert.equal(selectionRuntime.pill.getState().lastMessage, "Failed");
+  assert.equal(toastHost?.children?.[0]?.textContent, "Extension updated. Reload page.");
+});
+
+test("content capture surfaces unauthorized errors explicitly", async () => {
+  const { documentRef, windowRef } = installEnvironment();
+  const timers = createTimerHarness();
+  const chromeApi = createChromeStub(() => ({
+    ok: false,
+    status: "error",
+    requestId: "req-1",
+    error: { code: "unauthorized", message: "No bearer token is available." },
+  }));
+  const selectionRuntime = createSelectionRuntime({
+    documentRef,
+    windowRef,
+    MutationObserverRef: FakeMutationObserver,
+    setTimeoutRef: timers.setTimeoutRef,
+    clearTimeoutRef: timers.clearTimeoutRef,
+    chromeApi,
+  });
+
+  setSelection(documentRef, "Capture this citation text");
+  selectionRuntime.bootstrap();
+  timers.flush();
+
+  const menuRoot = selectionRuntime.pill.panel.children[0];
+  const citeButton = findChildByText(menuRoot, "Cite");
+
+  await citeButton.dispatchEvent(new FakeEvent("click", citeButton));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const toastHost = documentRef.body.children.find((node) => node.getAttribute?.("data-writior-toast-host") === "true");
+  assert.equal(selectionRuntime.pill.getState().lastMessage, "Failed");
+  assert.equal(toastHost?.children?.[0]?.textContent, "Sign in required");
+});
+
+test("quote capture routes through citation then canonical quote endpoint", async () => {
+  const calls = [];
+  const runtime = createBackgroundRuntime({
+    chromeApi: {
+      runtime: {
+        lastError: null,
+        sendMessage() {},
+      },
+      storage: {
+        local: {
+          async get(defaults) {
+            return { ...defaults };
+          },
+          async set() {},
+          async remove() {},
+        },
+      },
+    },
+    captureApi: {
+      createCitation(payload) {
+        calls.push({ kind: "citation", payload });
+        return Promise.resolve({
+          ok: true,
+          status: "ok",
+          data: { id: "cit-quote-1" },
+        });
+      },
+      createQuote(payload) {
+        calls.push({ kind: "quote", payload });
+        return Promise.resolve({
+          ok: true,
+          status: "ok",
+          data: { id: "quote-1", citation_id: payload.citation_id, excerpt: payload.excerpt },
+        });
+      },
+      createNote() {
+        throw new Error("note should not run");
+      },
+    },
+    baseUrl: "https://app.writior.com",
+  });
+
+  const result = await runtime.dispatch({
+    type: MESSAGE_NAMES.CAPTURE_CREATE_QUOTE,
+    requestId: "req-quote",
+    payload: {
+      surface: "content",
+      capture: {
+        selectionText: "Quote text",
+        pageTitle: "Capture Demo",
+        pageUrl: "https://example.com/articles/demo",
+        pageDomain: "example.com",
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.requestId, "req-quote");
+  assert.deepEqual(calls.map((entry) => entry.kind), ["citation", "quote"]);
+  assert.equal(calls[1].payload.citation_id, "cit-quote-1");
+  assert.equal(calls[1].payload.excerpt, "Quote text");
+});
+
+test("note capture routes directly to canonical note endpoint", async () => {
+  const calls = [];
+  const runtime = createBackgroundRuntime({
+    chromeApi: {
+      runtime: {
+        lastError: null,
+        sendMessage() {},
+      },
+      storage: {
+        local: {
+          async get(defaults) {
+            return { ...defaults };
+          },
+          async set() {},
+          async remove() {},
+        },
+      },
+    },
+    captureApi: {
+      createCitation() {
+        throw new Error("citation should not run");
+      },
+      createQuote() {
+        throw new Error("quote should not run");
+      },
+      createNote(payload) {
+        calls.push({ kind: "note", payload });
+        return Promise.resolve({
+          ok: true,
+          status: "ok",
+          data: { id: "note-direct-1", note_body: payload.note_body },
+        });
+      },
+    },
+    baseUrl: "https://app.writior.com",
+  });
+
+  const result = await runtime.dispatch({
+    type: MESSAGE_NAMES.CAPTURE_CREATE_NOTE,
+    requestId: "req-note",
+    payload: {
+      surface: "content",
+      capture: {
+        selectionText: "Quoted paragraph",
+        pageTitle: "Capture Demo",
+        pageUrl: "https://example.com/articles/demo",
+        pageDomain: "example.com",
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.requestId, "req-note");
+  assert.deepEqual(calls.map((entry) => entry.kind), ["note"]);
+  assert.equal(calls[0].payload.note_body, "Quoted paragraph");
+  assert.equal(calls[0].payload.highlight_text, "Quoted paragraph");
+  assert.equal(calls[0].payload.title, "Quoted paragraph");
+});
+
+test("plain note capture accepts note text without a highlight and attaches page context when provided", async () => {
+  const calls = [];
+  const runtime = createBackgroundRuntime({
+    chromeApi: {
+      runtime: {
+        lastError: null,
+        sendMessage() {},
+      },
+      storage: {
+        local: {
+          async get(defaults) {
+            return { ...defaults };
+          },
+          async set() {},
+          async remove() {},
+        },
+      },
+    },
+    captureApi: {
+      createCitation() {
+        throw new Error("citation should not run");
+      },
+      createQuote() {
+        throw new Error("quote should not run");
+      },
+      createNote(payload) {
+        calls.push(payload);
+        return Promise.resolve({
+          ok: true,
+          status: "ok",
+          data: { id: "note-plain-1", note_body: payload.note_body },
+        });
+      },
+    },
+    baseUrl: "https://app.writior.com",
+  });
+
+  const result = await runtime.dispatch({
+    type: MESSAGE_NAMES.CAPTURE_CREATE_NOTE,
+    requestId: "req-note-plain",
+    payload: {
+      surface: "sidepanel",
+      noteText: "Plain note body",
+      capture: {
+        selectionText: "",
+        pageTitle: "Current tab",
+        pageUrl: "https://example.com/current",
+        pageDomain: "example.com",
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].note_body, "Plain note body");
+  assert.equal(calls[0].highlight_text, null);
+  assert.equal(calls[0].sources[0].relation_type, "external");
+  assert.equal(calls[0].sources[0].title, "Current tab");
+  assert.equal(calls[0].sources[0].url, "https://example.com/current");
+});
+
+test("quick note save failures preserve entered text and surface an error state", async () => {
+  const { documentRef, windowRef } = installEnvironment();
+  const timers = createTimerHarness();
+  const chromeApi = createChromeStub((message) => {
+    if (message.type === MESSAGE_NAMES.CAPTURE_CREATE_NOTE) {
+      return {
+        ok: false,
+        status: "error",
+        requestId: "req-note-failed",
+        error: { code: "network_error", message: "Save failed upstream." },
+      };
+    }
+    return {
+      ok: true,
+      status: "ok",
+      requestId: "req-default",
+      data: {},
+    };
+  });
+  const selectionRuntime = createSelectionRuntime({
+    documentRef,
+    windowRef,
+    MutationObserverRef: FakeMutationObserver,
+    setTimeoutRef: timers.setTimeoutRef,
+    clearTimeoutRef: timers.clearTimeoutRef,
+    chromeApi,
+  });
+
+  setSelection(documentRef, "Capture this citation text");
+  selectionRuntime.bootstrap();
+  timers.flush();
+
+  const menuRoot = selectionRuntime.pill.panel.children[0];
+  const noteButton = findChildByText(menuRoot, "Note");
+  await noteButton.dispatchEvent(new FakeEvent("click", noteButton));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const noteInput = selectionRuntime.quickNotePanel.textarea;
+  noteInput.value = "Keep this note text";
+  noteInput.dispatchEvent(new FakeEvent("input", noteInput));
+  const noteSaveButton = findByAttr(selectionRuntime.quickNotePanel.panel, "data-quick-note-save", "true");
+  await noteSaveButton.dispatchEvent(new FakeEvent("click", noteSaveButton));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(selectionRuntime.quickNotePanel.getState().status, "error");
+  assert.equal(selectionRuntime.quickNotePanel.getState().noteText, "Keep this note text");
+  assert.match(selectionRuntime.quickNotePanel.getState().errorMessage, /Save failed upstream/);
 });

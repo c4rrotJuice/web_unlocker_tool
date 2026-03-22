@@ -1,0 +1,557 @@
+COPY/PASTE + CONTEXT MENU RESTORATION SCRIPT
+Developer Specification
+Version: 1.0
+
+OBJECTIVE
+Build a lightweight content-script module for a browser extension that restores normal user interactions on pages that suppress them, specifically:
+- text selection
+- copy
+- cut
+- paste
+- context menu (right click)
+- auxiliary mouse interactions when sites suppress them in JS
+- left-click behavior only where a site blocks interaction through overlays or event cancellation, without breaking legitimate site UI
+
+The script must:
+- be safe by default
+- avoid broad destructive DOM rewrites
+- minimize interference with normal site behavior
+- work on dynamically updated pages
+- avoid noticeable performance overhead
+- preserve host site functionality as much as possible
+
+NON-GOALS
+Do not:
+- rewrite the whole DOM
+- remove random elements aggressively
+- constantly scan the entire page
+- monkeypatch everything globally without boundaries
+- force actions in a way that breaks app logic
+- simulate clicks automatically
+- interfere with forms, editors, drag/drop, or app-specific gesture systems unless the page is explicitly blocking ordinary user input
+
+DESIGN PRINCIPLES
+1. Prefer targeted neutralization over brute force.
+2. Restore default browser behavior only where the page blocks it.
+3. Intervene in layers, from least invasive to more invasive.
+4. Scope changes narrowly and make them reversible where possible.
+5. Avoid breaking rich apps, editors, and custom widgets.
+6. Keep runtime tiny: low listener count, low mutation load, minimal DOM writes.
+
+THREAT MODEL / BLOCKING PATTERNS TO HANDLE
+The script should account for common anti-copy or anti-context-menu patterns:
+
+A. CSS-based restrictions
+- user-select: none
+- -webkit-user-select: none
+- pointer-events misuse on selectable content
+- touch-callout suppression on mobile-like environments
+- caret-color or selection styling tricks
+
+B. Event-based suppression
+- preventDefault() on:
+  - copy
+  - cut
+  - paste
+  - contextmenu
+  - selectstart
+  - dragstart
+  - mousedown
+  - mouseup
+  - click
+  - keydown / keyup for Ctrl/Cmd+C, Ctrl/Cmd+V, Ctrl/Cmd+X
+- stopPropagation / stopImmediatePropagation on the above
+
+C. Inline handlers / DOM0 handlers
+- oncopy
+- oncut
+- onpaste
+- oncontextmenu
+- onselectstart
+- ondragstart
+- onmousedown
+- onclick
+
+D. Overlay interception
+- invisible or transparent overlays intercepting click/right-click/selection
+- fixed layers with huge z-index blocking interaction
+
+E. Dynamic reapplication
+- sites that reattach blocking listeners after route changes or DOM updates
+- SPA hydration replacing nodes
+- Mutation-driven CSS re-locking
+
+OVERALL STRATEGY
+Use a 4-layer recovery model:
+
+LAYER 1 — CSS RESTORATION
+Apply minimal CSS overrides that restore selection without visually altering the page.
+
+LAYER 2 — EARLY CAPTURE-PHASE EVENT GUARD
+Attach a very small set of capture listeners at document level to intercept blocking patterns before page listeners suppress interaction.
+
+LAYER 3 — DOM0 HANDLER NULLIFICATION
+Clear only the small family of inline blocking handlers when encountered.
+
+LAYER 4 — TARGETED OVERLAY MITIGATION
+Detect obvious non-interactive overlays that only exist to swallow pointer events, then neutralize them conservatively.
+
+EXECUTION TIMING
+Run in two phases:
+
+PHASE A — EARLY BOOT
+Timing:
+- inject at document_start if possible
+
+Responsibilities:
+- install global capture listeners
+- install CSS overrides
+- patch minimal APIs if needed
+
+PHASE B — STABILIZATION
+Timing:
+- after DOM becomes interactive / complete
+- and after route changes / mutation bursts
+
+Responsibilities:
+- sweep for DOM0 handler blockers
+- detect overlay blockers
+- reapply narrowly after dynamic DOM updates
+
+SCRIPT MODULE STRUCTURE
+Recommended internal modules:
+
+1. bootstrap()
+   - idempotent entry
+   - installs all subsystems once
+
+2. installStyleOverrides()
+   - injects one style element
+   - uses scoped attribute/class marker for maintainability
+
+3. installEventGuards()
+   - capture listeners for blocked actions
+   - allows safe pass-through on sensitive targets
+
+4. neutralizeInlineBlockers(root)
+   - clears inline handler properties on candidate elements
+
+5. monitorDomChanges()
+   - lightweight MutationObserver with batching
+
+6. detectAndMitigateOverlay(target)
+   - run only on real symptoms, not as a constant scan
+
+7. routeChangeHooks()
+   - history.pushState/replaceState/popstate hooks for SPAs
+
+8. metrics/debug hooks (optional, disabled by default)
+   - useful for extension debugging
+   - must not log constantly in production
+
+CSS RESTORATION SPEC
+Inject one <style> tag with a stable ID, for example:
+- id="copy-unlock-style"
+
+The CSS strategy should:
+- restore text selection on document content
+- not force selection on every element blindly
+- avoid breaking inputs, canvas, draggable widgets, editors, and controls
+
+Suggested approach:
+- allow selection broadly for normal reading/content containers
+- preserve exclusions for:
+  - input
+  - textarea
+  - select
+  - option
+  - button
+  - canvas
+  - video
+  - audio
+  - iframe
+  - contenteditable roots where app logic may depend on custom handling
+  - draggable widgets if detected
+
+Override targets:
+- user-select
+- -webkit-user-select
+- -moz-user-select where relevant
+- -webkit-touch-callout
+
+Important:
+Do not set pointer-events globally.
+Do not restyle cursor globally.
+Do not inject !important rules everywhere except where needed for selection recovery.
+
+EVENT GUARD SPEC
+Install capture-phase listeners on document for the following events:
+- copy
+- cut
+- paste
+- contextmenu
+- selectstart
+- dragstart
+- keydown
+- mousedown
+- click
+
+Purpose:
+- ensure the user’s default browser interaction is not suppressed by site listeners later in the chain
+
+Guard logic:
+1. Inspect event target and composed path.
+2. Skip intervention for sensitive interactive contexts unless the page is clearly blocking ordinary user action there.
+3. Prefer stopping only known blocking paths, not all propagation.
+4. Only call stopImmediatePropagation in narrow cases where the site is cancelling the event and restoring user behavior requires preemption.
+5. Avoid synthesizing follow-up events.
+
+TARGET CLASSIFICATION
+Classify targets into:
+
+SAFE CONTENT TARGETS
+- paragraphs
+- spans
+- headings
+- articles
+- pre/code
+- divs containing textual content
+- images where right-click should be allowed
+- links where context menu should work
+
+SENSITIVE TARGETS
+- input
+- textarea
+- select
+- option
+- contenteditable
+- editors (Monaco, CodeMirror, ProseMirror, Quill, TinyMCE, etc.)
+- drag handles / sliders
+- canvas-driven apps
+- embedded apps in iframes
+- file upload controls
+
+Rule:
+- aggressive unlocking is allowed on SAFE CONTENT TARGETS
+- conservative unlocking only on SENSITIVE TARGETS
+
+KEYBOARD HANDLING
+For keydown:
+- detect copy/cut/paste shortcuts:
+  - Ctrl+C / Cmd+C
+  - Ctrl+X / Cmd+X
+  - Ctrl+V / Cmd+V
+- do not interfere with unrelated shortcuts
+- do not suppress site behavior unless the page is preventing these specific actions
+- do not interfere with editor shortcuts beyond copy/cut/paste restoration
+
+CONTEXT MENU HANDLING
+For contextmenu:
+- in capture phase, preserve browser context menu behavior
+- do not fake a context menu
+- do not attach custom UI
+- block only the page’s suppression path
+
+Important:
+Some sites use right-click for legitimate app features.
+If target is in a known app/editor/widget zone, allow site behavior unless the user explicitly requested force unlock mode.
+
+LEFT-CLICK RESTORATION
+Interpret “restore left-click” conservatively.
+
+Goal:
+- prevent sites from cancelling ordinary clicks purely to obstruct selection or context menu access
+- not bulldoze genuine application click logic
+
+Rules:
+- never globally override all click handling
+- only intervene when:
+  - target is a passive reading/content layer, and
+  - a blocker overlay or cancellation pattern is preventing ordinary interaction
+- do not neutralize click logic on:
+  - buttons
+  - menus
+  - dialogs
+  - dropdowns
+  - tabs
+  - accordions
+  - router links in apps
+  - media controls
+
+DOM0 HANDLER NULLIFICATION
+Sweep candidate nodes for inline blocking properties:
+- oncopy
+- oncut
+- onpaste
+- oncontextmenu
+- onselectstart
+- ondragstart
+
+Optional narrow handling:
+- onmousedown
+- onclick
+Only clear these when they are clearly being used to suppress normal interaction on passive content.
+
+Implementation rules:
+- never sweep the full DOM repeatedly
+- process:
+  - document.documentElement once on startup
+  - newly added nodes via MutationObserver
+  - ancestors of the event target when blocking is detected
+- mark processed nodes with a Symbol or WeakSet, not dataset pollution if avoidable
+
+OVERLAY MITIGATION SPEC
+Problem:
+Some pages place an invisible fixed/absolute element above content to intercept interaction.
+
+Detection heuristics:
+Only test when a user interaction indicates blockage.
+Use elementFromPoint / elementsFromPoint around the pointer location.
+
+Candidate overlay signs:
+- large area coverage
+- fixed/absolute positioning
+- high z-index
+- low or zero opacity, or transparent background
+- captures pointer events
+- contains no meaningful interactive UI
+- sits above readable content
+
+Mitigation action:
+Preferred:
+- set pointer-events: none on the suspicious overlay
+Fallback:
+- add a very narrow CSS rule targeting the specific element
+Do not remove the node from DOM unless in explicit aggressive mode.
+
+Safety checks before mitigation:
+- skip if overlay contains visible controls
+- skip if overlay is a modal/dialog/backdrop tied to an open dialog
+- skip if body is in a locked scroll/modal state
+- skip if overlay belongs to a menu, tooltip, toast, or popover system
+- skip if it appears during drag/resize operations
+
+MUTATION OBSERVER SPEC
+Use one MutationObserver on document.documentElement.
+
+Observe:
+- childList: true
+- subtree: true
+- attributes: true, but only for a tiny attribute filter if needed:
+  - style
+  - class
+
+Behavior:
+- batch work with microtask or requestAnimationFrame
+- process only added/changed nodes
+- cap work per flush
+- deduplicate nodes via Set
+- avoid repeated expensive traversal
+
+Do not:
+- rescan the entire DOM on every mutation
+- compute layout for many nodes in a loop
+- inspect text nodes unnecessarily
+
+SPA / ROUTE CHANGE SUPPORT
+Hook:
+- history.pushState
+- history.replaceState
+- popstate
+- hashchange if needed
+
+On route changes:
+- rerun narrow stabilization:
+  - ensure style tag still exists
+  - process newly mounted root containers
+  - reset observer batch state if necessary
+
+PERFORMANCE BUDGET
+Target characteristics:
+- near-zero idle CPU
+- one style tag
+- a handful of document-level listeners
+- one MutationObserver with batching
+- no polling
+- no interval timers unless strictly optional and disabled by default
+
+Avoid:
+- getComputedStyle on many nodes
+- full-page TreeWalker sweeps after startup
+- repeated calls to elementsFromPoint except on actual user interaction
+- logging in hot paths
+
+RECOMMENDED SAFETY MODES
+Implement 3 internal operating modes.
+
+1. SAFE MODE (default)
+- CSS restore
+- event guard for core events
+- limited DOM0 cleanup
+- conservative overlay mitigation
+- minimal interference with interactive widgets
+
+2. BALANCED MODE
+- broader DOM0 cleanup
+- stronger event preemption on passive content
+- more willing overlay neutralization
+
+3. AGGRESSIVE MODE
+- only for user opt-in
+- broader suppression of hostile handlers
+- more forceful overlay neutralization
+- still should avoid breaking editors/forms
+
+Default extension shipping mode should be SAFE MODE.
+
+EDITOR / INPUT SAFETY RULES
+Inputs and editable surfaces need special handling.
+
+Requirements:
+- users must be able to select/copy/cut/paste their own text in:
+  - input
+  - textarea
+  - contenteditable
+- do not break caret placement
+- do not break undo/redo
+- do not block IME/composition
+- do not override paste handling in editors unless the page is cancelling ordinary paste purely to restrict the user
+
+If site logic sanitizes pasted content for functional reasons, do not fight that by default.
+The script restores browser permission to paste; it should not force raw paste into specialized editors that intentionally transform input.
+
+EVENT DECISION MATRIX
+1. copy/cut/paste on input/textarea:
+   - allow browser default
+   - suppress only hostile site blocking
+
+2. copy on selected reading text:
+   - allow browser default
+   - suppress hostile page handlers
+
+3. contextmenu on passive content:
+   - allow browser default
+   - suppress hostile page handlers
+
+4. click on buttons/menus/controls:
+   - do not interfere
+
+5. click on passive text/image blocked by transparent overlay:
+   - attempt targeted overlay mitigation
+
+6. dragstart on images/links/content:
+   - restore only if used purely as anti-copy friction
+   - avoid breaking genuine drag UIs
+
+OPTIONAL MINIMAL API PATCHING
+Use only if needed, and keep tiny.
+
+Possible narrow patches:
+- wrap EventTarget.prototype.addEventListener to observe hostile listener registration patterns
+- wrap Event.prototype.preventDefault only for diagnostics, not production default
+- patching should be avoided unless real-world failures prove capture listeners are insufficient
+
+Recommendation:
+Do not ship with broad prototype patching in default mode.
+Start without it.
+
+DEBUG / TELEMETRY HOOKS
+Optional internal debug object:
+window.__copyUnlockDebug
+
+May expose:
+- mode
+- installed subsystems
+- counters for:
+  - blocked contextmenu suppressions
+  - blocked copy suppressions
+  - cleared inline handlers
+  - neutralized overlays
+
+Production:
+- disabled or stripped
+- no noisy console output
+
+FAIL-SAFE / IDPOTENCY REQUIREMENTS
+The script must be idempotent.
+Repeated injection should not:
+- duplicate listeners
+- duplicate style tags
+- multiply observers
+- repeatedly patch history methods
+- repeatedly process the same nodes
+
+Use:
+- module-level installed flags
+- WeakSets for processed nodes
+- stable symbol markers for patched functions
+
+TEST MATRIX
+The script should be tested against:
+
+1. Static content sites with user-select:none
+2. Sites blocking right-click via oncontextmenu
+3. Sites blocking copy via keydown or copy event
+4. SPAs that mount content after load
+5. Inputs/textareas with blocked paste
+6. Rich editors:
+   - ensure no regressions
+7. Pages with cookie banners/modals
+   - ensure overlays are not wrongly disabled
+8. News/blog pages with anti-copy scripts
+9. Shadow DOM cases
+10. Nested scrolling containers
+11. Iframes
+   - only if extension permissions allow injection
+
+ACCEPTANCE CRITERIA
+A page is considered successfully unlocked when:
+- text can be selected on formerly blocked content
+- Ctrl/Cmd+C works on selected content
+- right-click context menu appears on formerly blocked content
+- normal copy/cut/paste works in inputs and textareas
+- site remains functionally usable
+- no obvious UI breakage occurs
+- script does not cause measurable lag on normal browsing
+
+IMPLEMENTATION ORDER
+1. install idempotent bootstrap
+2. add CSS selection restoration
+3. add document capture listeners
+4. add target classification logic
+5. add inline handler cleanup
+6. add mutation batching
+7. add route change hooks
+8. add targeted overlay mitigation
+9. add debug instrumentation
+10. validate against hostile and normal pages
+
+PREFERRED DEFAULT SHAPE FOR EXTENSION INTEGRATION
+Recommended integration contract:
+- one small content script entry
+- one internal core unlock module
+- one optional debug module
+- optional mode config from extension storage
+- no background dependency for the unlocker itself
+
+Suggested config shape:
+{
+  enabled: true,
+  mode: "safe",
+  restoreSelection: true,
+  restoreClipboard: true,
+  restoreContextMenu: true,
+  restorePassiveClicks: true,
+  overlayMitigation: "conservative",
+  debug: false
+}
+
+FINAL ENGINEERING RECOMMENDATION
+The most reliable lightweight approach is:
+- early CSS restoration
+- a small set of document-level capture listeners
+- conservative cleanup of inline blockers
+- event-triggered overlay mitigation only when needed
+- mutation batching for dynamic pages
+
+That gets strong reliability without turning the script into a heavy-handed DOM warfare engine.

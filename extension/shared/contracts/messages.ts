@@ -1,0 +1,52 @@
+import { MESSAGE_NAMES } from "../constants/message_names.ts";
+import { SURFACE_NAMES } from "../types/contracts.ts";
+
+function createRequest(type, requestId, payload) {
+  return { type, requestId, payload };
+}
+
+export function createPingRequest(requestId, payload) {
+  return createRequest(MESSAGE_NAMES.PING, requestId, payload);
+}
+
+export function createOpenSidepanelRequest(requestId, surface) {
+  return createRequest(MESSAGE_NAMES.OPEN_SIDEPANEL, requestId, { surface });
+}
+
+export function createAuthStartRequest(requestId, surface, trigger, redirectPath = undefined) {
+  return createRequest(MESSAGE_NAMES.AUTH_START, requestId, {
+    surface,
+    trigger,
+    redirectPath,
+  });
+}
+
+export function createAuthStatusGetRequest(requestId, surface) {
+  return createRequest(MESSAGE_NAMES.AUTH_STATUS_GET, requestId, { surface });
+}
+
+export function createAuthLogoutRequest(requestId, surface) {
+  return createRequest(MESSAGE_NAMES.AUTH_LOGOUT, requestId, { surface });
+}
+
+export function createBootstrapFetchRequest(requestId, surface) {
+  return createRequest(MESSAGE_NAMES.BOOTSTRAP_FETCH, requestId, { surface });
+}
+
+export function createCaptureCreateCitationRequest(requestId, payload) {
+  return createRequest(MESSAGE_NAMES.CAPTURE_CREATE_CITATION, requestId, payload);
+}
+
+export function createCaptureCreateQuoteRequest(requestId, payload) {
+  return createRequest(MESSAGE_NAMES.CAPTURE_CREATE_QUOTE, requestId, payload);
+}
+
+export function createCaptureCreateNoteRequest(requestId, payload) {
+  return createRequest(MESSAGE_NAMES.CAPTURE_CREATE_NOTE, requestId, payload);
+}
+
+export function createWorkInEditorRequest(requestId, payload) {
+  return createRequest(MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST, requestId, payload);
+}
+
+export { SURFACE_NAMES };

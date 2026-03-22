@@ -42,6 +42,14 @@ def test_canonical_pack_allows_multiple_citations_per_source():
     assert "citation_instances_user_id_source_id_key" not in citations_migration
 
 
+def test_live_sql_history_removes_legacy_unique_source_constraint_for_citations():
+    corrective_migration = Path("sql/20260327_allow_multiple_citation_contexts.sql").read_text(encoding="utf-8")
+
+    assert "drop index if exists public.citation_instances_user_id_source_id_key;" in corrective_migration
+    assert "drop constraint if exists citation_instances_user_id_source_id_key;" in corrective_migration
+    assert "create index if not exists citation_instances_user_id_source_id_idx" in corrective_migration
+
+
 def test_monthly_citation_breakdown_uses_canonical_relation_tables():
     citations_migration = Path("writior_migration_pack/005_sources_citations_quotes.sql").read_text(encoding="utf-8")
 

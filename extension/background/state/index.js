@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { AUTH_STATUS, createAuthErrorState, createLoadingAuthState, createSignedInAuthState, createSignedOutAuthState, } from "../../shared/types/auth.js";
 function clone(value) {
     return typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));

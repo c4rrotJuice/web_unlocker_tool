@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export function createSelectionMenuButton({ documentRef = globalThis.document, action, onAction, }) {
     const button = documentRef.createElement("button");
     const isLocked = action?.locked === true;

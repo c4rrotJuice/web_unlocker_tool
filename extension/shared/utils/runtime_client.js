@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { SURFACE_NAMES, createAuthLogoutRequest, createAuthStartRequest, createAuthStatusGetRequest, createBootstrapFetchRequest, createSidepanelListRecentCitationsRequest, createSidepanelListRecentNotesRequest, createSidepanelOpenDashboardRequest, createSidepanelOpenEditorRequest, createCaptureCreateCitationRequest, createCaptureCreateNoteRequest, createCaptureCreateQuoteRequest, createCitationPreviewRequest, createCitationRenderRequest, createCitationSaveRequest, createOpenSidepanelRequest, createPingRequest, createWorkInEditorRequest, } from "../contracts/messages.js";
 import { createRequestId } from "./request_id.js";
 import { sendRuntimeMessage } from "./runtime_message.js";

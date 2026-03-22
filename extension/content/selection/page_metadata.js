@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 function walkElements(root, visit) {
     if (!root || typeof visit !== "function") {
         return;

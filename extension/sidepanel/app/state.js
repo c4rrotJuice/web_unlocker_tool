@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export const SIDEPANEL_TABS = Object.freeze({
     CITATIONS: "citations",
     NOTES: "notes",

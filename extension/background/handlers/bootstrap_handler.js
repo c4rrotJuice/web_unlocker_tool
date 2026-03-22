@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { validateBootstrapSnapshot } from "../../shared/contracts/validators.js";
 import { createErrorResult, ERROR_CODES, createOkResult } from "../../shared/types/messages.js";
 export function createBootstrapHandler(options = {}) {

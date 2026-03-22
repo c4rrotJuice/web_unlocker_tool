@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { createErrorResult, ERROR_CODES } from "../../shared/types/messages.js";
 export function createEditorHandler(options = {}) {
     const { workInEditorApi, tabOpener } = options;

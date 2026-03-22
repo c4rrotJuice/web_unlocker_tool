@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export function createTierBadge({ documentRef = globalThis.document, tier = "guest", } = {}) {
     const root = documentRef.createElement("span");
     root.setAttribute("data-tier-badge", "true");

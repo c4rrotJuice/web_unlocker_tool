@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { API_ORIGIN } from "../../shared/constants/endpoints.js";
 function readBootstrapApp(stateStore) {
     const app = stateStore?.getState?.()?.bootstrap?.app;

@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { createRuntimeClient } from "../shared/utils/runtime_client.js";
 import { createPageUnlockEngine } from "./unlock/engine.js";
 import { createSelectionRuntime } from "./selection/index.js";

@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { MESSAGE_NAMES } from "../constants/message_names.js";
 import { SURFACE_NAMES } from "../types/contracts.js";
 function createRequest(type, requestId, payload) {

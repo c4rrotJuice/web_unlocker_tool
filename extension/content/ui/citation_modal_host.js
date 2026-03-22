@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { renderCitationModal } from "../../sidepanel/app/citation_modal.js";
 const EXTENSION_UI_ATTR = "data-writior-extension-ui";
 export function createCitationModalHost({ documentRef = globalThis.document, onRequestPreview, onRequestRender, onSave, onDismiss, navigatorRef = globalThis.navigator, } = {}) {

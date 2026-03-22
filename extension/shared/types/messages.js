@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export const RESULT_STATUS = Object.freeze({
     OK: "ok",
     ERROR: "error",

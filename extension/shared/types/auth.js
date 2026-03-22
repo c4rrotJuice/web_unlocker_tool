@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export const AUTH_STATUS = Object.freeze({
     LOADING: "loading",
     SIGNED_OUT: "signed_out",

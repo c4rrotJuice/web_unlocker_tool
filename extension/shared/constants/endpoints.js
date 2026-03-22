@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export const API_ORIGIN = "https://app.writior.com";
 export const ENDPOINTS = Object.freeze({
     BOOTSTRAP: "/api/extension/bootstrap",

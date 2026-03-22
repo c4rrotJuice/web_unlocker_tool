@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { ENDPOINTS } from "../../shared/constants/endpoints.js";
 import { ERROR_CODES } from "../../shared/types/messages.js";
 import { validateCitationPreviewResponse, validateCitationRenderBundle } from "../../shared/contracts/validators.js";

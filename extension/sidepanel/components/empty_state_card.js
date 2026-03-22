@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export function createEmptyStateCard({ documentRef = globalThis.document, title = "Nothing here yet", body = "", } = {}) {
     const root = documentRef.createElement("section");
     root.setAttribute("data-empty-state-card", "true");

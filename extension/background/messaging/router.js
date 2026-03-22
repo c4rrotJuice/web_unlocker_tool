@@ -1,5 +1,6 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { MESSAGE_NAMES } from "../../shared/constants/message_names.js";
-import { validateMessageEnvelope } from "../../shared/contracts/validators.js";
+import { validateMessageEnvelope, validateMessageResult } from "../../shared/contracts/validators.js";
 import { createErrorResult, createNotImplementedResult, ERROR_CODES } from "../../shared/types/messages.js";
 const KNOWN_TYPES = Object.values(MESSAGE_NAMES);
 function createDefaultHandlers() {
@@ -37,6 +38,21 @@ function createDefaultHandlers() {
         },
     };
 }
+function mergeHandlers(handlers) {
+    const defaults = createDefaultHandlers();
+    if (!handlers || typeof handlers !== "object") {
+        return defaults;
+    }
+    return {
+        auth: { ...defaults.auth, ...(handlers.auth || {}) },
+        bootstrap: { ...defaults.bootstrap, ...(handlers.bootstrap || {}) },
+        sidepanel: { ...defaults.sidepanel, ...(handlers.sidepanel || {}) },
+        capture: { ...defaults.capture, ...(handlers.capture || {}) },
+        citation: { ...defaults.citation, ...(handlers.citation || {}) },
+        editor: { ...defaults.editor, ...(handlers.editor || {}) },
+        ui: { ...defaults.ui, ...(handlers.ui || {}) },
+    };
+}
 function createRouteTable(handlers) {
     return {
         [MESSAGE_NAMES.PING]: handlers.ui.ping,
@@ -60,7 +76,7 @@ function createRouteTable(handlers) {
 }
 export function createBackgroundRouter(deps = {}) {
     const typedDeps = deps;
-    const routeTable = createRouteTable(typedDeps.handlers || createDefaultHandlers());
+    const routeTable = createRouteTable(mergeHandlers(typedDeps.handlers));
     return async function routeMessage(message, sender = {}) {
         const envelopeError = validateMessageEnvelope(message, { allowedTypes: KNOWN_TYPES });
         if (envelopeError) {
@@ -71,7 +87,12 @@ export function createBackgroundRouter(deps = {}) {
             return createErrorResult(ERROR_CODES.UNSUPPORTED_MESSAGE, `Unsupported message: ${message.type}`, message.requestId);
         }
         try {
-            return await handler(message, sender);
+            const result = await handler(message, sender);
+            const resultError = validateMessageResult(result, message.requestId);
+            if (resultError) {
+                return createErrorResult(ERROR_CODES.UNEXPECTED_ERROR, `Handler returned an invalid result for ${message.type}.`, message.requestId, { validation_error: resultError.error });
+            }
+            return result;
         }
         catch (error) {
             return createErrorResult(ERROR_CODES.UNEXPECTED_ERROR, error?.message || `Handler failed for ${message.type}.`, message.requestId);

@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { buildSelectionContextPayload } from "./context.js";
 import { extractNormalizedSelection, selectionSignature } from "./extraction.js";
 import { extractPageMetadata } from "./page_metadata.js";

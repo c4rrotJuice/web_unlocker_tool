@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { computePillPosition } from "../selection/position.js";
 import { createSelectionMenuButton } from "./selection_menu_button.js";
 const HOST_ID = "writior-selection-pill";

@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { API_ORIGIN, ENDPOINTS } from "../../shared/constants/endpoints.js";
 import { validateResultEnvelope } from "../../shared/contracts/validators.js";
 import { createErrorResult, ERROR_CODES } from "../../shared/types/messages.js";

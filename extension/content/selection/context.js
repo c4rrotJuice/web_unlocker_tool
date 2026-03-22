@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { buildContentCapturePayload } from "../../shared/types/capture.js";
 export function buildSelectionContextPayload({ selection, page, }) {
     return {

@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export function createLogger(scope) {
     return {
         info(message, details = undefined) {

@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { getCitationPreviewText, normalizeCitationFormat, normalizeCitationStyle } from "../../shared/types/citation.js";
 import { createEmptyStateCard } from "./empty_state_card.js";
 import { createHoverPreview } from "./hover_preview.js";

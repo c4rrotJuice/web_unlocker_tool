@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { buildCitationCaptureRequest, buildNoteCaptureRequest, buildQuoteCaptureRequest, normalizeCaptureContext, } from "../../shared/types/capture.js";
 import { createErrorResult, createOkResult, ERROR_CODES } from "../../shared/types/messages.js";
 function normalizeResult(result, requestId) {

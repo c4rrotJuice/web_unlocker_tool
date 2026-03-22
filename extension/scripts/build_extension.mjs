@@ -7,6 +7,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const extensionDir = path.resolve(scriptDir, "..");
 const staticExtensions = new Set([".html", ".json", ".svg"]);
 const generatedFiles = [];
+const GENERATED_HEADER = "// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.\n";
 const IMPORT_RE = /\b(?:import|export)\s+(?:[^"'`]*?\s+from\s+)?["']([^"'`]+)["']/g;
 
 async function walk(dir) {
@@ -192,22 +193,12 @@ async function buildClassicContentScript() {
     entryId: normalizeExtensionPath(entryFile),
     modules,
   });
-  await fs.writeFile(bundleTarget, bundleSource, "utf8");
+  await fs.writeFile(bundleTarget, `${GENERATED_HEADER}${bundleSource}`, "utf8");
   generatedFiles.push(path.relative(extensionDir, bundleTarget));
 }
 
 async function removeStaleBuildArtifacts(files) {
-  const sourceTs = new Set(files.filter((file) => file.endsWith(".ts")));
-  const removableJs = files.filter((file) => {
-    if (!file.endsWith(".js")) {
-      return false;
-    }
-    if (file.endsWith(".mjs")) {
-      return false;
-    }
-    const candidateTs = file.replace(/\.js$/, ".ts");
-    return sourceTs.has(candidateTs);
-  });
+  const removableJs = files.filter((file) => file.endsWith(".js") && !file.endsWith(".mjs"));
 
   await Promise.all(removableJs.map((file) => fs.rm(file, { force: true })));
 }
@@ -227,7 +218,7 @@ async function build() {
           module: ts.ModuleKind.ESNext,
         },
       });
-      await fs.writeFile(target, rewriteModuleSpecifiers(transpiled.outputText), "utf8");
+      await fs.writeFile(target, `${GENERATED_HEADER}${rewriteModuleSpecifiers(transpiled.outputText)}`, "utf8");
       generatedFiles.push(path.relative(extensionDir, target));
       continue;
     }

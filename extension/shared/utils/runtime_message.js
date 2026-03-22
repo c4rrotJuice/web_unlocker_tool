@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { createErrorResult, ERROR_CODES } from "../types/messages.js";
 import { validateMessageEnvelope, validateMessageResult } from "../contracts/validators.js";
 function mapRuntimeFailure(messageText, requestId) {

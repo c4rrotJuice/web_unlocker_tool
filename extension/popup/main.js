@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { createLogger } from "../shared/utils/logger.js";
 import { createRuntimeClient, SURFACE_NAMES } from "../shared/utils/runtime_client.js";
 import { renderPopupAuthSnapshot } from "./app/index.js";

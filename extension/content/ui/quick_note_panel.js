@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { computePillPosition } from "../selection/position.js";
 import { createHighlightPreview } from "./highlight_preview.js";
 const HOST_ID = "writior-quick-note-panel";

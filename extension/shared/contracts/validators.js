@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { MESSAGE_NAMES } from "../constants/message_names.js";
 import { SURFACE_NAMES } from "../types/contracts.js";
 import { CITATION_FORMATS, CITATION_STYLES, normalizeCitationFormat, normalizeCitationStyle } from "../types/citation.js";

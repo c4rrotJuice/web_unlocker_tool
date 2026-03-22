@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export function createCitationPreviewCard({ documentRef = globalThis.document, title = "Backend-derived preview", } = {}) {
     const root = documentRef.createElement("section");
     const heading = documentRef.createElement("div");

@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 function normalizeText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
 }

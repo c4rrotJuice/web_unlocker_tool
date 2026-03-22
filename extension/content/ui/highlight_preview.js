@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 function truncatePreview(value, maxLength = 220) {
     const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
     if (!text || text.length <= maxLength) {

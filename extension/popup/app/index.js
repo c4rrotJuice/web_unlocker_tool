@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { AUTH_STATUS } from "../../shared/types/auth.js";
 import { normalizeCapabilitySurface } from "../../shared/types/capability_surface.js";
 function summarizeStatus(snapshot) {

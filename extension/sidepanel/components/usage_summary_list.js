@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export function createUsageSummaryList({ documentRef = globalThis.document, } = {}) {
     const root = documentRef.createElement("section");
     root.setAttribute("data-usage-summary-list", "true");

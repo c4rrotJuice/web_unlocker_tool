@@ -92,7 +92,7 @@ function renderSnapshotBody(snapshot) {
   }
   if (status === "signed_in") {
     const profileName = snapshot?.bootstrap?.profile?.display_name || snapshot?.session?.email || "Signed in";
-    const destination = snapshot?.bootstrap?.app?.handoff?.preferred_destination || "/editor";
+    const destination = snapshot?.bootstrap?.app?.handoff?.preferred_destination || "Unavailable until bootstrap resolves";
     return `
       <h1>Writior</h1>
       <p>Signed in as ${profileName}</p>
@@ -279,14 +279,9 @@ export function createSidepanelShell(options: any = {}) {
       stateStore.setAuth(result.data?.auth || null);
       return result.data?.auth || null;
     }
-    const fallback: any = await client.authStatusGet?.();
-    if (fallback?.ok) {
-      stateStore.setAuth(fallback.data?.auth || null);
-      return fallback.data?.auth || null;
-    }
     stateStore.setState({
       status: SIDEPANEL_STATUS.ERROR,
-      notice: { tone: "error", message: fallback?.error?.message || result?.error?.message || "Failed to load sidepanel state." },
+      notice: { tone: "error", message: result?.error?.message || "Failed to load sidepanel state." },
     });
     return null;
   }

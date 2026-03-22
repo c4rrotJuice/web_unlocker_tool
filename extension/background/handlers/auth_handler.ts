@@ -6,6 +6,7 @@ export function createAuthHandler(options = {}) {
   const apiClient = typedOptions.apiClient;
   const sessionStore = typedOptions.sessionStore;
   const stateStore = typedOptions.stateStore;
+  const citationStateStore = typedOptions.citationStateStore;
   const bootstrapHandler = typedOptions.bootstrapHandler;
   const chromeApi = typedOptions.chromeApi;
   const baseUrl = typedOptions.baseUrl;
@@ -35,6 +36,7 @@ export function createAuthHandler(options = {}) {
     },
     async logout(request) {
       await sessionStore.clear();
+      await citationStateStore?.clear?.();
       const auth = stateStore.setSignedOut("signed_out");
       return createOkResult({ auth }, request.requestId);
     },

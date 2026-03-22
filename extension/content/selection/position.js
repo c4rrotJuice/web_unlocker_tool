@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
 }

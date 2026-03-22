@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export { ERROR_CODES, RESULT_STATUS, createErrorResult, createNotImplementedResult, createOkResult, } from "./messages.js";
 export { AUTH_STATUS, createAuthErrorState, createLoadingAuthState, createSignedInAuthState, createSignedOutAuthState, normalizeAuthError, normalizeSession, } from "./auth.js";
 export { CAPTURE_TYPES, buildContentCapturePayload, buildCaptureExtractionPayload, buildCitationCaptureRequest, buildNoteCaptureRequest, buildQuoteCaptureRequest, normalizeCaptureContext, } from "./capture.js";

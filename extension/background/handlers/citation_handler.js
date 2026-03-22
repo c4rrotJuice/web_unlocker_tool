@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { createErrorResult, createOkResult, ERROR_CODES } from "../../shared/types/messages.js";
 import { normalizeCitationFormat, normalizeCitationStyle } from "../../shared/types/citation.js";
 import { buildCitationCaptureRequest, normalizeCaptureContext } from "../../shared/types/capture.js";
@@ -78,7 +79,7 @@ export function createCitationHandler({ citationApi, citationStateStore, } = {})
             if (!citationId) {
                 return createErrorResult(ERROR_CODES.INVALID_PAYLOAD, "Citation save response is missing an id.", request?.requestId);
             }
-            const nextState = citationStateStore.saveSelection({
+            const nextState = await citationStateStore.saveSelection({
                 citationId,
                 style,
                 format,

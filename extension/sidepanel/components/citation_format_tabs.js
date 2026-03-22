@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { CITATION_FORMATS } from "../../shared/types/citation.js";
 const FORMAT_LABELS = {
     inline: "Inline",

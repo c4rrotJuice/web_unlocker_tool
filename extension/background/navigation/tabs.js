@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { createErrorResult, createOkResult, ERROR_CODES } from "../../shared/types/messages.js";
 import { resolveCanonicalUrl } from "./app_urls.js";
 export function createTabOpener(options = {}) {

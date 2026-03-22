@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { getCitationPreviewText, normalizeCitationFormat, normalizeCitationStyle } from "../../shared/types/citation.js";
 import { createCitationFormatTabs } from "../components/citation_format_tabs.js";
 import { createCitationPreviewCard } from "../components/citation_preview_card.js";

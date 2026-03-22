@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export { createCitationsListView } from "./citations_list_view.js";
 export { createEmptyStateCard } from "./empty_state_card.js";
 export { createHoverPreview } from "./hover_preview.js";

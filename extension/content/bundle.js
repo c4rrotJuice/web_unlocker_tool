@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 (function() {
   const modules = {
 "shared/constants/message_names.ts": function(module, exports, require) {

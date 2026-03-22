@@ -16,6 +16,7 @@
     "test:extension-phase4": "node --test tests/extension_phase4_capture.test.mjs",
     "test:extension-phase5": "node --test tests/extension_phase5_citation.test.mjs",
     "test:extension-phase6": "node --test tests/extension_phase6_sidepanel.test.mjs",
+    "test:extension-phase9": "npm run build:extension && node --test tests/extension_phase9_hardening.test.mjs",
     "test:extension-phase11": "node --test tests/extension_phase11_notes.test.mjs",
     "test:research-runtime": "node --test tests/app_shell_runtime/research_runtime.test.mjs tests/app_shell_runtime/editor_runtime.test.mjs"
   }

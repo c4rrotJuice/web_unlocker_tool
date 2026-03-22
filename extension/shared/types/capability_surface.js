@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { CITATION_STYLES } from "./citation.js";
 function normalizeText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();

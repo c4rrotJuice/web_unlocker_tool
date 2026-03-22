@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 const HOST_ATTR = "data-writior-toast-host";
 const EXTENSION_UI_ATTR = "data-writior-extension-ui";
 export function createContentToastController({ documentRef = globalThis.document, windowRef = globalThis.window, } = {}) {

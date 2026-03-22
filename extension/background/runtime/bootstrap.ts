@@ -27,7 +27,7 @@ export function createBackgroundRuntime(deps = {}) {
   const chromeApi = typedDeps.chromeApi || globalThis.chrome;
   const sessionStore = typedDeps.sessionStore || createSessionStore({ chromeApi });
   const stateStore = typedDeps.stateStore || createBackgroundStateStore();
-  const citationStateStore = typedDeps.citationStateStore || createCitationStateStore();
+  const citationStateStore = typedDeps.citationStateStore || createCitationStateStore(undefined, { chromeApi });
   const apiClient = typedDeps.apiClient || createApiClient({
     baseUrl: typedDeps.baseUrl || API_ORIGIN,
     fetchImpl: typedDeps.fetchImpl || globalThis.fetch,
@@ -47,6 +47,7 @@ export function createBackgroundRuntime(deps = {}) {
       apiClient,
       sessionStore,
       stateStore,
+      citationStateStore,
       bootstrapHandler,
       chromeApi,
       baseUrl: typedDeps.baseUrl || API_ORIGIN,
@@ -68,6 +69,37 @@ export function createBackgroundRuntime(deps = {}) {
     chromeApi,
     handlers,
   });
+  let listenersRegistered = false;
+
+  async function runBootstrap(reason = "worker-bootstrap") {
+    logger.info("worker boot", { reason });
+    if (typeof citationStateStore.hydrate === "function") {
+      await citationStateStore.hydrate();
+    }
+    const restore = await handlers.auth.restoreSession({
+      type: MESSAGE_NAMES.AUTH_STATUS_GET,
+      requestId: reason,
+      payload: { surface: "background" },
+    });
+    if (restore.ok === false) {
+      return restore;
+    }
+    return createOkResult({
+      alive: true,
+      messageTypes: Object.values(MESSAGE_NAMES),
+      auth: stateStore.getState(),
+      citation: citationStateStore.getState(),
+    }, reason);
+  }
+
+  function bootstrapFromLifecycle(reason) {
+    void runBootstrap(reason).catch((error) => {
+      logger.warn("worker bootstrap failed", {
+        reason,
+        message: error?.message || String(error),
+      });
+    });
+  }
 
   return {
     chromeApi,
@@ -83,26 +115,17 @@ export function createBackgroundRuntime(deps = {}) {
       return router(message, sender);
     },
     async bootstrap() {
-      logger.info("worker boot");
-      const restore = await handlers.auth.restoreSession({
-        type: MESSAGE_NAMES.AUTH_STATUS_GET,
-        requestId: "worker-bootstrap",
-        payload: { surface: "background" },
-      });
-      if (restore.ok === false) {
-        return restore;
-      }
-      return createOkResult({
-        alive: true,
-        messageTypes: Object.values(MESSAGE_NAMES),
-        auth: stateStore.getState(),
-      }, "worker-bootstrap");
+      return runBootstrap("worker-bootstrap");
     },
     registerLifecycleHooks() {
       if (!chromeApi?.runtime?.onMessage?.addListener) {
         logger.warn("runtime.onMessage is unavailable");
         return false;
       }
+      if (listenersRegistered) {
+        return true;
+      }
+      listenersRegistered = true;
 
       logger.info("registering listeners");
 
@@ -122,12 +145,14 @@ export function createBackgroundRuntime(deps = {}) {
       if (typeof chromeApi.runtime.onInstalled?.addListener === "function") {
         chromeApi.runtime.onInstalled.addListener(() => {
           logger.info("runtime installed");
+          bootstrapFromLifecycle("worker-installed");
         });
       }
 
       if (typeof chromeApi.runtime.onStartup?.addListener === "function") {
         chromeApi.runtime.onStartup.addListener(() => {
           logger.info("runtime startup");
+          bootstrapFromLifecycle("worker-startup");
         });
       }
 

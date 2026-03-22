@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { STORAGE_KEYS } from "../../shared/constants/storage_keys.js";
 import { normalizeSession } from "../../shared/types/auth.js";
 function clone(value) {

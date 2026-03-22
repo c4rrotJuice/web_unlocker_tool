@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export { createAuthHandler } from "./auth_handler.js";
 export { createBootstrapHandler } from "./bootstrap_handler.js";
 export { createCaptureHandler } from "./capture_handler.js";

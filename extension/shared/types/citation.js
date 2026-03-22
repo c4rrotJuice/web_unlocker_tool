@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export const CITATION_STYLES = Object.freeze(["apa", "mla", "chicago", "harvard"]);
 export const CITATION_FORMATS = Object.freeze(["inline", "footnote", "bibliography", "quote_attribution"]);
 export function normalizeCitationStyle(value, fallback = "apa") {

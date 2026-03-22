@@ -1,5 +1,5 @@
 import { MESSAGE_NAMES } from "../../shared/constants/message_names.ts";
-import { validateMessageEnvelope } from "../../shared/contracts/validators.ts";
+import { validateMessageEnvelope, validateMessageResult } from "../../shared/contracts/validators.ts";
 import { createErrorResult, createNotImplementedResult, ERROR_CODES } from "../../shared/types/messages.ts";
 
 const KNOWN_TYPES = Object.values(MESSAGE_NAMES);
@@ -40,6 +40,22 @@ function createDefaultHandlers() {
   };
 }
 
+function mergeHandlers(handlers) {
+  const defaults = createDefaultHandlers();
+  if (!handlers || typeof handlers !== "object") {
+    return defaults;
+  }
+  return {
+    auth: { ...defaults.auth, ...(handlers.auth || {}) },
+    bootstrap: { ...defaults.bootstrap, ...(handlers.bootstrap || {}) },
+    sidepanel: { ...defaults.sidepanel, ...(handlers.sidepanel || {}) },
+    capture: { ...defaults.capture, ...(handlers.capture || {}) },
+    citation: { ...defaults.citation, ...(handlers.citation || {}) },
+    editor: { ...defaults.editor, ...(handlers.editor || {}) },
+    ui: { ...defaults.ui, ...(handlers.ui || {}) },
+  };
+}
+
 function createRouteTable(handlers) {
   return {
     [MESSAGE_NAMES.PING]: handlers.ui.ping,
@@ -64,7 +80,7 @@ function createRouteTable(handlers) {
 
 export function createBackgroundRouter(deps = {}) {
   const typedDeps = deps as { handlers?: any };
-  const routeTable = createRouteTable(typedDeps.handlers || createDefaultHandlers());
+  const routeTable = createRouteTable(mergeHandlers(typedDeps.handlers));
 
   return async function routeMessage(message, sender = {}) {
     const envelopeError = validateMessageEnvelope(message, { allowedTypes: KNOWN_TYPES });
@@ -82,7 +98,17 @@ export function createBackgroundRouter(deps = {}) {
     }
 
     try {
-      return await handler(message, sender);
+      const result = await handler(message, sender);
+      const resultError = validateMessageResult(result, message.requestId);
+      if (resultError) {
+        return createErrorResult(
+          ERROR_CODES.UNEXPECTED_ERROR,
+          `Handler returned an invalid result for ${message.type}.`,
+          message.requestId,
+          { validation_error: resultError.error },
+        );
+      }
+      return result;
     } catch (error) {
       return createErrorResult(
         ERROR_CODES.UNEXPECTED_ERROR,

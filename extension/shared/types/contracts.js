@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { MESSAGE_NAMES } from "../constants/message_names.js";
 export const MESSAGE_TOPICS = Object.freeze({
     UI: "ui",

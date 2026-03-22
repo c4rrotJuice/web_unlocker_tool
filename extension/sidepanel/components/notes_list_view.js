@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { createEmptyStateCard } from "./empty_state_card.js";
 import { createHoverPreview } from "./hover_preview.js";
 function getNoteSummary(note, expanded) {

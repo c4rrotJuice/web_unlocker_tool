@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export const MESSAGE_NAMES = Object.freeze({
     PING: "runtime.ping",
     OPEN_SIDEPANEL: "ui.open_sidepanel",

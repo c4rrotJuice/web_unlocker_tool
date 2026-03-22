@@ -90,7 +90,7 @@ export function createCitationHandler({
       if (!citationId) {
         return createErrorResult(ERROR_CODES.INVALID_PAYLOAD, "Citation save response is missing an id.", request?.requestId);
       }
-      const nextState = citationStateStore.saveSelection({
+      const nextState = await citationStateStore.saveSelection({
         citationId,
         style,
         format,

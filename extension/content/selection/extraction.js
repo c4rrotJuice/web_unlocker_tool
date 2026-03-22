@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 const EXTENSION_UI_ATTR = "data-writior-extension-ui";
 const MINIMUM_WORD_CHARS = 3;
 function normalizeWhitespace(value) {

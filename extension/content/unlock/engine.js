@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { classifyEventPath, classifyTarget, firstElementFromPath, getElementPath, getEventPath, isElementNode, } from "./dom.js";
 const STYLE_ID = "writior-copy-unlock-style";
 const DEBUG_KEY = "__WRITIOR_COPY_UNLOCK_DEBUG";

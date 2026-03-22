@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { createTierBadge } from "./tier_badge.js";
 function createActionButton(documentRef, label, onClick, tone = "neutral") {
     const button = documentRef.createElement("button");

@@ -133,6 +133,9 @@ test("plain note flow in sidepanel saves through background with active-tab page
     },
   };
   const runtimeClient = {
+    async bootstrapFetch() {
+      return { ok: true, data: { auth: { status: "signed_in", bootstrap: { profile: { display_name: "Researcher" } } } } };
+    },
     async authStatusGet() {
       return { ok: true, data: { auth: { status: "signed_in", bootstrap: { profile: { display_name: "Researcher" } } } } };
     },
@@ -183,6 +186,9 @@ test("sidepanel note failures keep the typed text available for retry", async ()
   const documentRef = new FakeDocument();
   const root = documentRef.createElement("main");
   const runtimeClient = {
+    async bootstrapFetch() {
+      return { ok: true, data: { auth: { status: "signed_in", bootstrap: { profile: { display_name: "Researcher" } } } } };
+    },
     async authStatusGet() {
       return { ok: true, data: { auth: { status: "signed_in", bootstrap: { profile: { display_name: "Researcher" } } } } };
     },

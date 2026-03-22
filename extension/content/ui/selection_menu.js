@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { createSelectionMenuButton } from "./selection_menu_button.js";
 export const SELECTION_MENU_ACTIONS = Object.freeze([
     { key: "copy", label: "Copy", active: true, locked: false },

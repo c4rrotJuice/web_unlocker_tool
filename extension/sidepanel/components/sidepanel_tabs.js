@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 export function createSidepanelTabs(options = {}) {
     const { documentRef = globalThis.document, tabs = [], activeTab = "", onSelect, } = options;
     const root = documentRef.createElement("div");

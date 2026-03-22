@@ -1,3 +1,4 @@
+// GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 const SAFE_TEXT_TAGS = new Set([
     "A",
     "ARTICLE",

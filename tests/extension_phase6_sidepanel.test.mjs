@@ -464,7 +464,7 @@ test("signed-in sidepanel loads recent items, supports tabs, expand, copy, and b
     assert.equal(collectText(mountedRoot).includes("Source Title"), true);
     assert.equal(collectText(mountedRoot).includes("Researcher"), true);
     assert.equal(collectText(mountedRoot).includes("user@example.com"), true);
-    assert.equal(collectText(mountedRoot).includes("pro"), true);
+    assert.equal(collectText(mountedRoot).includes("Pro"), true);
 
     const citationRow = findByAttr(mountedRoot, "data-citation-id", "citation-1");
     assert.ok(citationRow);

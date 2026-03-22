@@ -149,19 +149,30 @@ function validateCitationRenderPayload(payload) {
   return null;
 }
 
+function validateCitationPreviewPayload(payload) {
+  const captureError = validateCaptureEntityPayload(payload, "selectionText");
+  if (captureError) {
+    return captureError;
+  }
+  if (!isNonEmptyString(payload.style)) {
+    return "payload.style must be a non-empty string.";
+  }
+  if (normalizeCitationStyle(payload.style, "") !== payload.style.trim().toLowerCase()) {
+    return "payload.style must be one of the supported citation styles.";
+  }
+  return null;
+}
+
 function validateCitationSavePayload(payload) {
-  const renderError = validateCitationRenderPayload(payload);
-  if (renderError) {
-    return renderError;
+  const previewError = validateCitationPreviewPayload(payload);
+  if (previewError) {
+    return previewError;
   }
   if (!isNonEmptyString(payload.format)) {
     return "payload.format must be a non-empty string.";
   }
   if (normalizeCitationFormat(payload.format, "") !== payload.format.trim().toLowerCase()) {
     return "payload.format must be one of the supported citation formats.";
-  }
-  if (payload.copy != null && typeof payload.copy !== "boolean") {
-    return "payload.copy must be a boolean when provided.";
   }
   return null;
 }
@@ -180,6 +191,7 @@ export const REQUEST_PAYLOAD_VALIDATORS = Object.freeze({
   [MESSAGE_NAMES.CAPTURE_CREATE_CITATION]: (payload) => validateCaptureEntityPayload(payload, "selectionText"),
   [MESSAGE_NAMES.CAPTURE_CREATE_QUOTE]: (payload) => validateCaptureEntityPayload(payload, "selectionText"),
   [MESSAGE_NAMES.CAPTURE_CREATE_NOTE]: validateCaptureNotePayload,
+  [MESSAGE_NAMES.CITATION_PREVIEW]: validateCitationPreviewPayload,
   [MESSAGE_NAMES.CITATION_RENDER]: validateCitationRenderPayload,
   [MESSAGE_NAMES.CITATION_SAVE]: validateCitationSavePayload,
   [MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST]: validateEditorPayload,
@@ -225,6 +237,31 @@ export function validateCitationRenderBundle(payload) {
       ...payload,
       renders,
       cache_hit: Boolean(payload.cache_hit),
+    },
+    meta: payload.meta ?? null,
+  };
+}
+
+export function validateCitationPreviewResponse(payload) {
+  if (!isPlainObject(payload)) {
+    return createErrorResult(ERROR_CODES.INVALID_PAYLOAD, "Citation preview must be a JSON object.");
+  }
+  if (!isPlainObject(payload.citation)) {
+    return createErrorResult(ERROR_CODES.INVALID_PAYLOAD, "Citation preview must include citation data.");
+  }
+  const renderBundleResult = validateCitationRenderBundle(payload.render_bundle);
+  if (renderBundleResult?.ok === false) {
+    return renderBundleResult;
+  }
+  const normalizedRenderBundle = renderBundleResult && "data" in renderBundleResult
+    ? renderBundleResult.data
+    : payload.render_bundle;
+  return {
+    ok: true,
+    status: RESULT_STATUS.OK,
+    data: {
+      ...payload,
+      render_bundle: normalizedRenderBundle,
     },
     meta: payload.meta ?? null,
   };

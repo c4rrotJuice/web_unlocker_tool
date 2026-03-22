@@ -3,6 +3,7 @@ const FORMAT_LABELS = {
     inline: "Inline",
     footnote: "Footnote",
     bibliography: "Bibliography",
+    quote_attribution: "Quote Attribution",
 };
 export function createCitationFormatTabs({ documentRef = globalThis.document, formats = CITATION_FORMATS, selectedFormat = "bibliography", onSelect, } = {}) {
     const root = documentRef.createElement("div");

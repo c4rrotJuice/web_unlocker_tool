@@ -6,6 +6,7 @@ import { createCitationModalHost } from "../ui/citation_modal_host.ts";
 import { createQuickNotePanel } from "../ui/quick_note_panel.ts";
 import { createContentToastController } from "../ui/toast.ts";
 import { getLockedCitationStyles } from "../../shared/types/citation.ts";
+import { normalizeCapabilitySurface } from "../../shared/types/capability_surface.ts";
 import { SURFACE_NAMES } from "../../shared/types/contracts.ts";
 import { createRuntimeClient } from "../../shared/utils/runtime_client.ts";
 
@@ -111,6 +112,7 @@ export function createSelectionRuntime({
     noteText: "",
     noteError: "",
     citationModalSnapshot: null as any,
+    authSnapshot: null as any,
   };
   const listeners: Array<() => void> = [];
   const pill = createSelectionActionPill({
@@ -142,6 +144,7 @@ export function createSelectionRuntime({
   const citationModal = createCitationModalHost({
     documentRef,
     navigatorRef,
+    onRequestPreview: async (payload) => runtimeClient?.previewCitation(payload),
     onRequestRender: async (payload) => runtimeClient?.renderCitation(payload),
     onSave: async (payload) => runtimeClient?.saveCitation(payload),
     onDismiss: () => {
@@ -162,12 +165,37 @@ export function createSelectionRuntime({
   }
 
   function buildSelectionActions() {
+    const surface = normalizeCapabilitySurface({ auth: state.authSnapshot });
+    const availability = surface.actionAvailability || {
+      copy: true,
+      cite: undefined,
+      note: undefined,
+      quote: undefined,
+      work_in_editor: undefined,
+    };
     return [
       { key: "copy", label: "Copy", active: true, locked: false },
-      { key: "cite", label: "Cite", active: Boolean(runtimeClient), locked: false },
-      { key: "quote", label: "Quote", active: Boolean(runtimeClient), locked: false },
-      { key: "note", label: "Note", active: Boolean(runtimeClient), locked: false },
+      { key: "cite", label: "Cite", active: Boolean(runtimeClient) && availability.cite !== false, locked: availability.cite === false },
+      { key: "quote", label: "Quote", active: Boolean(runtimeClient) && availability.quote !== false, locked: availability.quote === false },
+      { key: "note", label: "Note", active: Boolean(runtimeClient) && availability.note !== false, locked: availability.note === false },
     ];
+  }
+
+  async function refreshAuthSnapshot() {
+    if (!runtimeClient?.authStatusGet) {
+      return null;
+    }
+    const result: any = await runtimeClient.authStatusGet();
+    if (result?.ok) {
+      state.authSnapshot = result.data?.auth || null;
+      if (state.visible && state.currentSnapshot) {
+        pill.render({
+          ...state.currentSnapshot,
+          actions: buildSelectionActions(),
+        });
+      }
+    }
+    return state.authSnapshot;
   }
 
   function hide(reason = "dismiss") {
@@ -247,10 +275,8 @@ export function createSelectionRuntime({
     if (!runtimeClient?.authStatusGet) {
       return [];
     }
-    const result: any = await runtimeClient.authStatusGet();
-    const allowedStyles = result?.ok
-      ? result.data?.auth?.bootstrap?.capabilities?.citation_styles
-      : null;
+    const auth = state.authSnapshot || await refreshAuthSnapshot();
+    const allowedStyles = auth?.bootstrap?.capabilities?.citation_styles;
     return getLockedCitationStyles(allowedStyles);
   }
 
@@ -431,65 +457,56 @@ export function createSelectionRuntime({
       }
       state.pendingAction = action;
       pill.hide("citation_modal_open");
-      state.citationModalSnapshot = {
+      const selectedStyle = "apa";
+      const baseModalSnapshot = {
         citation: null,
         render_bundle: null,
-        selected_style: "apa",
+        draft_payload: state.currentSnapshot.payload,
+        selected_style: selectedStyle,
         selected_format: "bibliography",
         locked_styles: [],
+        tier: normalizeCapabilitySurface({ auth: state.authSnapshot }).tier,
         loading: true,
         error: null,
       };
+      state.citationModalSnapshot = {
+        ...baseModalSnapshot,
+      };
       renderCitationModal();
       try {
-        const [captureResultRaw, lockedStyles] = await Promise.all([
-          runtimeClient.createCitation(state.currentSnapshot.payload),
+        const [previewResultRaw, lockedStyles] = await Promise.all([
+          runtimeClient.previewCitation({
+            ...state.currentSnapshot.payload,
+            style: selectedStyle,
+          }),
           resolveLockedCitationStyles(),
         ]);
-        const captureResult: any = captureResultRaw;
-        if (!captureResult?.ok) {
-          state.citationModalSnapshot = {
-            ...state.citationModalSnapshot,
-            loading: false,
-            error: captureResult?.error || { code: "citation_error", message: "Citation capture failed." },
-            locked_styles: lockedStyles,
-          };
-          renderCitationModal();
-          return captureResult;
+        const previewResult: any = previewResultRaw;
+        if (!previewResult?.ok) {
+          state.citationModalSnapshot = null;
+          citationModal.hide();
+          if (state.currentSnapshot) {
+            pill.render({
+              ...state.currentSnapshot,
+              actions: buildSelectionActions(),
+            });
+            state.visible = true;
+          }
+          pill.flash("Failed");
+          toast.show(describeCaptureFailure(previewResult));
+          return previewResult;
         }
-        const citation = captureResult.data;
-        const selectedStyle = String(citation?.style || "apa").trim().toLowerCase() || "apa";
-        const selectedFormat = "bibliography";
         state.citationModalSnapshot = {
-          citation,
-          render_bundle: null,
-          selected_style: selectedStyle,
-          selected_format: selectedFormat,
+          ...baseModalSnapshot,
+          citation: previewResult.data?.citation || null,
+          render_bundle: previewResult.data?.render_bundle || null,
           locked_styles: lockedStyles,
+          tier: normalizeCapabilitySurface({ auth: state.authSnapshot }).tier,
           loading: false,
           error: null,
         };
         renderCitationModal();
-        if (!citationModal.getState()?.text && citation?.id) {
-          state.citationModalSnapshot = {
-            ...state.citationModalSnapshot,
-            loading: true,
-          };
-          renderCitationModal();
-          const renderResult: any = await runtimeClient.renderCitation({
-            citationId: citation.id,
-            style: selectedStyle,
-          });
-          state.citationModalSnapshot = {
-            ...state.citationModalSnapshot,
-            loading: false,
-            render_bundle: renderResult?.ok ? renderResult.data : null,
-            error: renderResult?.ok ? null : renderResult?.error || { code: "citation_error", message: "Citation preview failed." },
-          };
-          renderCitationModal();
-          return renderResult?.ok ? captureResult : renderResult;
-        }
-        return captureResult;
+        return previewResult;
       } finally {
         state.pendingAction = "";
       }
@@ -641,6 +658,7 @@ export function createSelectionRuntime({
       });
     }
     inspectSelection();
+    void refreshAuthSnapshot();
     return getState();
   }
 

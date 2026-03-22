@@ -8,6 +8,7 @@ from app.modules.research.citations.repo import CitationsRepository
 from app.modules.research.citations.schemas import (
     CitationByIdsRequest,
     CitationCreateRequest,
+    CitationPreviewRequest,
     CitationRenderRequest,
     CitationTemplateCreateRequest,
     CitationTemplateUpdateRequest,
@@ -299,6 +300,19 @@ async def create_citation(payload: CitationCreateRequest, access=Depends(_access
     return await citations_service.create_citation(
         user_id=access.user_id,
         access_token=access.access_token,
+        account_type=access.capability_state.tier,
+        extraction_payload=payload.extraction_payload,
+        excerpt=payload.excerpt,
+        locator=payload.locator,
+        annotation=payload.annotation,
+        quote=payload.quote,
+        style=payload.style,
+    )
+
+
+@router.post("/api/citations/preview")
+async def preview_citation(payload: CitationPreviewRequest, access=Depends(_access)):
+    return await citations_service.preview_citation(
         account_type=access.capability_state.tier,
         extraction_payload=payload.extraction_payload,
         excerpt=payload.excerpt,

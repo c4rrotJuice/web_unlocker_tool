@@ -31,7 +31,14 @@ export function createHighlightPreview({ documentRef = globalThis.document, } = 
     meta.style.fontSize = "11px";
     meta.style.lineHeight = "1.4";
     meta.style.color = "#94a3b8";
-    root.append(label, text, meta);
+    if (typeof root.append === "function") {
+        root.append(label, text, meta);
+    }
+    else {
+        root.appendChild(label);
+        root.appendChild(text);
+        root.appendChild(meta);
+    }
     return {
         root,
         render({ text: previewText = "", pageTitle = "", pageUrl = "" } = {}) {

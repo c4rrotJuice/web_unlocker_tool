@@ -72,6 +72,52 @@ function createShellStyles(documentRef) {
   return style;
 }
 
+function renderSnapshotBody(snapshot) {
+  const surface = normalizeCapabilitySurface({ auth: snapshot });
+  const status = snapshot?.status || "signed_out";
+  const usageText = surface.usageItems.length
+    ? surface.usageItems.map((item) => `${item.label}: ${item.value}`).join(" • ")
+    : "Usage updates appear here when available.";
+  if (status === "loading") {
+    return `
+      <h1>Writior</h1>
+      <p>Loading auth state</p>
+    `;
+  }
+  if (status === "error") {
+    return `
+      <h1>Writior</h1>
+      <p>Auth error: ${snapshot?.error?.message || "unknown"}</p>
+    `;
+  }
+  if (status === "signed_in") {
+    const profileName = snapshot?.bootstrap?.profile?.display_name || snapshot?.session?.email || "Signed in";
+    const destination = snapshot?.bootstrap?.app?.handoff?.preferred_destination || "/editor";
+    return `
+      <h1>Writior</h1>
+      <p>Signed in as ${profileName}</p>
+      <p>Tier: ${surface.tier}</p>
+      <p>Preferred destination: ${destination}</p>
+      <p>${usageText}</p>
+    `;
+  }
+  return `
+    <h1>Writior</h1>
+    <p>Signed out</p>
+    <p>Tier: ${surface.tier}</p>
+    <p>${usageText}</p>
+  `;
+}
+
+export function renderSidepanelAuthSnapshot(root, snapshot) {
+  if (!root) {
+    return { mounted: false };
+  }
+  root.innerHTML = "";
+  root.innerHTML = renderSnapshotBody(snapshot);
+  return { mounted: true };
+}
+
 export function createSidepanelShell(options: any = {}) {
   const {
     root,

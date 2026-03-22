@@ -12,6 +12,7 @@ export const MESSAGE_NAMES = Object.freeze({
   CAPTURE_CREATE_CITATION: "capture.create_citation",
   CAPTURE_CREATE_QUOTE: "capture.create_quote",
   CAPTURE_CREATE_NOTE: "capture.create_note",
+  CITATION_PREVIEW: "citation.preview",
   CITATION_RENDER: "citation.render",
   CITATION_SAVE: "citation.save",
   WORK_IN_EDITOR_REQUEST: "editor.work_in_editor_request",

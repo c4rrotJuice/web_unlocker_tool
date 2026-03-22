@@ -15,6 +15,7 @@ from app.services.citation_domain import (
     SUPPORTED_STYLES,
     compute_citation_version,
     generate_render_bundle,
+    normalize_citation_payload,
 )
 from app.services.citation_templates import validate_template
 from app.services.free_tier_gating import allowed_citation_formats
@@ -56,6 +57,30 @@ class CitationsService:
         if selected_style:
             return {selected_style: renders.get(selected_style, {})} if selected_style in allowed_styles else {}
         return {style: payload for style, payload in renders.items() if style in allowed_styles}
+
+    def _citation_context(
+        self,
+        *,
+        excerpt: str | None,
+        locator: dict[str, Any] | None,
+        annotation: str | None,
+        quote: str | None,
+    ) -> dict[str, Any]:
+        citation_context = {
+            "locator": locator or {},
+            "annotation": annotation or None,
+            "excerpt": excerpt or quote or "",
+            "quote_text": quote or None,
+        }
+        citation_context["citation_version"] = compute_citation_version(
+            {
+                "locator": citation_context["locator"],
+                "annotation": citation_context["annotation"] or "",
+                "excerpt": citation_context["excerpt"],
+                "quote": citation_context["quote_text"] or citation_context["excerpt"],
+            }
+        )
+        return citation_context
 
     async def _build_render_rows(self, *, citation_id: str, source_id: str, source_row: dict[str, Any], citation_row: dict[str, Any]) -> list[dict[str, Any]]:
         source_payload = {
@@ -123,6 +148,107 @@ class CitationsService:
             "created_at": source.get("created_at"),
             "updated_at": source.get("updated_at"),
         }
+
+    def _normalized_source_to_row(self, source: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": source.get("id"),
+            "fingerprint": source.get("fingerprint"),
+            "title": source.get("title"),
+            "source_type": source.get("source_type"),
+            "authors": source.get("authors") or [],
+            "container_title": source.get("container_title"),
+            "publisher": source.get("publisher"),
+            "issued_date": source.get("issued") or {},
+            "identifiers": source.get("identifiers") or {},
+            "canonical_url": source.get("canonical_url"),
+            "page_url": source.get("page_url"),
+            "metadata": source.get("metadata") or {},
+            "raw_extraction": source.get("raw_extraction") or {},
+            "normalization_version": source.get("normalization_version"),
+            "source_version": source.get("source_version"),
+            "hostname": source.get("hostname"),
+            "language_code": source.get("language_code"),
+            "created_at": source.get("created_at"),
+            "updated_at": source.get("updated_at"),
+        }
+
+    def _serialize_preview(
+        self,
+        *,
+        source_payload: dict[str, Any],
+        citation_context: dict[str, Any],
+        account_type: str | None,
+        selected_style: str,
+    ) -> dict[str, Any]:
+        source_row = self._normalized_source_to_row(source_payload)
+        bundle = generate_render_bundle(source_payload, {
+            "locator": citation_context.get("locator") or {},
+            "annotation": citation_context.get("annotation") or "",
+            "excerpt": citation_context.get("excerpt") or "",
+            "quote": citation_context.get("quote_text") or citation_context.get("excerpt") or "",
+            "citation_version": citation_context.get("citation_version") or "",
+        })
+        filtered_renders = self._filter_renders(
+            renders=bundle["renders"],
+            account_type=account_type,
+            selected_style=selected_style,
+        )
+        return {
+            "citation": serialize_citation(
+                {
+                    "id": None,
+                    "source_id": None,
+                    "locator": citation_context.get("locator") or {},
+                    "annotation": citation_context.get("annotation"),
+                    "excerpt": citation_context.get("excerpt"),
+                    "quote_text": citation_context.get("quote_text") or citation_context.get("excerpt") or "",
+                    "created_at": None,
+                    "updated_at": None,
+                },
+                source=serialize_source_summary(source_row, relationship_counts={}),
+                renders=filtered_renders,
+                relationship_counts={},
+            ),
+            "render_bundle": {
+                **bundle,
+                "renders": filtered_renders,
+            },
+            "selected_style": selected_style,
+        }
+
+    async def preview_citation(
+        self,
+        *,
+        account_type: str,
+        extraction_payload: ExtractionPayload,
+        excerpt: str | None = None,
+        locator: dict[str, Any] | None = None,
+        annotation: str | None = None,
+        quote: str | None = None,
+        style: str | None = None,
+    ) -> dict[str, Any]:
+        if not isinstance(extraction_payload, ExtractionPayload):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "EXTRACTION_PAYLOAD_REQUIRED",
+                    "message": "Canonical extraction payload is required.",
+                },
+            )
+        selected_style = self._ensure_style_allowed(account_type=account_type, style=style)
+        normalized = normalize_citation_payload(extraction_payload)
+        citation_context = self._citation_context(
+            excerpt=excerpt or normalized["context"].get("excerpt"),
+            locator=locator or normalized["context"].get("locator") or {},
+            annotation=annotation or normalized["context"].get("annotation"),
+            quote=quote or normalized["context"].get("quote"),
+        )
+        return self._serialize_preview(
+            source_payload=normalized["source"],
+            citation_context=citation_context,
+            account_type=account_type,
+            selected_style=selected_style,
+        )
 
     async def refresh_renders(self, *, access_token: str | None, citation_row: dict[str, Any], source_row: dict[str, Any]) -> None:
         rows = await self._build_render_rows(
@@ -336,19 +462,11 @@ class CitationsService:
             access_token=access_token,
             extraction_payload=extraction_payload,
         )
-        citation_context = {
-            "locator": locator or {},
-            "annotation": annotation or None,
-            "excerpt": excerpt or quote or "",
-            "quote_text": quote or None,
-        }
-        citation_context["citation_version"] = compute_citation_version(
-            {
-                "locator": citation_context["locator"],
-                "annotation": citation_context["annotation"] or "",
-                "excerpt": citation_context["excerpt"],
-                "quote": citation_context["quote_text"] or citation_context["excerpt"],
-            }
+        citation_context = self._citation_context(
+            excerpt=excerpt,
+            locator=locator,
+            annotation=annotation,
+            quote=quote,
         )
         row = await self.repository.create_citation_instance(
             user_id=user_id,

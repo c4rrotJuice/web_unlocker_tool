@@ -1,0 +1,245 @@
+Canonical Extension Feature Inventory
+
+// Canonical capability payload returned from backend (derived from user_entitlements)
+// DO NOT derive this client-side
+
+type Tier = "guest" | "free" | "standard" | "pro";
+
+type CapabilityPayload = {
+  tier: Tier;
+  status: "active" | "expired" | "grace_period";
+
+  capabilities: {
+    // --- PAGE UTILITY ---
+    copy_unlock: {
+      enabled: boolean;        // restore copy/select/paste
+      right_click_restore: boolean;
+      anti_block_bypass: boolean;
+      soft_ad_cleanup: boolean;
+    };
+
+    // --- CAPTURE ACTIONS ---
+    actions: {
+      copy: boolean;
+      cite: boolean;
+      note: boolean;
+      quote: boolean;
+      work_in_editor: boolean;
+    };
+
+    // --- USAGE LIMITS ---
+    usage: {
+      citations_per_week: number | null;
+      notes_per_week: number | null;
+      documents_limit: number | null;
+      history_limit: number | "limited" | "full";
+    };
+
+    // --- CITATION SYSTEM ---
+    citation: {
+      styles: Array<"apa" | "mla" | "chicago" | "harvard">;
+      formats: Array<"inline" | "footnote" | "bibliography">;
+      backend_render_only: true; // enforced always 
+    };
+
+    // --- RESEARCH GRAPH ACCESS ---
+    research: {
+      sources: boolean;
+      citations: boolean;
+      quotes: boolean;
+      notes: boolean;
+      documents: boolean;
+      projects: boolean;
+      tags: boolean;
+    };
+
+    // --- EDITOR ---
+    editor: {
+      access: boolean;
+      autosave: boolean;
+      checkpoints: boolean;
+      export_formats: Array<"pdf" | "html">;
+      zip_export: boolean;
+      document_freeze_on_limit: boolean;
+    };
+
+    // --- HISTORY / CONTINUITY ---
+    history: {
+      recent_items: boolean;
+      extended_history: boolean;
+      search: boolean;
+      export: boolean;
+    };
+
+    // --- EXTENSION BEHAVIOR ---
+    extension: {
+      pill_actions: {
+        copy: boolean;
+        cite: boolean;
+        note: boolean;
+        quote: boolean;
+      };
+      sidepanel_access: boolean;
+      work_in_editor_flow: boolean;
+    };
+
+    // --- MONETIZATION FLAGS ---
+    monetization: {
+      ads: boolean;
+      upgrade_prompts: boolean;
+    };
+  };
+};
+
+==================================================
+1. Core Product Pillars
+
+These are the non-negotiables. Everything else supports these.
+
+A. Page Freedom Layer
+Auto unlock copy / select / paste
+Restore right-click where blocked
+Neutralize common anti-copy JS
+Soft ad cleanup (focus mode)
+
+This is your daily-use hook (why people keep the extension installed)
+
+B. Highlight → Action Layer
+Reliable text selection detection
+Context-aware action pill
+Fast, zero-friction actions:
+Copy
+Cite
+Note
+Quote
+
+This is your interaction engine
+
+C. Research Capture Layer
+Citation generation (multi-style)
+Quote capture
+Note creation:
+highlight-derived
+plain note
+Backend persistence (no local truth)
+
+This is your value creation layer
+
+D. Continuity Layer
+Work-in-editor (seeded entry)
+Open editor from extension
+Dashboard access
+Synced recent citations/notes
+
+This is your bridge into Writior
+
+E. Identity + Tier Layer
+Sign in / sign up
+Tier display (Free / Standard / Pro)
+Usage limits display
+Backend-enforced gating
+
+This is your monetization + control layer
+
+Feature Inventory (Clean + Structured)
+1. Page Utility Features
+Auto unlock copy/select/paste
+Event unblocking (preventDefault killers)
+CSS selection restore
+Mutation observer for re-blocking sites
+Soft ad cleanup (focus mode)
+Per-domain toggle (later phase)
+2. Highlight & Interaction
+Selection detection engine
+Minimum-length filtering
+Ignore inputs/editables
+Stable pill positioning
+Pill actions:
+Copy (instant)
+Cite (modal)
+Note (composer)
+Quote (save/preview)
+3. Citation System
+Citation modal
+Style toggle:
+APA
+MLA
+Chicago
+Harvard
+Format toggle:
+Inline
+Footnote
+Bibliography
+Actions:
+Copy (copy + save)
+Save (save only)
+Backend-generated citation only
+4. Notes & Quotes
+Quote capture (highlight → stored)
+Highlight-derived note:
+highlight text
+user note
+source URL
+Plain note:
+user text only
+optional source context
+Attach page metadata automatically where available
+5. Sidepanel (Main UI)
+Profile section
+Email
+Tier badge
+Usage summary
+Buttons:
+Open Editor
+Dashboard
+Sign Out
+Tabs
+Citations
+Notes
+New Note
+Content behavior
+Recent citations list
+Recent notes list
+Expand to full view
+Copy button on expanded view
+6. Auth System
+Sign in / sign up flow
+Handoff issue + exchange
+Token stored in background
+Session restore on startup
+No cookie reliance
+No page bridge dependency
+7. Work in Editor
+Call backend orchestration
+Receive editor_url
+Open editor directly
+No manual URL construction
+8. Error & Feedback System
+Explicit handling for:
+handoff_invalid
+handoff_expired
+handoff_already_used
+auth_attempt_invalid
+auth_attempt_expired
+UI feedback:
+success
+failure
+retry states
+9. Tier-Aware Behavior
+Guest
+unlock copy/select/paste
+soft ad cleanup
+plain copy only
+pill shows limited actions (Cite/Note locked)
+Free
+citation (APA, MLA)
+note + quote
+recent items
+usage limits
+Standard
+more citation styles (APA, MLA, CHICAGO, HAVARD)
+higher limits
+richer history
+Pro
+highest limits
+extended workflows (mostly web app side)

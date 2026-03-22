@@ -1,5 +1,5 @@
 export const CITATION_STYLES = Object.freeze(["apa", "mla", "chicago", "harvard"]);
-export const CITATION_FORMATS = Object.freeze(["inline", "footnote", "bibliography"]);
+export const CITATION_FORMATS = Object.freeze(["inline", "footnote", "bibliography", "quote_attribution"]);
 
 export function normalizeCitationStyle(value: any, fallback = "apa") {
   const normalized = String(value || fallback).trim().toLowerCase();
@@ -40,6 +40,9 @@ export function getCitationPreviewText(record: any, style = "apa", format = "bib
     if (normalizedFormat === "bibliography") {
       const value = record?.citation?.full_citation || record?.citation?.full_text || record?.full_citation || record?.full_text || "";
       return String(value).trim();
+    }
+    if (normalizedFormat === "quote_attribution" && typeof (record?.citation?.quote_attribution || record?.quote_attribution) === "string") {
+      return String(record?.citation?.quote_attribution || record?.quote_attribution).trim();
     }
   }
   return "";

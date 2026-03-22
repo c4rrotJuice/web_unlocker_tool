@@ -1,5 +1,6 @@
 import { createLogger } from "../shared/utils/logger.js";
 import { createRuntimeClient, SURFACE_NAMES } from "../shared/utils/runtime_client.js";
+import { renderPopupAuthSnapshot } from "./app/index.js";
 const logger = createLogger("popup");
 function createButton(label, onClick) {
     const button = document.createElement("button");
@@ -31,31 +32,43 @@ function getAuthStatusText(result) {
 function renderPopup(root) {
     const runtimeClient = createRuntimeClient(globalThis.chrome, SURFACE_NAMES.POPUP);
     const shell = document.createElement("section");
-    const title = document.createElement("h1");
-    const status = document.createElement("p");
+    const snapshotRoot = document.createElement("div");
     const actions = document.createElement("div");
-    title.textContent = "Writior";
-    status.textContent = "Auth: loading";
     async function refreshAuth() {
         const result = await runtimeClient.authStatusGet();
-        status.textContent = getAuthStatusText(result);
+        renderPopupAuthSnapshot(snapshotRoot, result?.ok ? result.data?.auth : {
+            status: "error",
+            error: { message: getAuthStatusText(result) },
+        });
         return result;
     }
     actions.append(createButton("Sign in", async () => {
-        status.textContent = "Auth: starting sign-in";
+        renderPopupAuthSnapshot(snapshotRoot, { status: "loading" });
         const result = await runtimeClient.authStart({
             trigger: "popup_sign_in",
             redirectPath: "/dashboard",
         });
-        status.textContent = getAuthStatusText(result);
+        renderPopupAuthSnapshot(snapshotRoot, result?.ok ? result.data?.auth : {
+            status: "error",
+            error: { message: getAuthStatusText(result) },
+        });
     }), createButton("Sign out", async () => {
         const result = await runtimeClient.authLogout();
-        status.textContent = getAuthStatusText(result);
+        renderPopupAuthSnapshot(snapshotRoot, result?.ok ? result.data?.auth : {
+            status: "error",
+            error: { message: getAuthStatusText(result) },
+        });
     }), createButton("Open sidepanel", async () => {
         const result = await runtimeClient.openSidepanel();
-        status.textContent = result.ok ? status.textContent : `Auth error: ${result.error.message}`;
+        if (!result?.ok) {
+            renderPopupAuthSnapshot(snapshotRoot, {
+                status: "error",
+                error: { message: result?.error?.message || "Open sidepanel failed." },
+            });
+        }
     }));
-    shell.append(title, status, actions);
+    renderPopupAuthSnapshot(snapshotRoot, { status: "loading" });
+    shell.append(snapshotRoot, actions);
     root.replaceChildren(shell);
     void refreshAuth();
 }

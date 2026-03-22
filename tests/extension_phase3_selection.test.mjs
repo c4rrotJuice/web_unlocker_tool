@@ -513,6 +513,82 @@ test("copy action falls back to execCommand with a hidden textarea when clipboar
   assert.equal(runtime.getState().pill.lastMessage, "Copied");
 });
 
+test("cite opens a preview modal without persisting immediately", async () => {
+  const { documentRef, windowRef } = installEnvironment();
+  setPageMetadata(documentRef);
+  const timers = createTimerHarness();
+  const calls = [];
+  const runtime = createSelectionRuntime({
+    documentRef,
+    windowRef,
+    MutationObserverRef: FakeMutationObserver,
+    setTimeoutRef: timers.setTimeoutRef,
+    clearTimeoutRef: timers.clearTimeoutRef,
+    chromeApi: { runtime: { sendMessage() {} } },
+    runtimeClientFactory() {
+      return {
+        authStatusGet: async () => ({ ok: true, data: { auth: { bootstrap: { capabilities: { citation_styles: ["apa", "mla"] } } } } }),
+        previewCitation: async (payload) => {
+          calls.push({ kind: "preview", payload });
+          return {
+            ok: true,
+            data: {
+              citation: {
+                id: null,
+                source_id: null,
+                source: {
+                  title: "Demo Article",
+                  canonical_url: "https://example.com/articles/demo",
+                  authors: [{ fullName: "A. Author" }],
+                },
+                renders: {
+                  apa: {
+                    bibliography: "Demo Article. Example citation output.",
+                    inline: "(Demo Article, 2026)",
+                    footnote: "Demo Article. Example footnote output.",
+                    quote_attribution: "\"Preview selection\" (Demo Article, 2026)",
+                  },
+                },
+              },
+              render_bundle: {
+                renders: {
+                  apa: {
+                    bibliography: "Demo Article. Example citation output.",
+                    inline: "(Demo Article, 2026)",
+                    footnote: "Demo Article. Example footnote output.",
+                    quote_attribution: "\"Preview selection\" (Demo Article, 2026)",
+                  },
+                },
+              },
+            },
+          };
+        },
+        renderCitation: async () => ({ ok: false, error: { code: "unused", message: "unused" } }),
+        saveCitation: async () => ({ ok: true, data: { id: "citation-1", renders: { apa: { bibliography: "saved" } } } }),
+      };
+    },
+  });
+  const selectionHost = documentRef.createElement("div");
+  documentRef.body.appendChild(selectionHost);
+  setSelection(documentRef, {
+    text: "Preview selection",
+    rect: { left: 120, top: 200, right: 300, bottom: 224, width: 180, height: 24 },
+    anchorNode: selectionHost,
+    focusNode: selectionHost,
+  });
+
+  runtime.bootstrap();
+  timers.flush();
+
+  const citeButton = runtime.pill.panel.children[0].children.find((child) => child.textContent === "Cite");
+  await citeButton.dispatchEvent(new FakeEvent("click", citeButton));
+  await Promise.resolve();
+
+  assert.equal(calls.length, 1);
+  assert.equal(runtime.citationModal.isVisible(), true);
+  assert.equal(Boolean(runtime.citationModal.getState().citation?.id), false);
+});
+
 test("pill waits until pointer selection settles before rendering", () => {
   const { documentRef, runtime, timers } = createSelectionEnvironment();
   const selectionHost = documentRef.createElement("div");

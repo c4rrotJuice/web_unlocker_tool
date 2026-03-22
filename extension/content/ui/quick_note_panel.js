@@ -88,8 +88,23 @@ export function createQuickNotePanel({ documentRef = globalThis.document, window
     saveButton.textContent = "Save note";
     saveButton.setAttribute("data-quick-note-save", "true");
     saveButton.style.background = "rgba(14, 165, 233, 0.2)";
-    actions.append(cancelButton, saveButton);
-    panel.append(heading, preview.root, textarea, feedback, actions);
+    if (typeof actions.append === "function") {
+        actions.append(cancelButton, saveButton);
+    }
+    else {
+        actions.appendChild(cancelButton);
+        actions.appendChild(saveButton);
+    }
+    if (typeof panel.append === "function") {
+        panel.append(heading, preview.root, textarea, feedback, actions);
+    }
+    else {
+        panel.appendChild(heading);
+        panel.appendChild(preview.root);
+        panel.appendChild(textarea);
+        panel.appendChild(feedback);
+        panel.appendChild(actions);
+    }
     host.appendChild(panel);
     let visible = false;
     let state = {

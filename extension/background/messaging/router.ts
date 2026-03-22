@@ -26,6 +26,7 @@ function createDefaultHandlers() {
       createNote: (request) => createNotImplementedResult(request.type, request.requestId),
     },
     citation: {
+      preview: (request) => createNotImplementedResult(request.type, request.requestId),
       render: (request) => createNotImplementedResult(request.type, request.requestId),
       save: (request) => createNotImplementedResult(request.type, request.requestId),
     },
@@ -54,6 +55,7 @@ function createRouteTable(handlers) {
     [MESSAGE_NAMES.CAPTURE_CREATE_CITATION]: handlers.capture.createCitation,
     [MESSAGE_NAMES.CAPTURE_CREATE_QUOTE]: handlers.capture.createQuote,
     [MESSAGE_NAMES.CAPTURE_CREATE_NOTE]: handlers.capture.createNote,
+    [MESSAGE_NAMES.CITATION_PREVIEW]: handlers.citation.preview,
     [MESSAGE_NAMES.CITATION_RENDER]: handlers.citation.render,
     [MESSAGE_NAMES.CITATION_SAVE]: handlers.citation.save,
     [MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST]: handlers.editor.requestWorkInEditor,

@@ -1,0 +1,299 @@
+{
+  tier: "guest",
+  capabilities: {
+    copy_unlock: {
+      enabled: true,
+      right_click_restore: true,
+      anti_block_bypass: true,
+      soft_ad_cleanup: true
+    },
+
+    actions: {
+      copy: true,
+      cite: false,
+      note: false,
+      quote: false,
+      work_in_editor: false
+    },
+
+    usage: {
+      citations_per_week: 0,
+      notes_per_week: 0,
+      documents_limit: 0,
+      history_limit: "limited"
+    },
+
+    citation: {
+      styles: [],
+      formats: [],
+      backend_render_only: true
+    },
+
+    research: {
+      sources: false,
+      citations: false,
+      quotes: false,
+      notes: false,
+      documents: false,
+      projects: false,
+      tags: false
+    },
+
+    editor: {
+      access: false,
+      autosave: false,
+      checkpoints: false,
+      export_formats: [],
+      zip_export: false,
+      document_freeze_on_limit: true
+    },
+
+    history: {
+      recent_items: false,
+      extended_history: false,
+      search: false,
+      export: false
+    },
+
+    extension: {
+      pill_actions: {
+        copy: true,
+        cite: false,
+        note: false,
+        quote: false
+      },
+      sidepanel_access: false,
+      work_in_editor_flow: false
+    },
+
+    monetization: {
+      ads: true,
+      upgrade_prompts: true
+    }
+  }
+}
+=================================================================================================
+{
+  tier: "free",
+  capabilities: {
+    copy_unlock: {
+      enabled: true,
+      right_click_restore: true,
+      anti_block_bypass: true,
+      soft_ad_cleanup: true
+    },
+
+    actions: {
+      copy: true,
+      cite: true,
+      note: true,
+      quote: true,
+      work_in_editor: true
+    },
+
+    usage: {
+      citations_per_week: 10,
+      notes_per_week: 10,
+      documents_limit: 3,
+      history_limit: "limited"
+    },
+
+    citation: {
+      styles: ["apa", "mla"],
+      formats: ["inline", "bibliography"],
+      backend_render_only: true
+    },
+
+    research: {
+      sources: true,
+      citations: true,
+      quotes: true,
+      notes: true,
+      documents: true,
+      projects: true,
+      tags: true
+    },
+
+    editor: {
+      access: true,
+      autosave: true,
+      checkpoints: true,
+      export_formats: ["pdf", "html"],
+      zip_export: false,
+      document_freeze_on_limit: true
+    },
+
+    history: {
+      recent_items: true,
+      extended_history: false,
+      search: false,
+      export: false
+    },
+
+    extension: {
+      pill_actions: {
+        copy: true,
+        cite: true,
+        note: true,
+        quote: true
+      },
+      sidepanel_access: true,
+      work_in_editor_flow: true
+    },
+
+    monetization: {
+      ads: true,
+      upgrade_prompts: true
+    }
+  }
+}
+==================================================================================
+{
+  tier: "standard",
+  capabilities: {
+    copy_unlock: {
+      enabled: true,
+      right_click_restore: true,
+      anti_block_bypass: true,
+      soft_ad_cleanup: true
+    },
+
+    actions: {
+      copy: true,
+      cite: true,
+      note: true,
+      quote: true,
+      work_in_editor: true
+    },
+
+    usage: {
+      citations_per_week: 50,
+      notes_per_week: null,
+      documents_limit: 14,
+      history_limit: "extended"
+    },
+
+    citation: {
+      styles: ["apa", "mla", "chicago", "harvard"],
+      formats: ["inline", "footnote", "bibliography"],
+      backend_render_only: true
+    },
+
+    research: {
+      sources: true,
+      citations: true,
+      quotes: true,
+      notes: true,
+      documents: true,
+      projects: true,
+      tags: true
+    },
+
+    editor: {
+      access: true,
+      autosave: true,
+      checkpoints: true,
+      export_formats: ["pdf", "html", "Docx"],
+      zip_export: false,
+      document_freeze_on_limit: true
+    },
+
+    history: {
+      recent_items: true,
+      extended_history: true,
+      search: true,
+      export: false
+    },
+
+    extension: {
+      pill_actions: {
+        copy: true,
+        cite: true,
+        note: true,
+        quote: true
+      },
+      sidepanel_access: true,
+      work_in_editor_flow: true
+    },
+
+    monetization: {
+      ads: false,
+      upgrade_prompts: true
+    }
+  }
+}
+======================================================================================
+{
+  tier: "pro",
+  capabilities: {
+    copy_unlock: {
+      enabled: true,
+      right_click_restore: true,
+      anti_block_bypass: true,
+      soft_ad_cleanup: true
+    },
+
+    actions: {
+      copy: true,
+      cite: true,
+      note: true,
+      quote: true,
+      work_in_editor: true
+    },
+
+    usage: {
+      citations_per_week: null,
+      notes_per_week: null,
+      documents_limit: null,
+      history_limit: "full"
+    },
+
+    citation: {
+      styles: ["apa", "mla", "chicago", "harvard"],
+      formats: ["inline", "footnote", "bibliography"],
+      backend_render_only: true
+    },
+
+    research: {
+      sources: true,
+      citations: true,
+      quotes: true,
+      notes: true,
+      documents: true,
+      projects: true,
+      tags: true
+    },
+
+    editor: {
+      access: true,
+      autosave: true,
+      checkpoints: true,
+      export_formats: ["pdf", "html"],
+      zip_export: true,
+      document_freeze_on_limit: false
+    },
+
+    history: {
+      recent_items: true,
+      extended_history: true,
+      search: true,
+      export: true
+    },
+
+    extension: {
+      pill_actions: {
+        copy: true,
+        cite: true,
+        note: true,
+        quote: true
+      },
+      sidepanel_access: true,
+      work_in_editor_flow: true
+    },
+
+    monetization: {
+      ads: false,
+      upgrade_prompts: false
+    }
+  }
+}

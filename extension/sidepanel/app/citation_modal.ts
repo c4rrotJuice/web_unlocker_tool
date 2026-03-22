@@ -2,6 +2,7 @@ import { getCitationPreviewText, normalizeCitationFormat, normalizeCitationStyle
 import { createCitationFormatTabs } from "../components/citation_format_tabs.ts";
 import { createCitationPreviewCard } from "../components/citation_preview_card.ts";
 import { createCitationStyleTabs } from "../components/citation_style_tabs.ts";
+import { createTierBadge } from "../components/tier_badge.ts";
 
 function setButtonDisabled(button: any, disabled: boolean) {
   button.disabled = disabled;
@@ -16,6 +17,7 @@ export function renderCitationModal(root, snapshot: any = {}, options: any = {})
   const {
     documentRef = globalThis.document,
     navigatorRef = globalThis.navigator,
+    onRequestPreview,
     onRequestRender,
     onSave,
     onDismiss,
@@ -27,9 +29,11 @@ export function renderCitationModal(root, snapshot: any = {}, options: any = {})
   const state = {
     citation: snapshot?.citation || null,
     renderBundle: snapshot?.render_bundle || null,
+    draftPayload: snapshot?.draft_payload || null,
     selectedStyle: normalizeCitationStyle(snapshot?.selected_style || snapshot?.citation?.style || "apa"),
     selectedFormat: normalizeCitationFormat(snapshot?.selected_format || snapshot?.citation?.format || "bibliography"),
     lockedStyles: Array.isArray(snapshot?.locked_styles) ? snapshot.locked_styles.slice() : [],
+    tier: String(snapshot?.tier || "guest").trim().toLowerCase() || "guest",
     loading: Boolean(snapshot?.loading),
     error: snapshot?.error || null,
     saveStatus: "idle",
@@ -37,13 +41,16 @@ export function renderCitationModal(root, snapshot: any = {}, options: any = {})
 
   const wrapper = documentRef.createElement("section");
   const title = documentRef.createElement("div");
+  const header = documentRef.createElement("div");
   const headline = documentRef.createElement("h2");
   const sourceMeta = documentRef.createElement("p");
+  const lockMeta = documentRef.createElement("p");
   const actions = documentRef.createElement("div");
   const copyButton = documentRef.createElement("button");
   const saveButton = documentRef.createElement("button");
   const closeButton = documentRef.createElement("button");
   const statusLine = documentRef.createElement("p");
+  const tierBadge = createTierBadge({ documentRef, tier: state.tier });
 
   wrapper.setAttribute("data-citation-modal", "true");
   wrapper.setAttribute("tabindex", "0");
@@ -64,6 +71,11 @@ export function renderCitationModal(root, snapshot: any = {}, options: any = {})
   title.style.letterSpacing = "0.08em";
   title.style.color = "#94a3b8";
 
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+  header.style.gap = "12px";
+
   headline.style.margin = "0";
   headline.style.fontSize = "22px";
   headline.style.lineHeight = "1.15";
@@ -73,6 +85,11 @@ export function renderCitationModal(root, snapshot: any = {}, options: any = {})
   sourceMeta.style.fontSize = "12px";
   sourceMeta.style.lineHeight = "1.5";
   sourceMeta.style.color = "#94a3b8";
+
+  lockMeta.style.margin = "0";
+  lockMeta.style.fontSize = "12px";
+  lockMeta.style.lineHeight = "1.5";
+  lockMeta.style.color = "#cbd5e1";
 
   statusLine.style.margin = "0";
   statusLine.style.minHeight = "18px";
@@ -106,26 +123,31 @@ export function renderCitationModal(root, snapshot: any = {}, options: any = {})
     documentRef,
     selectedStyle: state.selectedStyle,
     lockedStyles: state.lockedStyles,
+    lockLabel: "Locked",
     onSelect: async (style) => {
       if (style === state.selectedStyle) {
         return;
       }
       state.selectedStyle = normalizeCitationStyle(style);
-      state.loading = !getCurrentText();
+      state.loading = true;
       state.error = null;
       render();
-      if (!state.citation?.id) {
-        state.loading = false;
-        state.error = { code: "invalid_payload", message: "Missing citation id." };
-        render();
-        return;
-      }
-      const result = await onRequestRender?.({
-        citationId: state.citation.id,
-        style: state.selectedStyle,
-      });
+      const result = state.citation?.id
+        ? await onRequestRender?.({
+          citationId: state.citation.id,
+          style: state.selectedStyle,
+        })
+        : await onRequestPreview?.({
+          ...(state.draftPayload || {}),
+          style: state.selectedStyle,
+        });
       if (result?.ok) {
-        state.renderBundle = result.data || null;
+        if (!state.citation?.id) {
+          state.citation = result.data?.citation || state.citation;
+          state.renderBundle = result.data?.render_bundle || null;
+        } else {
+          state.renderBundle = result.data || null;
+        }
         state.loading = false;
         state.error = null;
       } else {
@@ -156,27 +178,37 @@ export function renderCitationModal(root, snapshot: any = {}, options: any = {})
   }
 
   async function saveSelection(copy = false) {
-    if (!state.citation?.id) {
-      state.error = { code: "invalid_payload", message: "Missing citation id." };
+    if (copy) {
+      return { ok: true, data: { copied: true } };
+    }
+    if (state.citation?.id) {
+      state.saveStatus = "saved";
+      state.error = null;
+      render();
+      return { ok: true, data: state.citation };
+    }
+    if (!state.draftPayload) {
+      state.error = { code: "invalid_payload", message: "Citation preview is unavailable." };
       render();
       return { ok: false, error: state.error };
     }
-    state.saveStatus = copy ? "copying" : "saving";
+    state.saveStatus = "saving";
     render();
     const result = await onSave?.({
-      citationId: state.citation.id,
+      ...state.draftPayload,
       style: state.selectedStyle,
       format: state.selectedFormat,
-      copy,
     });
     if (result?.ok) {
-      state.saveStatus = copy ? "copied" : "saved";
+      state.citation = result.data || state.citation;
+      state.renderBundle = result?.data?.renders ? { renders: result.data.renders } : state.renderBundle;
+      state.saveStatus = "saved";
       state.error = null;
       render();
       return result;
     }
     state.saveStatus = "idle";
-    state.error = result?.error || { code: "save_failed", message: copy ? "Copy failed." : "Save failed." };
+    state.error = result?.error || { code: "save_failed", message: "Save failed." };
     render();
     return result;
   }
@@ -198,7 +230,9 @@ export function renderCitationModal(root, snapshot: any = {}, options: any = {})
       render();
       return;
     }
-    await saveSelection(true);
+    state.saveStatus = "copied";
+    state.error = null;
+    render();
   });
 
   saveButton.addEventListener("click", async (event: any) => {
@@ -230,11 +264,15 @@ export function renderCitationModal(root, snapshot: any = {}, options: any = {})
   });
 
   function render() {
+    tierBadge.setTier(state.tier);
     headline.textContent = state.citation?.metadata?.title || state.citation?.source?.title || "Citation preview";
     sourceMeta.textContent = [
-      state.citation?.metadata?.author || state.citation?.source?.author || "",
-      state.citation?.metadata?.canonical_url || state.citation?.source?.canonical_url || "",
+      state.citation?.metadata?.author || state.citation?.source?.authors?.[0]?.fullName || state.citation?.source?.publisher || "",
+      state.citation?.metadata?.canonical_url || state.citation?.source?.canonical_url || state.citation?.source?.page_url || "",
     ].filter(Boolean).join(" • ");
+    lockMeta.textContent = state.lockedStyles.length
+      ? "Some citation styles are locked for this account."
+      : "";
 
     styleTabs.render(state.selectedStyle);
     formatTabs.render(state.selectedFormat);
@@ -276,9 +314,12 @@ export function renderCitationModal(root, snapshot: any = {}, options: any = {})
     actions.appendChild(closeButton);
 
     wrapper.innerHTML = "";
-    wrapper.appendChild(title);
+    header.appendChild(title);
+    header.appendChild(tierBadge.root);
+    wrapper.appendChild(header);
     wrapper.appendChild(headline);
     wrapper.appendChild(sourceMeta);
+    wrapper.appendChild(lockMeta);
     wrapper.appendChild(styleTabs.root);
     wrapper.appendChild(formatTabs.root);
     wrapper.appendChild(previewCard.root);
@@ -306,6 +347,7 @@ export function renderCitationModal(root, snapshot: any = {}, options: any = {})
         error: state.error,
         lockedStyles: state.lockedStyles.slice(),
         saveStatus: state.saveStatus,
+        citation: state.citation,
       };
     },
   };

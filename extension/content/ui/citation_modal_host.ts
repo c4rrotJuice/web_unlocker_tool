@@ -4,6 +4,7 @@ const EXTENSION_UI_ATTR = "data-writior-extension-ui";
 
 export function createCitationModalHost({
   documentRef = globalThis.document,
+  onRequestPreview,
   onRequestRender,
   onSave,
   onDismiss,
@@ -37,7 +38,12 @@ export function createCitationModalHost({
   surface.style.overflow = "auto";
   surface.style.pointerEvents = "auto";
 
-  host.append(backdrop, surface);
+  if (typeof host.append === "function") {
+    host.append(backdrop, surface);
+  } else {
+    host.appendChild(backdrop);
+    host.appendChild(surface);
+  }
 
   let visible = false;
   let modal = null as any;
@@ -56,6 +62,7 @@ export function createCitationModalHost({
     modal = renderCitationModal(surface, snapshot, {
       documentRef,
       navigatorRef,
+      onRequestPreview,
       onRequestRender,
       onSave,
       onDismiss,

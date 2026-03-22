@@ -12,22 +12,40 @@ export function createTierBadge({
   root.style.fontWeight = "700";
   root.style.textTransform = "uppercase";
   root.style.letterSpacing = "0.04em";
+  root.style.border = "1px solid transparent";
+
+  function labelForTier(normalized) {
+    if (!normalized) {
+      return "Guest";
+    }
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
 
   function setTier(nextTier) {
     const normalized = String(nextTier || "guest").trim().toLowerCase() || "guest";
-    root.textContent = normalized;
+    root.textContent = labelForTier(normalized);
+    root.setAttribute("data-tier", normalized);
     if (normalized === "pro") {
       root.style.background = "#dbeafe";
       root.style.color = "#1d4ed8";
+      root.style.borderColor = "rgba(59, 130, 246, 0.24)";
       return;
     }
-    if (normalized === "free" || normalized === "guest") {
-      root.style.background = "#e2e8f0";
-      root.style.color = "#334155";
+    if (normalized === "standard") {
+      root.style.background = "#dcfce7";
+      root.style.color = "#166534";
+      root.style.borderColor = "rgba(34, 197, 94, 0.24)";
       return;
     }
-    root.style.background = "#dcfce7";
-    root.style.color = "#166534";
+    if (normalized === "free") {
+      root.style.background = "#fef3c7";
+      root.style.color = "#92400e";
+      root.style.borderColor = "rgba(245, 158, 11, 0.24)";
+      return;
+    }
+    root.style.background = "#e2e8f0";
+    root.style.color = "#334155";
+    root.style.borderColor = "rgba(100, 116, 139, 0.22)";
   }
 
   setTier(tier);

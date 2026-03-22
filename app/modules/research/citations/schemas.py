@@ -8,7 +8,7 @@ from app.services.citation_domain import SUPPORTED_STYLES
 from app.services.citation_domain import ExtractionPayload
 
 
-class CitationCreateRequest(BaseModel):
+class _CitationPayloadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     extraction_payload: ExtractionPayload
     excerpt: str | None = None
@@ -26,6 +26,14 @@ class CitationCreateRequest(BaseModel):
         if normalized not in SUPPORTED_STYLES:
             raise ValueError("unsupported citation style")
         return normalized
+
+
+class CitationPreviewRequest(_CitationPayloadRequest):
+    pass
+
+
+class CitationCreateRequest(_CitationPayloadRequest):
+    pass
 
 
 class CitationUpdateRequest(BaseModel):

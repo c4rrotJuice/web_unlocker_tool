@@ -18,6 +18,7 @@ exports.MESSAGE_NAMES = Object.freeze({
     CAPTURE_CREATE_CITATION: "capture.create_citation",
     CAPTURE_CREATE_QUOTE: "capture.create_quote",
     CAPTURE_CREATE_NOTE: "capture.create_note",
+    CITATION_PREVIEW: "citation.preview",
     CITATION_RENDER: "citation.render",
     CITATION_SAVE: "citation.save",
     WORK_IN_EDITOR_REQUEST: "editor.work_in_editor_request",
@@ -110,6 +111,11 @@ exports.MESSAGE_CONTRACTS = Object.freeze({
         payloadShape: "surface:string, noteText?:string, capture?:{selectionText?:string, pageTitle?:string, pageUrl?:string, pageDomain?:string}",
         resultShape: "note:canonical backend response",
     }),
+    [message_names_ts_1.MESSAGE_NAMES.CITATION_PREVIEW]: Object.freeze({
+        topic: exports.MESSAGE_TOPICS.CITATION,
+        payloadShape: "surface:string, capture:{selectionText:string, pageTitle:string, pageUrl:string, pageDomain?:string}, style:string",
+        resultShape: "citation:{id:null, renders:...}, render_bundle:{renders:{...quote_attribution:string}}",
+    }),
     [message_names_ts_1.MESSAGE_NAMES.CITATION_RENDER]: Object.freeze({
         topic: exports.MESSAGE_TOPICS.CITATION,
         payloadShape: "surface:string, citationId:string, style:string",
@@ -117,8 +123,8 @@ exports.MESSAGE_CONTRACTS = Object.freeze({
     }),
     [message_names_ts_1.MESSAGE_NAMES.CITATION_SAVE]: Object.freeze({
         topic: exports.MESSAGE_TOPICS.CITATION,
-        payloadShape: "surface:string, citationId:string, style:string, format:string, copy?:boolean",
-        resultShape: "saved:boolean, citationId:string, style:string, format:string, copy:boolean",
+        payloadShape: "surface:string, capture:{selectionText:string, pageTitle:string, pageUrl:string, pageDomain?:string}, style:string, format:string",
+        resultShape: "citation:canonical backend response",
     }),
     [message_names_ts_1.MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST]: Object.freeze({
         topic: exports.MESSAGE_TOPICS.EDITOR,
@@ -146,6 +152,7 @@ exports.createCaptureCreateCitationRequest = createCaptureCreateCitationRequest;
 exports.createCaptureCreateQuoteRequest = createCaptureCreateQuoteRequest;
 exports.createCaptureCreateNoteRequest = createCaptureCreateNoteRequest;
 exports.createCitationRenderRequest = createCitationRenderRequest;
+exports.createCitationPreviewRequest = createCitationPreviewRequest;
 exports.createCitationSaveRequest = createCitationSaveRequest;
 exports.createWorkInEditorRequest = createWorkInEditorRequest;
 const message_names_ts_1 = require("../constants/message_names.ts");
@@ -199,6 +206,9 @@ function createCaptureCreateNoteRequest(requestId, payload) {
 }
 function createCitationRenderRequest(requestId, payload) {
     return createRequest(message_names_ts_1.MESSAGE_NAMES.CITATION_RENDER, requestId, payload);
+}
+function createCitationPreviewRequest(requestId, payload) {
+    return createRequest(message_names_ts_1.MESSAGE_NAMES.CITATION_PREVIEW, requestId, payload);
 }
 function createCitationSaveRequest(requestId, payload) {
     return createRequest(message_names_ts_1.MESSAGE_NAMES.CITATION_SAVE, requestId, payload);
@@ -292,7 +302,7 @@ exports.normalizeCitationFormat = normalizeCitationFormat;
 exports.getLockedCitationStyles = getLockedCitationStyles;
 exports.getCitationPreviewText = getCitationPreviewText;
 exports.CITATION_STYLES = Object.freeze(["apa", "mla", "chicago", "harvard"]);
-exports.CITATION_FORMATS = Object.freeze(["inline", "footnote", "bibliography"]);
+exports.CITATION_FORMATS = Object.freeze(["inline", "footnote", "bibliography", "quote_attribution"]);
 function normalizeCitationStyle(value, fallback = "apa") {
     const normalized = String(value || fallback).trim().toLowerCase();
     return exports.CITATION_STYLES.includes(normalized) ? normalized : fallback;
@@ -329,6 +339,9 @@ function getCitationPreviewText(record, style = "apa", format = "bibliography") 
         if (normalizedFormat === "bibliography") {
             const value = record?.citation?.full_citation || record?.citation?.full_text || record?.full_citation || record?.full_text || "";
             return String(value).trim();
+        }
+        if (normalizedFormat === "quote_attribution" && typeof (record?.citation?.quote_attribution || record?.quote_attribution) === "string") {
+            return String(record?.citation?.quote_attribution || record?.quote_attribution).trim();
         }
     }
     return "";
@@ -477,6 +490,7 @@ function buildNoteCaptureRequest({ selectionText, noteText, pageTitle, pageUrl, 
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.REQUEST_PAYLOAD_VALIDATORS = void 0;
 exports.validateCitationRenderBundle = validateCitationRenderBundle;
+exports.validateCitationPreviewResponse = validateCitationPreviewResponse;
 exports.validateMessageEnvelope = validateMessageEnvelope;
 exports.validateMessageResult = validateMessageResult;
 exports.validateResultEnvelope = validateResultEnvelope;
@@ -619,19 +633,29 @@ function validateCitationRenderPayload(payload) {
     }
     return null;
 }
+function validateCitationPreviewPayload(payload) {
+    const captureError = validateCaptureEntityPayload(payload, "selectionText");
+    if (captureError) {
+        return captureError;
+    }
+    if (!isNonEmptyString(payload.style)) {
+        return "payload.style must be a non-empty string.";
+    }
+    if ((0, citation_ts_1.normalizeCitationStyle)(payload.style, "") !== payload.style.trim().toLowerCase()) {
+        return "payload.style must be one of the supported citation styles.";
+    }
+    return null;
+}
 function validateCitationSavePayload(payload) {
-    const renderError = validateCitationRenderPayload(payload);
-    if (renderError) {
-        return renderError;
+    const previewError = validateCitationPreviewPayload(payload);
+    if (previewError) {
+        return previewError;
     }
     if (!isNonEmptyString(payload.format)) {
         return "payload.format must be a non-empty string.";
     }
     if ((0, citation_ts_1.normalizeCitationFormat)(payload.format, "") !== payload.format.trim().toLowerCase()) {
         return "payload.format must be one of the supported citation formats.";
-    }
-    if (payload.copy != null && typeof payload.copy !== "boolean") {
-        return "payload.copy must be a boolean when provided.";
     }
     return null;
 }
@@ -649,6 +673,7 @@ exports.REQUEST_PAYLOAD_VALIDATORS = Object.freeze({
     [message_names_ts_1.MESSAGE_NAMES.CAPTURE_CREATE_CITATION]: (payload) => validateCaptureEntityPayload(payload, "selectionText"),
     [message_names_ts_1.MESSAGE_NAMES.CAPTURE_CREATE_QUOTE]: (payload) => validateCaptureEntityPayload(payload, "selectionText"),
     [message_names_ts_1.MESSAGE_NAMES.CAPTURE_CREATE_NOTE]: validateCaptureNotePayload,
+    [message_names_ts_1.MESSAGE_NAMES.CITATION_PREVIEW]: validateCitationPreviewPayload,
     [message_names_ts_1.MESSAGE_NAMES.CITATION_RENDER]: validateCitationRenderPayload,
     [message_names_ts_1.MESSAGE_NAMES.CITATION_SAVE]: validateCitationSavePayload,
     [message_names_ts_1.MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST]: validateEditorPayload,
@@ -693,6 +718,30 @@ function validateCitationRenderBundle(payload) {
             ...payload,
             renders,
             cache_hit: Boolean(payload.cache_hit),
+        },
+        meta: payload.meta ?? null,
+    };
+}
+function validateCitationPreviewResponse(payload) {
+    if (!isPlainObject(payload)) {
+        return (0, messages_ts_1.createErrorResult)(messages_ts_1.ERROR_CODES.INVALID_PAYLOAD, "Citation preview must be a JSON object.");
+    }
+    if (!isPlainObject(payload.citation)) {
+        return (0, messages_ts_1.createErrorResult)(messages_ts_1.ERROR_CODES.INVALID_PAYLOAD, "Citation preview must include citation data.");
+    }
+    const renderBundleResult = validateCitationRenderBundle(payload.render_bundle);
+    if (renderBundleResult?.ok === false) {
+        return renderBundleResult;
+    }
+    const normalizedRenderBundle = renderBundleResult && "data" in renderBundleResult
+        ? renderBundleResult.data
+        : payload.render_bundle;
+    return {
+        ok: true,
+        status: messages_ts_1.RESULT_STATUS.OK,
+        data: {
+            ...payload,
+            render_bundle: normalizedRenderBundle,
         },
         meta: payload.meta ?? null,
     };
@@ -942,6 +991,13 @@ function createRuntimeClient(chromeApi, surface) {
         renderCitation(payload) {
             const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-render-citation`);
             return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createCitationRenderRequest)(requestId, {
+                surface,
+                ...payload,
+            }));
+        },
+        previewCitation(payload) {
+            const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-preview-citation`);
+            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createCitationPreviewRequest)(requestId, {
                 surface,
                 ...payload,
             }));
@@ -2297,18 +2353,29 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createSelectionMenuButton = createSelectionMenuButton;
 function createSelectionMenuButton({ documentRef = globalThis.document, action, onAction, }) {
     const button = documentRef.createElement("button");
-    const isDisabled = action?.active === false || action?.locked === true;
+    const isLocked = action?.locked === true;
+    const isDisabled = action?.active === false || isLocked;
     button.type = "button";
-    button.textContent = action?.label || "";
+    button.textContent = isLocked ? `${action?.label || ""} Locked` : action?.label || "";
     button.setAttribute("data-selection-action", action?.key || "");
-    button.setAttribute("aria-label", action?.label || "");
+    button.setAttribute("aria-label", isLocked ? `${action?.label || ""} locked` : action?.label || "");
     button.disabled = isDisabled;
     if (isDisabled) {
         button.setAttribute("aria-disabled", "true");
     }
+    if (isLocked) {
+        button.setAttribute("data-locked", "true");
+        button.title = "Locked by backend plan state.";
+    }
     button.style.appearance = "none";
-    button.style.border = "1px solid rgba(148, 163, 184, 0.28)";
-    button.style.background = isDisabled ? "rgba(15, 23, 42, 0.56)" : "rgba(248, 250, 252, 0.1)";
+    button.style.border = isLocked
+        ? "1px dashed rgba(248, 250, 252, 0.32)"
+        : "1px solid rgba(148, 163, 184, 0.28)";
+    button.style.background = isLocked
+        ? "rgba(148, 163, 184, 0.16)"
+        : isDisabled
+            ? "rgba(15, 23, 42, 0.56)"
+            : "rgba(248, 250, 252, 0.1)";
     button.style.color = "#f8fafc";
     button.style.borderRadius = "999px";
     button.style.padding = "6px 10px";
@@ -2316,7 +2383,7 @@ function createSelectionMenuButton({ documentRef = globalThis.document, action, 
     button.style.lineHeight = "1";
     button.style.fontWeight = "600";
     button.style.cursor = isDisabled ? "not-allowed" : "pointer";
-    button.style.opacity = isDisabled ? "0.54" : "1";
+    button.style.opacity = isLocked ? "0.78" : isDisabled ? "0.54" : "1";
     const preserveSelection = (event) => {
         event.preventDefault?.();
         event.stopPropagation?.();
@@ -2537,6 +2604,7 @@ const FORMAT_LABELS = {
     inline: "Inline",
     footnote: "Footnote",
     bibliography: "Bibliography",
+    quote_attribution: "Quote Attribution",
 };
 function createCitationFormatTabs({ documentRef = globalThis.document, formats = citation_ts_1.CITATION_FORMATS, selectedFormat = "bibliography", onSelect, } = {}) {
     const root = documentRef.createElement("div");
@@ -2637,7 +2705,7 @@ const STYLE_LABELS = {
     chicago: "Chicago",
     harvard: "Harvard",
 };
-function createCitationStyleTabs({ documentRef = globalThis.document, styles = citation_ts_1.CITATION_STYLES, selectedStyle = "apa", lockedStyles = [], onSelect, } = {}) {
+function createCitationStyleTabs({ documentRef = globalThis.document, styles = citation_ts_1.CITATION_STYLES, selectedStyle = "apa", lockedStyles = [], lockLabel = "Locked", onSelect, } = {}) {
     const root = documentRef.createElement("div");
     root.setAttribute("data-citation-style-tabs", "true");
     root.style.display = "flex";
@@ -2649,20 +2717,25 @@ function createCitationStyleTabs({ documentRef = globalThis.document, styles = c
             const button = documentRef.createElement("button");
             const locked = Array.isArray(lockedStyles) && lockedStyles.includes(style);
             button.type = "button";
-            button.textContent = STYLE_LABELS[style] || String(style || "").toUpperCase();
+            button.textContent = locked
+                ? `${STYLE_LABELS[style] || String(style || "").toUpperCase()} ${lockLabel}`
+                : STYLE_LABELS[style] || String(style || "").toUpperCase();
             button.setAttribute("data-style", style);
             button.setAttribute("aria-pressed", String(style === nextSelectedStyle));
             button.style.padding = "8px 10px";
             button.style.borderRadius = "999px";
-            button.style.border = "1px solid rgba(148, 163, 184, 0.28)";
+            button.style.border = locked
+                ? "1px dashed rgba(248, 250, 252, 0.28)"
+                : "1px solid rgba(148, 163, 184, 0.28)";
             button.style.background = style === nextSelectedStyle ? "rgba(14, 165, 233, 0.18)" : "rgba(15, 23, 42, 0.72)";
             button.style.color = "#e2e8f0";
-            button.style.opacity = locked ? "0.52" : "1";
+            button.style.opacity = locked ? "0.68" : "1";
             button.style.cursor = locked ? "not-allowed" : "pointer";
             button.disabled = locked;
             if (locked) {
                 button.setAttribute("data-locked", "true");
                 button.setAttribute("aria-disabled", "true");
+                button.title = "Locked by backend plan state.";
             }
             button.addEventListener("click", (event) => {
                 event.preventDefault?.();
@@ -2681,6 +2754,59 @@ function createCitationStyleTabs({ documentRef = globalThis.document, styles = c
 }
 
 },
+"sidepanel/components/tier_badge.ts": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createTierBadge = createTierBadge;
+function createTierBadge({ documentRef = globalThis.document, tier = "guest", } = {}) {
+    const root = documentRef.createElement("span");
+    root.setAttribute("data-tier-badge", "true");
+    root.style.display = "inline-flex";
+    root.style.alignItems = "center";
+    root.style.padding = "4px 8px";
+    root.style.borderRadius = "999px";
+    root.style.fontSize = "11px";
+    root.style.fontWeight = "700";
+    root.style.textTransform = "uppercase";
+    root.style.letterSpacing = "0.04em";
+    root.style.border = "1px solid transparent";
+    function labelForTier(normalized) {
+        if (!normalized) {
+            return "Guest";
+        }
+        return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+    }
+    function setTier(nextTier) {
+        const normalized = String(nextTier || "guest").trim().toLowerCase() || "guest";
+        root.textContent = labelForTier(normalized);
+        root.setAttribute("data-tier", normalized);
+        if (normalized === "pro") {
+            root.style.background = "#dbeafe";
+            root.style.color = "#1d4ed8";
+            root.style.borderColor = "rgba(59, 130, 246, 0.24)";
+            return;
+        }
+        if (normalized === "standard") {
+            root.style.background = "#dcfce7";
+            root.style.color = "#166534";
+            root.style.borderColor = "rgba(34, 197, 94, 0.24)";
+            return;
+        }
+        if (normalized === "free") {
+            root.style.background = "#fef3c7";
+            root.style.color = "#92400e";
+            root.style.borderColor = "rgba(245, 158, 11, 0.24)";
+            return;
+        }
+        root.style.background = "#e2e8f0";
+        root.style.color = "#334155";
+        root.style.borderColor = "rgba(100, 116, 139, 0.22)";
+    }
+    setTier(tier);
+    return { root, setTier };
+}
+
+},
 "sidepanel/app/citation_modal.ts": function(module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -2689,6 +2815,7 @@ const citation_ts_1 = require("../../shared/types/citation.ts");
 const citation_format_tabs_ts_1 = require("../components/citation_format_tabs.ts");
 const citation_preview_card_ts_1 = require("../components/citation_preview_card.ts");
 const citation_style_tabs_ts_1 = require("../components/citation_style_tabs.ts");
+const tier_badge_ts_1 = require("../components/tier_badge.ts");
 function setButtonDisabled(button, disabled) {
     button.disabled = disabled;
     if (disabled) {
@@ -2699,29 +2826,34 @@ function setButtonDisabled(button, disabled) {
     }
 }
 function renderCitationModal(root, snapshot = {}, options = {}) {
-    const { documentRef = globalThis.document, navigatorRef = globalThis.navigator, onRequestRender, onSave, onDismiss, } = options;
+    const { documentRef = globalThis.document, navigatorRef = globalThis.navigator, onRequestPreview, onRequestRender, onSave, onDismiss, } = options;
     if (!root) {
         return { mounted: false };
     }
     const state = {
         citation: snapshot?.citation || null,
         renderBundle: snapshot?.render_bundle || null,
+        draftPayload: snapshot?.draft_payload || null,
         selectedStyle: (0, citation_ts_1.normalizeCitationStyle)(snapshot?.selected_style || snapshot?.citation?.style || "apa"),
         selectedFormat: (0, citation_ts_1.normalizeCitationFormat)(snapshot?.selected_format || snapshot?.citation?.format || "bibliography"),
         lockedStyles: Array.isArray(snapshot?.locked_styles) ? snapshot.locked_styles.slice() : [],
+        tier: String(snapshot?.tier || "guest").trim().toLowerCase() || "guest",
         loading: Boolean(snapshot?.loading),
         error: snapshot?.error || null,
         saveStatus: "idle",
     };
     const wrapper = documentRef.createElement("section");
     const title = documentRef.createElement("div");
+    const header = documentRef.createElement("div");
     const headline = documentRef.createElement("h2");
     const sourceMeta = documentRef.createElement("p");
+    const lockMeta = documentRef.createElement("p");
     const actions = documentRef.createElement("div");
     const copyButton = documentRef.createElement("button");
     const saveButton = documentRef.createElement("button");
     const closeButton = documentRef.createElement("button");
     const statusLine = documentRef.createElement("p");
+    const tierBadge = (0, tier_badge_ts_1.createTierBadge)({ documentRef, tier: state.tier });
     wrapper.setAttribute("data-citation-modal", "true");
     wrapper.setAttribute("tabindex", "0");
     wrapper.style.display = "grid";
@@ -2739,6 +2871,10 @@ function renderCitationModal(root, snapshot = {}, options = {}) {
     title.style.textTransform = "uppercase";
     title.style.letterSpacing = "0.08em";
     title.style.color = "#94a3b8";
+    header.style.display = "flex";
+    header.style.justifyContent = "space-between";
+    header.style.alignItems = "center";
+    header.style.gap = "12px";
     headline.style.margin = "0";
     headline.style.fontSize = "22px";
     headline.style.lineHeight = "1.15";
@@ -2747,6 +2883,10 @@ function renderCitationModal(root, snapshot = {}, options = {}) {
     sourceMeta.style.fontSize = "12px";
     sourceMeta.style.lineHeight = "1.5";
     sourceMeta.style.color = "#94a3b8";
+    lockMeta.style.margin = "0";
+    lockMeta.style.fontSize = "12px";
+    lockMeta.style.lineHeight = "1.5";
+    lockMeta.style.color = "#cbd5e1";
     statusLine.style.margin = "0";
     statusLine.style.minHeight = "18px";
     statusLine.style.fontSize = "12px";
@@ -2773,26 +2913,32 @@ function renderCitationModal(root, snapshot = {}, options = {}) {
         documentRef,
         selectedStyle: state.selectedStyle,
         lockedStyles: state.lockedStyles,
+        lockLabel: "Locked",
         onSelect: async (style) => {
             if (style === state.selectedStyle) {
                 return;
             }
             state.selectedStyle = (0, citation_ts_1.normalizeCitationStyle)(style);
-            state.loading = !getCurrentText();
+            state.loading = true;
             state.error = null;
             render();
-            if (!state.citation?.id) {
-                state.loading = false;
-                state.error = { code: "invalid_payload", message: "Missing citation id." };
-                render();
-                return;
-            }
-            const result = await onRequestRender?.({
-                citationId: state.citation.id,
-                style: state.selectedStyle,
-            });
+            const result = state.citation?.id
+                ? await onRequestRender?.({
+                    citationId: state.citation.id,
+                    style: state.selectedStyle,
+                })
+                : await onRequestPreview?.({
+                    ...(state.draftPayload || {}),
+                    style: state.selectedStyle,
+                });
             if (result?.ok) {
-                state.renderBundle = result.data || null;
+                if (!state.citation?.id) {
+                    state.citation = result.data?.citation || state.citation;
+                    state.renderBundle = result.data?.render_bundle || null;
+                }
+                else {
+                    state.renderBundle = result.data || null;
+                }
                 state.loading = false;
                 state.error = null;
             }
@@ -2820,27 +2966,37 @@ function renderCitationModal(root, snapshot = {}, options = {}) {
         }, state.selectedStyle, state.selectedFormat);
     }
     async function saveSelection(copy = false) {
-        if (!state.citation?.id) {
-            state.error = { code: "invalid_payload", message: "Missing citation id." };
+        if (copy) {
+            return { ok: true, data: { copied: true } };
+        }
+        if (state.citation?.id) {
+            state.saveStatus = "saved";
+            state.error = null;
+            render();
+            return { ok: true, data: state.citation };
+        }
+        if (!state.draftPayload) {
+            state.error = { code: "invalid_payload", message: "Citation preview is unavailable." };
             render();
             return { ok: false, error: state.error };
         }
-        state.saveStatus = copy ? "copying" : "saving";
+        state.saveStatus = "saving";
         render();
         const result = await onSave?.({
-            citationId: state.citation.id,
+            ...state.draftPayload,
             style: state.selectedStyle,
             format: state.selectedFormat,
-            copy,
         });
         if (result?.ok) {
-            state.saveStatus = copy ? "copied" : "saved";
+            state.citation = result.data || state.citation;
+            state.renderBundle = result?.data?.renders ? { renders: result.data.renders } : state.renderBundle;
+            state.saveStatus = "saved";
             state.error = null;
             render();
             return result;
         }
         state.saveStatus = "idle";
-        state.error = result?.error || { code: "save_failed", message: copy ? "Copy failed." : "Save failed." };
+        state.error = result?.error || { code: "save_failed", message: "Save failed." };
         render();
         return result;
     }
@@ -2862,7 +3018,9 @@ function renderCitationModal(root, snapshot = {}, options = {}) {
             render();
             return;
         }
-        await saveSelection(true);
+        state.saveStatus = "copied";
+        state.error = null;
+        render();
     });
     saveButton.addEventListener("click", async (event) => {
         event.preventDefault?.();
@@ -2890,11 +3048,15 @@ function renderCitationModal(root, snapshot = {}, options = {}) {
         }
     });
     function render() {
+        tierBadge.setTier(state.tier);
         headline.textContent = state.citation?.metadata?.title || state.citation?.source?.title || "Citation preview";
         sourceMeta.textContent = [
-            state.citation?.metadata?.author || state.citation?.source?.author || "",
-            state.citation?.metadata?.canonical_url || state.citation?.source?.canonical_url || "",
+            state.citation?.metadata?.author || state.citation?.source?.authors?.[0]?.fullName || state.citation?.source?.publisher || "",
+            state.citation?.metadata?.canonical_url || state.citation?.source?.canonical_url || state.citation?.source?.page_url || "",
         ].filter(Boolean).join(" • ");
+        lockMeta.textContent = state.lockedStyles.length
+            ? "Some citation styles are locked for this account."
+            : "";
         styleTabs.render(state.selectedStyle);
         formatTabs.render(state.selectedFormat);
         previewCard.render({
@@ -2936,9 +3098,12 @@ function renderCitationModal(root, snapshot = {}, options = {}) {
         actions.appendChild(saveButton);
         actions.appendChild(closeButton);
         wrapper.innerHTML = "";
-        wrapper.appendChild(title);
+        header.appendChild(title);
+        header.appendChild(tierBadge.root);
+        wrapper.appendChild(header);
         wrapper.appendChild(headline);
         wrapper.appendChild(sourceMeta);
+        wrapper.appendChild(lockMeta);
         wrapper.appendChild(styleTabs.root);
         wrapper.appendChild(formatTabs.root);
         wrapper.appendChild(previewCard.root);
@@ -2965,6 +3130,7 @@ function renderCitationModal(root, snapshot = {}, options = {}) {
                 error: state.error,
                 lockedStyles: state.lockedStyles.slice(),
                 saveStatus: state.saveStatus,
+                citation: state.citation,
             };
         },
     };
@@ -2977,7 +3143,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createCitationModalHost = createCitationModalHost;
 const citation_modal_ts_1 = require("../../sidepanel/app/citation_modal.ts");
 const EXTENSION_UI_ATTR = "data-writior-extension-ui";
-function createCitationModalHost({ documentRef = globalThis.document, onRequestRender, onSave, onDismiss, navigatorRef = globalThis.navigator, } = {}) {
+function createCitationModalHost({ documentRef = globalThis.document, onRequestPreview, onRequestRender, onSave, onDismiss, navigatorRef = globalThis.navigator, } = {}) {
     const host = documentRef.createElement("div");
     const backdrop = documentRef.createElement("div");
     const surface = documentRef.createElement("div");
@@ -3002,7 +3168,13 @@ function createCitationModalHost({ documentRef = globalThis.document, onRequestR
     surface.style.maxHeight = "calc(100vh - 24px)";
     surface.style.overflow = "auto";
     surface.style.pointerEvents = "auto";
-    host.append(backdrop, surface);
+    if (typeof host.append === "function") {
+        host.append(backdrop, surface);
+    }
+    else {
+        host.appendChild(backdrop);
+        host.appendChild(surface);
+    }
     let visible = false;
     let modal = null;
     function ensureMounted() {
@@ -3018,6 +3190,7 @@ function createCitationModalHost({ documentRef = globalThis.document, onRequestR
         modal = (0, citation_modal_ts_1.renderCitationModal)(surface, snapshot, {
             documentRef,
             navigatorRef,
+            onRequestPreview,
             onRequestRender,
             onSave,
             onDismiss,
@@ -3100,7 +3273,14 @@ function createHighlightPreview({ documentRef = globalThis.document, } = {}) {
     meta.style.fontSize = "11px";
     meta.style.lineHeight = "1.4";
     meta.style.color = "#94a3b8";
-    root.append(label, text, meta);
+    if (typeof root.append === "function") {
+        root.append(label, text, meta);
+    }
+    else {
+        root.appendChild(label);
+        root.appendChild(text);
+        root.appendChild(meta);
+    }
     return {
         root,
         render({ text: previewText = "", pageTitle = "", pageUrl = "" } = {}) {
@@ -3205,8 +3385,23 @@ function createQuickNotePanel({ documentRef = globalThis.document, windowRef = g
     saveButton.textContent = "Save note";
     saveButton.setAttribute("data-quick-note-save", "true");
     saveButton.style.background = "rgba(14, 165, 233, 0.2)";
-    actions.append(cancelButton, saveButton);
-    panel.append(heading, preview.root, textarea, feedback, actions);
+    if (typeof actions.append === "function") {
+        actions.append(cancelButton, saveButton);
+    }
+    else {
+        actions.appendChild(cancelButton);
+        actions.appendChild(saveButton);
+    }
+    if (typeof panel.append === "function") {
+        panel.append(heading, preview.root, textarea, feedback, actions);
+    }
+    else {
+        panel.appendChild(heading);
+        panel.appendChild(preview.root);
+        panel.appendChild(textarea);
+        panel.appendChild(feedback);
+        panel.appendChild(actions);
+    }
     host.appendChild(panel);
     let visible = false;
     let state = {
@@ -3425,6 +3620,145 @@ function createContentToastController({ documentRef = globalThis.document, windo
 }
 
 },
+"shared/types/capability_surface.ts": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.normalizeCapabilitySurface = normalizeCapabilitySurface;
+const citation_ts_1 = require("./citation.ts");
+function normalizeText(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+}
+function normalizeTier(value) {
+    const normalized = normalizeText(value).toLowerCase();
+    if (normalized === "guest" || normalized === "free" || normalized === "standard" || normalized === "pro") {
+        return normalized;
+    }
+    return normalized || "guest";
+}
+function toTitleCase(value) {
+    const normalized = normalizeText(value).toLowerCase();
+    return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : "";
+}
+function formatUsageLabel(label) {
+    const normalized = normalizeText(label);
+    if (!normalized) {
+        return "";
+    }
+    return normalized
+        .replace(/[_-]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/\bper week\b/gi, "/week")
+        .replace(/\bper day\b/gi, "/day")
+        .replace(/\bper month\b/gi, "/month")
+        .replace(/\b([a-z])/gi, (match) => match.toUpperCase());
+}
+function formatUsageValue(value) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+    if (typeof value === "number") {
+        return Number.isFinite(value) ? String(value) : "";
+    }
+    if (typeof value === "boolean") {
+        return value ? "Enabled" : "";
+    }
+    return normalizeText(value);
+}
+function readUsageItems(source = {}) {
+    if (!source || typeof source !== "object") {
+        return [];
+    }
+    const usageSource = source?.capabilities?.usage ?? source?.usage ?? null;
+    if (Array.isArray(usageSource)) {
+        return usageSource
+            .map((item) => ({
+            label: formatUsageLabel(item?.label || item?.name || ""),
+            value: formatUsageValue(item?.value ?? item?.count ?? item?.remaining ?? ""),
+        }))
+            .filter((item) => item.label && item.value && item.label.toLowerCase() !== "tier");
+    }
+    if (usageSource && typeof usageSource === "object") {
+        return Object.entries(usageSource)
+            .map(([label, value]) => ({
+            label: formatUsageLabel(label),
+            value: formatUsageValue(value),
+        }))
+            .filter((item) => item.label && item.value && item.label.toLowerCase() !== "tier");
+    }
+    return [];
+}
+function readActionAvailability(authState = null, capabilities = {}) {
+    const selectionActions = capabilities?.selection_actions;
+    const genericActions = capabilities?.actions;
+    const pillActions = capabilities?.extension?.pill_actions;
+    const merged = {
+        ...(selectionActions && typeof selectionActions === "object" ? selectionActions : {}),
+        ...(genericActions && typeof genericActions === "object" ? genericActions : {}),
+        ...(pillActions && typeof pillActions === "object" ? pillActions : {}),
+    };
+    if (typeof capabilities?.extension?.work_in_editor_flow === "boolean" && merged.work_in_editor == null) {
+        merged.work_in_editor = capabilities.extension.work_in_editor_flow;
+    }
+    if (Object.keys(merged).length) {
+        return {
+            copy: merged.copy !== false,
+            cite: merged.cite,
+            note: merged.note,
+            quote: merged.quote,
+            work_in_editor: merged.work_in_editor,
+        };
+    }
+    if (authState?.status === "signed_out") {
+        return {
+            copy: true,
+            cite: false,
+            note: false,
+            quote: false,
+            work_in_editor: false,
+        };
+    }
+    return {
+        copy: true,
+        cite: undefined,
+        note: undefined,
+        quote: undefined,
+        work_in_editor: undefined,
+    };
+}
+function normalizeCapabilitySurface({ auth = null, bootstrap = null } = {}) {
+    const authState = auth && typeof auth === "object" ? auth : null;
+    const bootstrapState = bootstrap || authState?.bootstrap || null;
+    const entitlement = bootstrapState?.entitlement || null;
+    const capabilities = bootstrapState?.capabilities && typeof bootstrapState.capabilities === "object"
+        ? bootstrapState.capabilities
+        : {};
+    const taxonomy = bootstrapState?.taxonomy && typeof bootstrapState.taxonomy === "object"
+        ? bootstrapState.taxonomy
+        : {};
+    const tier = normalizeTier(entitlement?.tier || (authState?.status === "signed_out" ? "guest" : ""));
+    const citationStyles = Array.isArray(capabilities.citation_styles)
+        ? capabilities.citation_styles.map((style) => normalizeText(style).toLowerCase()).filter(Boolean)
+        : [];
+    const usageItems = readUsageItems(bootstrapState);
+    return {
+        auth: authState,
+        bootstrap: bootstrapState,
+        tier,
+        tierLabel: toTitleCase(tier),
+        entitlementStatus: normalizeText(entitlement?.status || ""),
+        usageItems,
+        actionAvailability: readActionAvailability(authState, capabilities),
+        hasUsageSummary: usageItems.length > 0,
+        lockedStyles: citationStyles.length
+            ? citation_ts_1.CITATION_STYLES.filter((style) => !citationStyles.includes(style))
+            : [],
+        recentProjectCount: Array.isArray(taxonomy.recent_projects) ? taxonomy.recent_projects.length : 0,
+        recentTagCount: Array.isArray(taxonomy.recent_tags) ? taxonomy.recent_tags.length : 0,
+    };
+}
+
+},
 "content/selection/index.ts": function(module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -3437,6 +3771,7 @@ const citation_modal_host_ts_1 = require("../ui/citation_modal_host.ts");
 const quick_note_panel_ts_1 = require("../ui/quick_note_panel.ts");
 const toast_ts_1 = require("../ui/toast.ts");
 const citation_ts_1 = require("../../shared/types/citation.ts");
+const capability_surface_ts_1 = require("../../shared/types/capability_surface.ts");
 const contracts_ts_1 = require("../../shared/types/contracts.ts");
 const runtime_client_ts_1 = require("../../shared/utils/runtime_client.ts");
 function isCommandShortcut(event) {
@@ -3518,6 +3853,7 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         noteText: "",
         noteError: "",
         citationModalSnapshot: null,
+        authSnapshot: null,
     };
     const listeners = [];
     const pill = (0, selection_action_pill_ts_1.createSelectionActionPill)({
@@ -3549,6 +3885,7 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
     const citationModal = (0, citation_modal_host_ts_1.createCitationModalHost)({
         documentRef,
         navigatorRef,
+        onRequestPreview: async (payload) => runtimeClient?.previewCitation(payload),
         onRequestRender: async (payload) => runtimeClient?.renderCitation(payload),
         onSave: async (payload) => runtimeClient?.saveCitation(payload),
         onDismiss: () => {
@@ -3566,12 +3903,36 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         listeners.push(() => target.removeEventListener?.(type, handler, options));
     }
     function buildSelectionActions() {
+        const surface = (0, capability_surface_ts_1.normalizeCapabilitySurface)({ auth: state.authSnapshot });
+        const availability = surface.actionAvailability || {
+            copy: true,
+            cite: undefined,
+            note: undefined,
+            quote: undefined,
+            work_in_editor: undefined,
+        };
         return [
             { key: "copy", label: "Copy", active: true, locked: false },
-            { key: "cite", label: "Cite", active: Boolean(runtimeClient), locked: false },
-            { key: "quote", label: "Quote", active: Boolean(runtimeClient), locked: false },
-            { key: "note", label: "Note", active: Boolean(runtimeClient), locked: false },
+            { key: "cite", label: "Cite", active: Boolean(runtimeClient) && availability.cite !== false, locked: availability.cite === false },
+            { key: "quote", label: "Quote", active: Boolean(runtimeClient) && availability.quote !== false, locked: availability.quote === false },
+            { key: "note", label: "Note", active: Boolean(runtimeClient) && availability.note !== false, locked: availability.note === false },
         ];
+    }
+    async function refreshAuthSnapshot() {
+        if (!runtimeClient?.authStatusGet) {
+            return null;
+        }
+        const result = await runtimeClient.authStatusGet();
+        if (result?.ok) {
+            state.authSnapshot = result.data?.auth || null;
+            if (state.visible && state.currentSnapshot) {
+                pill.render({
+                    ...state.currentSnapshot,
+                    actions: buildSelectionActions(),
+                });
+            }
+        }
+        return state.authSnapshot;
     }
     function hide(reason = "dismiss") {
         const wasVisible = state.visible;
@@ -3647,10 +4008,8 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         if (!runtimeClient?.authStatusGet) {
             return [];
         }
-        const result = await runtimeClient.authStatusGet();
-        const allowedStyles = result?.ok
-            ? result.data?.auth?.bootstrap?.capabilities?.citation_styles
-            : null;
+        const auth = state.authSnapshot || await refreshAuthSnapshot();
+        const allowedStyles = auth?.bootstrap?.capabilities?.citation_styles;
         return (0, citation_ts_1.getLockedCitationStyles)(allowedStyles);
     }
     function renderCitationModal(snapshot = state.citationModalSnapshot) {
@@ -3824,65 +4183,56 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
             }
             state.pendingAction = action;
             pill.hide("citation_modal_open");
-            state.citationModalSnapshot = {
+            const selectedStyle = "apa";
+            const baseModalSnapshot = {
                 citation: null,
                 render_bundle: null,
-                selected_style: "apa",
+                draft_payload: state.currentSnapshot.payload,
+                selected_style: selectedStyle,
                 selected_format: "bibliography",
                 locked_styles: [],
+                tier: (0, capability_surface_ts_1.normalizeCapabilitySurface)({ auth: state.authSnapshot }).tier,
                 loading: true,
                 error: null,
             };
+            state.citationModalSnapshot = {
+                ...baseModalSnapshot,
+            };
             renderCitationModal();
             try {
-                const [captureResultRaw, lockedStyles] = await Promise.all([
-                    runtimeClient.createCitation(state.currentSnapshot.payload),
+                const [previewResultRaw, lockedStyles] = await Promise.all([
+                    runtimeClient.previewCitation({
+                        ...state.currentSnapshot.payload,
+                        style: selectedStyle,
+                    }),
                     resolveLockedCitationStyles(),
                 ]);
-                const captureResult = captureResultRaw;
-                if (!captureResult?.ok) {
-                    state.citationModalSnapshot = {
-                        ...state.citationModalSnapshot,
-                        loading: false,
-                        error: captureResult?.error || { code: "citation_error", message: "Citation capture failed." },
-                        locked_styles: lockedStyles,
-                    };
-                    renderCitationModal();
-                    return captureResult;
+                const previewResult = previewResultRaw;
+                if (!previewResult?.ok) {
+                    state.citationModalSnapshot = null;
+                    citationModal.hide();
+                    if (state.currentSnapshot) {
+                        pill.render({
+                            ...state.currentSnapshot,
+                            actions: buildSelectionActions(),
+                        });
+                        state.visible = true;
+                    }
+                    pill.flash("Failed");
+                    toast.show(describeCaptureFailure(previewResult));
+                    return previewResult;
                 }
-                const citation = captureResult.data;
-                const selectedStyle = String(citation?.style || "apa").trim().toLowerCase() || "apa";
-                const selectedFormat = "bibliography";
                 state.citationModalSnapshot = {
-                    citation,
-                    render_bundle: null,
-                    selected_style: selectedStyle,
-                    selected_format: selectedFormat,
+                    ...baseModalSnapshot,
+                    citation: previewResult.data?.citation || null,
+                    render_bundle: previewResult.data?.render_bundle || null,
                     locked_styles: lockedStyles,
+                    tier: (0, capability_surface_ts_1.normalizeCapabilitySurface)({ auth: state.authSnapshot }).tier,
                     loading: false,
                     error: null,
                 };
                 renderCitationModal();
-                if (!citationModal.getState()?.text && citation?.id) {
-                    state.citationModalSnapshot = {
-                        ...state.citationModalSnapshot,
-                        loading: true,
-                    };
-                    renderCitationModal();
-                    const renderResult = await runtimeClient.renderCitation({
-                        citationId: citation.id,
-                        style: selectedStyle,
-                    });
-                    state.citationModalSnapshot = {
-                        ...state.citationModalSnapshot,
-                        loading: false,
-                        render_bundle: renderResult?.ok ? renderResult.data : null,
-                        error: renderResult?.ok ? null : renderResult?.error || { code: "citation_error", message: "Citation preview failed." },
-                    };
-                    renderCitationModal();
-                    return renderResult?.ok ? captureResult : renderResult;
-                }
-                return captureResult;
+                return previewResult;
             }
             finally {
                 state.pendingAction = "";
@@ -4026,6 +4376,7 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
             });
         }
         inspectSelection();
+        void refreshAuthSnapshot();
         return getState();
     }
     function getState() {

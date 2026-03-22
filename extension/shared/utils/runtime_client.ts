@@ -11,6 +11,7 @@ import {
   createCaptureCreateCitationRequest,
   createCaptureCreateNoteRequest,
   createCaptureCreateQuoteRequest,
+  createCitationPreviewRequest,
   createCitationRenderRequest,
   createCitationSaveRequest,
   createOpenSidepanelRequest,
@@ -99,6 +100,13 @@ export function createRuntimeClient(chromeApi, surface) {
     renderCitation(payload) {
       const requestId = createRequestId(`${surface}-render-citation`);
       return sendRuntimeMessage(chromeApi, createCitationRenderRequest(requestId, {
+        surface,
+        ...payload,
+      }));
+    },
+    previewCitation(payload) {
+      const requestId = createRequestId(`${surface}-preview-citation`);
+      return sendRuntimeMessage(chromeApi, createCitationPreviewRequest(requestId, {
         surface,
         ...payload,
       }));

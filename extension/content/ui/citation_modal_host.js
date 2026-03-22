@@ -1,6 +1,6 @@
 import { renderCitationModal } from "../../sidepanel/app/citation_modal.js";
 const EXTENSION_UI_ATTR = "data-writior-extension-ui";
-export function createCitationModalHost({ documentRef = globalThis.document, onRequestRender, onSave, onDismiss, navigatorRef = globalThis.navigator, } = {}) {
+export function createCitationModalHost({ documentRef = globalThis.document, onRequestPreview, onRequestRender, onSave, onDismiss, navigatorRef = globalThis.navigator, } = {}) {
     const host = documentRef.createElement("div");
     const backdrop = documentRef.createElement("div");
     const surface = documentRef.createElement("div");
@@ -25,7 +25,13 @@ export function createCitationModalHost({ documentRef = globalThis.document, onR
     surface.style.maxHeight = "calc(100vh - 24px)";
     surface.style.overflow = "auto";
     surface.style.pointerEvents = "auto";
-    host.append(backdrop, surface);
+    if (typeof host.append === "function") {
+        host.append(backdrop, surface);
+    }
+    else {
+        host.appendChild(backdrop);
+        host.appendChild(surface);
+    }
     let visible = false;
     let modal = null;
     function ensureMounted() {
@@ -41,6 +47,7 @@ export function createCitationModalHost({ documentRef = globalThis.document, onR
         modal = renderCitationModal(surface, snapshot, {
             documentRef,
             navigatorRef,
+            onRequestPreview,
             onRequestRender,
             onSave,
             onDismiss,

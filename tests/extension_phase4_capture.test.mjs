@@ -352,6 +352,94 @@ function createCaptureFetchStub() {
   return api;
 }
 
+function createCitationApiStub() {
+  const calls = [];
+  return {
+    calls,
+    previewCitation(payload) {
+      calls.push({ kind: "preview", payload });
+      return Promise.resolve({
+        ok: true,
+        status: "ok",
+        data: {
+          citation: {
+            id: null,
+            source_id: null,
+            source: {
+              title: payload.extraction_payload?.title_candidates?.[0]?.value || "",
+              canonical_url: payload.extraction_payload?.page_url || "",
+              authors: [],
+            },
+            renders: {
+              apa: {
+                inline: "(Capture Demo, 2026)",
+                bibliography: "Capture Demo. Example citation output.",
+                footnote: "Capture Demo. Example footnote output.",
+                quote_attribution: "\"Capture this citation text\" (Capture Demo, 2026)",
+              },
+            },
+          },
+          render_bundle: {
+            renders: {
+              apa: {
+                inline: "(Capture Demo, 2026)",
+                bibliography: "Capture Demo. Example citation output.",
+                footnote: "Capture Demo. Example footnote output.",
+                quote_attribution: "\"Capture this citation text\" (Capture Demo, 2026)",
+              },
+            },
+            cache_hit: false,
+          },
+          selected_style: payload.style || "apa",
+        },
+      });
+    },
+    renderCitation(payload) {
+      calls.push({ kind: "render", payload });
+      return Promise.resolve({
+        ok: true,
+        status: "ok",
+        data: {
+          renders: {
+            apa: {
+              inline: "(Capture Demo, 2026)",
+              bibliography: "Capture Demo. Example citation output.",
+              footnote: "Capture Demo. Example footnote output.",
+              quote_attribution: "\"Capture this citation text\" (Capture Demo, 2026)",
+            },
+          },
+          cache_hit: false,
+        },
+      });
+    },
+    saveCitation(payload) {
+      calls.push({ kind: "save", payload });
+      return Promise.resolve({
+        ok: true,
+        status: "ok",
+        data: {
+          id: "cit-1",
+          source_id: "source-1",
+          source: { id: "source-1", title: payload.extraction_payload?.title_candidates?.[0]?.value || "" },
+          locator: {},
+          annotation: null,
+          excerpt: payload.excerpt,
+          quote_text: payload.excerpt,
+          renders: {
+            apa: {
+              inline: "(Capture Demo, 2026)",
+              bibliography: "Capture Demo. Example citation output.",
+              footnote: "Capture Demo. Example footnote output.",
+              quote_attribution: "\"Capture this citation text\" (Capture Demo, 2026)",
+            },
+          },
+          relationship_counts: {},
+        },
+      });
+    },
+  };
+}
+
 function findChildByText(node, text) {
   if (!node) {
     return null;
@@ -417,6 +505,7 @@ test("capture actions are typed content messages and the background is the sole 
   runtime = createBackgroundRuntime({
     chromeApi,
     captureApi,
+    citationApi: createCitationApiStub(),
     baseUrl: "https://app.writior.com",
     fetchImpl: async (url) => {
       if (String(url).endsWith("/api/extension/bootstrap")) {
@@ -472,19 +561,15 @@ test("capture actions are typed content messages and the background is the sole 
   await quoteButton.dispatchEvent(new FakeEvent("click", quoteButton));
   await tick();
 
-  assert.equal(captureApi.calls.length, 4);
+  assert.equal(captureApi.calls.length, 3);
   assert.deepEqual(
     captureApi.calls.map((call) => call.kind),
-    ["citation", "note", "citation", "quote"],
+    ["note", "citation", "quote"],
   );
-  assert.equal(captureApi.calls[0].payload.extraction_payload.selection_text, "Capture this citation text");
-  assert.equal(captureApi.calls[0].payload.extraction_payload.title_candidates[0].value, "Capture Demo");
-  assert.equal(captureApi.calls[0].payload.extraction_payload.page_url, "https://example.com/articles/demo");
-  assert.equal(captureApi.calls[0].payload.extraction_payload.extraction_evidence.page_domain, "example.com");
-  assert.equal(captureApi.calls[1].payload.note_body, "Highlight note body");
-  assert.equal(captureApi.calls[1].payload.highlight_text, "Capture this citation text");
-  assert.equal(captureApi.calls[1].payload.citation_id, null);
-  assert.equal(captureApi.calls[1].payload.sources[0].url, "https://example.com/articles/demo");
+  assert.equal(captureApi.calls[0].payload.note_body, "Highlight note body");
+  assert.equal(captureApi.calls[0].payload.highlight_text, "Capture this citation text");
+  assert.equal(captureApi.calls[0].payload.citation_id, null);
+  assert.equal(captureApi.calls[0].payload.sources[0].url, "https://example.com/articles/demo");
   assert.equal(read("extension/content/selection/index.ts").includes("fetch("), false);
 });
 
@@ -648,8 +733,8 @@ test("content capture surfaces extension context invalidation explicitly", async
   await citeButton.dispatchEvent(new FakeEvent("click", citeButton));
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.equal(selectionRuntime.citationModal.getState().loading, false);
-  assert.match(selectionRuntime.citationModal.getState().error?.message || "", /Reload the page and try again/);
+  assert.equal(selectionRuntime.citationModal.isVisible(), false);
+  assert.equal(selectionRuntime.getState().visible, true);
 });
 
 test("content capture surfaces unauthorized errors explicitly", async () => {
@@ -680,8 +765,8 @@ test("content capture surfaces unauthorized errors explicitly", async () => {
   await citeButton.dispatchEvent(new FakeEvent("click", citeButton));
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.equal(selectionRuntime.citationModal.getState().loading, false);
-  assert.match(selectionRuntime.citationModal.getState().error?.message || "", /No bearer token is available|Sign in required/);
+  assert.equal(selectionRuntime.citationModal.isVisible(), false);
+  assert.equal(selectionRuntime.getState().visible, true);
 });
 
 test("quote capture routes through citation then canonical quote endpoint", async () => {

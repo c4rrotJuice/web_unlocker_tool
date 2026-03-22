@@ -52,10 +52,15 @@ export function createProfileCard(options: any = {}) {
   email.style.color = "#475569";
   email.style.overflowWrap = "anywhere";
 
+  const planMeta = documentRef.createElement("div");
+  planMeta.style.fontSize = "12px";
+  planMeta.style.color = "#64748b";
+
   const badge = createTierBadge({ documentRef });
 
   identity.appendChild(name);
   identity.appendChild(email);
+  identity.appendChild(planMeta);
   header.appendChild(identity);
   header.appendChild(badge.root);
 
@@ -71,9 +76,12 @@ export function createProfileCard(options: any = {}) {
   root.appendChild(actions);
 
   function render(profile = null, entitlement = null, fallbackEmail = "") {
+    const tier = String(entitlement?.tier || "guest").trim().toLowerCase() || "guest";
+    const tierLabel = tier.charAt(0).toUpperCase() + tier.slice(1);
     name.textContent = profile?.display_name || profile?.email || fallbackEmail || "Writior";
-    email.textContent = profile?.email || fallbackEmail || "Signed in";
-    badge.setTier(entitlement?.tier || "guest");
+    email.textContent = profile?.email || fallbackEmail || (tier === "guest" ? "Guest session" : "Signed in");
+    planMeta.textContent = `Plan ${tierLabel}`;
+    badge.setTier(tier);
   }
 
   return { root, render };

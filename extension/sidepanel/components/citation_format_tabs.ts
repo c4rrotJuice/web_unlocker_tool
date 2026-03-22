@@ -4,6 +4,7 @@ const FORMAT_LABELS = {
   inline: "Inline",
   footnote: "Footnote",
   bibliography: "Bibliography",
+  quote_attribution: "Quote Attribution",
 };
 
 export function createCitationFormatTabs({

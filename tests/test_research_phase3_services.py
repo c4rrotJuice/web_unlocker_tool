@@ -360,6 +360,27 @@ async def test_citation_create_get_list_update_delete_and_shape_are_canonical(ci
 
 
 @pytest.mark.anyio
+async def test_citation_preview_uses_canonical_rendering_without_persisting_rows(citations_service):
+    preview = await citations_service.preview_citation(
+        account_type="pro",
+        extraction_payload=_canonical_extraction_payload(),
+        excerpt="Quoted sentence",
+        quote="Quoted sentence",
+        locator={"paragraph": 4},
+        style="mla",
+    )
+
+    assert preview["citation"]["id"] is None
+    assert preview["citation"]["source_id"] is None
+    assert preview["citation"]["source"]["title"] == "Paper title"
+    assert preview["citation"]["renders"]["mla"]["quote_attribution"] == "\"Quoted sentence\" (Lovelace, par. 4)"
+    assert preview["render_bundle"]["renders"]["mla"]["quote_attribution"] == "\"Quoted sentence\" (Lovelace, par. 4)"
+    assert citations_service.repository.rows == {}
+    assert citations_service.repository.renders == {}
+    assert citations_service.repository.replace_renders_calls == []
+
+
+@pytest.mark.anyio
 async def test_citation_create_rejects_legacy_metadata_only_payload(citations_service):
     with pytest.raises(HTTPException) as exc:
         await citations_service.create_citation(

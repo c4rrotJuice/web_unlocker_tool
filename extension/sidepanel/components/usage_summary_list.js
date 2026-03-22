@@ -15,29 +15,38 @@ export function createUsageSummaryList({ documentRef = globalThis.document, } = 
     title.style.color = "#64748b";
     const list = documentRef.createElement("div");
     list.style.display = "grid";
-    list.style.gap = "8px";
+    list.style.gap = "6px";
     function render(items = []) {
         list.innerHTML = "";
-        if (!items.length) {
+        const visibleItems = Array.isArray(items)
+            ? items.filter((item) => String(item?.label || "").trim() && String(item?.value || "").trim())
+            : [];
+        if (!visibleItems.length) {
             const empty = documentRef.createElement("div");
-            empty.textContent = "No usage data available.";
+            empty.textContent = "Usage updates appear here when available.";
             empty.style.color = "#64748b";
+            empty.style.fontSize = "13px";
             list.appendChild(empty);
             return;
         }
-        for (const item of items) {
+        for (const item of visibleItems) {
             const row = documentRef.createElement("div");
             row.style.display = "flex";
             row.style.justifyContent = "space-between";
+            row.style.alignItems = "baseline";
             row.style.gap = "12px";
             row.style.fontSize = "13px";
             const label = documentRef.createElement("span");
             label.textContent = item.label;
             label.style.color = "#475569";
+            label.style.flex = "1";
             const value = documentRef.createElement("span");
             value.textContent = item.value;
             value.style.color = "#0f172a";
             value.style.fontWeight = "600";
+            value.style.textAlign = "right";
+            value.style.maxWidth = "50%";
+            value.style.overflowWrap = "anywhere";
             row.appendChild(label);
             row.appendChild(value);
             list.appendChild(row);

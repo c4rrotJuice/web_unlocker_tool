@@ -402,7 +402,7 @@ test("guest/free/standard/pro snapshots render backend-confirmed tier and usage"
   };
   const proSurface = normalizeCapabilitySurface({ auth: proSnapshot });
   assert.equal(proSurface.tier, "pro");
-  assert.equal(proSurface.usageItems.some((item) => item.label === "history"), true);
+  assert.equal(proSurface.usageItems.some((item) => item.label === "History"), true);
   assert.match(renderPopupText(proSnapshot), /Tier pro/);
   assert.match(renderSidepanelText(proSnapshot), /Tier: pro/);
 

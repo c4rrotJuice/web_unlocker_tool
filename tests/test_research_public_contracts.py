@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from app.modules.research.citations.schemas import CitationCreateRequest
-from app.modules.research.routes import create_citation, resolve_source
+from app.modules.research.citations.schemas import CitationCreateRequest, CitationPreviewRequest
+from app.modules.research.routes import create_citation, preview_citation, resolve_source
 from app.modules.research.sources.schemas import SourceResolveRequest
 
 
@@ -131,5 +131,65 @@ async def test_citation_create_handler_accepts_canonical_extraction_payload(monk
 
     assert response["id"] == "citation-1"
     assert captured["user_id"] == "user-1"
+    assert captured["account_type"] == "pro"
+    assert captured["extraction_payload"].canonical_url == "https://example.com/paper"
+
+
+@pytest.mark.anyio
+async def test_citation_preview_handler_accepts_canonical_extraction_payload(monkeypatch):
+    captured = {}
+
+    async def fake_preview_citation(
+        *,
+        account_type,
+        extraction_payload,
+        excerpt,
+        locator,
+        annotation,
+        quote,
+        style,
+    ):
+        captured["account_type"] = account_type
+        captured["extraction_payload"] = extraction_payload
+        captured["excerpt"] = excerpt
+        captured["locator"] = locator
+        captured["annotation"] = annotation
+        captured["quote"] = quote
+        captured["style"] = style
+        return {
+            "citation": {
+                "id": None,
+                "source_id": None,
+                "source": {"title": "Paper title"},
+                "locator": {"paragraph": 4},
+                "annotation": None,
+                "excerpt": "Quoted sentence",
+                "quote_text": "Quoted sentence",
+                "renders": {"mla": {"quote_attribution": "\"Quoted sentence\" (Lovelace, par. 4)"}},
+                "created_at": None,
+                "updated_at": None,
+                "relationship_counts": {},
+            },
+            "render_bundle": {
+                "renders": {"mla": {"quote_attribution": "\"Quoted sentence\" (Lovelace, par. 4)"}},
+            },
+            "selected_style": "mla",
+        }
+
+    monkeypatch.setattr("app.modules.research.routes.citations_service.preview_citation", fake_preview_citation)
+
+    payload = CitationPreviewRequest.model_validate(
+        {
+            "extraction_payload": _canonical_extraction_payload(),
+            "excerpt": "Quoted sentence",
+            "quote": "Quoted sentence",
+            "locator": {"paragraph": 4},
+            "style": "mla",
+        }
+    )
+    response = await preview_citation(payload, access=_access_context())
+
+    assert response["citation"]["id"] is None
+    assert response["selected_style"] == "mla"
     assert captured["account_type"] == "pro"
     assert captured["extraction_payload"].canonical_url == "https://example.com/paper"

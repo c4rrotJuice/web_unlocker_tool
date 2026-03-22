@@ -50,7 +50,7 @@ create table if not exists public.citation_renders (
   citation_instance_id uuid not null references public.citation_instances(id) on delete cascade,
   source_id uuid not null references public.sources(id) on delete cascade,
   style text not null check (style in ('apa', 'mla', 'chicago', 'harvard', 'custom')),
-  render_kind text not null check (render_kind in ('inline', 'full', 'bibliography')),
+  render_kind text not null check (render_kind in ('inline', 'bibliography', 'footnote', 'quote_attribution')),
   rendered_text text not null,
   cache_key text not null unique,
   source_version text not null,

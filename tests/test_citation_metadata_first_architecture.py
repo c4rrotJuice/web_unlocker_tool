@@ -10,6 +10,7 @@ def test_backend_exposes_metadata_first_render_endpoint_and_render_cache_payload
     domain_source = Path("app/services/citation_domain.py").read_text(encoding="utf-8")
     sources_service = Path("app/modules/research/sources/service.py").read_text(encoding="utf-8")
 
+    assert "@router.post(\"/api/citations/preview\")" in source
     assert "@router.post(\"/api/citations/render\")" in source
     assert "@router.post(\"/api/citations/by-ids\")" in source
     assert "citation_renders" in repo_source

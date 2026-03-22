@@ -123,7 +123,7 @@ function findByAttr(node, name, value) {
   return null;
 }
 
-function createRuntime({ renderResult, renderError } = {}) {
+function createRuntime({ previewResult, previewError, renderResult, renderError, saveResult, saveError } = {}) {
   return createBackgroundRuntime({
     chromeApi: {
       runtime: {
@@ -160,6 +160,50 @@ function createRuntime({ renderResult, renderError } = {}) {
       },
     },
     citationApi: {
+      async previewCitation(payload) {
+        if (previewError) {
+          return {
+            ok: false,
+            status: "error",
+            error: previewError,
+          };
+        }
+        return {
+          ok: true,
+          status: "ok",
+          data: previewResult || {
+            citation: {
+              id: null,
+              source_id: null,
+              source: {
+                title: "Public health update",
+                canonical_url: "https://example.com/articles/demo",
+                authors: [{ fullName: "World Health Organization" }],
+              },
+              renders: {
+                apa: {
+                  inline: "(World Health Organization, 2024, para. 6)",
+                  bibliography: "World Health Organization. (2024). Public health update. WHO.",
+                  footnote: "World Health Organization. (2024). Public health update. WHO.",
+                  quote_attribution: "\"Selected sentence\" (World Health Organization, 2024, para. 6)",
+                },
+              },
+            },
+            render_bundle: {
+              renders: {
+                apa: {
+                  inline: "(World Health Organization, 2024, para. 6)",
+                  bibliography: "World Health Organization. (2024). Public health update. WHO.",
+                  footnote: "World Health Organization. (2024). Public health update. WHO.",
+                  quote_attribution: "\"Selected sentence\" (World Health Organization, 2024, para. 6)",
+                },
+              },
+              cache_hit: false,
+            },
+            selected_style: payload.style || "apa",
+          },
+        };
+      },
       async renderCitation(payload) {
         if (renderError) {
           return {
@@ -177,9 +221,46 @@ function createRuntime({ renderResult, renderError } = {}) {
                 inline: "(WHO 6)",
                 bibliography: "World Health Organization. \"Public Health Update.\" WHO.",
                 footnote: "World Health Organization. \"Public Health Update.\" WHO.",
+                quote_attribution: "\"Selected sentence\" (WHO 6)",
               },
             },
             cache_hit: false,
+          },
+        };
+      },
+      async saveCitation(_payload) {
+        if (saveError) {
+          return {
+            ok: false,
+            status: "error",
+            error: saveError,
+          };
+        }
+        return {
+          ok: true,
+          status: "ok",
+          data: saveResult || {
+            id: "citation-1",
+            source_id: "source-1",
+            source: {
+              id: "source-1",
+              title: "Public health update",
+              canonical_url: "https://example.com/articles/demo",
+              authors: [{ fullName: "World Health Organization" }],
+            },
+            locator: {},
+            annotation: null,
+            excerpt: "Selected sentence",
+            quote_text: "Selected sentence",
+            renders: {
+              chicago: {
+                inline: "(World Health Organization 2024)",
+                bibliography: "World Health Organization. Public Health Update. WHO, 2024.",
+                footnote: "World Health Organization, Public Health Update (WHO, 2024).",
+                quote_attribution: "\"Selected sentence\" (World Health Organization 2024)",
+              },
+            },
+            relationship_counts: {},
           },
         };
       },
@@ -187,28 +268,43 @@ function createRuntime({ renderResult, renderError } = {}) {
   });
 }
 
-test("citation modal switches style and format using backend-derived previews only", async () => {
+test("citation modal switches style and format using backend-derived previews only before save", async () => {
   const documentRef = new FakeDocument();
   const root = documentRef.createElement("div");
-  const renderCalls = [];
+  const previewCalls = [];
   const saveCalls = [];
   const clipboardWrites = [];
 
   const modal = renderCitationModal(root, {
     citation: {
-      id: "citation-1",
+      id: null,
       style: "apa",
       format: "bibliography",
-      inline_citation: "(World Health Organization, 2024, para. 6)",
-      full_citation: "World Health Organization. (2024). Public health update. WHO.",
-      footnote: "World Health Organization. (2024). Public health update. WHO.",
-      metadata: {
+      source: {
         title: "Public health update",
-        author: "World Health Organization",
         canonical_url: "https://example.com/articles/demo",
+        authors: [{ fullName: "World Health Organization" }],
       },
     },
-    render_bundle: null,
+    render_bundle: {
+      renders: {
+        apa: {
+          inline: "(World Health Organization, 2024, para. 6)",
+          bibliography: "World Health Organization. (2024). Public health update. WHO.",
+          footnote: "World Health Organization. (2024). Public health update. WHO.",
+          quote_attribution: "\"Selected sentence\" (World Health Organization, 2024, para. 6)",
+        },
+      },
+      cache_hit: false,
+    },
+    draft_payload: {
+      capture: {
+        selectionText: "Selected sentence",
+        pageTitle: "Public health update",
+        pageUrl: "https://example.com/articles/demo",
+        pageDomain: "example.com",
+      },
+    },
     selected_style: "apa",
     selected_format: "bibliography",
     locked_styles: ["chicago", "harvard"],
@@ -223,30 +319,77 @@ test("citation modal switches style and format using backend-derived previews on
         },
       },
     },
-    onRequestRender: async (payload) => {
-      renderCalls.push(payload);
+    onRequestPreview: async (payload) => {
+      previewCalls.push(payload);
       return {
         ok: true,
         data: {
+          citation: {
+            id: null,
+            source_id: null,
+            source: {
+              title: "Public health update",
+              canonical_url: "https://example.com/articles/demo",
+              authors: [{ fullName: "World Health Organization" }],
+            },
+            renders: {
+              mla: {
+                inline: "(World Health Organization 6)",
+                bibliography: "World Health Organization. \"Public Health Update.\" WHO.",
+                footnote: "World Health Organization. \"Public Health Update.\" WHO.",
+                quote_attribution: "\"Selected sentence\" (World Health Organization 6)",
+              },
+            },
+          },
+          render_bundle: {
+            renders: {
+              mla: {
+                inline: "(World Health Organization 6)",
+                bibliography: "World Health Organization. \"Public Health Update.\" WHO.",
+                footnote: "World Health Organization. \"Public Health Update.\" WHO.",
+                quote_attribution: "\"Selected sentence\" (World Health Organization 6)",
+              },
+            },
+            cache_hit: false,
+          },
+          selected_style: "mla",
+        },
+      };
+    },
+    onRequestRender: async () => ({ ok: false, error: { code: "unused", message: "render should not run before save" } }),
+    onSave: async (payload) => {
+      saveCalls.push(payload);
+      return {
+        ok: true,
+        data: {
+          id: "citation-1",
+          source_id: "source-1",
+          source: {
+            id: "source-1",
+            title: "Public health update",
+            canonical_url: "https://example.com/articles/demo",
+            authors: [{ fullName: "World Health Organization" }],
+          },
+          locator: {},
+          annotation: null,
+          excerpt: "Selected sentence",
+          quote_text: "Selected sentence",
           renders: {
             mla: {
               inline: "(World Health Organization 6)",
               bibliography: "World Health Organization. \"Public Health Update.\" WHO.",
               footnote: "World Health Organization. \"Public Health Update.\" WHO.",
+              quote_attribution: "\"Selected sentence\" (World Health Organization 6)",
             },
           },
-          cache_hit: false,
+          relationship_counts: {},
         },
       };
-    },
-    onSave: async (payload) => {
-      saveCalls.push(payload);
-      return { ok: true, data: { saved: true } };
     },
   });
 
   assert.match(modal.getState().text, /Public health update/);
-  const locked = root.children[0].children[3].children.filter((button) => button.getAttribute("data-locked") === "true");
+  const locked = findByAttr(root, "data-citation-style-tabs", "true").children.filter((button) => button.getAttribute("data-locked") === "true");
   assert.equal(locked.length, 2);
 
   const styleTabs = findByAttr(root, "data-citation-style-tabs", "true");
@@ -254,7 +397,7 @@ test("citation modal switches style and format using backend-derived previews on
   await mlaButton.dispatchEvent(new FakeEvent("click", mlaButton));
   await Promise.resolve();
 
-  assert.equal(renderCalls.length, 1);
+  assert.equal(previewCalls.length, 1);
   assert.equal(modal.getState().selectedStyle, "mla");
   assert.match(modal.getState().text, /World Health Organization/);
 
@@ -268,16 +411,17 @@ test("citation modal switches style and format using backend-derived previews on
   await copyButton.dispatchEvent(new FakeEvent("click", copyButton));
   await Promise.resolve();
   assert.equal(clipboardWrites.at(-1), "(World Health Organization 6)");
-  assert.equal(saveCalls.at(-1)?.copy, true);
+  assert.equal(saveCalls.length, 0);
 
   const saveButton = findByAttr(root, "data-citation-save", "true");
   await saveButton.dispatchEvent(new FakeEvent("click", saveButton));
   await Promise.resolve();
-  assert.equal(saveCalls.at(-1)?.copy, false);
+  assert.equal(saveCalls.at(-1)?.capture?.selectionText, "Selected sentence");
   assert.equal(saveCalls.at(-1)?.format, "inline");
+  assert.equal(modal.getState().citation?.id, "citation-1");
 });
 
-test("background citation render returns backend render bundles and save persists modal selection in background", async () => {
+test("background citation preview and render return backend bundles and save returns hydrated citation", async () => {
   const runtime = createRuntime({
     renderResult: {
       renders: {
@@ -285,11 +429,30 @@ test("background citation render returns backend render bundles and save persist
           inline: "(World Health Organization 2024)",
           bibliography: "World Health Organization. Public Health Update. WHO, 2024.",
           footnote: "World Health Organization, Public Health Update (WHO, 2024).",
+          quote_attribution: "\"Selected sentence\" (World Health Organization 2024)",
         },
       },
       cache_hit: true,
     },
   });
+
+  const previewResult = await runtime.dispatch({
+    type: MESSAGE_NAMES.CITATION_PREVIEW,
+    requestId: "req-preview",
+    payload: {
+      surface: "content",
+      capture: {
+        selectionText: "Selected sentence",
+        pageTitle: "Public health update",
+        pageUrl: "https://example.com/articles/demo",
+        pageDomain: "example.com",
+      },
+      style: "chicago",
+    },
+  });
+
+  assert.equal(previewResult.ok, true);
+  assert.match(previewResult.data.citation.renders.apa.quote_attribution, /Selected sentence/);
 
   const renderResult = await runtime.dispatch({
     type: MESSAGE_NAMES.CITATION_RENDER,
@@ -309,18 +472,22 @@ test("background citation render returns backend render bundles and save persist
     requestId: "req-save",
     payload: {
       surface: "content",
-      citationId: "citation-1",
+      capture: {
+        selectionText: "Selected sentence",
+        pageTitle: "Public health update",
+        pageUrl: "https://example.com/articles/demo",
+        pageDomain: "example.com",
+      },
       style: "chicago",
       format: "footnote",
-      copy: true,
     },
   });
 
   assert.equal(saveResult.ok, true);
-  assert.equal(saveResult.data.saved, true);
-  assert.equal(saveResult.data.style, "chicago");
-  assert.equal(saveResult.data.format, "footnote");
-  assert.equal(saveResult.data.copy, true);
+  assert.equal(saveResult.data.id, "citation-1");
+  assert.equal(saveResult.data.selected_style, "chicago");
+  assert.equal(saveResult.data.selected_format, "footnote");
+  assert.match(saveResult.data.renders.chicago.quote_attribution, /Selected sentence/);
 });
 
 test("citation modal shows loading and error states without collapsing", () => {
@@ -352,10 +519,29 @@ test("citation modal shows loading and error states without collapsing", () => {
   assert.match(findByAttr(root, "data-citation-preview-body", "true").textContent, /Preview failed/);
 });
 
-test("backend citation render errors map cleanly and save rejects invalid payloads", async () => {
+test("backend citation preview/render errors map cleanly and save rejects invalid payloads", async () => {
   const runtime = createRuntime({
+    previewError: { code: "unauthorized", message: "No bearer token is available." },
     renderError: { code: "unauthorized", message: "No bearer token is available." },
   });
+
+  const previewResult = await runtime.dispatch({
+    type: MESSAGE_NAMES.CITATION_PREVIEW,
+    requestId: "req-preview-fail",
+    payload: {
+      surface: "content",
+      capture: {
+        selectionText: "Selected sentence",
+        pageTitle: "Public health update",
+        pageUrl: "https://example.com/articles/demo",
+        pageDomain: "example.com",
+      },
+      style: "mla",
+    },
+  });
+
+  assert.equal(previewResult.ok, false);
+  assert.equal(previewResult.error.code, "unauthorized");
 
   const renderResult = await runtime.dispatch({
     type: MESSAGE_NAMES.CITATION_RENDER,
@@ -376,7 +562,12 @@ test("backend citation render errors map cleanly and save rejects invalid payloa
     requestId: "req-save-invalid",
     payload: {
       surface: "content",
-      citationId: "",
+      capture: {
+        selectionText: "",
+        pageTitle: "Public health update",
+        pageUrl: "https://example.com/articles/demo",
+        pageDomain: "example.com",
+      },
       style: "mla",
       format: "inline",
     },

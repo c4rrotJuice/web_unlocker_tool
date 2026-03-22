@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.modules.research.common import build_user_headers, first_row
-from app.services.supabase_rest import SupabaseRestRepository, response_json
+from app.services.supabase_rest import SupabaseRestRepository, response_error_code, response_error_text, response_json
 
 
 class CitationsRepository:
@@ -21,6 +23,17 @@ class CitationsRepository:
             prefer=prefer,
             include_content_type=include_content_type,
         )
+
+    def _raise_write_error(self, *, response, operation: str) -> None:
+        body = response_json(response)
+        detail = {
+            "code": "CITATION_PERSISTENCE_WRITE_FAILED",
+            "message": f"Failed to {operation}.",
+            "upstream_code": response_error_code(response) or None,
+            "upstream_detail": response_error_text(response) or None,
+            "upstream_details": body.get("details") if isinstance(body, dict) else None,
+        }
+        raise HTTPException(status_code=500, detail=detail)
 
     async def create_citation_instance(self, *, user_id: str, access_token: str | None, payload: dict[str, Any]) -> dict | None:
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -39,6 +52,8 @@ class CitationsRepository:
             },
             headers=self._headers(access_token, prefer="return=representation"),
         )
+        if response.status_code not in {200, 201}:
+            self._raise_write_error(response=response, operation="create citation instance")
         return first_row(response_json(response))
 
     async def get_citation_by_source(self, *, user_id: str, access_token: str | None, source_id: str) -> dict | None:
@@ -94,6 +109,8 @@ class CitationsRepository:
             json=payload,
             headers=self._headers(access_token, prefer="return=representation"),
         )
+        if response.status_code not in {200, 204}:
+            self._raise_write_error(response=response, operation="update citation instance")
         return first_row(response_json(response))
 
     async def delete_citation(self, *, user_id: str, access_token: str | None, citation_id: str) -> list[dict]:
@@ -117,18 +134,22 @@ class CitationsRepository:
         return payload if isinstance(payload, list) else []
 
     async def replace_renders(self, *, citation_id: str, source_id: str, rows: list[dict[str, Any]]) -> None:
-        await self.supabase_repo.delete(
+        delete_response = await self.supabase_repo.delete(
             "citation_renders",
             params={"citation_instance_id": f"eq.{citation_id}"},
             headers=self.supabase_repo.headers(prefer="return=minimal", include_content_type=False),
         )
+        if delete_response.status_code not in {200, 204}:
+            self._raise_write_error(response=delete_response, operation="delete stale citation renders")
         if not rows:
             return
-        await self.supabase_repo.post(
+        insert_response = await self.supabase_repo.post(
             "citation_renders",
             json=rows,
             headers=self.supabase_repo.headers(prefer="return=minimal"),
         )
+        if insert_response.status_code not in {200, 201, 204}:
+            self._raise_write_error(response=insert_response, operation="persist citation renders")
 
     async def list_quote_counts(self, *, user_id: str, access_token: str | None, citation_ids: list[str]) -> dict[str, int]:
         if not citation_ids:

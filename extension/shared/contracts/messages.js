@@ -49,6 +49,9 @@ export function createCaptureCreateNoteRequest(requestId, payload) {
 export function createCitationRenderRequest(requestId, payload) {
     return createRequest(MESSAGE_NAMES.CITATION_RENDER, requestId, payload);
 }
+export function createCitationPreviewRequest(requestId, payload) {
+    return createRequest(MESSAGE_NAMES.CITATION_PREVIEW, requestId, payload);
+}
 export function createCitationSaveRequest(requestId, payload) {
     return createRequest(MESSAGE_NAMES.CITATION_SAVE, requestId, payload);
 }

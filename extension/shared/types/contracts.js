@@ -80,6 +80,11 @@ export const MESSAGE_CONTRACTS = Object.freeze({
         payloadShape: "surface:string, noteText?:string, capture?:{selectionText?:string, pageTitle?:string, pageUrl?:string, pageDomain?:string}",
         resultShape: "note:canonical backend response",
     }),
+    [MESSAGE_NAMES.CITATION_PREVIEW]: Object.freeze({
+        topic: MESSAGE_TOPICS.CITATION,
+        payloadShape: "surface:string, capture:{selectionText:string, pageTitle:string, pageUrl:string, pageDomain?:string}, style:string",
+        resultShape: "citation:{id:null, renders:...}, render_bundle:{renders:{...quote_attribution:string}}",
+    }),
     [MESSAGE_NAMES.CITATION_RENDER]: Object.freeze({
         topic: MESSAGE_TOPICS.CITATION,
         payloadShape: "surface:string, citationId:string, style:string",
@@ -87,8 +92,8 @@ export const MESSAGE_CONTRACTS = Object.freeze({
     }),
     [MESSAGE_NAMES.CITATION_SAVE]: Object.freeze({
         topic: MESSAGE_TOPICS.CITATION,
-        payloadShape: "surface:string, citationId:string, style:string, format:string, copy?:boolean",
-        resultShape: "saved:boolean, citationId:string, style:string, format:string, copy:boolean",
+        payloadShape: "surface:string, capture:{selectionText:string, pageTitle:string, pageUrl:string, pageDomain?:string}, style:string, format:string",
+        resultShape: "citation:canonical backend response",
     }),
     [MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST]: Object.freeze({
         topic: MESSAGE_TOPICS.EDITOR,

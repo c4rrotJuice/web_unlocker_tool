@@ -95,9 +95,15 @@ export function createNewNoteView({
   saveButton.style.background = "#0f172a";
   saveButton.style.color = "#f8fafc";
 
-  actions.append(cancelButton, saveButton);
-  composer.append(context, textarea, feedback, actions);
-  root.append(heading, toggle, composer);
+  actions.appendChild(cancelButton);
+  actions.appendChild(saveButton);
+  composer.appendChild(context);
+  composer.appendChild(textarea);
+  composer.appendChild(feedback);
+  composer.appendChild(actions);
+  root.appendChild(heading);
+  root.appendChild(toggle);
+  root.appendChild(composer);
 
   let state = {
     status: "closed",

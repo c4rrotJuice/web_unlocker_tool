@@ -5,9 +5,11 @@ import { createLogger } from "../../shared/utils/logger.js";
 import { createApiClient } from "../api/client.js";
 import { createCaptureApi } from "../api/captures.js";
 import { createCitationApi } from "../api/citations.js";
+import { createWorkInEditorApi } from "../api/work_in_editor.js";
 import { createSessionStore } from "../auth/session_store.js";
-import { createAuthHandler, createBootstrapHandler, createCaptureHandler, createCitationHandler, createEditorHandler, createUiHandler, } from "../handlers/index.js";
+import { createAuthHandler, createBootstrapHandler, createCaptureHandler, createCitationHandler, createEditorHandler, createSidepanelHandler, createUiHandler, } from "../handlers/index.js";
 import { createBackgroundRouter } from "../messaging/router.js";
+import { createTabOpener } from "../navigation/tabs.js";
 import { createBackgroundStateStore } from "../state/index.js";
 import { createCitationStateStore } from "../state/citation_state.js";
 const logger = createLogger("background");
@@ -24,6 +26,8 @@ export function createBackgroundRuntime(deps = {}) {
     });
     const captureApi = typedDeps.captureApi || createCaptureApi(apiClient);
     const citationApi = typedDeps.citationApi || createCitationApi(apiClient);
+    const workInEditorApi = typedDeps.workInEditorApi || createWorkInEditorApi(apiClient);
+    const tabOpener = typedDeps.tabOpener || createTabOpener({ chromeApi, stateStore });
     const bootstrapHandler = typedDeps.bootstrapHandler || createBootstrapHandler({
         apiClient,
         sessionStore,
@@ -41,9 +45,14 @@ export function createBackgroundRuntime(deps = {}) {
             maxPollAttempts: typedDeps.maxPollAttempts,
         }),
         bootstrap: bootstrapHandler,
+        sidepanel: createSidepanelHandler({
+            apiClient,
+            stateStore,
+            tabOpener,
+        }),
         capture: createCaptureHandler({ captureApi }),
         citation: createCitationHandler({ citationApi, citationStateStore }),
-        editor: createEditorHandler(),
+        editor: createEditorHandler({ workInEditorApi, tabOpener }),
         ui: createUiHandler({ chromeApi }),
     };
     const router = typedDeps.router || createBackgroundRouter({
@@ -57,6 +66,7 @@ export function createBackgroundRuntime(deps = {}) {
         apiClient,
         captureApi,
         citationApi,
+        workInEditorApi,
         handlers,
         router,
         dispatch(message, sender = {}) {

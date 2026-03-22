@@ -33,6 +33,22 @@ export function createBootstrapFetchRequest(requestId, surface) {
   return createRequest(MESSAGE_NAMES.BOOTSTRAP_FETCH, requestId, { surface });
 }
 
+export function createSidepanelListRecentCitationsRequest(requestId, payload) {
+  return createRequest(MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_CITATIONS, requestId, payload);
+}
+
+export function createSidepanelListRecentNotesRequest(requestId, payload) {
+  return createRequest(MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_NOTES, requestId, payload);
+}
+
+export function createSidepanelOpenEditorRequest(requestId, surface) {
+  return createRequest(MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR, requestId, { surface });
+}
+
+export function createSidepanelOpenDashboardRequest(requestId, surface) {
+  return createRequest(MESSAGE_NAMES.SIDEPANEL_OPEN_DASHBOARD, requestId, { surface });
+}
+
 export function createCaptureCreateCitationRequest(requestId, payload) {
   return createRequest(MESSAGE_NAMES.CAPTURE_CREATE_CITATION, requestId, payload);
 }

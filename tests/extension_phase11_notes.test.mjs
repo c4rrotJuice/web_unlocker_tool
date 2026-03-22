@@ -159,6 +159,9 @@ test("plain note flow in sidepanel saves through background with active-tab page
     clearTimeoutRef() {},
   });
 
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const newNoteTab = findByAttr(root, "data-tab", "new-note");
+  newNoteTab.dispatchEvent(new FakeEvent("click", newNoteTab));
   const openButton = findByAttr(root, "data-note-open", "true");
   openButton.dispatchEvent(new FakeEvent("click", openButton));
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -210,6 +213,9 @@ test("sidepanel note failures keep the typed text available for retry", async ()
     clearTimeoutRef() {},
   });
 
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const newNoteTab = findByAttr(root, "data-tab", "new-note");
+  newNoteTab.dispatchEvent(new FakeEvent("click", newNoteTab));
   const openButton = findByAttr(root, "data-note-open", "true");
   openButton.dispatchEvent(new FakeEvent("click", openButton));
   await new Promise((resolve) => setTimeout(resolve, 0));

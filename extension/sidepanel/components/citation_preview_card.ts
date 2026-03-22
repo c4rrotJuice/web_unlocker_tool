@@ -31,7 +31,8 @@ export function createCitationPreviewCard({
   body.style.color = "#f8fafc";
   body.style.fontSize = "15px";
 
-  root.append(heading, body);
+  root.appendChild(heading);
+  root.appendChild(body);
 
   return {
     root,

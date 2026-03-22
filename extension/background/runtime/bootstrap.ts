@@ -5,6 +5,7 @@ import { createLogger } from "../../shared/utils/logger.ts";
 import { createApiClient } from "../api/client.ts";
 import { createCaptureApi } from "../api/captures.ts";
 import { createCitationApi } from "../api/citations.ts";
+import { createWorkInEditorApi } from "../api/work_in_editor.ts";
 import { createSessionStore } from "../auth/session_store.ts";
 import {
   createAuthHandler,
@@ -12,9 +13,11 @@ import {
   createCaptureHandler,
   createCitationHandler,
   createEditorHandler,
+  createSidepanelHandler,
   createUiHandler,
 } from "../handlers/index.ts";
 import { createBackgroundRouter } from "../messaging/router.ts";
+import { createTabOpener } from "../navigation/tabs.ts";
 import { createBackgroundStateStore } from "../state/index.ts";
 import { createCitationStateStore } from "../state/citation_state.ts";
 
@@ -32,6 +35,8 @@ export function createBackgroundRuntime(deps = {}) {
   });
   const captureApi = typedDeps.captureApi || createCaptureApi(apiClient);
   const citationApi = typedDeps.citationApi || createCitationApi(apiClient);
+  const workInEditorApi = typedDeps.workInEditorApi || createWorkInEditorApi(apiClient);
+  const tabOpener = typedDeps.tabOpener || createTabOpener({ chromeApi, stateStore });
   const bootstrapHandler = typedDeps.bootstrapHandler || createBootstrapHandler({
     apiClient,
     sessionStore,
@@ -49,9 +54,14 @@ export function createBackgroundRuntime(deps = {}) {
       maxPollAttempts: typedDeps.maxPollAttempts,
     }),
     bootstrap: bootstrapHandler,
+    sidepanel: createSidepanelHandler({
+      apiClient,
+      stateStore,
+      tabOpener,
+    }),
     capture: createCaptureHandler({ captureApi }),
     citation: createCitationHandler({ citationApi, citationStateStore }),
-    editor: createEditorHandler(),
+    editor: createEditorHandler({ workInEditorApi, tabOpener }),
     ui: createUiHandler({ chromeApi }),
   };
   const router = typedDeps.router || createBackgroundRouter({
@@ -66,6 +76,7 @@ export function createBackgroundRuntime(deps = {}) {
     apiClient,
     captureApi,
     citationApi,
+    workInEditorApi,
     handlers,
     router,
     dispatch(message, sender = {}) {

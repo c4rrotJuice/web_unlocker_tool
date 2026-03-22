@@ -1,6 +1,9 @@
 export const API_ORIGIN = "https://app.writior.com";
 export const ENDPOINTS = Object.freeze({
     BOOTSTRAP: "/api/extension/bootstrap",
+    WORK_IN_EDITOR: "/api/extension/work-in-editor",
+    CITATIONS: "/api/citations",
+    NOTES: "/api/notes",
     CAPTURE_CITATION: "/api/extension/captures/citation",
     CAPTURE_QUOTE: "/api/extension/captures/quote",
     CAPTURE_NOTE: "/api/extension/captures/note",

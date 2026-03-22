@@ -271,10 +271,19 @@ export function renderCitationModal(root, snapshot: any = {}, options: any = {})
     saveButton.textContent = state.saveStatus === "saved" ? "Saved" : "Save";
 
     actions.innerHTML = "";
-    actions.append(copyButton, saveButton, closeButton);
+    actions.appendChild(copyButton);
+    actions.appendChild(saveButton);
+    actions.appendChild(closeButton);
 
     wrapper.innerHTML = "";
-    wrapper.append(title, headline, sourceMeta, styleTabs.root, formatTabs.root, previewCard.root, statusLine, actions);
+    wrapper.appendChild(title);
+    wrapper.appendChild(headline);
+    wrapper.appendChild(sourceMeta);
+    wrapper.appendChild(styleTabs.root);
+    wrapper.appendChild(formatTabs.root);
+    wrapper.appendChild(previewCard.root);
+    wrapper.appendChild(statusLine);
+    wrapper.appendChild(actions);
     if (typeof root.replaceChildren === "function") {
       root.replaceChildren(wrapper);
     } else {

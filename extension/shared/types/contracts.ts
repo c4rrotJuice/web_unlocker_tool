@@ -4,6 +4,7 @@ export const MESSAGE_TOPICS = Object.freeze({
   UI: "ui",
   AUTH: "auth",
   BOOTSTRAP: "bootstrap",
+  SIDEPANEL: "sidepanel",
   CAPTURE: "capture",
   CITATION: "citation",
   EDITOR: "editor",
@@ -47,6 +48,26 @@ export const MESSAGE_CONTRACTS = Object.freeze({
     payloadShape: "surface:string",
     resultShape: "auth:AuthState",
   }),
+  [MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_CITATIONS]: Object.freeze({
+    topic: MESSAGE_TOPICS.SIDEPANEL,
+    payloadShape: "surface:string, limit?:number, offset?:number, query?:string",
+    resultShape: "items:Citation[]",
+  }),
+  [MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_NOTES]: Object.freeze({
+    topic: MESSAGE_TOPICS.SIDEPANEL,
+    payloadShape: "surface:string, limit?:number, offset?:number, query?:string",
+    resultShape: "items:Note[]",
+  }),
+  [MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR]: Object.freeze({
+    topic: MESSAGE_TOPICS.SIDEPANEL,
+    payloadShape: "surface:string",
+    resultShape: "opened:boolean, destination:string, url:string",
+  }),
+  [MESSAGE_NAMES.SIDEPANEL_OPEN_DASHBOARD]: Object.freeze({
+    topic: MESSAGE_TOPICS.SIDEPANEL,
+    payloadShape: "surface:string",
+    resultShape: "opened:boolean, destination:string, url:string",
+  }),
   [MESSAGE_NAMES.CAPTURE_CREATE_CITATION]: Object.freeze({
     topic: MESSAGE_TOPICS.CAPTURE,
     payloadShape: "surface:string, capture:{selectionText:string, pageTitle:string, pageUrl:string, pageDomain?:string}",
@@ -74,7 +95,7 @@ export const MESSAGE_CONTRACTS = Object.freeze({
   }),
   [MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST]: Object.freeze({
     topic: MESSAGE_TOPICS.EDITOR,
-    payloadShape: "surface:string, sourceId:string",
-    resultShape: "phase:string",
+    payloadShape: "surface:string, url:string, title?:string, selected_text?:string, citation_format?:string, citation_text?:string, extraction_payload?:object, metadata?:object, locator?:object, project_id?:string, document_title?:string, note?:object, idempotency_key?:string",
+    resultShape: "opened:boolean, destination:string, url:string",
   }),
 });

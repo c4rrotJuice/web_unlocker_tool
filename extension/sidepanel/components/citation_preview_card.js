@@ -24,7 +24,8 @@ export function createCitationPreviewCard({ documentRef = globalThis.document, t
     body.style.lineHeight = "1.65";
     body.style.color = "#f8fafc";
     body.style.fontSize = "15px";
-    root.append(heading, body);
+    root.appendChild(heading);
+    root.appendChild(body);
     return {
         root,
         body,

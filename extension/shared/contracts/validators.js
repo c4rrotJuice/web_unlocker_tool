@@ -46,6 +46,22 @@ function validateAuthStartPayload(payload) {
 function validateStatusPayload(payload) {
     return validateSurface(payload);
 }
+function validateListPayload(payload) {
+    const surfaceError = validateSurface(payload);
+    if (surfaceError) {
+        return surfaceError;
+    }
+    if (payload.limit != null && (!Number.isInteger(payload.limit) || payload.limit < 1 || payload.limit > 50)) {
+        return "payload.limit must be an integer between 1 and 50 when provided.";
+    }
+    if (payload.offset != null && (!Number.isInteger(payload.offset) || payload.offset < 0)) {
+        return "payload.offset must be a non-negative integer when provided.";
+    }
+    if (payload.query != null && !isNonEmptyString(payload.query)) {
+        return "payload.query must be a non-empty string when provided.";
+    }
+    return null;
+}
 function validateCaptureEntityPayload(payload, contentField) {
     const surfaceError = validateSurface(payload);
     if (surfaceError) {
@@ -98,8 +114,8 @@ function validateEditorPayload(payload) {
     if (surfaceError) {
         return surfaceError;
     }
-    if (!isNonEmptyString(payload.sourceId)) {
-        return "payload.sourceId must be a non-empty string.";
+    if (!isNonEmptyString(payload.url)) {
+        return "payload.url must be a non-empty string.";
     }
     return null;
 }
@@ -142,6 +158,10 @@ export const REQUEST_PAYLOAD_VALIDATORS = Object.freeze({
     [MESSAGE_NAMES.AUTH_STATUS_GET]: validateStatusPayload,
     [MESSAGE_NAMES.AUTH_LOGOUT]: validateStatusPayload,
     [MESSAGE_NAMES.BOOTSTRAP_FETCH]: validateStatusPayload,
+    [MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_CITATIONS]: validateListPayload,
+    [MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_NOTES]: validateListPayload,
+    [MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR]: validateStatusPayload,
+    [MESSAGE_NAMES.SIDEPANEL_OPEN_DASHBOARD]: validateStatusPayload,
     [MESSAGE_NAMES.CAPTURE_CREATE_CITATION]: (payload) => validateCaptureEntityPayload(payload, "selectionText"),
     [MESSAGE_NAMES.CAPTURE_CREATE_QUOTE]: (payload) => validateCaptureEntityPayload(payload, "selectionText"),
     [MESSAGE_NAMES.CAPTURE_CREATE_NOTE]: validateCaptureNotePayload,
@@ -279,6 +299,20 @@ export function validateBootstrapSnapshot(payload) {
     }
     if (!isPlainObject(payload.taxonomy)) {
         return createErrorResult(ERROR_CODES.BOOTSTRAP_FAILED, "Bootstrap taxonomy is required.");
+    }
+    return {
+        ok: true,
+        status: RESULT_STATUS.OK,
+        data: payload,
+        meta: null,
+    };
+}
+export function validateWorkInEditorLaunchResponse(payload) {
+    if (!isPlainObject(payload)) {
+        return createErrorResult(ERROR_CODES.INVALID_PAYLOAD, "Work-in-editor response must be an object.");
+    }
+    if (!isNonEmptyString(payload.editor_url)) {
+        return createErrorResult(ERROR_CODES.INVALID_PAYLOAD, "Work-in-editor response must include editor_url.");
     }
     return {
         ok: true,

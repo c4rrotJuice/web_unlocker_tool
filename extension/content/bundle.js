@@ -11,6 +11,10 @@ exports.MESSAGE_NAMES = Object.freeze({
     AUTH_STATUS_GET: "auth.status_get",
     AUTH_LOGOUT: "auth.logout",
     BOOTSTRAP_FETCH: "bootstrap.fetch",
+    SIDEPANEL_LIST_RECENT_CITATIONS: "sidepanel.list_recent_citations",
+    SIDEPANEL_LIST_RECENT_NOTES: "sidepanel.list_recent_notes",
+    SIDEPANEL_OPEN_EDITOR: "sidepanel.open_editor",
+    SIDEPANEL_OPEN_DASHBOARD: "sidepanel.open_dashboard",
     CAPTURE_CREATE_CITATION: "capture.create_citation",
     CAPTURE_CREATE_QUOTE: "capture.create_quote",
     CAPTURE_CREATE_NOTE: "capture.create_note",
@@ -29,6 +33,7 @@ exports.MESSAGE_TOPICS = Object.freeze({
     UI: "ui",
     AUTH: "auth",
     BOOTSTRAP: "bootstrap",
+    SIDEPANEL: "sidepanel",
     CAPTURE: "capture",
     CITATION: "citation",
     EDITOR: "editor",
@@ -70,6 +75,26 @@ exports.MESSAGE_CONTRACTS = Object.freeze({
         payloadShape: "surface:string",
         resultShape: "auth:AuthState",
     }),
+    [message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_CITATIONS]: Object.freeze({
+        topic: exports.MESSAGE_TOPICS.SIDEPANEL,
+        payloadShape: "surface:string, limit?:number, offset?:number, query?:string",
+        resultShape: "items:Citation[]",
+    }),
+    [message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_NOTES]: Object.freeze({
+        topic: exports.MESSAGE_TOPICS.SIDEPANEL,
+        payloadShape: "surface:string, limit?:number, offset?:number, query?:string",
+        resultShape: "items:Note[]",
+    }),
+    [message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR]: Object.freeze({
+        topic: exports.MESSAGE_TOPICS.SIDEPANEL,
+        payloadShape: "surface:string",
+        resultShape: "opened:boolean, destination:string, url:string",
+    }),
+    [message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_OPEN_DASHBOARD]: Object.freeze({
+        topic: exports.MESSAGE_TOPICS.SIDEPANEL,
+        payloadShape: "surface:string",
+        resultShape: "opened:boolean, destination:string, url:string",
+    }),
     [message_names_ts_1.MESSAGE_NAMES.CAPTURE_CREATE_CITATION]: Object.freeze({
         topic: exports.MESSAGE_TOPICS.CAPTURE,
         payloadShape: "surface:string, capture:{selectionText:string, pageTitle:string, pageUrl:string, pageDomain?:string}",
@@ -97,8 +122,8 @@ exports.MESSAGE_CONTRACTS = Object.freeze({
     }),
     [message_names_ts_1.MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST]: Object.freeze({
         topic: exports.MESSAGE_TOPICS.EDITOR,
-        payloadShape: "surface:string, sourceId:string",
-        resultShape: "phase:string",
+        payloadShape: "surface:string, url:string, title?:string, selected_text?:string, citation_format?:string, citation_text?:string, extraction_payload?:object, metadata?:object, locator?:object, project_id?:string, document_title?:string, note?:object, idempotency_key?:string",
+        resultShape: "opened:boolean, destination:string, url:string",
     }),
 });
 
@@ -113,6 +138,10 @@ exports.createAuthStartRequest = createAuthStartRequest;
 exports.createAuthStatusGetRequest = createAuthStatusGetRequest;
 exports.createAuthLogoutRequest = createAuthLogoutRequest;
 exports.createBootstrapFetchRequest = createBootstrapFetchRequest;
+exports.createSidepanelListRecentCitationsRequest = createSidepanelListRecentCitationsRequest;
+exports.createSidepanelListRecentNotesRequest = createSidepanelListRecentNotesRequest;
+exports.createSidepanelOpenEditorRequest = createSidepanelOpenEditorRequest;
+exports.createSidepanelOpenDashboardRequest = createSidepanelOpenDashboardRequest;
 exports.createCaptureCreateCitationRequest = createCaptureCreateCitationRequest;
 exports.createCaptureCreateQuoteRequest = createCaptureCreateQuoteRequest;
 exports.createCaptureCreateNoteRequest = createCaptureCreateNoteRequest;
@@ -146,6 +175,18 @@ function createAuthLogoutRequest(requestId, surface) {
 }
 function createBootstrapFetchRequest(requestId, surface) {
     return createRequest(message_names_ts_1.MESSAGE_NAMES.BOOTSTRAP_FETCH, requestId, { surface });
+}
+function createSidepanelListRecentCitationsRequest(requestId, payload) {
+    return createRequest(message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_CITATIONS, requestId, payload);
+}
+function createSidepanelListRecentNotesRequest(requestId, payload) {
+    return createRequest(message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_NOTES, requestId, payload);
+}
+function createSidepanelOpenEditorRequest(requestId, surface) {
+    return createRequest(message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR, requestId, { surface });
+}
+function createSidepanelOpenDashboardRequest(requestId, surface) {
+    return createRequest(message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_OPEN_DASHBOARD, requestId, { surface });
 }
 function createCaptureCreateCitationRequest(requestId, payload) {
     return createRequest(message_names_ts_1.MESSAGE_NAMES.CAPTURE_CREATE_CITATION, requestId, payload);
@@ -440,6 +481,7 @@ exports.validateMessageEnvelope = validateMessageEnvelope;
 exports.validateMessageResult = validateMessageResult;
 exports.validateResultEnvelope = validateResultEnvelope;
 exports.validateBootstrapSnapshot = validateBootstrapSnapshot;
+exports.validateWorkInEditorLaunchResponse = validateWorkInEditorLaunchResponse;
 const message_names_ts_1 = require("../constants/message_names.ts");
 const contracts_ts_1 = require("../types/contracts.ts");
 const citation_ts_1 = require("../types/citation.ts");
@@ -487,6 +529,22 @@ function validateAuthStartPayload(payload) {
 }
 function validateStatusPayload(payload) {
     return validateSurface(payload);
+}
+function validateListPayload(payload) {
+    const surfaceError = validateSurface(payload);
+    if (surfaceError) {
+        return surfaceError;
+    }
+    if (payload.limit != null && (!Number.isInteger(payload.limit) || payload.limit < 1 || payload.limit > 50)) {
+        return "payload.limit must be an integer between 1 and 50 when provided.";
+    }
+    if (payload.offset != null && (!Number.isInteger(payload.offset) || payload.offset < 0)) {
+        return "payload.offset must be a non-negative integer when provided.";
+    }
+    if (payload.query != null && !isNonEmptyString(payload.query)) {
+        return "payload.query must be a non-empty string when provided.";
+    }
+    return null;
 }
 function validateCaptureEntityPayload(payload, contentField) {
     const surfaceError = validateSurface(payload);
@@ -540,8 +598,8 @@ function validateEditorPayload(payload) {
     if (surfaceError) {
         return surfaceError;
     }
-    if (!isNonEmptyString(payload.sourceId)) {
-        return "payload.sourceId must be a non-empty string.";
+    if (!isNonEmptyString(payload.url)) {
+        return "payload.url must be a non-empty string.";
     }
     return null;
 }
@@ -584,6 +642,10 @@ exports.REQUEST_PAYLOAD_VALIDATORS = Object.freeze({
     [message_names_ts_1.MESSAGE_NAMES.AUTH_STATUS_GET]: validateStatusPayload,
     [message_names_ts_1.MESSAGE_NAMES.AUTH_LOGOUT]: validateStatusPayload,
     [message_names_ts_1.MESSAGE_NAMES.BOOTSTRAP_FETCH]: validateStatusPayload,
+    [message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_CITATIONS]: validateListPayload,
+    [message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_NOTES]: validateListPayload,
+    [message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR]: validateStatusPayload,
+    [message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_OPEN_DASHBOARD]: validateStatusPayload,
     [message_names_ts_1.MESSAGE_NAMES.CAPTURE_CREATE_CITATION]: (payload) => validateCaptureEntityPayload(payload, "selectionText"),
     [message_names_ts_1.MESSAGE_NAMES.CAPTURE_CREATE_QUOTE]: (payload) => validateCaptureEntityPayload(payload, "selectionText"),
     [message_names_ts_1.MESSAGE_NAMES.CAPTURE_CREATE_NOTE]: validateCaptureNotePayload,
@@ -729,6 +791,20 @@ function validateBootstrapSnapshot(payload) {
         meta: null,
     };
 }
+function validateWorkInEditorLaunchResponse(payload) {
+    if (!isPlainObject(payload)) {
+        return (0, messages_ts_1.createErrorResult)(messages_ts_1.ERROR_CODES.INVALID_PAYLOAD, "Work-in-editor response must be an object.");
+    }
+    if (!isNonEmptyString(payload.editor_url)) {
+        return (0, messages_ts_1.createErrorResult)(messages_ts_1.ERROR_CODES.INVALID_PAYLOAD, "Work-in-editor response must include editor_url.");
+    }
+    return {
+        ok: true,
+        status: messages_ts_1.RESULT_STATUS.OK,
+        data: payload,
+        meta: null,
+    };
+}
 
 },
 "shared/utils/runtime_message.ts": function(module, exports, require) {
@@ -815,6 +891,32 @@ function createRuntimeClient(chromeApi, surface) {
         bootstrapFetch() {
             const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-bootstrap-fetch`);
             return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createBootstrapFetchRequest)(requestId, surface));
+        },
+        listRecentCitations({ limit = 8, offset = 0, query = "" } = {}) {
+            const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-list-recent-citations`);
+            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createSidepanelListRecentCitationsRequest)(requestId, {
+                surface,
+                limit,
+                offset,
+                query,
+            }));
+        },
+        listRecentNotes({ limit = 8, offset = 0, query = "" } = {}) {
+            const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-list-recent-notes`);
+            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createSidepanelListRecentNotesRequest)(requestId, {
+                surface,
+                limit,
+                offset,
+                query,
+            }));
+        },
+        openEditor() {
+            const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-open-editor`);
+            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createSidepanelOpenEditorRequest)(requestId, surface));
+        },
+        openDashboard() {
+            const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-open-dashboard`);
+            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createSidepanelOpenDashboardRequest)(requestId, surface));
         },
         createCitation(payload) {
             const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-create-citation`);
@@ -2501,7 +2603,8 @@ function createCitationPreviewCard({ documentRef = globalThis.document, title = 
     body.style.lineHeight = "1.65";
     body.style.color = "#f8fafc";
     body.style.fontSize = "15px";
-    root.append(heading, body);
+    root.appendChild(heading);
+    root.appendChild(body);
     return {
         root,
         body,
@@ -2829,9 +2932,18 @@ function renderCitationModal(root, snapshot = {}, options = {}) {
         copyButton.textContent = state.saveStatus === "copied" ? "Copied" : "Copy";
         saveButton.textContent = state.saveStatus === "saved" ? "Saved" : "Save";
         actions.innerHTML = "";
-        actions.append(copyButton, saveButton, closeButton);
+        actions.appendChild(copyButton);
+        actions.appendChild(saveButton);
+        actions.appendChild(closeButton);
         wrapper.innerHTML = "";
-        wrapper.append(title, headline, sourceMeta, styleTabs.root, formatTabs.root, previewCard.root, statusLine, actions);
+        wrapper.appendChild(title);
+        wrapper.appendChild(headline);
+        wrapper.appendChild(sourceMeta);
+        wrapper.appendChild(styleTabs.root);
+        wrapper.appendChild(formatTabs.root);
+        wrapper.appendChild(previewCard.root);
+        wrapper.appendChild(statusLine);
+        wrapper.appendChild(actions);
         if (typeof root.replaceChildren === "function") {
             root.replaceChildren(wrapper);
         }

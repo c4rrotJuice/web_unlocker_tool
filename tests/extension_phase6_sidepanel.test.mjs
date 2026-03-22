@@ -48,6 +48,7 @@ class FakeElement extends FakeEventTarget {
     this.style = {};
     this.textContent = "";
     this.value = "";
+    this.disabled = false;
     this._innerHTML = "";
   }
 
@@ -57,6 +58,10 @@ class FakeElement extends FakeEventTarget {
 
   getAttribute(name) {
     return this.attributes.has(name) ? this.attributes.get(name) : null;
+  }
+
+  removeAttribute(name) {
+    this.attributes.delete(name);
   }
 
   appendChild(child) {
@@ -75,6 +80,13 @@ class FakeElement extends FakeEventTarget {
     }
     return this.shadowRoot;
   }
+
+  replaceChildren(...children) {
+    this.children = [];
+    children.forEach((child) => this.appendChild(child));
+  }
+
+  focus() {}
 
   set innerHTML(value) {
     this._innerHTML = String(value);
@@ -96,10 +108,6 @@ class FakeDocument extends FakeEventTarget {
 
   createElement(tagName) {
     return new FakeElement(tagName, this);
-  }
-
-  getElementById() {
-    return null;
   }
 }
 
@@ -196,7 +204,11 @@ function createFetchStub({ signedIn = true, citationsBody, notesBody, renderBody
           profile: { id: "user-1", display_name: "Researcher", email: "user@example.com" },
           entitlement: { tier: "pro", status: "active" },
           capabilities: { citation_styles: ["apa", "mla", "chicago", "harvard"], unlocks: true, documents: {} },
-          app: { origin: "https://app.writior.com", handoff: { preferred_destination: "/editor" } },
+          app: {
+            origin: "https://app.writior.com",
+            handoff: { preferred_destination: "/editor/from-bootstrap" },
+            routes: { dashboard_path: "/dashboard/from-bootstrap" },
+          },
           taxonomy: { recent_projects: [{ id: "project-1" }], recent_tags: [{ id: "tag-1" }] },
         },
       } : {
@@ -231,20 +243,8 @@ function createFetchStub({ signedIn = true, citationsBody, notesBody, renderBody
         },
       });
     }
-    if (normalizedUrl.endsWith("/api/auth/handoff/exchange")) {
-      return createResponse({
-        ok: true,
-        data: {
-          redirect_path: "/editor",
-          session: {
-            access_token: "token-1",
-            refresh_token: "refresh-1",
-            token_type: "bearer",
-            user_id: "user-1",
-            email: "user@example.com",
-          },
-        },
-      });
+    if (normalizedUrl.endsWith("/api/extension/captures/note")) {
+      return createResponse({ ok: true, data: { id: "note-2" } });
     }
     return createResponse({ ok: false, error: { code: "unexpected", message: normalizedUrl } }, 404);
   };
@@ -276,6 +276,9 @@ function createChromeStub(initialStorage = {}) {
       async create(args) {
         tabsCreateCalls.push(args);
         return args;
+      },
+      async query() {
+        return [{ title: "Example page", url: "https://example.com/page", windowId: 1 }];
       },
     },
     storage: {
@@ -317,50 +320,51 @@ function createRuntime({ signedIn = true, citationsBody, notesBody } = {}) {
 
 function createClient(runtime, chromeApi) {
   return {
-    restoreSession: () => {
-      chromeApi.messages.push({ type: MESSAGE_NAMES.AUTH_RESTORE_SESSION });
-      return runtime.dispatch({ type: MESSAGE_NAMES.AUTH_RESTORE_SESSION }, { tab: { windowId: 1 } });
-    },
-    getAuthState: () => {
-      chromeApi.messages.push({ type: MESSAGE_NAMES.AUTH_GET_STATE });
-      return runtime.dispatch({ type: MESSAGE_NAMES.AUTH_GET_STATE }, { tab: { windowId: 1 } });
-    },
-    getBootstrapState: () => {
-      chromeApi.messages.push({ type: MESSAGE_NAMES.BOOTSTRAP_GET_STATE });
-      return runtime.dispatch({ type: MESSAGE_NAMES.BOOTSTRAP_GET_STATE }, { tab: { windowId: 1 } });
-    },
-    listCitations: (payload) => {
-      chromeApi.messages.push({ type: MESSAGE_NAMES.SIDEPANEL_LIST_CITATIONS, payload });
-      return runtime.dispatch({ type: MESSAGE_NAMES.SIDEPANEL_LIST_CITATIONS, payload }, { tab: { windowId: 1 } });
-    },
-    listNotes: (payload) => {
-      chromeApi.messages.push({ type: MESSAGE_NAMES.SIDEPANEL_LIST_NOTES, payload });
-      return runtime.dispatch({ type: MESSAGE_NAMES.SIDEPANEL_LIST_NOTES, payload }, { tab: { windowId: 1 } });
-    },
-    openEditor: () => {
-      chromeApi.messages.push({ type: MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR });
-      return runtime.dispatch({ type: MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR }, { tab: { windowId: 1 } });
-    },
-    openDashboard: () => {
-      chromeApi.messages.push({ type: MESSAGE_NAMES.SIDEPANEL_OPEN_DASHBOARD });
-      return runtime.dispatch({ type: MESSAGE_NAMES.SIDEPANEL_OPEN_DASHBOARD }, { tab: { windowId: 1 } });
-    },
-    signOut: () => {
-      chromeApi.messages.push({ type: MESSAGE_NAMES.AUTH_SIGN_OUT });
-      return runtime.dispatch({ type: MESSAGE_NAMES.AUTH_SIGN_OUT }, { tab: { windowId: 1 } });
-    },
-    createNote: (payload) => {
-      chromeApi.messages.push({ type: MESSAGE_NAMES.CAPTURE_CREATE_NOTE, payload });
-      return runtime.dispatch({ type: MESSAGE_NAMES.CAPTURE_CREATE_NOTE, payload }, { tab: { windowId: 1 } });
-    },
-    saveCitationState: (payload) => {
-      chromeApi.messages.push({ type: MESSAGE_NAMES.CITATION_SAVE_STATE, payload });
-      return runtime.dispatch({ type: MESSAGE_NAMES.CITATION_SAVE_STATE, payload }, { tab: { windowId: 1 } });
-    },
-    renderCitation: (payload) => {
-      chromeApi.messages.push({ type: MESSAGE_NAMES.CITATION_RENDER, payload });
-      return runtime.dispatch({ type: MESSAGE_NAMES.CITATION_RENDER, payload }, { tab: { windowId: 1 } });
-    },
+    bootstrapFetch: () => runtime.dispatch({
+      type: MESSAGE_NAMES.BOOTSTRAP_FETCH,
+      requestId: "bootstrap-fetch",
+      payload: { surface: "sidepanel" },
+    }, { tab: { windowId: 1 } }),
+    authStatusGet: () => runtime.dispatch({
+      type: MESSAGE_NAMES.AUTH_STATUS_GET,
+      requestId: "auth-status",
+      payload: { surface: "sidepanel" },
+    }, { tab: { windowId: 1 } }),
+    authLogout: () => runtime.dispatch({
+      type: MESSAGE_NAMES.AUTH_LOGOUT,
+      requestId: "auth-logout",
+      payload: { surface: "sidepanel" },
+    }, { tab: { windowId: 1 } }),
+    listRecentCitations: (payload = {}) => runtime.dispatch({
+      type: MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_CITATIONS,
+      requestId: "list-citations",
+      payload: { surface: "sidepanel", ...payload },
+    }, { tab: { windowId: 1 } }),
+    listRecentNotes: (payload = {}) => runtime.dispatch({
+      type: MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_NOTES,
+      requestId: "list-notes",
+      payload: { surface: "sidepanel", ...payload },
+    }, { tab: { windowId: 1 } }),
+    openEditor: () => runtime.dispatch({
+      type: MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR,
+      requestId: "open-editor",
+      payload: { surface: "sidepanel" },
+    }, { tab: { windowId: 1 } }),
+    openDashboard: () => runtime.dispatch({
+      type: MESSAGE_NAMES.SIDEPANEL_OPEN_DASHBOARD,
+      requestId: "open-dashboard",
+      payload: { surface: "sidepanel" },
+    }, { tab: { windowId: 1 } }),
+    createNote: (payload) => runtime.dispatch({
+      type: MESSAGE_NAMES.CAPTURE_CREATE_NOTE,
+      requestId: "create-note",
+      payload: { surface: "sidepanel", ...payload },
+    }, { tab: { windowId: 1 } }),
+    renderCitation: (payload) => runtime.dispatch({
+      type: MESSAGE_NAMES.CITATION_RENDER,
+      requestId: "render-citation",
+      payload: { surface: "sidepanel", ...payload },
+    }, { tab: { windowId: 1 } }),
   };
 }
 
@@ -384,13 +388,11 @@ test("signed-out sidepanel stays background-only and does not fetch lists", asyn
     shell.render();
     await shell.refresh();
 
+    const mountedRoot = root.shadowRoot || root;
     assert.equal(shell.getState().status, "signed_out");
-    assert.equal(collectText(root.shadowRoot || root).includes("Signed out"), true);
+    assert.equal(collectText(mountedRoot).includes("Signed out"), true);
     assert.equal(requests.some((entry) => entry.url.includes("/api/citations?")), false);
     assert.equal(requests.some((entry) => entry.url.includes("/api/notes?")), false);
-    assert.equal(chromeApi.messages.some((message) => message.type === MESSAGE_NAMES.AUTH_RESTORE_SESSION), true);
-    assert.equal(runtime.stateStore.getState().status, "signed_out");
-    await new Promise((resolve) => setTimeout(resolve, 20));
   } finally {
     shell?.destroy?.();
     globalThis.document = previousDocument;
@@ -398,7 +400,7 @@ test("signed-out sidepanel stays background-only and does not fetch lists", asyn
   }
 });
 
-test("signed-in sidepanel loads recent items, supports expand/copy, and keeps navigation in background", async () => {
+test("signed-in sidepanel loads recent items, supports tabs, expand, copy, and background navigation", async () => {
   const previousDocument = globalThis.document;
   const previousWindow = globalThis.window;
   const documentRef = new FakeDocument();
@@ -457,25 +459,33 @@ test("signed-in sidepanel loads recent items, supports expand/copy, and keeps na
 
     const mountedRoot = root.shadowRoot || root;
     assert.equal(shell.getState().status, "ready");
-    assert.equal(chromeApi.messages.some((message) => message.type === MESSAGE_NAMES.AUTH_RESTORE_SESSION), true);
     assert.equal(requests.some((entry) => entry.url.includes("/api/citations?limit=8")), true);
     assert.equal(requests.some((entry) => entry.url.includes("/api/notes?limit=8")), true);
     assert.equal(collectText(mountedRoot).includes("Source Title"), true);
+    assert.equal(collectText(mountedRoot).includes("Researcher"), true);
+    assert.equal(collectText(mountedRoot).includes("user@example.com"), true);
+    assert.equal(collectText(mountedRoot).includes("pro"), true);
 
     const citationRow = findByAttr(mountedRoot, "data-citation-id", "citation-1");
     assert.ok(citationRow);
-    const citationCopy = findByText(citationRow, "Copy");
-    citationCopy.dispatchEvent(new FakeEvent("click", citationCopy));
-    assert.equal(clipboard.lastText.includes("Author. (2024). Source Title."), true);
-
     const citationExpand = findByText(citationRow, "Expand");
     citationExpand.dispatchEvent(new FakeEvent("click", citationExpand));
     assert.equal(shell.getState().expanded_citation_id, "citation-1");
+
+    const citationCopy = findByText(citationRow, "Copy");
+    citationCopy.dispatchEvent(new FakeEvent("click", citationCopy));
+    assert.equal(clipboard.lastText.includes("Author. (2024). Source Title."), true);
 
     const notesTab = findByAttr(mountedRoot, "data-tab", "notes");
     notesTab.dispatchEvent(new FakeEvent("click", notesTab));
     assert.equal(shell.getState().active_tab, "notes");
     assert.equal(collectText(mountedRoot).includes("Field note"), true);
+    assert.equal(collectText(mountedRoot).includes("Highlight note"), true);
+
+    const noteRow = findByAttr(mountedRoot, "data-note-id", "note-1");
+    const noteCopy = findByText(noteRow, "Copy");
+    noteCopy.dispatchEvent(new FakeEvent("click", noteCopy));
+    assert.equal(clipboard.lastText.includes("Note body text"), true);
 
     const profileCard = findByAttr(mountedRoot, "data-profile-card", "true");
     const actionButtons = profileCard.children[1].children;
@@ -486,14 +496,64 @@ test("signed-in sidepanel loads recent items, supports expand/copy, and keeps na
     openEditor.dispatchEvent(new FakeEvent("click", openEditor));
     openDashboard.dispatchEvent(new FakeEvent("click", openDashboard));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.equal(chromeApi.tabsCreateCalls[0].url, "https://app.writior.com/editor");
-    assert.equal(chromeApi.tabsCreateCalls[1].url, "https://app.writior.com/dashboard");
+    assert.equal(chromeApi.tabsCreateCalls[0].url, "https://app.writior.com/editor/from-bootstrap");
+    assert.equal(chromeApi.tabsCreateCalls[1].url, "https://app.writior.com/dashboard/from-bootstrap");
+    assert.equal(collectText(mountedRoot).includes("Opening dashboard..."), true);
 
     signOut.dispatchEvent(new FakeEvent("click", signOut));
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(shell.getState().status, "signed_out");
-    assert.equal(chromeApi.messages.some((message) => message.type === MESSAGE_NAMES.AUTH_SIGN_OUT), true);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+  } finally {
+    shell?.destroy?.();
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+  }
+});
+
+test("sidepanel surfaces launch failures when canonical dashboard truth is unavailable", async () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const documentRef = new FakeDocument();
+  globalThis.document = documentRef;
+  globalThis.window = new FakeEventTarget();
+  let shell;
+  try {
+    const { chromeApi, runtime } = createRuntime({ signedIn: true });
+    runtime.stateStore.setSignedIn({
+      session: {
+        access_token: "token-1",
+        token_type: "bearer",
+        user_id: "user-1",
+        email: "user@example.com",
+        source: "background",
+      },
+      bootstrap: {
+        profile: { id: "user-1", display_name: "Researcher", email: "user@example.com" },
+        entitlement: { tier: "pro", status: "active" },
+        capabilities: { citation_styles: ["apa"], unlocks: true, documents: {} },
+        app: { origin: "https://app.writior.com", handoff: { preferred_destination: "/editor" } },
+        taxonomy: { recent_projects: [], recent_tags: [] },
+      },
+    });
+    const root = documentRef.createElement("div");
+    shell = createSidepanelShell({
+      root,
+      client: createClient(runtime, chromeApi),
+      chromeApi,
+      documentRef,
+      navigatorRef: { clipboard: { async writeText() {} } },
+    });
+    shell.render();
+
+    const mountedRoot = root.shadowRoot || root;
+    const profileCard = findByAttr(mountedRoot, "data-profile-card", "true");
+    const actionButtons = profileCard.children[1].children;
+    const openDashboard = actionButtons.find((child) => child.textContent === "Open dashboard");
+    openDashboard.dispatchEvent(new FakeEvent("click", openDashboard));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(chromeApi.tabsCreateCalls.length, 0);
+    assert.equal(collectText(mountedRoot).includes("Dashboard URL is unavailable from bootstrap."), true);
   } finally {
     shell?.destroy?.();
     globalThis.document = previousDocument;

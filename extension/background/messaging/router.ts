@@ -14,6 +14,12 @@ function createDefaultHandlers() {
     bootstrap: {
       fetch: (request) => createNotImplementedResult(request.type, request.requestId),
     },
+    sidepanel: {
+      listRecentCitations: (request) => createNotImplementedResult(request.type, request.requestId),
+      listRecentNotes: (request) => createNotImplementedResult(request.type, request.requestId),
+      openEditor: (request) => createNotImplementedResult(request.type, request.requestId),
+      openDashboard: (request) => createNotImplementedResult(request.type, request.requestId),
+    },
     capture: {
       createCitation: (request) => createNotImplementedResult(request.type, request.requestId),
       createQuote: (request) => createNotImplementedResult(request.type, request.requestId),
@@ -41,6 +47,10 @@ function createRouteTable(handlers) {
     [MESSAGE_NAMES.AUTH_STATUS_GET]: handlers.auth.getStatus,
     [MESSAGE_NAMES.AUTH_LOGOUT]: handlers.auth.logout,
     [MESSAGE_NAMES.BOOTSTRAP_FETCH]: handlers.bootstrap.fetch,
+    [MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_CITATIONS]: handlers.sidepanel.listRecentCitations,
+    [MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_NOTES]: handlers.sidepanel.listRecentNotes,
+    [MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR]: handlers.sidepanel.openEditor,
+    [MESSAGE_NAMES.SIDEPANEL_OPEN_DASHBOARD]: handlers.sidepanel.openDashboard,
     [MESSAGE_NAMES.CAPTURE_CREATE_CITATION]: handlers.capture.createCitation,
     [MESSAGE_NAMES.CAPTURE_CREATE_QUOTE]: handlers.capture.createQuote,
     [MESSAGE_NAMES.CAPTURE_CREATE_NOTE]: handlers.capture.createNote,

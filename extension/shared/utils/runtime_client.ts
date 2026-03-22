@@ -4,6 +4,10 @@ import {
   createAuthStartRequest,
   createAuthStatusGetRequest,
   createBootstrapFetchRequest,
+  createSidepanelListRecentCitationsRequest,
+  createSidepanelListRecentNotesRequest,
+  createSidepanelOpenDashboardRequest,
+  createSidepanelOpenEditorRequest,
   createCaptureCreateCitationRequest,
   createCaptureCreateNoteRequest,
   createCaptureCreateQuoteRequest,
@@ -44,6 +48,32 @@ export function createRuntimeClient(chromeApi, surface) {
     bootstrapFetch() {
       const requestId = createRequestId(`${surface}-bootstrap-fetch`);
       return sendRuntimeMessage(chromeApi, createBootstrapFetchRequest(requestId, surface));
+    },
+    listRecentCitations({ limit = 8, offset = 0, query = "" } = {}) {
+      const requestId = createRequestId(`${surface}-list-recent-citations`);
+      return sendRuntimeMessage(chromeApi, createSidepanelListRecentCitationsRequest(requestId, {
+        surface,
+        limit,
+        offset,
+        query,
+      }));
+    },
+    listRecentNotes({ limit = 8, offset = 0, query = "" } = {}) {
+      const requestId = createRequestId(`${surface}-list-recent-notes`);
+      return sendRuntimeMessage(chromeApi, createSidepanelListRecentNotesRequest(requestId, {
+        surface,
+        limit,
+        offset,
+        query,
+      }));
+    },
+    openEditor() {
+      const requestId = createRequestId(`${surface}-open-editor`);
+      return sendRuntimeMessage(chromeApi, createSidepanelOpenEditorRequest(requestId, surface));
+    },
+    openDashboard() {
+      const requestId = createRequestId(`${surface}-open-dashboard`);
+      return sendRuntimeMessage(chromeApi, createSidepanelOpenDashboardRequest(requestId, surface));
     },
     createCitation(payload) {
       const requestId = createRequestId(`${surface}-create-citation`);

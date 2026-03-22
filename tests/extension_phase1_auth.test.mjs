@@ -225,6 +225,32 @@ test("api client normalizes network and backend auth errors", async () => {
   assert.equal(backendResult.error.code, "handoff_invalid");
 });
 
+test("api client surfaces FastAPI detail payloads instead of envelope-shape errors", async () => {
+  const backendClient = createApiClient({
+    fetchImpl: async () => createResponse({
+      detail: {
+        code: "CITATION_PERSISTENCE_WRITE_FAILED",
+        message: "Failed to create citation instance.",
+        details: {
+          upstream_code: "23514",
+        },
+      },
+    }, 500),
+  });
+
+  const result = await backendClient.request("/api/citations", {
+    method: "POST",
+    body: {},
+    fallbackCode: "invalid_payload",
+    label: "Citation save response",
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "CITATION_PERSISTENCE_WRITE_FAILED");
+  assert.match(result.error.message, /Failed to create citation instance/);
+  assert.equal(result.meta.status, 500);
+});
+
 test("worker restore uses stored token to fetch bootstrap and expose signed-in auth state", async () => {
   const chromeApi = createChromeStub({
     [STORAGE_KEYS.AUTH_SESSION]: {

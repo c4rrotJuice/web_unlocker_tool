@@ -10,6 +10,19 @@ function mapHttpError(status, fallbackCode = ERROR_CODES.NETWORK_ERROR) {
     }
     return fallbackCode;
 }
+function mapBackendDetailError(payload, status, fallbackCode) {
+    if (!payload || typeof payload !== "object") {
+        return null;
+    }
+    const detail = payload.detail;
+    if (typeof detail === "string" && detail.trim()) {
+        return createErrorResult(mapHttpError(status, fallbackCode), detail.trim(), undefined, payload, { status });
+    }
+    if (detail && typeof detail === "object") {
+        return createErrorResult(typeof detail.code === "string" && detail.code.trim() ? detail.code.trim() : mapHttpError(status, fallbackCode), typeof detail.message === "string" && detail.message.trim() ? detail.message.trim() : `Request failed with ${status}.`, undefined, detail.details ?? payload, { status });
+    }
+    return null;
+}
 async function parseJson(response) {
     try {
         const text = await response.text();
@@ -57,6 +70,12 @@ export function createApiClient({ baseUrl = API_ORIGIN, fetchImpl = globalThis.f
         const parsed = await parseJson(response);
         if (parsed?.ok === false && parsed?.status === "error") {
             return parsed;
+        }
+        if (!response.ok) {
+            const mappedDetailError = mapBackendDetailError(parsed, response.status, fallbackCode);
+            if (mappedDetailError) {
+                return mappedDetailError;
+            }
         }
         const normalized = validateResultEnvelope(parsed, { fallbackCode, label });
         if (response.ok) {

@@ -362,6 +362,9 @@ exports.buildNoteCaptureRequest = buildNoteCaptureRequest;
 function normalizeText(value) {
     return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
 }
+function isPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 function truncateText(value, maxLength = 80) {
     const normalized = normalizeText(value);
     if (!normalized || normalized.length <= maxLength) {
@@ -384,6 +387,57 @@ function deriveDomain(pageUrl, explicitDomain = "") {
     catch {
         return "";
     }
+}
+function normalizeCandidate(candidate) {
+    if (typeof candidate === "string") {
+        const value = normalizeText(candidate);
+        return value ? { value, confidence: 0.5, source: null } : null;
+    }
+    if (!isPlainObject(candidate)) {
+        return null;
+    }
+    const value = normalizeText(candidate.value);
+    if (!value) {
+        return null;
+    }
+    const confidence = Number(candidate.confidence);
+    return {
+        value,
+        confidence: Number.isFinite(confidence) ? confidence : 0.5,
+        source: normalizeText(candidate.source) || null,
+    };
+}
+function normalizeCandidateList(input) {
+    const seen = new Set();
+    const normalized = [];
+    for (const entry of Array.isArray(input) ? input : []) {
+        const candidate = normalizeCandidate(entry);
+        if (!candidate) {
+            continue;
+        }
+        const key = `${candidate.value.toLowerCase()}|${candidate.source || ""}`;
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        normalized.push(candidate);
+    }
+    return normalized;
+}
+function normalizeIdentifiers(input) {
+    if (!isPlainObject(input)) {
+        return {};
+    }
+    const normalized = {};
+    for (const [key, value] of Object.entries(input)) {
+        const normalizedKey = normalizeText(key).toLowerCase();
+        const normalizedValue = normalizeText(value);
+        if (!normalizedKey || !normalizedValue) {
+            continue;
+        }
+        normalized[normalizedKey] = normalizedValue;
+    }
+    return normalized;
 }
 function buildExternalNoteSource({ pageUrl, pageDomain, pageTitle, } = {}) {
     const url = normalizeText(pageUrl);
@@ -408,49 +462,117 @@ function normalizeCaptureContext(input = {}) {
     const pageTitle = normalizeText(input.pageTitle);
     const pageUrl = normalizeText(input.pageUrl);
     const pageDomain = deriveDomain(pageUrl, input.pageDomain);
+    const canonicalUrl = normalizeText(input.canonicalUrl ?? input.canonical_url);
+    const description = normalizeText(input.description);
+    const language = normalizeText(input.language);
+    const siteName = normalizeText(input.siteName ?? input.site_name);
+    const titleCandidates = normalizeCandidateList(input.titleCandidates ?? input.title_candidates);
+    const authorCandidates = normalizeCandidateList(input.authorCandidates ?? input.author_candidates);
+    const dateCandidates = normalizeCandidateList(input.dateCandidates ?? input.date_candidates);
+    const publisherCandidates = normalizeCandidateList(input.publisherCandidates ?? input.publisher_candidates);
+    const containerCandidates = normalizeCandidateList(input.containerCandidates ?? input.container_candidates);
+    const sourceTypeCandidates = normalizeCandidateList(input.sourceTypeCandidates ?? input.source_type_candidates);
+    const identifiers = normalizeIdentifiers(input.identifiers);
+    const extractionEvidence = isPlainObject(input.extractionEvidence ?? input.extraction_evidence)
+        ? (input.extractionEvidence ?? input.extraction_evidence)
+        : {};
+    const rawMetadata = isPlainObject(input.rawMetadata ?? input.raw_metadata)
+        ? (input.rawMetadata ?? input.raw_metadata)
+        : {};
     return {
         selectionText,
         pageTitle,
         pageUrl,
         pageDomain,
+        canonicalUrl,
+        description,
+        language,
+        siteName,
+        titleCandidates,
+        authorCandidates,
+        dateCandidates,
+        publisherCandidates,
+        containerCandidates,
+        sourceTypeCandidates,
+        identifiers,
+        extractionEvidence,
+        rawMetadata,
     };
 }
-function buildContentCapturePayload({ selectionText, pageTitle, pageUrl, pageDomain, } = {}) {
+function buildContentCapturePayload({ selectionText, pageTitle, pageUrl, pageDomain, canonicalUrl, description, language, siteName, titleCandidates, authorCandidates, dateCandidates, publisherCandidates, containerCandidates, sourceTypeCandidates, identifiers, extractionEvidence, rawMetadata, } = {}) {
     return {
         capture: normalizeCaptureContext({
             selectionText,
             pageTitle,
             pageUrl,
             pageDomain,
+            canonicalUrl,
+            description,
+            language,
+            siteName,
+            titleCandidates,
+            authorCandidates,
+            dateCandidates,
+            publisherCandidates,
+            containerCandidates,
+            sourceTypeCandidates,
+            identifiers,
+            extractionEvidence,
+            rawMetadata,
         }),
     };
 }
 function buildCaptureExtractionPayload(input = {}) {
     const context = normalizeCaptureContext(input);
-    return {
-        identifiers: {},
-        canonical_url: context.pageUrl || null,
+    const rawMetadata = {
+        ...context.rawMetadata,
         page_url: context.pageUrl || null,
-        title_candidates: context.pageTitle
-            ? [{ value: context.pageTitle, confidence: 0.9, source: "document.title" }]
-            : [],
-        author_candidates: [],
-        date_candidates: [],
-        publisher_candidates: context.pageDomain
-            ? [{ value: context.pageDomain, confidence: 0.4, source: "page.domain" }]
-            : [],
-        container_candidates: [],
-        source_type_candidates: [{ value: "webpage", confidence: 0.8, source: "extension.capture" }],
+        canonical_url: context.canonicalUrl || context.pageUrl || null,
+        title: context.pageTitle || null,
+        description: context.description || null,
+        language: context.language || null,
+        site_name: context.siteName || null,
+    };
+    if (context.authorCandidates.length) {
+        rawMetadata.authors = context.authorCandidates.map((candidate) => candidate.value);
+        rawMetadata.author = rawMetadata.authors[0];
+    }
+    if (context.dateCandidates.length && !rawMetadata.datePublished) {
+        rawMetadata.datePublished = context.dateCandidates[0].value;
+    }
+    if (context.containerCandidates.length && !rawMetadata.container_title) {
+        rawMetadata.container_title = context.containerCandidates[0].value;
+    }
+    if (Object.keys(context.identifiers).length) {
+        rawMetadata.identifiers = { ...context.identifiers };
+    }
+    return {
+        identifiers: { ...context.identifiers },
+        canonical_url: context.canonicalUrl || context.pageUrl || null,
+        page_url: context.pageUrl || null,
+        title_candidates: context.titleCandidates.length
+            ? context.titleCandidates
+            : (context.pageTitle ? [{ value: context.pageTitle, confidence: 0.9, source: "document.title" }] : []),
+        author_candidates: context.authorCandidates,
+        date_candidates: context.dateCandidates,
+        publisher_candidates: context.publisherCandidates.length
+            ? context.publisherCandidates
+            : (context.siteName
+                ? [{ value: context.siteName, confidence: 0.6, source: "page.site_name" }]
+                : (context.pageDomain ? [{ value: context.pageDomain, confidence: 0.4, source: "page.domain" }] : [])),
+        container_candidates: context.containerCandidates,
+        source_type_candidates: context.sourceTypeCandidates.length
+            ? context.sourceTypeCandidates
+            : [{ value: "webpage", confidence: 0.8, source: "extension.capture" }],
         selection_text: context.selectionText || null,
         locator: {},
         extraction_evidence: {
+            ...context.extractionEvidence,
             capture_source: "extension_selection",
             page_domain: context.pageDomain || null,
+            canonical_url: context.canonicalUrl || context.pageUrl || null,
         },
-        raw_metadata: {
-            title: context.pageTitle || null,
-            page_domain: context.pageDomain || null,
-        },
+        raw_metadata: rawMetadata,
     };
 }
 function buildCitationCaptureRequest(input = {}) {
@@ -2028,6 +2150,19 @@ function buildSelectionContextPayload({ selection, page, }) {
             pageTitle: page?.title || "",
             pageUrl: page?.url || "",
             pageDomain: page?.host || "",
+            canonicalUrl: page?.canonical_url || "",
+            description: page?.description || "",
+            language: page?.language || "",
+            siteName: page?.site_name || "",
+            titleCandidates: page?.title_candidates || [],
+            authorCandidates: page?.author_candidates || [],
+            dateCandidates: page?.date_candidates || [],
+            publisherCandidates: page?.publisher_candidates || [],
+            containerCandidates: page?.container_candidates || [],
+            sourceTypeCandidates: page?.source_type_candidates || [],
+            identifiers: page?.identifiers || {},
+            extractionEvidence: page?.extraction_evidence || {},
+            rawMetadata: page?.raw_metadata || {},
         }),
     };
 }
@@ -2260,6 +2395,93 @@ function selectionSignature(snapshot) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.extractPageMetadata = extractPageMetadata;
+const JSON_LD_MAX_SCRIPTS = 8;
+const JSON_LD_MAX_TEXT_LENGTH = 50000;
+const JSON_LD_MAX_NODES = 24;
+const TIME_ELEMENT_LIMIT = 8;
+const SUPPORTED_SCHEMA_TYPES = new Set([
+    "scholarlyarticle",
+    "newsarticle",
+    "article",
+    "report",
+    "webpage",
+    "book",
+    "dataset",
+    "creativework",
+]);
+const META_AUTHOR_KEYS = new Set([
+    "author",
+    "article:author",
+    "citation_author",
+    "dc.creator",
+    "dcterms.creator",
+    "dc.contributor",
+    "dcterms.contributor",
+]);
+const META_DATE_KEYS = new Set([
+    "article:published_time",
+    "article:modified_time",
+    "citation_publication_date",
+    "citation_date",
+    "dc.date",
+    "dcterms.date",
+    "dcterms.issued",
+    "dcterms.created",
+    "dcterms.modified",
+    "prism.publicationdate",
+    "prism.creationdate",
+    "prism.modificationdate",
+]);
+const META_CONTAINER_KEYS = new Set([
+    "citation_journal_title",
+    "citation_conference_title",
+    "dc.relation.ispartof",
+    "dcterms.ispartof",
+    "prism.publicationname",
+]);
+const META_PUBLISHER_KEYS = new Set([
+    "og:site_name",
+    "publisher",
+    "dc.publisher",
+    "dcterms.publisher",
+    "application-name",
+]);
+const META_DESCRIPTION_KEYS = new Set([
+    "description",
+    "og:description",
+    "dc.description",
+    "dcterms.description",
+]);
+const META_LANGUAGE_KEYS = new Set([
+    "content-language",
+    "dc.language",
+    "dcterms.language",
+]);
+const META_TITLE_KEYS = new Set([
+    "title",
+    "og:title",
+    "citation_title",
+    "dc.title",
+    "dcterms.title",
+]);
+const IDENTIFIER_META_KEYS = {
+    doi: new Set(["citation_doi", "prism.doi"]),
+    issn: new Set(["citation_issn", "prism.issn"]),
+    isbn: new Set(["citation_isbn"]),
+    pdf_url: new Set(["citation_pdf_url"]),
+};
+function normalizeText(value) {
+    return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+}
+function isPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function toArray(value) {
+    if (Array.isArray(value)) {
+        return value;
+    }
+    return value == null ? [] : [value];
+}
 function walkElements(root, visit) {
     if (!root || typeof visit !== "function") {
         return;
@@ -2270,52 +2492,421 @@ function walkElements(root, visit) {
         if (!node) {
             continue;
         }
-        visit(node);
+        if (visit(node) === false) {
+            return;
+        }
         const children = node.children || node.childNodes || [];
         for (let index = children.length - 1; index >= 0; index -= 1) {
             stack.push(children[index]);
         }
     }
 }
-function readMeta(documentRef, match) {
-    let found = "";
-    walkElements(documentRef?.head || documentRef?.documentElement || documentRef?.body || null, (node) => {
-        if (found || typeof node?.tagName !== "string" || String(node.tagName).toUpperCase() !== "META") {
-            return;
-        }
-        const name = String(typeof node.getAttribute === "function" ? node.getAttribute("name") : node.name || "");
-        const property = String(typeof node.getAttribute === "function" ? node.getAttribute("property") : node.property || "");
-        if (match(name.toLowerCase(), property.toLowerCase())) {
-            const content = typeof node.getAttribute === "function" ? node.getAttribute("content") : node.content;
-            found = content ? String(content).trim() : "";
-        }
-    });
-    return found;
+function readAttribute(node, name) {
+    if (!node) {
+        return "";
+    }
+    const value = typeof node.getAttribute === "function" ? node.getAttribute(name) : node[name];
+    return normalizeText(value);
 }
-function readLink(documentRef, relValue) {
-    let found = "";
-    walkElements(documentRef?.head || documentRef?.documentElement || documentRef?.body || null, (node) => {
-        if (found || typeof node?.tagName !== "string" || String(node.tagName).toUpperCase() !== "LINK") {
-            return;
-        }
-        const rel = String(typeof node.getAttribute === "function" ? node.getAttribute("rel") : node.rel || "").toLowerCase();
-        if (rel === relValue) {
-            const href = typeof node.getAttribute === "function" ? node.getAttribute("href") : node.href;
-            found = href ? String(href) : "";
+function normalizeUrlCandidate(value) {
+    const normalized = normalizeText(value);
+    if (!normalized) {
+        return "";
+    }
+    return normalized;
+}
+function pushCandidate(bucket, seen, value, confidence, source) {
+    const normalizedValue = normalizeText(value);
+    if (!normalizedValue) {
+        return;
+    }
+    const key = `${normalizedValue.toLowerCase()}|${source}`;
+    if (seen.has(key)) {
+        return;
+    }
+    seen.add(key);
+    bucket.push({ value: normalizedValue, confidence, source });
+}
+function pushEvidence(bucket, value, source, extra = {}) {
+    const normalizedValue = normalizeText(value);
+    if (!normalizedValue) {
+        return;
+    }
+    bucket.push({
+        value: normalizedValue,
+        source,
+        ...extra,
+    });
+}
+function createIdentifierCollector() {
+    return {
+        identifiers: {},
+        evidence: {
+            doi: [],
+            issn: [],
+            isbn: [],
+            pdf_url: [],
+        },
+    };
+}
+function pushIdentifier(collector, key, value, source) {
+    const normalizedValue = normalizeText(value);
+    if (!normalizedValue) {
+        return;
+    }
+    if (!collector.identifiers[key]) {
+        collector.identifiers[key] = normalizedValue;
+    }
+    pushEvidence(collector.evidence[key], normalizedValue, source);
+}
+function collectHeadElements(documentRef, tagName) {
+    const matches = [];
+    walkElements(documentRef?.head || documentRef?.documentElement || null, (node) => {
+        if (String(node?.tagName || "").toUpperCase() === tagName) {
+            matches.push(node);
         }
     });
-    return found;
+    return matches;
+}
+function collectMetaEntries(documentRef) {
+    return collectHeadElements(documentRef, "META").map((node) => {
+        const name = readAttribute(node, "name").toLowerCase();
+        const property = readAttribute(node, "property").toLowerCase();
+        const key = name || property;
+        const content = readAttribute(node, "content");
+        return {
+            key,
+            content,
+            source: name ? `meta:name:${name}` : `meta:property:${property}`,
+        };
+    }).filter((entry) => entry.key && entry.content);
+}
+function readCanonicalUrl(documentRef) {
+    for (const node of collectHeadElements(documentRef, "LINK")) {
+        const rel = readAttribute(node, "rel").toLowerCase();
+        if (rel === "canonical") {
+            return normalizeUrlCandidate(readAttribute(node, "href"));
+        }
+    }
+    return "";
+}
+function splitAuthorContent(value) {
+    const normalized = normalizeText(value);
+    if (!normalized) {
+        return [];
+    }
+    if (!/[;,]/.test(normalized) || /\band\b/i.test(normalized)) {
+        return [normalized];
+    }
+    return normalized
+        .split(/[;,]/g)
+        .map((part) => normalizeText(part))
+        .filter(Boolean);
+}
+function addMetaCandidates(metaEntries, candidates) {
+    const titleSeen = new Set();
+    const authorSeen = new Set();
+    const dateSeen = new Set();
+    const publisherSeen = new Set();
+    const containerSeen = new Set();
+    for (const entry of metaEntries) {
+        const key = entry.key.toLowerCase();
+        if (META_TITLE_KEYS.has(key)) {
+            pushCandidate(candidates.title_candidates, titleSeen, entry.content, 0.95, entry.source);
+            pushEvidence(candidates.raw.meta_tags.title, entry.content, entry.source, { key });
+        }
+        if (META_AUTHOR_KEYS.has(key)) {
+            for (const authorValue of splitAuthorContent(entry.content)) {
+                pushCandidate(candidates.author_candidates, authorSeen, authorValue, 0.92, entry.source);
+            }
+            pushEvidence(candidates.raw.meta_tags.authors, entry.content, entry.source, { key });
+        }
+        if (META_DATE_KEYS.has(key)) {
+            pushCandidate(candidates.date_candidates, dateSeen, entry.content, 0.9, entry.source);
+            pushEvidence(candidates.raw.meta_tags.dates, entry.content, entry.source, { key });
+        }
+        if (META_CONTAINER_KEYS.has(key)) {
+            pushCandidate(candidates.container_candidates, containerSeen, entry.content, 0.88, entry.source);
+            pushEvidence(candidates.raw.meta_tags.containers, entry.content, entry.source, { key });
+        }
+        if (META_PUBLISHER_KEYS.has(key)) {
+            pushCandidate(candidates.publisher_candidates, publisherSeen, entry.content, 0.8, entry.source);
+            pushEvidence(candidates.raw.meta_tags.publishers, entry.content, entry.source, { key });
+        }
+        if (META_DESCRIPTION_KEYS.has(key)) {
+            pushEvidence(candidates.raw.meta_tags.description, entry.content, entry.source, { key });
+        }
+        if (META_LANGUAGE_KEYS.has(key)) {
+            pushEvidence(candidates.raw.meta_tags.language, entry.content, entry.source, { key });
+        }
+        for (const [identifierKey, metaKeys] of Object.entries(IDENTIFIER_META_KEYS)) {
+            if (metaKeys.has(key)) {
+                pushIdentifier(candidates.identifiers, identifierKey, entry.content, entry.source);
+            }
+        }
+    }
+}
+function parseJson(value) {
+    try {
+        return JSON.parse(value);
+    }
+    catch {
+        return null;
+    }
+}
+function getSchemaTypes(node) {
+    return toArray(node?.["@type"] || node?.type)
+        .map((value) => normalizeText(value).toLowerCase())
+        .filter(Boolean);
+}
+function parseAuthorValue(value, output = []) {
+    for (const entry of toArray(value)) {
+        if (typeof entry === "string") {
+            const normalized = normalizeText(entry);
+            if (normalized) {
+                output.push(normalized);
+            }
+            continue;
+        }
+        if (isPlainObject(entry)) {
+            const name = normalizeText(entry.name || entry.alternateName || entry.familyName || entry.givenName);
+            if (name) {
+                output.push(name);
+            }
+        }
+    }
+    return output;
+}
+function parseIdentifierFromJsonLd(node, collector, source) {
+    const directDoi = normalizeText(node?.doi);
+    if (directDoi) {
+        pushIdentifier(collector, "doi", directDoi, source);
+    }
+    const directIssn = normalizeText(node?.issn);
+    if (directIssn) {
+        pushIdentifier(collector, "issn", directIssn, source);
+    }
+    const directIsbn = normalizeText(node?.isbn);
+    if (directIsbn) {
+        pushIdentifier(collector, "isbn", directIsbn, source);
+    }
+    for (const entry of toArray(node?.identifier)) {
+        if (typeof entry === "string") {
+            const normalized = normalizeText(entry);
+            if (/10\.\S+\/\S+/i.test(normalized)) {
+                pushIdentifier(collector, "doi", normalized, source);
+            }
+            continue;
+        }
+        if (!isPlainObject(entry)) {
+            continue;
+        }
+        const propertyId = normalizeText(entry.propertyID || entry.name).toLowerCase();
+        const value = normalizeText(entry.value || entry.identifier);
+        if (!propertyId || !value) {
+            continue;
+        }
+        if (propertyId.includes("doi")) {
+            pushIdentifier(collector, "doi", value, source);
+        }
+        else if (propertyId.includes("issn")) {
+            pushIdentifier(collector, "issn", value, source);
+        }
+        else if (propertyId.includes("isbn")) {
+            pushIdentifier(collector, "isbn", value, source);
+        }
+    }
+}
+function collectRelevantJsonLdNodes(value, output, state) {
+    if (state.count >= JSON_LD_MAX_NODES || value == null) {
+        return;
+    }
+    if (Array.isArray(value)) {
+        for (const entry of value) {
+            collectRelevantJsonLdNodes(entry, output, state);
+            if (state.count >= JSON_LD_MAX_NODES) {
+                return;
+            }
+        }
+        return;
+    }
+    if (!isPlainObject(value)) {
+        return;
+    }
+    state.count += 1;
+    const types = getSchemaTypes(value);
+    if (types.some((type) => SUPPORTED_SCHEMA_TYPES.has(type))) {
+        output.push(value);
+    }
+    if (isPlainObject(value["@graph"])) {
+        collectRelevantJsonLdNodes(value["@graph"], output, state);
+    }
+    if (Array.isArray(value["@graph"])) {
+        collectRelevantJsonLdNodes(value["@graph"], output, state);
+    }
+}
+function addJsonLdCandidates(documentRef, candidates) {
+    const scripts = collectHeadElements(documentRef, "SCRIPT")
+        .filter((node) => readAttribute(node, "type").toLowerCase() === "application/ld+json")
+        .slice(0, JSON_LD_MAX_SCRIPTS);
+    const titleSeen = new Set(candidates.title_candidates.map((candidate) => `${candidate.value.toLowerCase()}|${candidate.source}`));
+    const authorSeen = new Set(candidates.author_candidates.map((candidate) => `${candidate.value.toLowerCase()}|${candidate.source}`));
+    const dateSeen = new Set(candidates.date_candidates.map((candidate) => `${candidate.value.toLowerCase()}|${candidate.source}`));
+    const publisherSeen = new Set(candidates.publisher_candidates.map((candidate) => `${candidate.value.toLowerCase()}|${candidate.source}`));
+    const containerSeen = new Set(candidates.container_candidates.map((candidate) => `${candidate.value.toLowerCase()}|${candidate.source}`));
+    const sourceTypeSeen = new Set(candidates.source_type_candidates.map((candidate) => `${candidate.value.toLowerCase()}|${candidate.source}`));
+    scripts.forEach((scriptNode, index) => {
+        const rawText = String(scriptNode?.textContent || "").trim();
+        if (!rawText || rawText.length > JSON_LD_MAX_TEXT_LENGTH) {
+            return;
+        }
+        const parsed = parseJson(rawText);
+        if (!parsed) {
+            candidates.raw.json_ld_errors.push({ source: `jsonld:${index}`, reason: "parse_failed" });
+            return;
+        }
+        const relevantNodes = [];
+        collectRelevantJsonLdNodes(parsed, relevantNodes, { count: 0 });
+        for (const node of relevantNodes) {
+            const types = getSchemaTypes(node);
+            const source = `jsonld:${types[0] || index}`;
+            const title = normalizeText(node.headline || node.name || node.title);
+            const authors = parseAuthorValue(node.author || node.creator);
+            const dateValues = [
+                node.datePublished,
+                node.dateCreated,
+                node.dateModified,
+                node.uploadDate,
+                node.date,
+            ];
+            const publisher = normalizeText(node.publisher?.name || node.provider?.name || node.sourceOrganization?.name);
+            const container = normalizeText(node.isPartOf?.name
+                || node.publication?.name
+                || node.periodical?.name
+                || node.journalTitle
+                || node.containerTitle);
+            const url = normalizeUrlCandidate(node.url || node.mainEntityOfPage?.["@id"] || node.mainEntityOfPage?.url);
+            const description = normalizeText(node.description);
+            const language = normalizeText(node.inLanguage);
+            if (title) {
+                pushCandidate(candidates.title_candidates, titleSeen, title, 0.93, source);
+            }
+            for (const author of authors) {
+                pushCandidate(candidates.author_candidates, authorSeen, author, 0.9, source);
+            }
+            for (const dateValue of dateValues) {
+                pushCandidate(candidates.date_candidates, dateSeen, dateValue, 0.88, source);
+            }
+            if (publisher) {
+                pushCandidate(candidates.publisher_candidates, publisherSeen, publisher, 0.82, source);
+            }
+            if (container) {
+                pushCandidate(candidates.container_candidates, containerSeen, container, 0.84, source);
+            }
+            for (const type of types) {
+                pushCandidate(candidates.source_type_candidates, sourceTypeSeen, type, 0.85, source);
+            }
+            parseIdentifierFromJsonLd(node, candidates.identifiers, source);
+            candidates.raw.json_ld.push({
+                source,
+                types,
+                title: title || null,
+                authors,
+                dates: dateValues.map((value) => normalizeText(value)).filter(Boolean),
+                publisher: publisher || null,
+                container: container || null,
+                url: url || null,
+                description: description || null,
+                language: language || null,
+            });
+            if (url) {
+                candidates.raw.canonical_urls.push({ value: url, source });
+            }
+            if (description) {
+                pushEvidence(candidates.raw.meta_tags.description, description, source);
+            }
+            if (language) {
+                pushEvidence(candidates.raw.meta_tags.language, language, source);
+            }
+        }
+    });
+}
+function addVisibleTimeCandidates(documentRef, candidates) {
+    const dateSeen = new Set(candidates.date_candidates.map((candidate) => `${candidate.value.toLowerCase()}|${candidate.source}`));
+    let count = 0;
+    walkElements(documentRef?.body || null, (node) => {
+        if (count >= TIME_ELEMENT_LIMIT) {
+            return false;
+        }
+        if (String(node?.tagName || "").toUpperCase() !== "TIME") {
+            return;
+        }
+        const datetime = readAttribute(node, "datetime");
+        const text = normalizeText(node?.textContent || "");
+        if (!datetime && !text) {
+            return;
+        }
+        count += 1;
+        const source = "dom:time";
+        if (datetime) {
+            pushCandidate(candidates.date_candidates, dateSeen, datetime, 0.68, source);
+        }
+        else if (text) {
+            pushCandidate(candidates.date_candidates, dateSeen, text, 0.55, source);
+        }
+        candidates.raw.visible_times.push({
+            datetime: datetime || null,
+            text: text || null,
+            source,
+        });
+    });
+}
+function firstValue(candidates) {
+    return candidates.length ? candidates[0].value : "";
 }
 function extractPageMetadata({ documentRef = globalThis.document, windowRef = globalThis.window, } = {}) {
     const url = String(windowRef?.location?.href || "");
-    const title = String(documentRef?.title
-        || readMeta(documentRef, (name, property) => name === "title" || property === "og:title")
-        || "").trim();
-    const description = readMeta(documentRef, (name, property) => name === "description" || property === "og:description");
-    const author = readMeta(documentRef, (name, property) => name === "author" || property === "article:author");
-    const site_name = readMeta(documentRef, (_name, property) => property === "og:site_name");
-    const canonical_url = readLink(documentRef, "canonical");
-    const language = String(documentRef?.documentElement?.lang || "");
+    const canonical_url = readCanonicalUrl(documentRef);
+    const metaEntries = collectMetaEntries(documentRef);
+    const candidates = {
+        title_candidates: [],
+        author_candidates: [],
+        date_candidates: [],
+        publisher_candidates: [],
+        container_candidates: [],
+        source_type_candidates: [],
+        identifiers: createIdentifierCollector(),
+        raw: {
+            meta_tags: {
+                title: [],
+                authors: [],
+                dates: [],
+                containers: [],
+                publishers: [],
+                description: [],
+                language: [],
+            },
+            json_ld: [],
+            json_ld_errors: [],
+            visible_times: [],
+            canonical_urls: canonical_url ? [{ value: canonical_url, source: "link:canonical" }] : [],
+        },
+    };
+    addMetaCandidates(metaEntries, candidates);
+    addJsonLdCandidates(documentRef, candidates);
+    addVisibleTimeCandidates(documentRef, candidates);
+    const documentTitle = normalizeText(documentRef?.title || "");
+    if (documentTitle && !candidates.title_candidates.length) {
+        candidates.title_candidates.push({ value: documentTitle, confidence: 0.9, source: "document.title" });
+    }
+    if (!candidates.source_type_candidates.length) {
+        candidates.source_type_candidates.push({ value: "webpage", confidence: 0.6, source: "extension.capture" });
+    }
+    const description = firstValue(candidates.raw.meta_tags.description) || "";
+    const site_name = firstValue(candidates.publisher_candidates);
+    const language = normalizeText(documentRef?.documentElement?.lang || firstValue(candidates.raw.meta_tags.language));
+    const title = firstValue(candidates.title_candidates) || documentTitle;
+    const author = firstValue(candidates.author_candidates);
     let origin = "";
     let host = "";
     try {
@@ -2334,6 +2925,35 @@ function extractPageMetadata({ documentRef = globalThis.document, windowRef = gl
         site_name,
         canonical_url,
         language,
+        title_candidates: candidates.title_candidates,
+        author_candidates: candidates.author_candidates,
+        date_candidates: candidates.date_candidates,
+        publisher_candidates: candidates.publisher_candidates,
+        container_candidates: candidates.container_candidates,
+        source_type_candidates: candidates.source_type_candidates,
+        identifiers: candidates.identifiers.identifiers,
+        extraction_evidence: {
+            meta_tags: candidates.raw.meta_tags,
+            json_ld: candidates.raw.json_ld,
+            json_ld_errors: candidates.raw.json_ld_errors,
+            visible_times: candidates.raw.visible_times,
+            canonical_urls: candidates.raw.canonical_urls,
+        },
+        raw_metadata: {
+            title: title || null,
+            description: description || null,
+            author: author || null,
+            authors: candidates.author_candidates.map((candidate) => candidate.value),
+            site_name: site_name || null,
+            publisher: site_name || null,
+            canonical_url: canonical_url || null,
+            page_url: url || null,
+            language: language || null,
+            datePublished: firstValue(candidates.date_candidates) || null,
+            container_title: firstValue(candidates.container_candidates) || null,
+            identifiers: { ...candidates.identifiers.identifiers },
+            json_ld: candidates.raw.json_ld,
+        },
     };
 }
 
@@ -2837,6 +3457,79 @@ function setButtonDisabled(button, disabled) {
         button.removeAttribute("aria-disabled");
     }
 }
+function normalizeText(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+}
+function summarizeAuthors(source = {}) {
+    const authors = Array.isArray(source?.authors) ? source.authors : [];
+    const names = authors.map((author) => normalizeText(author?.fullName)).filter(Boolean);
+    if (!names.length) {
+        return "";
+    }
+    if (names.length <= 2) {
+        return names.join(", ");
+    }
+    return `${names[0]}, ${names[1]} +${names.length - 2}`;
+}
+function summarizeIssuedDate(source = {}) {
+    const issued = source?.issued_date || source?.issued || {};
+    return normalizeText(issued?.raw || issued?.year);
+}
+function summarizeHostname(source = {}) {
+    const direct = normalizeText(source?.hostname);
+    if (direct) {
+        return direct;
+    }
+    try {
+        return normalizeText(new URL(source?.canonical_url || source?.page_url || "").hostname.replace(/^www\./, ""));
+    }
+    catch {
+        return "";
+    }
+}
+function qualityMessages(source = {}) {
+    const quality = source?.quality || {};
+    const messages = [];
+    if (quality.author_status === "missing") {
+        messages.push("Author missing");
+    }
+    else if (quality.author_status === "organization_fallback") {
+        messages.push("Organization fallback");
+    }
+    if (quality.date_status === "missing") {
+        messages.push("Publication date missing");
+    }
+    if (quality.limited_metadata) {
+        messages.push("Limited metadata");
+    }
+    return messages;
+}
+function sourceFactRows(source = {}) {
+    const identifiers = source?.identifiers || {};
+    const rows = [];
+    const authors = summarizeAuthors(source);
+    const issued = summarizeIssuedDate(source);
+    const sourceType = normalizeText(source?.source_type).replace(/_/g, " ");
+    const container = normalizeText(source?.container_title);
+    const publisher = normalizeText(source?.publisher);
+    const doi = normalizeText(identifiers?.doi);
+    const hostname = summarizeHostname(source);
+    const canonicalUrl = normalizeText(source?.canonical_url || source?.page_url);
+    if (authors) {
+        rows.push({ label: "Authors", value: authors });
+    }
+    rows.push({ label: "Source", value: [sourceType, issued].filter(Boolean).join(" • ") || "Web reference" });
+    if (container || publisher) {
+        rows.push({ label: "Published In", value: [container, publisher].filter(Boolean).join(" • ") });
+    }
+    if (doi) {
+        rows.push({ label: "DOI", value: doi });
+    }
+    if (canonicalUrl || hostname) {
+        rows.push({ label: "Link", value: canonicalUrl || hostname });
+    }
+    return rows;
+}
 function renderCitationModal(root, snapshot = {}, options = {}) {
     const { documentRef = globalThis.document, navigatorRef = globalThis.navigator, onRequestPreview, onRequestRender, onSave, onDismiss, } = options;
     if (!root) {
@@ -2859,6 +3552,8 @@ function renderCitationModal(root, snapshot = {}, options = {}) {
     const header = documentRef.createElement("div");
     const headline = documentRef.createElement("h2");
     const sourceMeta = documentRef.createElement("p");
+    const sourceFacts = documentRef.createElement("div");
+    const qualityMeta = documentRef.createElement("p");
     const lockMeta = documentRef.createElement("p");
     const actions = documentRef.createElement("div");
     const copyButton = documentRef.createElement("button");
@@ -2895,6 +3590,14 @@ function renderCitationModal(root, snapshot = {}, options = {}) {
     sourceMeta.style.fontSize = "12px";
     sourceMeta.style.lineHeight = "1.5";
     sourceMeta.style.color = "#94a3b8";
+    sourceFacts.setAttribute("data-citation-source-facts", "true");
+    sourceFacts.style.display = "grid";
+    sourceFacts.style.gap = "6px";
+    qualityMeta.setAttribute("data-citation-quality", "true");
+    qualityMeta.style.margin = "0";
+    qualityMeta.style.fontSize = "12px";
+    qualityMeta.style.lineHeight = "1.5";
+    qualityMeta.style.color = "#cbd5e1";
     lockMeta.style.margin = "0";
     lockMeta.style.fontSize = "12px";
     lockMeta.style.lineHeight = "1.5";
@@ -3060,12 +3763,33 @@ function renderCitationModal(root, snapshot = {}, options = {}) {
         }
     });
     function render() {
+        const source = state.citation?.source || {};
         tierBadge.setTier(state.tier);
-        headline.textContent = state.citation?.metadata?.title || state.citation?.source?.title || "Citation preview";
+        headline.textContent = state.citation?.metadata?.title || source?.title || "Citation preview";
         sourceMeta.textContent = [
-            state.citation?.metadata?.author || state.citation?.source?.authors?.[0]?.fullName || state.citation?.source?.publisher || "",
-            state.citation?.metadata?.canonical_url || state.citation?.source?.canonical_url || state.citation?.source?.page_url || "",
+            summarizeAuthors(source) || state.citation?.metadata?.author || source?.publisher || "",
+            summarizeHostname(source),
         ].filter(Boolean).join(" • ");
+        sourceFacts.innerHTML = "";
+        sourceFactRows(source).forEach((row) => {
+            const item = documentRef.createElement("div");
+            const label = documentRef.createElement("span");
+            const value = documentRef.createElement("span");
+            item.style.display = "grid";
+            item.style.gridTemplateColumns = "92px 1fr";
+            item.style.gap = "8px";
+            item.style.fontSize = "12px";
+            item.style.lineHeight = "1.45";
+            label.textContent = row.label;
+            label.style.color = "#94a3b8";
+            value.textContent = row.value;
+            value.style.color = "#e2e8f0";
+            value.style.overflowWrap = "anywhere";
+            item.appendChild(label);
+            item.appendChild(value);
+            sourceFacts.appendChild(item);
+        });
+        qualityMeta.textContent = qualityMessages(source).join(" • ");
         lockMeta.textContent = state.lockedStyles.length
             ? "Some citation styles are locked for this account."
             : "";
@@ -3115,6 +3839,12 @@ function renderCitationModal(root, snapshot = {}, options = {}) {
         wrapper.appendChild(header);
         wrapper.appendChild(headline);
         wrapper.appendChild(sourceMeta);
+        if (sourceFacts.children.length) {
+            wrapper.appendChild(sourceFacts);
+        }
+        if (qualityMeta.textContent) {
+            wrapper.appendChild(qualityMeta);
+        }
         wrapper.appendChild(lockMeta);
         wrapper.appendChild(styleTabs.root);
         wrapper.appendChild(formatTabs.root);

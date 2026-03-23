@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.modules.research.notes.schemas import NoteSourceInput
+from app.services.citation_domain import ExtractionPayload, SUPPORTED_STYLES
 
 
 class ExtensionStatus(BaseModel):
@@ -62,12 +63,22 @@ class AuthAttemptCompleteRequest(BaseModel):
 class ExtensionCitationCaptureRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_id: str | None = None
-    extraction_payload: dict[str, Any]
+    extraction_payload: ExtractionPayload
     excerpt: str | None = None
     locator: dict[str, Any] = Field(default_factory=dict)
     annotation: str | None = None
     quote: str | None = None
     style: str | None = None
+
+    @field_validator("style")
+    @classmethod
+    def validate_style(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized not in SUPPORTED_STYLES:
+            raise ValueError("unsupported citation style")
+        return normalized
 
 
 class ExtensionQuoteCaptureRequest(BaseModel):

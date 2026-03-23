@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import re
+from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -11,9 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 SUPPORTED_STYLES = {"mla", "apa", "chicago", "harvard"}
 SUPPORTED_RENDER_KINDS = {"inline", "bibliography", "footnote", "quote_attribution"}
-NORMALIZATION_VERSION = 1
+NORMALIZATION_VERSION = 2
 RENDER_VERSION = 1
-METADATA_SCHEMA_VERSION = 3
+METADATA_SCHEMA_VERSION = 4
 
 INSTITUTION_EQUIVALENTS = {
     "who": "World Health Organization",
@@ -25,6 +26,38 @@ PUBLISHER_EQUIVALENTS = {
     "who": "World Health Organization",
     "world health organisation": "World Health Organization",
     "w.h.o.": "World Health Organization",
+}
+
+PERSON_AUTHOR_DELIMITERS = re.compile(r"\s*(?:;|\|)\s*")
+ORG_HINTS = {
+    "academy",
+    "agency",
+    "association",
+    "center",
+    "centre",
+    "college",
+    "commission",
+    "committee",
+    "company",
+    "council",
+    "department",
+    "foundation",
+    "group",
+    "institute",
+    "journal",
+    "lab",
+    "laboratory",
+    "ministry",
+    "office",
+    "organization",
+    "organisation",
+    "press",
+    "project",
+    "publisher",
+    "school",
+    "society",
+    "team",
+    "university",
 }
 
 
@@ -58,6 +91,10 @@ def _clean(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def _clean_lower(value: Any) -> str:
+    return _clean(value).lower()
+
+
 def _domain(url: str) -> str:
     try:
         host = urlparse(url).netloc.lower().replace("www.", "")
@@ -75,6 +112,43 @@ def _canonical_url(url: str) -> str:
         return cleaned
     fragmentless = parsed._replace(fragment="")
     return fragmentless.geturl().rstrip("/")
+
+
+def _normalize_page_url(url: str) -> str:
+    cleaned = _clean(url)
+    if not cleaned:
+        return ""
+    parsed = urlparse(cleaned)
+    if not parsed.scheme or not parsed.netloc:
+        return cleaned
+    return parsed._replace(fragment="").geturl()
+
+
+def _normalize_doi(value: Any) -> str:
+    text = _clean(value)
+    if not text:
+        return ""
+    normalized = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", text, flags=re.IGNORECASE)
+    normalized = re.sub(r"^doi:\s*", "", normalized, flags=re.IGNORECASE)
+    normalized = normalized.strip().rstrip(".;,)")
+    return normalized.lower()
+
+
+def _normalize_isbn(value: Any) -> str:
+    text = _clean(value)
+    if not text:
+        return ""
+    return re.sub(r"[^0-9Xx]", "", text).upper()
+
+
+def _normalize_issn(value: Any) -> str:
+    text = _clean(value)
+    if not text:
+        return ""
+    digits = re.sub(r"[^0-9Xx]", "", text).upper()
+    if len(digits) == 8:
+        return f"{digits[:4]}-{digits[4:]}"
+    return digits
 
 
 def _title_case(value: str) -> str:
@@ -110,24 +184,137 @@ def _normalize_source_type(value: str) -> str:
     cleaned = _clean(value).lower()
     if not cleaned:
         return "webpage"
-    if cleaned in {"journal article", "article", "scholarly article"}:
+    if cleaned in {"journal article", "scholarly article", "scholarlyarticle"}:
         return "journal_article"
+    if cleaned in {"article", "news article", "newsarticle"}:
+        return "article"
     if cleaned in {"book", "dataset", "website", "webpage", "report"}:
         return cleaned.replace("website", "webpage").replace(" ", "_")
     return cleaned.replace(" ", "_")
 
 
+def _source_priority(source: str | None) -> int:
+    normalized = _clean_lower(source)
+    if not normalized:
+        return 10
+    if "doi" in normalized and ("meta:" in normalized or normalized.startswith("jsonld:")):
+        return 120
+    if "citation_" in normalized or "highwire" in normalized:
+        return 110
+    if "dc." in normalized or "dcterms." in normalized or "prism." in normalized:
+        return 100
+    if normalized.startswith("jsonld:"):
+        return 90
+    if normalized.startswith("meta:property:article:") or normalized.startswith("meta:name:author") or normalized.startswith("meta:property:og:"):
+        return 70
+    if normalized.startswith("meta:"):
+        return 65
+    if normalized.startswith("dom:time") or normalized.startswith("dom:"):
+        return 40
+    if normalized.startswith("page.site_name") or normalized.startswith("page.domain"):
+        return 20
+    if normalized.startswith("extension.capture"):
+        return 5
+    return 30
+
+
+def _candidate_sort_key(candidate: ExtractionCandidate) -> tuple[int, float, int, str]:
+    value = _clean(candidate.value)
+    return (_source_priority(candidate.source), candidate.confidence, len(value), value.lower())
+
+
+def _sorted_candidates(candidates: list[ExtractionCandidate]) -> list[ExtractionCandidate]:
+    usable = [candidate for candidate in candidates if _clean(candidate.value)]
+    return sorted(usable, key=_candidate_sort_key, reverse=True)
+
+
 def _candidate_value(candidates: list[ExtractionCandidate], fallback: str = "") -> str:
-    best = ""
-    best_confidence = -1.0
-    for candidate in candidates:
+    ordered = _sorted_candidates(candidates)
+    return _clean(ordered[0].value if ordered else fallback)
+
+
+def _candidate_values(candidates: list[ExtractionCandidate]) -> list[str]:
+    seen: set[str] = set()
+    values: list[str] = []
+    for candidate in _sorted_candidates(candidates):
         value = _clean(candidate.value)
-        if not value:
+        key = value.lower()
+        if not value or key in seen:
             continue
-        if candidate.confidence > best_confidence:
-            best = value
-            best_confidence = candidate.confidence
-    return best or _clean(fallback)
+        seen.add(key)
+        values.append(value)
+    return values
+
+
+def _parse_date_parts(value: Any) -> dict[str, Any]:
+    text = _clean(value)
+    if not text:
+        return {}
+    parsed: datetime | None = None
+    normalized = text
+    iso_match = re.match(r"^\s*(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?", text)
+    if iso_match:
+        year = int(iso_match.group(1))
+        month = int(iso_match.group(2)) if iso_match.group(2) else None
+        day = int(iso_match.group(3)) if iso_match.group(3) else None
+        payload: dict[str, Any] = {"raw": text, "year": year}
+        if month:
+            payload["month"] = month
+        if day:
+            payload["day"] = day
+        if month and day:
+            payload["iso"] = f"{year:04d}-{month:02d}-{day:02d}"
+        elif month:
+            payload["iso"] = f"{year:04d}-{month:02d}"
+        else:
+            payload["iso"] = f"{year:04d}"
+        return payload
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        parsed = None
+    if parsed is None:
+        try:
+            parsed = parsedate_to_datetime(text)
+        except (TypeError, ValueError):
+            parsed = None
+    if parsed is not None:
+        payload = {
+            "raw": text,
+            "year": parsed.year,
+            "month": parsed.month,
+            "day": parsed.day,
+            "iso": parsed.date().isoformat(),
+        }
+        return payload
+    year = _parse_year(text)
+    if year != "n.d.":
+        return {"raw": text, "year": int(year), "iso": year}
+    return {"raw": text, "year": None}
+
+
+def _is_probable_organization(value: str) -> bool:
+    normalized = _clean(value)
+    if not normalized:
+        return False
+    lower = normalized.lower()
+    if lower in INSTITUTION_EQUIVALENTS or lower in PUBLISHER_EQUIVALENTS:
+        return True
+    parts = [part.strip(".,()").lower() for part in normalized.split()]
+    if len(parts) == 1 and parts[0].isupper():
+        return True
+    return any(part in ORG_HINTS for part in parts)
+
+
+def _split_author_string(value: Any) -> list[str]:
+    text = _clean(value)
+    if not text:
+        return []
+    if PERSON_AUTHOR_DELIMITERS.search(text):
+        return [part for part in PERSON_AUTHOR_DELIMITERS.split(text) if _clean(part)]
+    if " and " in text.lower() and "," not in text:
+        return [_clean(part) for part in re.split(r"\s+(?:and|&)\s+", text, flags=re.IGNORECASE) if _clean(part)]
+    return [text]
 
 
 def _parse_author_object(raw: Any) -> dict[str, Any] | None:
@@ -140,19 +327,38 @@ def _parse_author_object(raw: Any) -> dict[str, Any] | None:
         return None
 
     normalized = INSTITUTION_EQUIVALENTS.get(full.lower(), full)
-    parts = normalized.split()
-    is_org = len(parts) == 1 or any(
-        word.lower() in {"organization", "agency", "association", "department", "institute"}
-        for word in parts
-    )
-
-    if is_org:
+    if _is_probable_organization(normalized):
         return {
             "fullName": normalized,
             "firstName": "",
             "lastName": normalized,
             "initials": "",
             "isOrganization": True,
+        }
+
+    comma_parts = [part.strip() for part in normalized.split(",", 1)]
+    if len(comma_parts) == 2 and comma_parts[0] and comma_parts[1]:
+        last = comma_parts[0]
+        given = comma_parts[1]
+        given_parts = [part for part in given.split() if part]
+        full_name = f"{given} {last}".strip()
+        initials = "".join(part[:1].upper() for part in given_parts)
+        return {
+            "fullName": full_name,
+            "firstName": given_parts[0] if given_parts else given,
+            "lastName": last,
+            "initials": initials,
+            "isOrganization": False,
+        }
+
+    parts = [part for part in normalized.split() if part]
+    if len(parts) == 1:
+        return {
+            "fullName": normalized,
+            "firstName": parts[0],
+            "lastName": parts[0],
+            "initials": parts[0][:1].upper(),
+            "isOrganization": False,
         }
 
     first = parts[0]
@@ -167,29 +373,40 @@ def _parse_author_object(raw: Any) -> dict[str, Any] | None:
     }
 
 
-def _normalize_authors(author_candidates: list[ExtractionCandidate], raw_metadata: dict[str, Any], site_name: str) -> list[dict[str, Any]]:
-    raw_authors: list[Any] = []
-    if author_candidates:
-        raw_authors.extend(candidate.value for candidate in author_candidates if _clean(candidate.value))
-
+def _author_fallbacks(raw_metadata: dict[str, Any]) -> list[Any]:
+    authors: list[Any] = []
     metadata_authors = raw_metadata.get("authors")
     if isinstance(metadata_authors, list):
-        raw_authors.extend(metadata_authors)
+        authors.extend(metadata_authors)
+    for key in ("author", "creator"):
+        value = raw_metadata.get(key)
+        if value:
+            authors.append(value)
+    return authors
 
-    if not raw_authors:
-        raw_authors.extend(
-            value
-            for value in [
-                raw_metadata.get("author"),
-                raw_metadata.get("creator"),
-                raw_metadata.get("publisher"),
-                site_name,
-            ]
-            if value
-        )
+
+def _normalize_authors(
+    author_candidates: list[ExtractionCandidate],
+    raw_metadata: dict[str, Any],
+    *,
+    site_name: str,
+    publisher: str,
+    source_type: str,
+) -> list[dict[str, Any]]:
+    raw_authors: list[Any] = []
+    for candidate in _sorted_candidates(author_candidates):
+        raw_authors.extend(_split_author_string(candidate.value))
+    for raw in _author_fallbacks(raw_metadata):
+        if isinstance(raw, list):
+            for item in raw:
+                raw_authors.extend(_split_author_string(item))
+        else:
+            raw_authors.extend(_split_author_string(raw))
 
     authors: list[dict[str, Any]] = []
     seen: set[str] = set()
+    site_lower = _clean_lower(site_name)
+    publisher_lower = _clean_lower(publisher)
     for raw in raw_authors:
         parsed = _parse_author_object(raw)
         if not parsed:
@@ -197,19 +414,76 @@ def _normalize_authors(author_candidates: list[ExtractionCandidate], raw_metadat
         key = parsed["fullName"].lower()
         if key in seen:
             continue
-        if key == _clean(site_name).lower() and len(raw_authors) > 1:
+        if not parsed["isOrganization"] and key in {site_lower, publisher_lower}:
             continue
         seen.add(key)
         authors.append(parsed)
 
-    return authors
+    if authors:
+        return authors
+
+    fallback_org = publisher or site_name
+    if source_type in {"report", "dataset"} and _is_probable_organization(fallback_org):
+        parsed = _parse_author_object(fallback_org)
+        return [parsed] if parsed else []
+    return []
+
+
+def _normalize_identifiers(payload: ExtractionPayload, raw_metadata: dict[str, Any]) -> dict[str, str]:
+    identifiers: dict[str, str] = {}
+    raw_inputs = dict(payload.identifiers or {})
+    if isinstance(raw_metadata.get("identifiers"), dict):
+        raw_inputs = {**raw_metadata.get("identifiers"), **raw_inputs}
+    raw_inputs.setdefault("doi", raw_metadata.get("doi"))
+    raw_inputs.setdefault("isbn", raw_metadata.get("isbn"))
+    raw_inputs.setdefault("issn", raw_metadata.get("issn"))
+    raw_inputs.setdefault("pdf_url", raw_metadata.get("pdf_url"))
+
+    doi = _normalize_doi(raw_inputs.get("doi"))
+    isbn = _normalize_isbn(raw_inputs.get("isbn"))
+    issn = _normalize_issn(raw_inputs.get("issn"))
+    pdf_url = _canonical_url(raw_inputs.get("pdf_url") or "")
+    if doi:
+        identifiers["doi"] = doi
+    if isbn:
+        identifiers["isbn"] = isbn
+    if issn:
+        identifiers["issn"] = issn
+    if pdf_url:
+        identifiers["pdf_url"] = pdf_url
+    return identifiers
+
+
+def _infer_source_type(
+    source_type_candidates: list[ExtractionCandidate],
+    *,
+    identifiers: dict[str, str],
+    container_title: str,
+    raw_metadata: dict[str, Any],
+) -> str:
+    for candidate in _sorted_candidates(source_type_candidates):
+        normalized = _normalize_source_type(candidate.value)
+        if normalized in {"journal_article", "article", "report", "book", "dataset", "webpage"}:
+            return normalized
+    raw_type = _normalize_source_type(raw_metadata.get("source_type") or raw_metadata.get("@type") or "")
+    if raw_type in {"journal_article", "article", "report", "book", "dataset", "webpage"}:
+        return raw_type
+    if identifiers.get("doi") and container_title:
+        return "journal_article"
+    if container_title and any(_clean(raw_metadata.get(key)) for key in ("volume", "issue", "first_page", "last_page", "pages")):
+        return "journal_article"
+    return "webpage"
 
 
 def build_source_fingerprint(source: dict[str, Any]) -> str:
     identifiers = source.get("identifiers") or {}
-    doi = _clean(identifiers.get("doi") or source.get("doi"))
+    doi = _normalize_doi(identifiers.get("doi") or source.get("doi"))
     if doi:
-        return f"doi:{doi.lower().replace('https://doi.org/', '').replace('http://doi.org/', '')}"
+        return f"doi:{doi}"
+
+    isbn = _normalize_isbn(identifiers.get("isbn") or source.get("isbn"))
+    if isbn:
+        return f"isbn:{isbn}"
 
     canonical_url = _canonical_url(source.get("canonical_url") or source.get("url") or "")
     if canonical_url:
@@ -219,7 +493,9 @@ def build_source_fingerprint(source: dict[str, Any]) -> str:
     authors = ",".join(_clean((author or {}).get("fullName")).lower() for author in (source.get("authors") or []))
     year = _parse_year(_clean((source.get("issued") or {}).get("raw") or source.get("datePublished") or ""))
     source_type = _clean(source.get("source_type")).lower()
-    digest = hashlib.sha1(f"{title}|{authors}|{year}|{source_type}".encode("utf-8")).hexdigest()  # noqa: S324
+    container = _clean(source.get("container_title")).lower()
+    publisher = _clean(source.get("publisher") or source.get("site_name")).lower()
+    digest = hashlib.sha1(f"{title}|{authors}|{year}|{source_type}|{container}|{publisher}".encode("utf-8")).hexdigest()  # noqa: S324
     return f"meta:{digest}"
 
 
@@ -248,8 +524,9 @@ def compute_source_version(source: dict[str, Any]) -> str:
             canonical["source_type"],
             canonical["issued_raw"],
             canonical["canonical_url"],
-            _clean(canonical["identifiers"].get("doi")),
-            _clean(canonical["identifiers"].get("isbn")),
+            _normalize_doi(canonical["identifiers"].get("doi")),
+            _normalize_isbn(canonical["identifiers"].get("isbn")),
+            _normalize_issn(canonical["identifiers"].get("issn")),
         ],
     )
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()  # noqa: S324
@@ -272,30 +549,86 @@ def compute_citation_version(context: dict[str, Any]) -> str:
 
 def normalize_citation_payload(payload: ExtractionPayload) -> dict[str, Any]:
     raw = dict(payload.raw_metadata or {})
-
-    page_url = _canonical_url(payload.page_url or raw.get("page_url") or "")
-    canonical_url = _canonical_url(payload.canonical_url or page_url)
-    site_name = _normalize_org_name(
-        _candidate_value(payload.publisher_candidates, raw.get("siteName") or raw.get("site_name") or raw.get("publisher") or _domain(canonical_url))
-    )
+    page_url = _normalize_page_url(payload.page_url or raw.get("page_url") or "")
+    canonical_url = _canonical_url(payload.canonical_url or raw.get("canonical_url") or page_url)
+    identifiers = _normalize_identifiers(payload, raw)
     title = _candidate_value(payload.title_candidates, raw.get("title") or raw.get("headline") or "Untitled Page") or "Untitled Page"
-    authors = _normalize_authors(payload.author_candidates, raw, site_name)
-    lead_author = authors[0] if authors else _parse_author_object(site_name)
-    date_raw = _candidate_value(payload.date_candidates, raw.get("datePublished") or raw.get("date") or raw.get("year"))
-    year = _parse_year(date_raw)
-    source_type = _normalize_source_type(_candidate_value(payload.source_type_candidates, raw.get("source_type") or raw.get("@type") or "webpage"))
-    container_title = _candidate_value(payload.container_candidates, raw.get("container_title") or raw.get("journalTitle") or raw.get("journal_title"))
+    container_title = _candidate_value(
+        payload.container_candidates,
+        raw.get("container_title") or raw.get("journalTitle") or raw.get("journal_title"),
+    )
+    site_name = _normalize_org_name(
+        _candidate_value(payload.publisher_candidates, raw.get("siteName") or raw.get("site_name") or _domain(canonical_url or page_url))
+    )
     publisher = _normalize_org_name(_candidate_value(payload.publisher_candidates, raw.get("publisher") or site_name)) or site_name
+    source_type = _infer_source_type(
+        payload.source_type_candidates,
+        identifiers=identifiers,
+        container_title=container_title,
+        raw_metadata=raw,
+    )
+    authors = _normalize_authors(
+        payload.author_candidates,
+        raw,
+        site_name=site_name,
+        publisher=publisher,
+        source_type=source_type,
+    )
+    lead_author = authors[0] if authors else None
+    explicit_author_inputs = bool(_sorted_candidates(payload.author_candidates)) or bool(_author_fallbacks(raw))
+
+    issued_raw = _candidate_value(payload.date_candidates, raw.get("datePublished") or raw.get("date") or raw.get("year"))
+    modified_raw = _clean(raw.get("dateModified") or raw.get("modified") or raw.get("lastModified"))
+    accessed_raw = _clean(raw.get("accessed") or raw.get("accessed_at"))
+    issued = _parse_date_parts(issued_raw) if issued_raw else {}
+    if "year" not in issued:
+        issued["year"] = None
+    issued.setdefault("raw", issued_raw)
+    modified = _parse_date_parts(modified_raw) if modified_raw else {}
+    accessed = _parse_date_parts(accessed_raw) if accessed_raw else {}
+    date_resolution = "explicit" if issued_raw else "missing"
+    if authors:
+        author_resolution = "explicit" if explicit_author_inputs else "organization_fallback"
+    else:
+        author_resolution = "missing"
 
     locator = dict(payload.locator or {})
     paragraph = locator.get("paragraph")
     if paragraph and str(paragraph).isdigit():
         locator["paragraph"] = int(paragraph)
-
-    issued = {
-        "raw": date_raw,
-        "year": None if year == "n.d." else int(year),
+    metadata = {
+        **raw,
+        "title": title,
+        "authors": [author["fullName"] for author in authors],
+        "author": lead_author["fullName"] if lead_author else None,
+        "site_name": site_name or None,
+        "publisher": publisher or None,
+        "container_title": container_title or None,
+        "source_type": source_type,
+        "datePublished": issued.get("raw"),
+        "dateModified": modified.get("raw"),
+        "accessed": accessed.get("raw"),
+        "canonical_url": canonical_url or None,
+        "page_url": page_url or canonical_url or None,
+        "language": _clean(raw.get("language") or raw.get("inLanguage") or ""),
+        "description": _clean(raw.get("description")),
+        "hostname": _domain(canonical_url or page_url),
     }
+    for field in ("volume", "issue", "first_page", "last_page", "pages"):
+        value = _clean(raw.get(field) or raw.get(field.replace("_", "")))
+        if value:
+            metadata[field] = value
+    if modified:
+        metadata["modified_date"] = modified
+    if accessed:
+        metadata["accessed_date"] = accessed
+    metadata["author_resolution"] = author_resolution
+    metadata["date_resolution"] = date_resolution
+    metadata["limited_metadata"] = bool(
+        not authors
+        or not issued_raw
+        or (not identifiers.get("doi") and not container_title and not publisher)
+    )
 
     source = {
         "title": title,
@@ -303,15 +636,15 @@ def normalize_citation_payload(payload: ExtractionPayload) -> dict[str, Any]:
         "sentence_case": _sentence_case(title),
         "source_type": source_type,
         "authors": authors,
-        "author": lead_author["fullName"] if lead_author else site_name,
+        "author": lead_author["fullName"] if lead_author else "",
         "container_title": container_title,
         "publisher": publisher,
         "site_name": site_name,
         "issued": issued,
-        "identifiers": {key.lower(): value for key, value in (payload.identifiers or {}).items() if _clean(value)},
+        "identifiers": identifiers,
         "canonical_url": canonical_url,
         "page_url": page_url or canonical_url,
-        "metadata": raw,
+        "metadata": metadata,
         "raw_extraction": payload.model_dump(mode="json"),
         "normalization_version": NORMALIZATION_VERSION,
         "metadata_schema_version": METADATA_SCHEMA_VERSION,
@@ -334,21 +667,346 @@ def normalize_citation_payload(payload: ExtractionPayload) -> dict[str, Any]:
     }
 
 
+MONTH_NAMES = {
+    1: "January",
+    2: "February",
+    3: "March",
+    4: "April",
+    5: "May",
+    6: "June",
+    7: "July",
+    8: "August",
+    9: "September",
+    10: "October",
+    11: "November",
+    12: "December",
+}
+
+
+def _initials_with_periods(initials: str) -> str:
+    return " ".join(f"{character}." for character in (initials or ""))
+
+
+def _author_bib_name(author: dict[str, Any], *, style: str, invert: bool) -> str:
+    if author.get("isOrganization"):
+        return author.get("fullName") or "Source"
+    first = _clean(author.get("firstName"))
+    last = _clean(author.get("lastName")) or _clean(author.get("fullName")) or "Source"
+    initials = _initials_with_periods(author.get("initials") or first[:1].upper())
+    if style in {"apa", "harvard"}:
+        return f"{last}, {initials}".strip().rstrip(",")
+    if invert:
+        return f"{last}, {first}".strip().rstrip(",")
+    return f"{first} {last}".strip()
+
+
+def _join_author_names(values: list[str], *, final_joiner: str = ", and ") -> str:
+    if not values:
+        return ""
+    if len(values) == 1:
+        return values[0]
+    if len(values) == 2:
+        return f"{values[0]}{final_joiner}{values[1]}"
+    return f"{', '.join(values[:-1])}{final_joiner}{values[-1]}"
+
+
 def _authors_for_style(authors: list[dict[str, Any]], style: str) -> str:
     if not authors:
         return ""
-    mapped = []
-    for author in authors:
-        if author.get("isOrganization"):
-            mapped.append(author["fullName"])
-        elif style in {"apa", "harvard"}:
-            initials = " ".join(f"{character}." for character in (author.get("initials") or ""))
-            mapped.append(f"{author.get('lastName')}, {initials}".strip().rstrip(","))
-        else:
-            mapped.append(f"{author.get('lastName')}, {author.get('firstName')}".strip().rstrip(","))
-    if len(mapped) == 1:
-        return mapped[0]
-    return f"{mapped[0]} et al."
+    if style == "apa":
+        names = [
+            _author_bib_name(author, style=style, invert=True)
+            for author in authors
+        ]
+        return _join_author_names(names, final_joiner=", & ")
+    if style == "harvard":
+        if len(authors) > 3:
+            return f"{_author_bib_name(authors[0], style=style, invert=True)} et al."
+        names = [_author_bib_name(author, style=style, invert=True) for author in authors]
+        return _join_author_names(names, final_joiner=" and ")
+    if style == "mla":
+        if len(authors) > 2:
+            return f"{_author_bib_name(authors[0], style=style, invert=True)} et al."
+        first = _author_bib_name(authors[0], style=style, invert=True)
+        if len(authors) == 1:
+            return first
+        second = _author_bib_name(authors[1], style=style, invert=False)
+        return f"{first}, and {second}"
+    if len(authors) > 3:
+        return f"{_author_bib_name(authors[0], style=style, invert=True)} et al."
+    names = [
+        _author_bib_name(author, style=style, invert=index == 0)
+        for index, author in enumerate(authors)
+    ]
+    return _join_author_names(names, final_joiner=", and ")
+
+
+def _inline_author_label(source: dict[str, Any], style: str) -> str:
+    authors = source.get("authors") or []
+    if not authors:
+        title = _clean(source.get("title")) or "Source"
+        return " ".join(title.split()[:3])
+    if style in {"apa", "harvard"}:
+        if len(authors) == 1:
+            return authors[0].get("lastName") or authors[0].get("fullName") or "Source"
+        if len(authors) == 2:
+            first = authors[0].get("lastName") or authors[0].get("fullName") or "Source"
+            second = authors[1].get("lastName") or authors[1].get("fullName") or "Source"
+            joiner = " & " if style == "apa" else " and "
+            return f"{first}{joiner}{second}"
+        return f"{authors[0].get('lastName') or authors[0].get('fullName') or 'Source'} et al."
+    if len(authors) == 1:
+        return authors[0].get("lastName") or authors[0].get("fullName") or "Source"
+    if len(authors) == 2:
+        first = authors[0].get("lastName") or authors[0].get("fullName") or "Source"
+        second = authors[1].get("lastName") or authors[1].get("fullName") or "Source"
+        return f"{first} and {second}"
+    return f"{authors[0].get('lastName') or authors[0].get('fullName') or 'Source'} et al."
+
+
+def _issued_year(source: dict[str, Any]) -> str:
+    issued = source.get("issued") or {}
+    year = issued.get("year")
+    if isinstance(year, int):
+        return str(year)
+    return _parse_year(issued.get("raw"))
+
+
+def _format_date(source: dict[str, Any], *, style: str, long_form: bool = False) -> str:
+    issued = source.get("issued") or {}
+    year = issued.get("year")
+    month = issued.get("month")
+    day = issued.get("day")
+    if not year:
+        return "n.d."
+    if not month:
+        return str(year)
+    month_name = MONTH_NAMES.get(int(month), str(month))
+    if not day:
+        return f"{year}, {month_name}" if style == "apa" else f"{month_name} {year}"
+    if style == "apa":
+        return f"{year}, {month_name} {day}"
+    if long_form:
+        return f"{day} {month_name} {year}"
+    return str(year)
+
+
+def _format_access_date(source: dict[str, Any]) -> str:
+    access = ((source.get("metadata") or {}).get("accessed_date") or {})
+    if not access:
+        return ""
+    year = access.get("year")
+    month = access.get("month")
+    day = access.get("day")
+    if year and month and day:
+        return f"{day} {MONTH_NAMES.get(int(month), str(month))} {year}"
+    return _clean(access.get("raw"))
+
+
+def _preferred_locator(context: dict[str, Any], *, style: str) -> str:
+    locator = context.get("locator") or {}
+    page = _clean(locator.get("page"))
+    paragraph = _clean(locator.get("paragraph"))
+    if style == "mla":
+        if page:
+            return page
+        if paragraph:
+            return f"par. {paragraph}"
+        return ""
+    if page:
+        return f"p. {page}"
+    if paragraph:
+        return f"para. {paragraph}"
+    return ""
+
+
+def _page_range(source: dict[str, Any]) -> str:
+    metadata = source.get("metadata") or {}
+    pages = _clean(metadata.get("pages"))
+    if pages:
+        return pages
+    first_page = _clean(metadata.get("first_page"))
+    last_page = _clean(metadata.get("last_page"))
+    if first_page and last_page:
+        return f"{first_page}-{last_page}"
+    return first_page or last_page
+
+
+def _container_segment(source: dict[str, Any], *, style: str) -> str:
+    container = _clean(source.get("container_title"))
+    metadata = source.get("metadata") or {}
+    volume = _clean(metadata.get("volume"))
+    issue = _clean(metadata.get("issue"))
+    pages = _page_range(source)
+    parts: list[str] = []
+    if container:
+        parts.append(container)
+    if volume:
+        volume_part = f"vol. {volume}" if style in {"mla", "chicago", "harvard"} else volume
+        if issue:
+            volume_part = f"{volume_part}({issue})" if style == "apa" else f"{volume_part}, no. {issue}"
+        parts.append(volume_part)
+    elif issue:
+        parts.append(f"no. {issue}")
+    if pages:
+        prefix = "pp. " if "-" in pages else "p. "
+        parts.append(f"{prefix}{pages}")
+    return ", ".join(part for part in parts if part)
+
+
+def _link_for_source(source: dict[str, Any]) -> str:
+    identifiers = source.get("identifiers") or {}
+    doi = _normalize_doi(identifiers.get("doi"))
+    source_type = _clean(source.get("source_type"))
+    if doi and source_type in {"journal_article", "book", "dataset", "report"}:
+        return f"https://doi.org/{doi}"
+    return _clean(source.get("canonical_url") or source.get("page_url"))
+
+
+def _title_text(source: dict[str, Any], *, style: str, quoted: bool) -> str:
+    title = source.get("title_case") if style in {"mla", "chicago"} else source.get("sentence_case")
+    title = _clean(title or source.get("title")) or "Untitled page"
+    if quoted:
+        return f"\"{title}.\""
+    return title
+
+
+def _source_kind(source: dict[str, Any]) -> str:
+    normalized = _normalize_source_type(source.get("source_type") or "webpage")
+    return normalized
+
+
+def _is_container_work(source: dict[str, Any]) -> bool:
+    return _source_kind(source) in {"journal_article", "article"}
+
+
+def _render_apa_bibliography(source: dict[str, Any]) -> str:
+    authors = _authors_for_style(source.get("authors") or [], "apa") or _clean(source.get("publisher") or source.get("site_name") or "Source")
+    date_text = _format_date(source, style="apa")
+    source_type = _source_kind(source)
+    title = _title_text(source, style="apa", quoted=False)
+    container = _container_segment(source, style="apa")
+    publisher = _clean(source.get("publisher") or source.get("site_name"))
+    link = _link_for_source(source)
+    if source_type == "book":
+        parts = [f"{authors}. ({date_text}). {title}.", publisher]
+    elif source_type == "dataset":
+        parts = [f"{authors}. ({date_text}). {title} [Data set].", publisher]
+    elif source_type == "report":
+        parts = [f"{authors}. ({date_text}). {title}.", publisher]
+    elif _is_container_work(source):
+        parts = [f"{authors}. ({date_text}). {title}.", container or publisher]
+    else:
+        parts = [f"{authors}. ({date_text}). {title}.", publisher]
+    if link:
+        parts.append(link)
+    bibliography = " ".join(part.strip() for part in parts if part).strip()
+    return bibliography if bibliography.endswith(".") else bibliography + "."
+
+
+def _render_mla_bibliography(source: dict[str, Any]) -> str:
+    authors = _authors_for_style(source.get("authors") or [], "mla") or _clean(source.get("publisher") or source.get("site_name") or "Source")
+    title = _title_text(source, style="mla", quoted=_source_kind(source) != "book")
+    container = _container_segment(source, style="mla")
+    publisher = _clean(source.get("publisher") or source.get("site_name"))
+    year = _issued_year(source)
+    link = _link_for_source(source)
+    access = _format_access_date(source)
+    parts = [f"{authors}. {title}"]
+    if _source_kind(source) == "book":
+        parts = [f"{authors}. *{_title_text(source, style='mla', quoted=False)}*."]
+    if container:
+        parts.append(f"*{container}*")
+    elif publisher and _source_kind(source) != "book":
+        parts.append(publisher)
+    if publisher and _source_kind(source) in {"report", "dataset", "webpage", "article"}:
+        parts.append(publisher)
+    if year != "n.d.":
+        parts.append(year)
+    if link:
+        parts.append(link)
+    bibliography = ", ".join(part.strip().rstrip(".") for part in parts if part).strip()
+    bibliography = bibliography.rstrip(",") + "."
+    if access and _source_kind(source) in {"webpage", "article", "report", "dataset"}:
+        bibliography += f" Accessed {access}."
+    return bibliography
+
+
+def _render_chicago_bibliography(source: dict[str, Any]) -> str:
+    authors = _authors_for_style(source.get("authors") or [], "chicago") or _clean(source.get("publisher") or source.get("site_name") or "Source")
+    title = _title_text(source, style="chicago", quoted=_source_kind(source) != "book")
+    container = _container_segment(source, style="chicago")
+    publisher = _clean(source.get("publisher") or source.get("site_name"))
+    date_text = _format_date(source, style="chicago", long_form=True)
+    link = _link_for_source(source)
+    if _source_kind(source) == "book":
+        parts = [f"{authors}. *{_title_text(source, style='chicago', quoted=False)}*.", publisher, date_text]
+    else:
+        parts = [f"{authors}. {title}", container or publisher, date_text]
+    if link:
+        parts.append(link)
+    return ". ".join(part.strip().rstrip(".") for part in parts if part) + "."
+
+
+def _render_harvard_bibliography(source: dict[str, Any]) -> str:
+    authors = _authors_for_style(source.get("authors") or [], "harvard") or _clean(source.get("publisher") or source.get("site_name") or "Source")
+    year = _issued_year(source)
+    title = _title_text(source, style="harvard", quoted=_source_kind(source) != "book")
+    container = _container_segment(source, style="harvard")
+    publisher = _clean(source.get("publisher") or source.get("site_name"))
+    link = _link_for_source(source)
+    access = _format_access_date(source)
+    if _source_kind(source) == "book":
+        parts = [f"{authors} ({year}) *{_title_text(source, style='harvard', quoted=False)}*.", publisher]
+    else:
+        parts = [f"{authors} ({year}) {title}.", container or publisher]
+        if publisher and publisher not in parts[-1]:
+            parts.append(publisher)
+    if link:
+        parts.append(f"Available at: {link}")
+    bibliography = " ".join(part.strip() for part in parts if part).strip()
+    if access and _source_kind(source) in {"webpage", "article", "report", "dataset"}:
+        bibliography += f" (Accessed: {access})."
+    elif not bibliography.endswith("."):
+        bibliography += "."
+    return bibliography
+
+
+STYLE_BIBLIOGRAPHY_RENDERERS = {
+    "apa": _render_apa_bibliography,
+    "mla": _render_mla_bibliography,
+    "chicago": _render_chicago_bibliography,
+    "harvard": _render_harvard_bibliography,
+}
+
+
+def _render_inline(source: dict[str, Any], context: dict[str, Any], *, style: str) -> str:
+    author_label = _inline_author_label(source, style)
+    year = _issued_year(source)
+    locator = _preferred_locator(context, style=style)
+    if style == "mla":
+        if locator:
+            return f"({author_label}, {locator})"
+        return f"({author_label})"
+    if style == "chicago":
+        inner = f"{author_label} {year}" if year != "n.d." else author_label
+        if locator:
+            inner += f", {locator}"
+        return f"({inner})"
+    inner = f"{author_label}, {year}" if year != "n.d." else author_label
+    if locator:
+        inner += f", {locator}"
+    return f"({inner})"
+
+
+def _render_footnote(source: dict[str, Any], context: dict[str, Any], *, style: str) -> str:
+    bibliography = STYLE_BIBLIOGRAPHY_RENDERERS.get(style, _render_mla_bibliography)(source).rstrip(".")
+    quote = _clean(context.get("quote") or context.get("excerpt"))
+    locator = _preferred_locator(context, style=style)
+    suffix = f", {locator}" if locator else ""
+    if quote:
+        return f"{bibliography}{suffix}, quote: \"{quote}\"."
+    return f"{bibliography}{suffix}."
 
 
 def render_citation(source: dict[str, Any], context: dict[str, Any], *, style: str, render_kind: str) -> str:
@@ -359,27 +1017,11 @@ def render_citation(source: dict[str, Any], context: dict[str, Any], *, style: s
     if normalized_kind not in SUPPORTED_RENDER_KINDS:
         normalized_kind = "bibliography"
 
-    authors = source.get("authors") or []
-    author_obj = authors[0] if authors else _parse_author_object(source.get("author") or source.get("site_name"))
-    author_last = author_obj.get("lastName") if author_obj else source.get("site_name") or "Source"
-    author_text = _authors_for_style(authors, normalized_style) or source.get("author") or source.get("site_name") or "Source"
-    year = _parse_year((source.get("issued") or {}).get("raw"))
-    paragraph = (context.get("locator") or {}).get("paragraph")
-    page = (context.get("locator") or {}).get("page")
-    locator_suffix = f", p. {page}" if page else f", para. {paragraph}" if paragraph else ""
-
     if normalized_kind == "inline":
-        if normalized_style == "mla":
-            locator = f", par. {paragraph}" if paragraph else f", {page}" if page else ""
-            return f"({author_last}{locator})"
-        return f"({author_last}, {year}{locator_suffix})"
+        return _render_inline(source, context, style=normalized_style)
 
     if normalized_kind == "footnote":
-        base = render_citation(source, context, style=normalized_style, render_kind="bibliography").rstrip(".")
-        quote = context.get("quote")
-        if quote:
-            return f"{base}, quote: \"{quote}\"."
-        return f"{base}."
+        return _render_footnote(source, context, style=normalized_style)
 
     if normalized_kind == "quote_attribution":
         inline = render_citation(source, context, style=normalized_style, render_kind="inline")
@@ -388,19 +1030,7 @@ def render_citation(source: dict[str, Any], context: dict[str, Any], *, style: s
             return f"\"{quote}\" {inline}"
         return inline
 
-    title_case = source.get("title_case") or _title_case(source.get("title"))
-    sentence_case = source.get("sentence_case") or _sentence_case(source.get("title"))
-    container = source.get("container_title") or source.get("site_name")
-    publisher = source.get("publisher") or source.get("site_name")
-    canonical_url = source.get("canonical_url") or source.get("page_url") or ""
-
-    if normalized_style == "mla":
-        return f"{author_text}. \"{title_case}.\" *{container or publisher}*, {year}, {canonical_url}."
-    if normalized_style == "chicago":
-        return f"{author_text}. \"{title_case}.\" {container or publisher}. {canonical_url}."
-    if normalized_style == "harvard":
-        return f"{author_text} ({year}) {sentence_case}. {container or publisher}. Available at: {canonical_url}."
-    return f"{author_text}. ({year}). {sentence_case}. {container or publisher}. {canonical_url}"
+    return STYLE_BIBLIOGRAPHY_RENDERERS.get(normalized_style, _render_mla_bibliography)(source)
 
 
 def generate_render_bundle(

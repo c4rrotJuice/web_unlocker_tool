@@ -13,6 +13,79 @@ function setButtonDisabled(button, disabled) {
         button.removeAttribute("aria-disabled");
     }
 }
+function normalizeText(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+}
+function summarizeAuthors(source = {}) {
+    const authors = Array.isArray(source?.authors) ? source.authors : [];
+    const names = authors.map((author) => normalizeText(author?.fullName)).filter(Boolean);
+    if (!names.length) {
+        return "";
+    }
+    if (names.length <= 2) {
+        return names.join(", ");
+    }
+    return `${names[0]}, ${names[1]} +${names.length - 2}`;
+}
+function summarizeIssuedDate(source = {}) {
+    const issued = source?.issued_date || source?.issued || {};
+    return normalizeText(issued?.raw || issued?.year);
+}
+function summarizeHostname(source = {}) {
+    const direct = normalizeText(source?.hostname);
+    if (direct) {
+        return direct;
+    }
+    try {
+        return normalizeText(new URL(source?.canonical_url || source?.page_url || "").hostname.replace(/^www\./, ""));
+    }
+    catch {
+        return "";
+    }
+}
+function qualityMessages(source = {}) {
+    const quality = source?.quality || {};
+    const messages = [];
+    if (quality.author_status === "missing") {
+        messages.push("Author missing");
+    }
+    else if (quality.author_status === "organization_fallback") {
+        messages.push("Organization fallback");
+    }
+    if (quality.date_status === "missing") {
+        messages.push("Publication date missing");
+    }
+    if (quality.limited_metadata) {
+        messages.push("Limited metadata");
+    }
+    return messages;
+}
+function sourceFactRows(source = {}) {
+    const identifiers = source?.identifiers || {};
+    const rows = [];
+    const authors = summarizeAuthors(source);
+    const issued = summarizeIssuedDate(source);
+    const sourceType = normalizeText(source?.source_type).replace(/_/g, " ");
+    const container = normalizeText(source?.container_title);
+    const publisher = normalizeText(source?.publisher);
+    const doi = normalizeText(identifiers?.doi);
+    const hostname = summarizeHostname(source);
+    const canonicalUrl = normalizeText(source?.canonical_url || source?.page_url);
+    if (authors) {
+        rows.push({ label: "Authors", value: authors });
+    }
+    rows.push({ label: "Source", value: [sourceType, issued].filter(Boolean).join(" • ") || "Web reference" });
+    if (container || publisher) {
+        rows.push({ label: "Published In", value: [container, publisher].filter(Boolean).join(" • ") });
+    }
+    if (doi) {
+        rows.push({ label: "DOI", value: doi });
+    }
+    if (canonicalUrl || hostname) {
+        rows.push({ label: "Link", value: canonicalUrl || hostname });
+    }
+    return rows;
+}
 export function renderCitationModal(root, snapshot = {}, options = {}) {
     const { documentRef = globalThis.document, navigatorRef = globalThis.navigator, onRequestPreview, onRequestRender, onSave, onDismiss, } = options;
     if (!root) {
@@ -35,6 +108,8 @@ export function renderCitationModal(root, snapshot = {}, options = {}) {
     const header = documentRef.createElement("div");
     const headline = documentRef.createElement("h2");
     const sourceMeta = documentRef.createElement("p");
+    const sourceFacts = documentRef.createElement("div");
+    const qualityMeta = documentRef.createElement("p");
     const lockMeta = documentRef.createElement("p");
     const actions = documentRef.createElement("div");
     const copyButton = documentRef.createElement("button");
@@ -71,6 +146,14 @@ export function renderCitationModal(root, snapshot = {}, options = {}) {
     sourceMeta.style.fontSize = "12px";
     sourceMeta.style.lineHeight = "1.5";
     sourceMeta.style.color = "#94a3b8";
+    sourceFacts.setAttribute("data-citation-source-facts", "true");
+    sourceFacts.style.display = "grid";
+    sourceFacts.style.gap = "6px";
+    qualityMeta.setAttribute("data-citation-quality", "true");
+    qualityMeta.style.margin = "0";
+    qualityMeta.style.fontSize = "12px";
+    qualityMeta.style.lineHeight = "1.5";
+    qualityMeta.style.color = "#cbd5e1";
     lockMeta.style.margin = "0";
     lockMeta.style.fontSize = "12px";
     lockMeta.style.lineHeight = "1.5";
@@ -236,12 +319,33 @@ export function renderCitationModal(root, snapshot = {}, options = {}) {
         }
     });
     function render() {
+        const source = state.citation?.source || {};
         tierBadge.setTier(state.tier);
-        headline.textContent = state.citation?.metadata?.title || state.citation?.source?.title || "Citation preview";
+        headline.textContent = state.citation?.metadata?.title || source?.title || "Citation preview";
         sourceMeta.textContent = [
-            state.citation?.metadata?.author || state.citation?.source?.authors?.[0]?.fullName || state.citation?.source?.publisher || "",
-            state.citation?.metadata?.canonical_url || state.citation?.source?.canonical_url || state.citation?.source?.page_url || "",
+            summarizeAuthors(source) || state.citation?.metadata?.author || source?.publisher || "",
+            summarizeHostname(source),
         ].filter(Boolean).join(" • ");
+        sourceFacts.innerHTML = "";
+        sourceFactRows(source).forEach((row) => {
+            const item = documentRef.createElement("div");
+            const label = documentRef.createElement("span");
+            const value = documentRef.createElement("span");
+            item.style.display = "grid";
+            item.style.gridTemplateColumns = "92px 1fr";
+            item.style.gap = "8px";
+            item.style.fontSize = "12px";
+            item.style.lineHeight = "1.45";
+            label.textContent = row.label;
+            label.style.color = "#94a3b8";
+            value.textContent = row.value;
+            value.style.color = "#e2e8f0";
+            value.style.overflowWrap = "anywhere";
+            item.appendChild(label);
+            item.appendChild(value);
+            sourceFacts.appendChild(item);
+        });
+        qualityMeta.textContent = qualityMessages(source).join(" • ");
         lockMeta.textContent = state.lockedStyles.length
             ? "Some citation styles are locked for this account."
             : "";
@@ -291,6 +395,12 @@ export function renderCitationModal(root, snapshot = {}, options = {}) {
         wrapper.appendChild(header);
         wrapper.appendChild(headline);
         wrapper.appendChild(sourceMeta);
+        if (sourceFacts.children.length) {
+            wrapper.appendChild(sourceFacts);
+        }
+        if (qualityMeta.textContent) {
+            wrapper.appendChild(qualityMeta);
+        }
         wrapper.appendChild(lockMeta);
         wrapper.appendChild(styleTabs.root);
         wrapper.appendChild(formatTabs.root);

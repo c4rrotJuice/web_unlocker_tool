@@ -634,7 +634,7 @@ class ExtensionService:
             user_id=access.user_id,
             access_token=access.access_token,
             account_type=access.capability_state.tier,
-            extraction_payload=ExtractionPayload.model_validate(payload.extraction_payload),
+            extraction_payload=payload.extraction_payload,
             excerpt=payload.excerpt,
             locator=payload.locator,
             annotation=payload.annotation,

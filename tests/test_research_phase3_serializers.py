@@ -67,11 +67,13 @@ def test_source_summary_and_detail_serializer_shapes_are_stable():
         "page_url",
         "hostname",
         "language_code",
+        "quality",
         "created_at",
         "updated_at",
         "relationship_counts",
     }
     assert set(detail.keys()) == set(summary.keys()) | {"fingerprint", "metadata", "normalization_version", "source_version"}
+    assert summary["quality"]["author_status"] == "available"
 
 
 def test_citation_serializer_shape_is_stable():

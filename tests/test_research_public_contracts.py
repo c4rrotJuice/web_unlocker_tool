@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
+from app.modules.extension.schemas import ExtensionCitationCaptureRequest
 from app.modules.research.citations.schemas import CitationCreateRequest, CitationPreviewRequest
 from app.modules.research.routes import create_citation, preview_citation, resolve_source
 from app.modules.research.sources.schemas import SourceResolveRequest
@@ -17,8 +18,23 @@ def _canonical_extraction_payload() -> dict[str, object]:
         "title_candidates": [{"value": "Paper title", "confidence": 1.0}],
         "author_candidates": [{"value": "Ada Lovelace", "confidence": 1.0}],
         "date_candidates": [{"value": "2024-02-03", "confidence": 1.0}],
+        "container_candidates": [{"value": "Journal of Analytical Engines", "confidence": 0.88, "source": "meta:name:citation_journal_title"}],
+        "publisher_candidates": [{"value": "Example Press", "confidence": 0.8, "source": "meta:property:og:site_name"}],
+        "source_type_candidates": [{"value": "scholarlyarticle", "confidence": 0.85, "source": "jsonld:scholarlyarticle"}],
+        "identifiers": {"doi": "10.1000/example-doi", "issn": "1234-5678"},
         "locator": {"paragraph": 4},
-        "raw_metadata": {"quote": "Quoted sentence", "excerpt": "Quoted sentence"},
+        "extraction_evidence": {
+            "meta_tags": {
+                "authors": [{"value": "Ada Lovelace", "source": "meta:name:author", "key": "author"}],
+            }
+        },
+        "raw_metadata": {
+            "quote": "Quoted sentence",
+            "excerpt": "Quoted sentence",
+            "site_name": "Example Journal",
+            "language": "en",
+            "description": "A preserved description",
+        },
     }
 
 
@@ -74,7 +90,23 @@ def test_citation_create_schema_rejects_legacy_metadata_shape():
                 "locator": {"paragraph": 4},
                 "style": "mla",
             }
-        )
+    )
+
+
+def test_extension_capture_schema_accepts_canonical_extraction_payload():
+    payload = ExtensionCitationCaptureRequest.model_validate(
+        {
+            "extraction_payload": _canonical_extraction_payload(),
+            "excerpt": "Quoted sentence",
+            "quote": "Quoted sentence",
+            "locator": {"paragraph": 4},
+            "style": "mla",
+        }
+    )
+
+    assert payload.extraction_payload.canonical_url == "https://example.com/paper"
+    assert payload.extraction_payload.identifiers["doi"] == "10.1000/example-doi"
+    assert payload.extraction_payload.container_candidates[0].value == "Journal of Analytical Engines"
 
 
 @pytest.mark.anyio
@@ -134,6 +166,8 @@ async def test_citation_create_handler_accepts_canonical_extraction_payload(monk
     assert captured["user_id"] == "user-1"
     assert captured["account_type"] == "pro"
     assert captured["extraction_payload"].canonical_url == "https://example.com/paper"
+    assert captured["extraction_payload"].identifiers["doi"] == "10.1000/example-doi"
+    assert captured["extraction_payload"].container_candidates[0].value == "Journal of Analytical Engines"
 
 
 @pytest.mark.anyio
@@ -195,3 +229,5 @@ async def test_citation_preview_handler_accepts_canonical_extraction_payload(mon
     assert response["data"]["selected_style"] == "mla"
     assert captured["account_type"] == "pro"
     assert captured["extraction_payload"].canonical_url == "https://example.com/paper"
+    assert captured["extraction_payload"].identifiers["doi"] == "10.1000/example-doi"
+    assert captured["extraction_payload"].container_candidates[0].value == "Journal of Analytical Engines"

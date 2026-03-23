@@ -148,7 +148,17 @@ test("hover previews render for citations and notes", () => {
     citations: [
       {
         id: "citation-1",
-        source: { title: "Research article", hostname: "example.com" },
+        source: {
+          title: "Research article",
+          hostname: "example.com",
+          authors: [{ fullName: "Ada Lovelace" }, { fullName: "John Roe" }, { fullName: "Alex Poe" }],
+          issued_date: { raw: "2024-02-03", year: 2024 },
+          source_type: "journal_article",
+          container_title: "Journal of Examples",
+          publisher: "Example Press",
+          identifiers: { doi: "10.1000/example-doi" },
+          quality: { author_status: "available", date_status: "available", limited_metadata: false },
+        },
         style: "apa",
         format: "bibliography",
         excerpt: "A compact citation excerpt.",
@@ -163,6 +173,8 @@ test("hover previews render for citations and notes", () => {
   const citationPreview = findByAttr(citationsView.root, "data-hover-preview", "true");
   assert.match(collectText(citationPreview), /Citation preview/i);
   assert.match(collectText(citationPreview), /Research article|A compact citation excerpt/i);
+  assert.match(collectText(citationsView.root), /Ada Lovelace, John Roe \+1/i);
+  assert.match(collectText(citationsView.root), /DOI 10\.1000\/example-doi/i);
 
   const notesView = createNotesListView({
     documentRef,
@@ -193,6 +205,18 @@ test("citation modal keyboard shortcuts trigger copy, save, and dismiss", async 
     citation: {
       id: "citation-1",
       metadata: { title: "Backend title" },
+      source: {
+        title: "Backend title",
+        authors: [{ fullName: "Ada Lovelace" }, { fullName: "John Roe" }],
+        issued_date: { raw: "2024-02-03", year: 2024 },
+        source_type: "journal_article",
+        container_title: "Journal of Examples",
+        publisher: "Example Press",
+        identifiers: { doi: "10.1000/backend-doi" },
+        canonical_url: "https://example.com/paper",
+        hostname: "example.com",
+        quality: { author_status: "available", date_status: "available", limited_metadata: false },
+      },
       style: "apa",
       format: "bibliography",
       full_citation: "Backend full citation",
@@ -228,15 +252,18 @@ test("citation modal keyboard shortcuts trigger copy, save, and dismiss", async 
 
   const wrapper = modal.root.children[0];
   assert.ok(wrapper);
+  assert.match(collectText(wrapper), /Authors Ada Lovelace, John Roe/i);
+  assert.match(collectText(wrapper), /Source journal article • 2024-02-03/i);
+  assert.match(collectText(wrapper), /DOI 10\.1000\/backend-doi/i);
 
   wrapper.dispatchEvent(new FakeEvent("keydown", { key: "Enter", ctrlKey: true }));
   await Promise.resolve();
   assert.equal(clipboardWrites.at(-1), "Backend full citation");
-  assert.equal(saveCalls.at(-1)?.copy, true);
+  assert.equal(saveCalls.length, 0);
 
   wrapper.dispatchEvent(new FakeEvent("keydown", { key: "s", ctrlKey: true }));
   await Promise.resolve();
-  assert.equal(saveCalls.length >= 2, true);
+  assert.equal(saveCalls.length, 0);
 
   wrapper.dispatchEvent(new FakeEvent("keydown", { key: "Escape" }));
   assert.equal(dismissCount, 1);

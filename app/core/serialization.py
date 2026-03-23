@@ -195,6 +195,12 @@ def serialize_source_summary(row: dict[str, object], *, relationship_counts: dic
     authors = row.get("authors") if isinstance(row.get("authors"), list) else []
     identifiers = row.get("identifiers") if isinstance(row.get("identifiers"), dict) else {}
     issued_date = row.get("issued_date") if isinstance(row.get("issued_date"), dict) else {}
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    quality = {
+        "author_status": metadata.get("author_resolution") or ("available" if authors else "missing"),
+        "date_status": metadata.get("date_resolution") or ("available" if issued_date.get("raw") else "missing"),
+        "limited_metadata": bool(metadata.get("limited_metadata")) if "limited_metadata" in metadata else bool(not authors or not issued_date.get("raw")),
+    }
     return {
         "id": row.get("id"),
         "title": row.get("title"),
@@ -208,6 +214,7 @@ def serialize_source_summary(row: dict[str, object], *, relationship_counts: dic
         "page_url": row.get("page_url"),
         "hostname": row.get("hostname"),
         "language_code": row.get("language_code"),
+        "quality": quality,
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "relationship_counts": relationship_counts or {},

@@ -2,6 +2,41 @@
 import { getCitationPreviewText, normalizeCitationFormat, normalizeCitationStyle } from "../../shared/types/citation.js";
 import { createEmptyStateCard } from "./empty_state_card.js";
 import { createHoverPreview } from "./hover_preview.js";
+function normalizeText(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+}
+function summarizeAuthors(source = {}) {
+    const authors = Array.isArray(source?.authors) ? source.authors : [];
+    const names = authors.map((author) => normalizeText(author?.fullName)).filter(Boolean);
+    if (!names.length) {
+        return "";
+    }
+    if (names.length <= 2) {
+        return names.join(", ");
+    }
+    return `${names[0]}, ${names[1]} +${names.length - 2}`;
+}
+function summarizeIssued(source = {}) {
+    const issued = source?.issued_date || {};
+    return normalizeText(issued?.raw || issued?.year);
+}
+function qualityMessages(source = {}) {
+    const quality = source?.quality || {};
+    const messages = [];
+    if (quality.author_status === "missing") {
+        messages.push("Author missing");
+    }
+    else if (quality.author_status === "organization_fallback") {
+        messages.push("Organization fallback");
+    }
+    if (quality.date_status === "missing") {
+        messages.push("Publication date missing");
+    }
+    if (quality.limited_metadata) {
+        messages.push("Limited metadata");
+    }
+    return messages;
+}
 export function createCitationsListView(options = {}) {
     const { documentRef = globalThis.document, citations = [], selectedCitationId = null, onExpand, onCopy, } = options;
     const root = documentRef.createElement("section");
@@ -42,9 +77,22 @@ export function createCitationsListView(options = {}) {
             title.style.color = "#0f172a";
             title.style.overflowWrap = "anywhere";
             const meta = documentRef.createElement("div");
-            meta.textContent = [citation.source?.hostname, citation.created_at].filter(Boolean).join(" • ");
+            meta.textContent = [
+                summarizeAuthors(citation.source),
+                summarizeIssued(citation.source),
+                normalizeText(citation.source?.source_type).replace(/_/g, " "),
+                citation.source?.identifiers?.doi ? `DOI ${citation.source.identifiers.doi}` : "",
+            ].filter(Boolean).join(" • ");
             meta.style.fontSize = "12px";
             meta.style.color = "#64748b";
+            const submeta = documentRef.createElement("div");
+            submeta.textContent = [
+                [citation.source?.container_title, citation.source?.publisher].filter(Boolean).join(" • "),
+                citation.source?.hostname || "",
+                ...qualityMessages(citation.source),
+            ].filter(Boolean).join(" • ");
+            submeta.style.fontSize = "12px";
+            submeta.style.color = "#0f766e";
             const previewText = getCitationPreviewText(citation, normalizeCitationStyle(citation.style || "apa"), normalizeCitationFormat(citation.format || "bibliography")) || citation.quote_text || citation.excerpt || "No citation text available.";
             const summary = documentRef.createElement("div");
             summary.textContent = citation.id === expandedId ? previewText : previewText.slice(0, 140);
@@ -79,7 +127,13 @@ export function createCitationsListView(options = {}) {
             const updatePreview = () => {
                 preview.render({
                     label: "Citation preview",
-                    meta: [citation.source?.title || "Citation", citation.source?.hostname, citation.style, citation.format].filter(Boolean).join(" • "),
+                    meta: [
+                        citation.source?.title || "Citation",
+                        summarizeAuthors(citation.source),
+                        summarizeIssued(citation.source),
+                        citation.source?.identifiers?.doi ? `DOI ${citation.source.identifiers.doi}` : "",
+                        ...qualityMessages(citation.source),
+                    ].filter(Boolean).join(" • "),
                     body: previewText,
                 });
             };
@@ -87,6 +141,7 @@ export function createCitationsListView(options = {}) {
             row.addEventListener("focusin", updatePreview);
             row.appendChild(title);
             row.appendChild(meta);
+            row.appendChild(submeta);
             row.appendChild(summary);
             actions.appendChild(expand);
             actions.appendChild(copy);

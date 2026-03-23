@@ -255,6 +255,7 @@ def _canonical_extraction_payload(
     quote: str = "Quoted sentence",
     paragraph: int | str = 4,
     date_published: str = "2024-02-03",
+    doi: str = "10.1000/example-doi",
 ) -> ExtractionPayload:
     return ExtractionPayload(
         canonical_url=url,
@@ -262,10 +263,22 @@ def _canonical_extraction_payload(
         title_candidates=[ExtractionCandidate(value=title, confidence=1.0)],
         author_candidates=[ExtractionCandidate(value=author, confidence=1.0)],
         date_candidates=[ExtractionCandidate(value=date_published, confidence=1.0)],
+        container_candidates=[ExtractionCandidate(value="Journal of Analytical Engines", confidence=0.88, source="meta:name:citation_journal_title")],
+        publisher_candidates=[ExtractionCandidate(value="Example Press", confidence=0.8, source="meta:property:og:site_name")],
+        source_type_candidates=[ExtractionCandidate(value="scholarlyarticle", confidence=0.85, source="jsonld:scholarlyarticle")],
+        identifiers={"doi": doi, "issn": "1234-5678"},
         locator={"paragraph": paragraph},
+        extraction_evidence={
+            "meta_tags": {
+                "authors": [{"value": author, "source": "meta:name:author", "key": "author"}],
+            }
+        },
         raw_metadata={
             "quote": quote,
             "excerpt": excerpt,
+            "site_name": "Example Journal",
+            "language": "en",
+            "description": "A preserved description",
         },
     )
 
@@ -308,6 +321,44 @@ async def test_source_resolve_deduplicates_same_source_correctly(sources_service
         extraction_payload=_canonical_extraction_payload(url="https://doi.org/10.1000/test", title="Paper"),
     )
     assert first["id"] == second["id"]
+
+
+@pytest.mark.anyio
+async def test_source_resolve_deduplicates_by_canonical_url_when_identifier_missing(sources_service):
+    first = await sources_service.resolve_or_create_source(
+        access_token=None,
+        extraction_payload=_canonical_extraction_payload(url="https://example.com/article#top", title="Paper", doi=""),
+    )
+    second = await sources_service.resolve_or_create_source(
+        access_token=None,
+        extraction_payload=_canonical_extraction_payload(url="https://example.com/article", title="Paper", doi=""),
+    )
+
+    assert first["id"] == second["id"]
+
+
+@pytest.mark.anyio
+async def test_source_resolve_does_not_overmerge_distinct_sparse_pages(sources_service):
+    first = await sources_service.resolve_or_create_source(
+        access_token=None,
+        extraction_payload=_canonical_extraction_payload(url="", title="Untitled Page", author="", doi=""),
+    )
+    second = await sources_service.resolve_or_create_source(
+        access_token=None,
+        extraction_payload=_canonical_extraction_payload(url="", title="Untitled Page", author="", doi=""),
+    )
+
+    assert first["id"] == second["id"]
+
+    third = await sources_service.resolve_or_create_source(
+        access_token=None,
+        extraction_payload=ExtractionPayload(
+            title_candidates=[ExtractionCandidate(value="Untitled Page", confidence=1.0)],
+            raw_metadata={"publisher": "Different Publisher"},
+        ),
+    )
+
+    assert third["id"] != first["id"]
 
 
 @pytest.mark.anyio
@@ -373,11 +424,67 @@ async def test_citation_preview_uses_canonical_rendering_without_persisting_rows
     assert preview["citation"]["id"] is None
     assert preview["citation"]["source_id"] is None
     assert preview["citation"]["source"]["title"] == "Paper title"
+    assert preview["citation"]["source"]["quality"]["author_status"] == "explicit"
     assert preview["citation"]["renders"]["mla"]["quote_attribution"] == "\"Quoted sentence\" (Lovelace, par. 4)"
     assert preview["render_bundle"]["renders"]["mla"]["quote_attribution"] == "\"Quoted sentence\" (Lovelace, par. 4)"
     assert citations_service.repository.rows == {}
     assert citations_service.repository.renders == {}
     assert citations_service.repository.replace_renders_calls == []
+
+
+@pytest.mark.anyio
+async def test_citation_preview_preserves_rich_extraction_payload_into_normalization(monkeypatch, citations_service):
+    captured = {}
+
+    def fake_normalize(extraction_payload):
+        captured["canonical_url"] = extraction_payload.canonical_url
+        captured["identifiers"] = dict(extraction_payload.identifiers)
+        captured["container"] = extraction_payload.container_candidates[0].value
+        captured["raw_metadata"] = dict(extraction_payload.raw_metadata)
+        captured["extraction_evidence"] = dict(extraction_payload.extraction_evidence)
+        return {
+            "source": {
+                "id": None,
+                "title": "Paper title",
+                "source_type": "journal_article",
+                "authors": [{"fullName": "Ada Lovelace"}],
+                "container_title": "Journal of Analytical Engines",
+                "publisher": "Example Press",
+                "issued": {"raw": "2024-02-03", "year": 2024},
+                "identifiers": dict(extraction_payload.identifiers),
+                "canonical_url": extraction_payload.canonical_url,
+                "page_url": extraction_payload.page_url,
+                "metadata": dict(extraction_payload.raw_metadata),
+                "raw_extraction": extraction_payload.model_dump(mode="json"),
+                "normalization_version": 1,
+                "source_version": "source-version",
+                "fingerprint": "url:https://example.com/paper",
+            },
+            "context": {
+                "excerpt": "Quoted sentence",
+                "quote": "Quoted sentence",
+                "annotation": "",
+                "locator": {"paragraph": 4},
+            },
+        }
+
+    monkeypatch.setattr("app.modules.research.citations.service.normalize_citation_payload", fake_normalize)
+
+    preview = await citations_service.preview_citation(
+        account_type="pro",
+        extraction_payload=_canonical_extraction_payload(),
+        excerpt="Quoted sentence",
+        quote="Quoted sentence",
+        locator={"paragraph": 4},
+        style="mla",
+    )
+
+    assert preview["citation"]["source"]["identifiers"]["doi"] == "10.1000/example-doi"
+    assert captured["canonical_url"] == "https://example.com/paper"
+    assert captured["container"] == "Journal of Analytical Engines"
+    assert captured["identifiers"] == {"doi": "10.1000/example-doi", "issn": "1234-5678"}
+    assert captured["raw_metadata"]["site_name"] == "Example Journal"
+    assert captured["extraction_evidence"]["meta_tags"]["authors"][0]["value"] == "Ada Lovelace"
 
 
 @pytest.mark.anyio
@@ -397,6 +504,73 @@ async def test_citation_create_rejects_legacy_metadata_only_payload(citations_se
             style="mla",
         )
     assert exc.value.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_citation_create_preserves_rich_extraction_payload_into_source_resolution(monkeypatch, citations_service):
+    captured = {}
+
+    async def fake_resolve_or_create_source(*, access_token, extraction_payload):
+        captured["access_token"] = access_token
+        captured["canonical_url"] = extraction_payload.canonical_url
+        captured["identifiers"] = dict(extraction_payload.identifiers)
+        captured["container"] = extraction_payload.container_candidates[0].value
+        captured["raw_metadata"] = dict(extraction_payload.raw_metadata)
+        return {
+            "id": "source-1",
+            "fingerprint": "url:https://example.com/paper",
+            "title": "Paper title",
+            "source_type": "journal_article",
+            "authors": [{"fullName": "Ada Lovelace"}],
+            "container_title": "Journal of Analytical Engines",
+            "publisher": "Example Press",
+            "issued_date": {"raw": "2024-02-03", "year": 2024},
+            "identifiers": dict(extraction_payload.identifiers),
+            "canonical_url": extraction_payload.canonical_url,
+            "page_url": extraction_payload.page_url,
+            "metadata": dict(extraction_payload.raw_metadata),
+            "raw_extraction": extraction_payload.model_dump(mode="json"),
+            "normalization_version": 1,
+            "source_version": "source-version",
+            "hostname": "example.com",
+            "language_code": "en",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }
+
+    monkeypatch.setattr(citations_service.sources_service, "resolve_or_create_source", fake_resolve_or_create_source)
+    async def fake_get_citation(**_kwargs):
+        return {
+            "id": "citation-1",
+            "source_id": "source-1",
+            "source": {"id": "source-1", "identifiers": {"doi": "10.1000/example-doi"}},
+            "locator": {"paragraph": 4},
+            "annotation": None,
+            "excerpt": "Quoted sentence",
+            "quote_text": "Quoted sentence",
+            "renders": {"mla": {"inline": "(Lovelace)"}},
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "relationship_counts": {},
+        }
+    monkeypatch.setattr(citations_service, "get_citation", fake_get_citation)
+
+    created = await citations_service.create_citation(
+        user_id="user-1",
+        access_token=None,
+        account_type="pro",
+        extraction_payload=_canonical_extraction_payload(),
+        excerpt="Quoted sentence",
+        quote="Quoted sentence",
+        locator={"paragraph": 4},
+        style="mla",
+    )
+
+    assert created["source"]["identifiers"]["doi"] == "10.1000/example-doi"
+    assert captured["canonical_url"] == "https://example.com/paper"
+    assert captured["container"] == "Journal of Analytical Engines"
+    assert captured["identifiers"] == {"doi": "10.1000/example-doi", "issn": "1234-5678"}
+    assert captured["raw_metadata"]["site_name"] == "Example Journal"
 
 
 @pytest.mark.anyio
@@ -548,11 +722,11 @@ async def test_pro_only_template_behavior_is_enforced(citations_service):
 async def test_research_list_pages_return_cursor_meta_for_sources(sources_service):
     await sources_service.resolve_or_create_source(
         access_token=None,
-        extraction_payload=_canonical_extraction_payload(url="https://example.com/1", title="One", excerpt="", quote="", paragraph=1),
+        extraction_payload=_canonical_extraction_payload(url="https://example.com/1", title="One", excerpt="", quote="", paragraph=1, doi="10.1000/example-doi-1"),
     )
     await sources_service.resolve_or_create_source(
         access_token=None,
-        extraction_payload=_canonical_extraction_payload(url="https://example.com/2", title="Two", excerpt="", quote="", paragraph=2),
+        extraction_payload=_canonical_extraction_payload(url="https://example.com/2", title="Two", excerpt="", quote="", paragraph=2, doi="10.1000/example-doi-2"),
     )
     page = await sources_service.list_sources_page(
         user_id="user-1",

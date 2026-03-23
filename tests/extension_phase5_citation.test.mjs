@@ -123,6 +123,23 @@ function findByAttr(node, name, value) {
   return null;
 }
 
+function collectText(node) {
+  if (!node) {
+    return "";
+  }
+  const parts = [];
+  if (typeof node.textContent === "string" && node.textContent.trim()) {
+    parts.push(node.textContent.trim());
+  }
+  for (const child of node.children || []) {
+    const text = collectText(child);
+    if (text) {
+      parts.push(text);
+    }
+  }
+  return parts.join(" ");
+}
+
 function createRuntime({ previewResult, previewError, renderResult, renderError, saveResult, saveError } = {}) {
   return createBackgroundRuntime({
     chromeApi: {
@@ -284,6 +301,11 @@ test("citation modal switches style and format using backend-derived previews on
         title: "Public health update",
         canonical_url: "https://example.com/articles/demo",
         authors: [{ fullName: "World Health Organization" }],
+        issued_date: { raw: "2024-03-10", year: 2024 },
+        source_type: "report",
+        publisher: "World Health Organization",
+        identifiers: { doi: "10.1000/who-demo" },
+        quality: { author_status: "available", date_status: "available", limited_metadata: false },
       },
     },
     render_bundle: {
@@ -331,6 +353,11 @@ test("citation modal switches style and format using backend-derived previews on
               title: "Public health update",
               canonical_url: "https://example.com/articles/demo",
               authors: [{ fullName: "World Health Organization" }],
+              issued_date: { raw: "2024-03-10", year: 2024 },
+              source_type: "report",
+              publisher: "World Health Organization",
+              identifiers: { doi: "10.1000/who-demo" },
+              quality: { author_status: "available", date_status: "available", limited_metadata: false },
             },
             renders: {
               mla: {
@@ -369,6 +396,11 @@ test("citation modal switches style and format using backend-derived previews on
             title: "Public health update",
             canonical_url: "https://example.com/articles/demo",
             authors: [{ fullName: "World Health Organization" }],
+            issued_date: { raw: "2024-03-10", year: 2024 },
+            source_type: "report",
+            publisher: "World Health Organization",
+            identifiers: { doi: "10.1000/who-demo" },
+            quality: { author_status: "available", date_status: "available", limited_metadata: false },
           },
           locator: {},
           annotation: null,
@@ -400,6 +432,7 @@ test("citation modal switches style and format using backend-derived previews on
   assert.equal(previewCalls.length, 1);
   assert.equal(modal.getState().selectedStyle, "mla");
   assert.match(modal.getState().text, /World Health Organization/);
+  assert.match(collectText(root.children[0]), /DOI/);
 
   const formatTabs = findByAttr(root, "data-citation-format-tabs", "true");
   const inlineButton = formatTabs.children.find((button) => button.getAttribute("data-format") === "inline");
@@ -517,6 +550,43 @@ test("citation modal shows loading and error states without collapsing", () => {
   }, { documentRef });
 
   assert.match(findByAttr(root, "data-citation-preview-body", "true").textContent, /Preview failed/);
+});
+
+test("citation modal surfaces missing or inferred metadata honestly", () => {
+  const documentRef = new FakeDocument();
+  const root = documentRef.createElement("div");
+
+  renderCitationModal(root, {
+    citation: {
+      id: null,
+      style: "apa",
+      format: "bibliography",
+      source: {
+        title: "Sparse web reference",
+        canonical_url: "https://example.com/sparse",
+        publisher: "Example Site",
+        source_type: "webpage",
+        quality: { author_status: "organization_fallback", date_status: "missing", limited_metadata: true },
+      },
+    },
+    render_bundle: {
+      renders: {
+        apa: {
+          bibliography: "Example Site. (n.d.). Sparse web reference. https://example.com/sparse",
+        },
+      },
+    },
+    selected_style: "apa",
+    selected_format: "bibliography",
+    locked_styles: [],
+    loading: false,
+    error: null,
+  }, { documentRef });
+
+  const visible = collectText(root.children[0]);
+  assert.match(visible, /Organization fallback/);
+  assert.match(visible, /Publication date missing/);
+  assert.match(visible, /Limited metadata/);
 });
 
 test("backend citation preview/render errors map cleanly and save rejects invalid payloads", async () => {

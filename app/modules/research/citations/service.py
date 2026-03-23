@@ -26,6 +26,17 @@ class CitationsService:
         self.repository = repository
         self.sources_service = sources_service
 
+    def _require_extraction_payload(self, extraction_payload: ExtractionPayload) -> ExtractionPayload:
+        if isinstance(extraction_payload, ExtractionPayload):
+            return extraction_payload
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "EXTRACTION_PAYLOAD_REQUIRED",
+                "message": "Canonical extraction payload is required.",
+            },
+        )
+
     def _ensure_style_allowed(self, *, account_type: str, style: str | None) -> str:
         selected_style = (style or "mla").strip().lower()
         if selected_style not in allowed_citation_formats(account_type):
@@ -227,14 +238,7 @@ class CitationsService:
         quote: str | None = None,
         style: str | None = None,
     ) -> dict[str, Any]:
-        if not isinstance(extraction_payload, ExtractionPayload):
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "EXTRACTION_PAYLOAD_REQUIRED",
-                    "message": "Canonical extraction payload is required.",
-                },
-            )
+        extraction_payload = self._require_extraction_payload(extraction_payload)
         selected_style = self._ensure_style_allowed(account_type=account_type, style=style)
         normalized = normalize_citation_payload(extraction_payload)
         citation_context = self._citation_context(
@@ -449,14 +453,7 @@ class CitationsService:
         quote: str | None = None,
         style: str | None = None,
     ) -> dict:
-        if not isinstance(extraction_payload, ExtractionPayload):
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "EXTRACTION_PAYLOAD_REQUIRED",
-                    "message": "Canonical extraction payload is required.",
-                },
-            )
+        extraction_payload = self._require_extraction_payload(extraction_payload)
         self._ensure_style_allowed(account_type=account_type, style=style)
         source = await self.sources_service.resolve_or_create_source(
             access_token=access_token,

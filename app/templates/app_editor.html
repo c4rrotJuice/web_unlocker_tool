@@ -8,18 +8,14 @@
 {% block main %}
 <section class="editor-v2-page" aria-label="Editor workspace">
   <div class="editor-v2-shell" id="editor-v2-shell">
-    <aside class="editor-v2-panel editor-v2-explorer" aria-label="Research Explorer">
-      <div class="editor-v2-panel-head">
-        <div>
-          <p class="editor-v2-kicker">Capture</p>
-          <h2>Research Explorer</h2>
-        </div>
-        <button class="app-theme-toggle editor-v2-action" id="editor-new-document" type="button">New document</button>
+    <aside class="editor-v2-panel editor-v2-explorer" aria-label="Workspace navigation">
+      <div class="editor-v2-inline-actions">
+        <button class="editor-v2-action" id="editor-new-document" type="button">New</button>
       </div>
       <div class="editor-v2-search-row">
-        <input id="editor-explorer-search" type="search" placeholder="Search documents, sources, citations, quotes, notes" aria-label="Search research" />
+        <input id="editor-explorer-search" type="search" placeholder="Search" aria-label="Search documents, sources, citations, quotes, notes" />
       </div>
-      <div class="editor-v2-tablist" role="tablist" aria-label="Research explorer">
+      <div class="editor-v2-tablist" role="tablist" aria-label="Explorer sections">
         <button class="editor-v2-tab is-active" data-explorer-tab="documents" role="tab" aria-selected="true">Documents</button>
         <button class="editor-v2-tab" data-explorer-tab="sources" role="tab" aria-selected="false">Sources</button>
         <button class="editor-v2-tab" data-explorer-tab="citations" role="tab" aria-selected="false">Citations</button>
@@ -27,25 +23,25 @@
         <button class="editor-v2-tab" data-explorer-tab="notes" role="tab" aria-selected="false">Notes</button>
       </div>
       <section class="editor-v2-results">
-        <div class="editor-v2-subhead">
+        <div class="editor-v2-subhead editor-v2-subhead-compact">
           <h3 id="editor-explorer-heading">Documents</h3>
           <span id="editor-explorer-status" class="editor-v2-meta">Ready</span>
         </div>
-        <div id="editor-explorer-list" class="editor-v2-scroll" tabindex="0"></div>
+        <div class="editor-v2-explorer-body">
+          <div id="editor-explorer-list" class="editor-v2-scroll editor-v2-list-rows" tabindex="0"></div>
+          <aside id="editor-explorer-preview" class="editor-v2-hover-preview" hidden aria-live="polite"></aside>
+        </div>
       </section>
     </aside>
 
-    <section class="editor-v2-panel editor-v2-surface" aria-label="Writing Surface">
-      <div class="editor-v2-surface-head">
-        <div class="editor-v2-title-wrap">
-          <p class="editor-v2-kicker">Write</p>
-          <input id="editor-document-title" class="editor-v2-title" type="text" placeholder="Untitled document" aria-label="Document title" />
-        </div>
+    <section class="editor-v2-panel editor-v2-surface" aria-label="Writing surface">
+      <div class="editor-v2-document-bar">
+        <input id="editor-document-title" class="editor-v2-title" type="text" placeholder="Untitled document" aria-label="Document title" />
         <div class="editor-v2-head-actions">
           <span id="editor-save-state" class="editor-v2-save-state" aria-live="polite">Saved</span>
           <button class="editor-v2-action" id="editor-checkpoint-button" type="button">Checkpoint</button>
-          <button class="editor-v2-action" id="editor-command-button" type="button">Commands</button>
           <button class="editor-v2-action" id="editor-export-button" type="button">Export</button>
+          <button class="editor-v2-action" id="editor-command-button" type="button" aria-label="More actions">•••</button>
         </div>
       </div>
 
@@ -58,16 +54,23 @@
 
       <div id="editor-writing-surface" class="editor-v2-writing-surface" hidden>
         <div id="editor-command-menu" class="editor-v2-popover" hidden aria-label="Editor commands"></div>
-        <div id="editor-toolbar" class="editor-v2-toolbar">
-          <span class="ql-formats">
-            <select class="ql-header" aria-label="Heading level">
+        <div id="editor-toolbar" class="editor-v2-toolbar editor-v2-toolbar-compact" aria-label="Editor toolbar">
+          <span class="ql-formats" data-toolbar-group="core">
+            <select class="ql-header" aria-label="Style">
               <option value="1">Heading 1</option>
               <option value="2">Heading 2</option>
               <option value="3">Heading 3</option>
               <option selected>Paragraph</option>
             </select>
+            <button class="ql-bold" aria-label="Bold"></button>
+            <button class="ql-italic" aria-label="Italic"></button>
+            <button class="ql-underline" aria-label="Underline"></button>
+            <button class="ql-list" value="bullet" aria-label="Bullet list"></button>
+            <button class="ql-blockquote" aria-label="Quote block"></button>
+            <button class="editor-v2-toolbar-action" data-toolbar-action="insert-citation" type="button" aria-label="Insert citation">Citation</button>
+            <button class="editor-v2-toolbar-action" data-toolbar-action="toggle-expand" type="button" aria-expanded="false" aria-controls="editor-toolbar" id="editor-toolbar-toggle">More</button>
           </span>
-          <span class="ql-formats">
+          <span class="ql-formats" data-toolbar-group="advanced" hidden>
             <select class="ql-font" aria-label="Font family">
               <option value="Georgia,serif" selected>Georgia</option>
               <option value="Cambria,serif">Cambria</option>
@@ -89,19 +92,8 @@
               <option value="28px">28px</option>
               <option value="32px">32px</option>
             </select>
-          </span>
-          <span class="ql-formats">
-            <button class="ql-bold" aria-label="Bold"></button>
-            <button class="ql-italic" aria-label="Italic"></button>
-            <button class="ql-underline" aria-label="Underline"></button>
             <button class="ql-strike" aria-label="Strike"></button>
-          </span>
-          <span class="ql-formats">
             <button class="ql-list" value="ordered" aria-label="Ordered list"></button>
-            <button class="ql-list" value="bullet" aria-label="Bullet list"></button>
-            <button class="ql-blockquote" aria-label="Quote block"></button>
-          </span>
-          <span class="ql-formats">
             <select class="ql-align" aria-label="Alignment">
               <option selected></option>
               <option value="center"></option>
@@ -124,25 +116,26 @@
       </div>
     </section>
 
-    <aside class="editor-v2-panel editor-v2-context" aria-label="Context Rail">
-      <div class="editor-v2-panel-head">
-        <div>
-          <p class="editor-v2-kicker">Understand</p>
-          <h2>Context Rail</h2>
+    <aside class="editor-v2-panel editor-v2-context" aria-label="Attached context">
+      <div class="editor-v2-context-head">
+        <div class="editor-v2-tablist" role="tablist" aria-label="Context tabs">
+          <button class="editor-v2-tab is-active" data-context-tab="citations" role="tab" aria-selected="true">Citations</button>
+          <button class="editor-v2-tab" data-context-tab="outline" role="tab" aria-selected="false">Outline</button>
+          <button class="editor-v2-tab" data-context-tab="notes" role="tab" aria-selected="false">Notes</button>
+          <button class="editor-v2-tab" data-context-tab="checkpoints" role="tab" aria-selected="false">Checkpoints</button>
         </div>
         <span id="editor-context-mode" class="editor-v2-meta">Idle</span>
       </div>
-      <div id="editor-context-rail" class="editor-v2-scroll" tabindex="0"></div>
-      <section class="editor-v2-side-section">
-        <div class="editor-v2-subhead">
-          <h3>Outline</h3>
-        </div>
+      <section class="editor-v2-context-pane" data-context-pane="citations">
+        <div id="editor-context-rail" class="editor-v2-scroll" tabindex="0"></div>
+      </section>
+      <section class="editor-v2-context-pane" data-context-pane="outline" hidden>
         <div id="editor-outline-list" class="editor-v2-outline" tabindex="0"></div>
       </section>
-      <section class="editor-v2-side-section">
-        <div class="editor-v2-subhead">
-          <h3>Checkpoints</h3>
-        </div>
+      <section class="editor-v2-context-pane" data-context-pane="notes" hidden>
+        <div id="editor-notes-panel" class="editor-v2-scroll editor-v2-notes-placeholder" tabindex="0"></div>
+      </section>
+      <section class="editor-v2-context-pane" data-context-pane="checkpoints" hidden>
         <div id="editor-checkpoints-list" class="editor-v2-checkpoints" tabindex="0"></div>
       </section>
     </aside>

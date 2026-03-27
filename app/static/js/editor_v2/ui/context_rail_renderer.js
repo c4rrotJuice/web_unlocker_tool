@@ -94,7 +94,7 @@ export function renderContextRail(target, context, state, detail, handlers = {})
   if (context.mode === "seed_review" || context.mode === "quote_focus") {
     target.innerHTML = `
       <div class="editor-v2-card">
-        <h3>Seed Review</h3>
+        <h3>Captured research</h3>
         <p>${escapeHtml(detail?.excerpt || detail?.citation?.source?.title || "Captured context is ready for writing.")}</p>
         <div class="editor-v2-context-actions">
           <button class="editor-v2-action" data-context-action="insert-seed-quote">Insert quote now</button>
@@ -124,7 +124,7 @@ export function renderContextRail(target, context, state, detail, handlers = {})
   }
   target.innerHTML = `
     <div class="editor-v2-card">
-      <h3>Context</h3>
+      <h3>Attached research</h3>
       <p>Select text or focus a research item to work without modal sprawl.</p>
       <p class="editor-v2-meta">
         Attached: ${(attached.citations || []).length} citations, ${(attached.notes || []).length} notes, ${(attached.quotes || []).length} quotes, ${(attached.sources || []).length} sources

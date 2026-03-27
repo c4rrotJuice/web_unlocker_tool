@@ -9,9 +9,9 @@ import { bindKeyboardShortcuts } from "./keyboard.js";
 import { createWorkspaceApi } from "../api/workspace_api.js";
 import { createResearchApi } from "../api/research_api.js";
 import { getEditorAccess } from "../api/capability_api.js";
-import { composeEditorDelta, createQuillAdapter } from "../ui/quill_adapter.js";
+import { createQuillAdapter } from "../ui/quill_adapter.js";
 import { getFocusedInlineEntity } from "../ui/inline_affordances.js";
-import { renderDocumentList, renderExplorerList } from "../ui/explorer_renderer.js";
+import { renderDocumentList, renderExplorerList, renderExplorerLoading, renderExplorerState } from "../ui/explorer_renderer.js";
 import { renderContextRail } from "../ui/context_rail_renderer.js";
 import { renderStatusBar } from "../ui/status_bar.js";
 import { hidePopover, renderCommandMenu } from "../ui/popovers.js";
@@ -64,7 +64,6 @@ function queryRefs() {
     commandButton: document.getElementById("editor-command-button"),
     checkpointButton: document.getElementById("editor-checkpoint-button"),
     exportButton: document.getElementById("editor-export-button"),
-    toolbarToggle: document.getElementById("editor-toolbar-toggle"),
     contextTabButtons: Array.from(document.querySelectorAll("[data-context-tab]")),
     contextPanes: Array.from(document.querySelectorAll("[data-context-pane]")),
     notesPanel: document.getElementById("editor-notes-panel"),
@@ -126,7 +125,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     toolbarSelector: refs.toolbar,
     onTextChange: ({ delta, source }) => {
       if (source !== "user") return;
-      const nextDelta = composeEditorDelta(workspaceState.getState().active_document?.content_delta, delta);
+      const nextDelta = quillAdapter.getContents();
       workspaceState.markDirty({
         content_delta: nextDelta,
       });
@@ -203,7 +202,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
   const explorerController = createExplorerController({
     workspaceState,
     refs,
-    renderers: { renderDocumentList },
+    renderers: { renderDocumentList, renderExplorerLoading, renderExplorerState },
     hydrator,
     onOpenDocument: (documentId) => void documentController.openDocument(documentId, { seed: null }).then(() => {
       void checkpointController.refresh();
@@ -299,7 +298,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     const attachedNotes = state.attached_research?.notes || [];
     refs.notesPanel.innerHTML = attachedNotes.length
       ? `<div class="editor-v2-list">${attachedNotes.map((note) => `<button class="editor-v2-row" type="button"><div class="editor-v2-row-primary">${escapeHtml(note.title || "Note")}</div><div class="editor-v2-row-secondary">${escapeHtml((note.text || "").slice(0, 120))}</div></button>`).join("")}</div>`
-      : `<div class="editor-v2-card">No attached notes yet.</div>`;
+      : `<div class="editor-v2-list-state">No attached notes yet.</div>`;
     if (!focused && context.mode !== "seed_review" && context.mode !== "quote_focus") {
       renderContextRail(refs.contextRail, context, state, null, {
         selectionText: () => selectionState.getState().text,
@@ -462,6 +461,8 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       quillAdapter.setEnabled(false);
       const pageState = boot.page_state || {};
       workspaceState.setSeedState(normalizeSeed(pageState));
+      renderExplorerLoading(refs.explorerList, "documents");
+      refs.explorerStatus.textContent = "Loading";
       const documentSummaries = await workspaceApi.listDocumentsSummary();
       workspaceState.setDocumentList(documentSummaries);
       explorerController.bind();

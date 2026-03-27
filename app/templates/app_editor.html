@@ -52,7 +52,7 @@
 
       <div id="editor-writing-surface" class="editor-v2-writing-surface" hidden>
         <div id="editor-command-menu" class="editor-v2-popover" hidden aria-label="Editor commands"></div>
-        <div id="editor-toolbar" class="editor-v2-toolbar editor-v2-toolbar-compact" aria-label="Editor toolbar">
+        <div id="editor-toolbar" class="editor-v2-toolbar" aria-label="Editor toolbar">
           <span class="ql-formats" data-toolbar-group="core">
             <select class="ql-header" aria-label="Style">
               <option value="1">Heading 1</option>
@@ -66,9 +66,8 @@
             <button class="ql-list" value="bullet" aria-label="Bullet list"></button>
             <button class="ql-blockquote" aria-label="Quote block"></button>
             <button class="editor-v2-toolbar-action" data-toolbar-action="insert-citation" type="button" aria-label="Insert citation">Citation</button>
-            <button class="editor-v2-toolbar-action" data-toolbar-action="toggle-expand" type="button" aria-expanded="false" aria-controls="editor-toolbar" id="editor-toolbar-toggle">More</button>
           </span>
-          <span class="ql-formats" data-toolbar-group="advanced" hidden>
+          <span class="ql-formats" data-toolbar-group="secondary">
             <select class="ql-font" aria-label="Font family">
               <option value="Georgia,serif" selected>Georgia</option>
               <option value="Cambria,serif">Cambria</option>

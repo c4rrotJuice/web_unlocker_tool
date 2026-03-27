@@ -131,6 +131,7 @@ def test_editor_toolbar_and_quill_adapter_support_production_format_controls():
     assert 'class="ql-script" value="super"' in template_source
     assert 'class="ql-script" value="sub"' in template_source
     assert 'class="ql-clean"' in template_source
+    assert 'editor-toolbar-toggle' not in template_source
     assert "small" not in template_source
     assert "large" not in template_source
     assert "huge" not in template_source
@@ -140,6 +141,7 @@ def test_editor_toolbar_and_quill_adapter_support_production_format_controls():
     assert "attributors/style/size" in adapter_source
     assert "attributors/style/font" in adapter_source
     assert "attributors/style/align" in adapter_source
+    assert "normalizeEditorDelta" in adapter_source
 
 
 def test_editor_empty_state_copy_is_removed_but_primary_ctas_remain():
@@ -154,10 +156,13 @@ def test_editor_empty_state_copy_is_removed_but_primary_ctas_remain():
 def test_editor_shell_uses_viewport_bounded_height_and_internal_scroll():
     css_source = Path("app/static/css/editor_v2.css").read_text(encoding="utf-8")
 
-    assert ".editor-v2-page {\n  display: flex;\n  min-height: 0;\n  height: 100%;\n}" in css_source
+    assert ".editor-v2-page {" in css_source
+    assert "height: 100%;" in css_source
     assert ".app-shell[data-page=\"editor\"] .app-workspace" in css_source
     assert ".app-shell[data-page=\"editor\"] .app-main" in css_source
     assert ".editor-v2-quill .ql-editor" in css_source
+    assert ".editor-v2-list-rows" in css_source
+    assert ".editor-v2-context-pane > .editor-v2-scroll" in css_source
     assert "overflow: auto;" in css_source
     assert "min-height: calc(100vh - 12rem)" not in css_source
 

@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 
 import { bindToolbarController } from "../../app/static/js/editor_v2/ui/toolbar_controller.js";
 import { bindContextTabs } from "../../app/static/js/editor_v2/ui/context_tabs_controller.js";
-import { renderDocumentList } from "../../app/static/js/editor_v2/ui/explorer_renderer.js";
+import {
+  renderDocumentList,
+  renderExplorerLoading,
+  renderExplorerState,
+} from "../../app/static/js/editor_v2/ui/explorer_renderer.js";
+import { createExplorerController } from "../../app/static/js/editor_v2/research/explorer_controller.js";
+import { createWorkspaceState } from "../../app/static/js/editor_v2/core/workspace_state.js";
 
 function makeElement({ dataset = {} } = {}) {
   const listeners = new Map();
@@ -48,47 +54,32 @@ function makeElement({ dataset = {} } = {}) {
     getAttribute(name) {
       return this.attributes.get(name) || null;
     },
-    querySelector(selector) {
-      if (selector === '[data-toolbar-action="toggle-expand"]') return this.toggleButton || null;
-      if (selector === '[data-toolbar-action="insert-citation"]') return this.citationButton || null;
-      return null;
-    },
+    querySelector() { return null; },
     closest(selector) {
       if (selector === "[data-toolbar-action]" && this.dataset?.toolbarAction) return this;
       return null;
     },
-    querySelectorAll(selector) {
-      if (selector === '[data-toolbar-group="advanced"]') return this.advancedGroups || [];
-      return [];
-    },
+    querySelectorAll() { return []; },
   };
   return element;
 }
 
-test("compact toolbar toggles advanced controls and citation action", () => {
+test("toolbar keeps citation action without collapse state", () => {
   let citationCalls = 0;
   const toolbar = makeElement();
-  const toggleButton = makeElement({ dataset: { toolbarAction: "toggle-expand" } });
   const citationButton = makeElement({ dataset: { toolbarAction: "insert-citation" } });
-  const advanced = makeElement({ dataset: { toolbarGroup: "advanced" } });
-  toolbar.toggleButton = toggleButton;
-  toolbar.citationButton = citationButton;
-  toolbar.advancedGroups = [advanced];
 
   const controller = bindToolbarController({
     toolbar,
+    focusTarget: { focus() {} },
     onInsertCitation() {
       citationCalls += 1;
     },
   });
 
-  assert.equal(advanced.hidden, true);
-  toolbar.dispatch("click", { target: toggleButton });
-  assert.equal(toolbar.dataset.toolbarExpanded, "true");
-  assert.equal(advanced.hidden, false);
-
   toolbar.dispatch("click", { target: citationButton });
   assert.equal(citationCalls, 1);
+  assert.equal(toolbar.dataset.toolbarExpanded, undefined);
 
   controller.dispose();
 });
@@ -119,4 +110,52 @@ test("document explorer renders dense rows with preview payload", () => {
   assert.match(target.innerHTML, /editor-v2-row/);
   assert.match(target.innerHTML, /data-preview=/);
   assert.match(target.innerHTML, /Draft/);
+});
+
+test("explorer loading and empty states render as compact list states", () => {
+  const target = makeElement();
+  renderExplorerLoading(target, "sources", 2);
+  assert.match(target.innerHTML, /editor-v2-row-skeleton/);
+
+  renderExplorerState(target, "No sources ready yet.");
+  assert.match(target.innerHTML, /editor-v2-list-state/);
+  assert.doesNotMatch(target.innerHTML, /editor-v2-card/);
+});
+
+test("explorer tab switch shows loading before fetch resolves", async () => {
+  const workspaceState = createWorkspaceState();
+  const refs = {
+    explorerStatus: makeElement(),
+    explorerList: makeElement(),
+    explorerSearch: { value: "", addEventListener() {}, removeEventListener() {}, focus() {}, select() {} },
+    explorerTabs: [],
+  };
+  let resolveExplorer = null;
+  const pendingExplorer = new Promise((resolve) => {
+    resolveExplorer = resolve;
+  });
+  const controller = createExplorerController({
+    workspaceState,
+    refs,
+    renderers: {
+      renderDocumentList() {},
+      renderExplorerLoading: renderExplorerLoading,
+      renderExplorerState: renderExplorerState,
+    },
+    hydrator: {
+      hydrateExplorer() {
+        return pendingExplorer;
+      },
+    },
+    onOpenDocument() {},
+    onFocusEntity() {},
+    onEntityAction() {},
+  });
+
+  const pending = controller.beginEntityAction({ action: "insert", entityType: "citation" });
+  assert.equal(refs.explorerStatus.textContent, "Loading");
+  assert.match(refs.explorerList.innerHTML, /editor-v2-row-skeleton/);
+
+  resolveExplorer([]);
+  await pending;
 });

@@ -143,8 +143,8 @@ def test_editor_template_exposes_compact_document_bar_and_checkpoint_affordances
     assert 'class="editor-v2-document-bar"' in template
     assert 'id="editor-checkpoint-status"' in template
     assert 'id="editor-checkpoint-button"' in template
-    assert 'data-toolbar-group="advanced"' in template
-    assert 'id="editor-toolbar-toggle"' in template
+    assert 'data-toolbar-group="secondary"' in template
+    assert 'id="editor-toolbar-toggle"' not in template
     assert 'id="editor-explorer-preview"' in template
     assert 'data-context-tab="checkpoints"' in template
 
@@ -157,8 +157,8 @@ def test_editor_runtime_keeps_compact_toolbar_toggle_and_hover_preview_modules()
 
     assert 'focusTarget: quillAdapter' in app_source
     assert 'summarizeContextMode' in app_source
-    assert 'data-toolbar-group="advanced"' in open("app/templates/app_editor.html", encoding="utf-8").read()
-    assert 'toggle-expand' in toolbar_source
+    assert 'data-toolbar-group="secondary"' in open("app/templates/app_editor.html", encoding="utf-8").read()
+    assert 'toggle-expand' not in toolbar_source
     assert 'focusTarget.focus?.()' in toolbar_source
     assert 'panel.addEventListener("mouseenter", onPanelEnter)' in preview_source
     assert 'list.addEventListener("focusin", onFocus)' in preview_source

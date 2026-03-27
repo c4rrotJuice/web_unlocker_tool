@@ -13,7 +13,7 @@ import { createNoteStore } from "../../app/static/js/editor_v2/research/note_sto
 import { createOutlineController } from "../../app/static/js/editor_v2/document/outline_controller.js";
 import { createDocumentController } from "../../app/static/js/editor_v2/document/document_controller.js";
 import { createAutosaveController } from "../../app/static/js/editor_v2/document/autosave_controller.js";
-import { composeEditorDelta, sanitizeEditorHtml } from "../../app/static/js/editor_v2/ui/quill_adapter.js";
+import { composeEditorDelta, normalizeEditorDelta, sanitizeEditorHtml } from "../../app/static/js/editor_v2/ui/quill_adapter.js";
 import { createAttachActions } from "../../app/static/js/editor_v2/actions/attach_actions.js";
 import { renderContextRail } from "../../app/static/js/editor_v2/ui/context_rail_renderer.js";
 import { createExplorerController } from "../../app/static/js/editor_v2/research/explorer_controller.js";
@@ -539,6 +539,131 @@ test("editor delta composes incrementally without reading the live DOM", () => {
   } finally {
     globalThis.window = previousWindow;
   }
+});
+
+test("normalized editor delta preserves block alignment attributes", () => {
+  const aligned = normalizeEditorDelta({
+    ops: [
+      { insert: "Centered heading" },
+      { insert: "\n", attributes: { header: 2, align: "center" } },
+      { insert: "Body copy" },
+      { insert: "\n", attributes: { align: "right" } },
+      { insert: "Justified copy" },
+      { insert: "\n", attributes: { align: "justify" } },
+    ],
+  });
+
+  assert.deepEqual(aligned, {
+    ops: [
+      { insert: "Centered heading" },
+      { insert: "\n", attributes: { header: 2, align: "center" } },
+      { insert: "Body copy" },
+      { insert: "\n", attributes: { align: "right" } },
+      { insert: "Justified copy" },
+      { insert: "\n", attributes: { align: "justify" } },
+    ],
+  });
+});
+
+test("autosave sends aligned delta without mutating paragraph order or formatting", async () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  const alignedDelta = {
+    ops: [
+      { insert: "Heading" },
+      { insert: "\n", attributes: { header: 1, align: "center" } },
+      { insert: "Body line" },
+      { insert: "\n", attributes: { align: "right" } },
+      { insert: "Closing line" },
+      { insert: "\n" },
+    ],
+  };
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft 1",
+    project_id: null,
+    content_delta: alignedDelta,
+    content_html: '<h1 style="text-align: center;">Heading</h1><p style="text-align: right;">Body line</p><p>Closing line</p>',
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  workspaceState.markDirty({ content_delta: alignedDelta });
+
+  const saves = [];
+  const autosave = createAutosaveController({
+    workspaceState,
+    workspaceApi: {
+      async updateDocument(_documentId, payload) {
+        saves.push(payload);
+        return {
+          id: "doc-1",
+          title: "Draft 1",
+          project_id: null,
+          revision: "rev-2",
+          updated_at: "rev-2",
+          content_delta: payload.content_delta,
+          content_html: payload.content_html,
+          attached_citation_ids: [],
+          attached_note_ids: [],
+          tag_ids: [],
+        };
+      },
+    },
+    eventBus: { emit() {} },
+    snapshotProvider: () => ({ content_html: '<h1 style="text-align: center;">Heading</h1><p style="text-align: right;">Body line</p><p>Closing line</p>' }),
+  });
+
+  await autosave.flush();
+
+  assert.deepEqual(saves[0].content_delta, alignedDelta);
+  assert.equal(saves[0].content_html.includes("text-align: center"), true);
+  assert.equal(saves[0].content_html.includes("text-align: right"), true);
+});
+
+test("document open rehydrates aligned delta without rewriting text", async () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  const refs = createDocumentRefs();
+  const quillAdapter = createQuillStub();
+  const alignedDelta = {
+    ops: [
+      { insert: "Centered heading" },
+      { insert: "\n", attributes: { header: 2, align: "center" } },
+      { insert: "Paragraph text" },
+      { insert: "\n", attributes: { align: "justify" } },
+    ],
+  };
+  const controller = createDocumentController({
+    workspaceState,
+    workspaceApi: {
+      async getDocument() {
+        return {
+          id: "doc-1",
+          title: "Draft",
+          project_id: null,
+          content_delta: alignedDelta,
+          content_html: '<h2 style="text-align: center;">Centered heading</h2><p style="text-align: justify;">Paragraph text</p>',
+          attached_citation_ids: [],
+          attached_note_ids: [],
+          tag_ids: [],
+        };
+      },
+      async hydrateDocument() {
+        return { seed: null };
+      },
+    },
+    refs,
+    quillAdapter,
+    autosaveController: { async flush() {}, schedule() {} },
+    hydrator: { consumeDocumentHydration() {} },
+    eventBus: { emit() {} },
+  });
+
+  await controller.openDocument("doc-1", { awaitHydration: false });
+
+  assert.deepEqual(quillAdapter.contents, alignedDelta);
+  assert.equal(refs.titleInput.value, "Draft");
 });
 
 test("auth fetch waits for session rehydration before issuing a protected request", async () => {

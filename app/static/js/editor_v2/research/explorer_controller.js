@@ -17,9 +17,8 @@ export function createExplorerController({
 
   function renderExplorerFailure(message) {
     refs.explorerList.innerHTML = `
-      <div class="editor-v2-card">
-        <h3>${currentTab[0].toUpperCase() + currentTab.slice(1)} unavailable</h3>
-        <p>${message}</p>
+      <div class="editor-v2-list-state" data-list-state="error">
+        <div>${message}</div>
         <button class="editor-v2-action" type="button" data-explorer-retry="true">Retry</button>
       </div>
     `;
@@ -52,6 +51,7 @@ export function createExplorerController({
       return;
     }
     refs.explorerStatus.textContent = "Loading";
+    renderers.renderExplorerLoading?.(refs.explorerList, currentTab);
     try {
       await hydrator.hydrateExplorer(currentTab, { query: searchQuery });
       const pending = workspaceState.getState().pending_explorer_action;

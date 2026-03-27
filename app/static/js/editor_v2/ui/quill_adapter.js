@@ -25,6 +25,13 @@ function stripGrammarMarkers(html) {
   return next;
 }
 
+export function normalizeEditorDelta(delta) {
+  const ops = Array.isArray(delta?.ops)
+    ? delta.ops.map((op) => JSON.parse(JSON.stringify(op)))
+    : [{ insert: "\n" }];
+  return { ops };
+}
+
 export function composeEditorDelta(currentDelta, changeDelta) {
   if (typeof window === "undefined" || !window.Quill || typeof window.Quill.import !== "function") {
     return currentDelta || { ops: [{ insert: "\n" }] };
@@ -33,10 +40,10 @@ export function composeEditorDelta(currentDelta, changeDelta) {
   if (typeof Delta !== "function") {
     return currentDelta || { ops: [{ insert: "\n" }] };
   }
-  const base = new Delta(currentDelta || { ops: [{ insert: "\n" }] });
-  const change = new Delta(changeDelta || { ops: [] });
+  const base = new Delta(normalizeEditorDelta(currentDelta || { ops: [{ insert: "\n" }] }));
+  const change = new Delta(normalizeEditorDelta(changeDelta || { ops: [] }));
   const composed = base.compose(change);
-  return { ops: Array.isArray(composed.ops) ? composed.ops.slice() : [] };
+  return normalizeEditorDelta(composed);
 }
 
 export function sanitizeEditorHtml(html) {
@@ -188,10 +195,10 @@ export function createQuillAdapter({ element, toolbarSelector, onTextChange, onS
     quill,
     root: quill.root,
     setContents(delta) {
-      quill.setContents(delta || { ops: [{ insert: "\n" }] }, "silent");
+      quill.setContents(normalizeEditorDelta(delta || { ops: [{ insert: "\n" }] }), "silent");
     },
     getContents() {
-      return quill.getContents();
+      return normalizeEditorDelta(quill.getContents());
     },
     getHTML() {
       return sanitizeEditorHtml(quill.root.innerHTML);

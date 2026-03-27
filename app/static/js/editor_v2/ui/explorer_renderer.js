@@ -80,9 +80,26 @@ function rowMarkup({ id, active = false, title = "", subtitle = "", preview = {}
   `;
 }
 
+function stateMarkup(message, variant = "empty") {
+  return `<div class="editor-v2-list-state" data-list-state="${escapeHtml(variant)}">${escapeHtml(message)}</div>`;
+}
+
+export function renderExplorerLoading(target, type, count = 6) {
+  target.innerHTML = Array.from({ length: count }, (_, index) => `
+    <div class="editor-v2-row editor-v2-row-skeleton" aria-hidden="true" data-skeleton-index="${index}" data-skeleton-type="${escapeHtml(type)}">
+      <div class="editor-v2-row-primary"></div>
+      <div class="editor-v2-row-secondary"></div>
+    </div>
+  `).join("");
+}
+
+export function renderExplorerState(target, message, variant = "empty") {
+  target.innerHTML = stateMarkup(message, variant);
+}
+
 export function renderDocumentList(target, documents, activeDocumentId) {
   if (!documents.length) {
-    target.innerHTML = `<div class="editor-v2-card">No documents yet.</div>`;
+    target.innerHTML = stateMarkup("No documents yet.");
     return;
   }
   target.innerHTML = documents.map((document) => {
@@ -99,7 +116,7 @@ export function renderDocumentList(target, documents, activeDocumentId) {
 
 export function renderExplorerList(target, type, entities, focusedId) {
   if (!entities.length) {
-    target.innerHTML = `<div class="editor-v2-card">No ${escapeHtml(type)} ready yet.</div>`;
+    target.innerHTML = stateMarkup(`No ${type} ready yet.`);
     return;
   }
   const singular = type.slice(0, -1);

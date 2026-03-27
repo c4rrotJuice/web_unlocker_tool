@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from typing import Any
 
 from fastapi import HTTPException
 
 from app.modules.research.common import build_user_headers, first_row
 from app.services.supabase_rest import SupabaseRestRepository, response_error_code, response_error_text, response_json
+
+logger = logging.getLogger(__name__)
 
 
 class CitationsRepository:
@@ -134,6 +137,20 @@ class CitationsRepository:
         return payload if isinstance(payload, list) else []
 
     async def replace_renders(self, *, citation_id: str, source_id: str, rows: list[dict[str, Any]]) -> None:
+        logger.info(
+            "citations.replace_renders.attempt",
+            extra={
+                "citation_id": citation_id,
+                "source_id": source_id,
+                "render_count": len(rows),
+                "render_kinds": sorted({str(row.get("render_kind") or "") for row in rows if row.get("render_kind")}),
+                "styles": sorted({str(row.get("style") or "") for row in rows if row.get("style")}),
+                "cache_keys": [str(row.get("cache_key") or "") for row in rows[:6]],
+                "source_versions": sorted({str(row.get("source_version") or "") for row in rows if row.get("source_version")}),
+                "citation_versions": sorted({str(row.get("citation_version") or "") for row in rows if row.get("citation_version")}),
+                "render_versions": sorted({int(row.get("render_version") or 0) for row in rows if row.get("render_version") is not None}),
+            },
+        )
         delete_response = await self.supabase_repo.delete(
             "citation_renders",
             params={"citation_instance_id": f"eq.{citation_id}"},
@@ -149,6 +166,22 @@ class CitationsRepository:
             headers=self.supabase_repo.headers(prefer="return=minimal"),
         )
         if insert_response.status_code not in {200, 201, 204}:
+            logger.warning(
+                "citations.replace_renders.failed",
+                extra={
+                    "citation_id": citation_id,
+                    "source_id": source_id,
+                    "render_count": len(rows),
+                    "render_kinds": sorted({str(row.get("render_kind") or "") for row in rows if row.get("render_kind")}),
+                    "styles": sorted({str(row.get("style") or "") for row in rows if row.get("style")}),
+                    "cache_keys": [str(row.get("cache_key") or "") for row in rows[:6]],
+                    "source_versions": sorted({str(row.get("source_version") or "") for row in rows if row.get("source_version")}),
+                    "citation_versions": sorted({str(row.get("citation_version") or "") for row in rows if row.get("citation_version")}),
+                    "render_versions": sorted({int(row.get("render_version") or 0) for row in rows if row.get("render_version") is not None}),
+                    "upstream_code": response_error_code(insert_response) or None,
+                    "upstream_detail": response_error_text(insert_response) or None,
+                },
+            )
             self._raise_write_error(response=insert_response, operation="persist citation renders")
 
     async def list_quote_counts(self, *, user_id: str, access_token: str | None, citation_ids: list[str]) -> dict[str, int]:

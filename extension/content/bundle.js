@@ -2399,6 +2399,7 @@ const JSON_LD_MAX_SCRIPTS = 8;
 const JSON_LD_MAX_TEXT_LENGTH = 50000;
 const JSON_LD_MAX_NODES = 24;
 const TIME_ELEMENT_LIMIT = 8;
+const VISIBLE_METADATA_LIMIT = 12;
 const SUPPORTED_SCHEMA_TYPES = new Set([
     "scholarlyarticle",
     "newsarticle",
@@ -2412,7 +2413,9 @@ const SUPPORTED_SCHEMA_TYPES = new Set([
 const META_AUTHOR_KEYS = new Set([
     "author",
     "article:author",
+    "parsely-author",
     "citation_author",
+    "citation_authors",
     "dc.creator",
     "dcterms.creator",
     "dc.contributor",
@@ -2421,7 +2424,10 @@ const META_AUTHOR_KEYS = new Set([
 const META_DATE_KEYS = new Set([
     "article:published_time",
     "article:modified_time",
+    "date",
+    "pubdate",
     "citation_publication_date",
+    "citation_online_date",
     "citation_date",
     "dc.date",
     "dcterms.date",
@@ -2441,6 +2447,7 @@ const META_CONTAINER_KEYS = new Set([
 ]);
 const META_PUBLISHER_KEYS = new Set([
     "og:site_name",
+    "article:publisher",
     "publisher",
     "dc.publisher",
     "dcterms.publisher",
@@ -2459,10 +2466,18 @@ const META_LANGUAGE_KEYS = new Set([
 ]);
 const META_TITLE_KEYS = new Set([
     "title",
+    "article:title",
     "og:title",
     "citation_title",
     "dc.title",
     "dcterms.title",
+]);
+const META_CANONICAL_URL_KEYS = new Set([
+    "og:url",
+    "twitter:url",
+    "citation_public_url",
+    "citation_full_html_url",
+    "citation_fulltext_html_url",
 ]);
 const IDENTIFIER_META_KEYS = {
     doi: new Set(["citation_doi", "prism.doi"]),
@@ -2644,6 +2659,9 @@ function addMetaCandidates(metaEntries, candidates) {
                 pushIdentifier(candidates.identifiers, identifierKey, entry.content, entry.source);
             }
         }
+        if (META_CANONICAL_URL_KEYS.has(key)) {
+            candidates.raw.canonical_urls.push({ value: entry.content, source: entry.source });
+        }
     }
 }
 function parseJson(value) {
@@ -2669,13 +2687,69 @@ function parseAuthorValue(value, output = []) {
             continue;
         }
         if (isPlainObject(entry)) {
-            const name = normalizeText(entry.name || entry.alternateName || entry.familyName || entry.givenName);
+            const givenName = normalizeText(entry.givenName);
+            const familyName = normalizeText(entry.familyName);
+            const combinedName = normalizeText(`${givenName} ${familyName}`);
+            const name = normalizeText(entry.name || entry.alternateName || combinedName || familyName || givenName);
             if (name) {
                 output.push(name);
             }
         }
     }
     return output;
+}
+function isLikelyVisibleAuthorNode(node) {
+    const rel = readAttribute(node, "rel").toLowerCase();
+    const itemProp = readAttribute(node, "itemprop").toLowerCase();
+    const dataTestId = readAttribute(node, "data-testid").toLowerCase();
+    const className = normalizeText(node?.className || "").toLowerCase();
+    const id = readAttribute(node, "id").toLowerCase();
+    return rel === "author"
+        || itemProp === "author"
+        || itemProp === "creator"
+        || dataTestId.includes("author")
+        || dataTestId.includes("byline")
+        || /\bauthor\b/.test(className)
+        || /\bbyline\b/.test(className)
+        || /\bauthor\b/.test(id)
+        || /\bbyline\b/.test(id);
+}
+function isLikelyVisibleDateNode(node) {
+    const itemProp = readAttribute(node, "itemprop").toLowerCase();
+    const dataTestId = readAttribute(node, "data-testid").toLowerCase();
+    const className = normalizeText(node?.className || "").toLowerCase();
+    const id = readAttribute(node, "id").toLowerCase();
+    return itemProp === "datepublished"
+        || itemProp === "datecreated"
+        || itemProp === "dateissued"
+        || dataTestId.includes("date")
+        || dataTestId.includes("published")
+        || /\bpublished\b/.test(className)
+        || /\bdate\b/.test(className)
+        || /\bpublished\b/.test(id)
+        || /\bdate\b/.test(id);
+}
+function normalizeVisibleAuthorText(value) {
+    const normalized = normalizeText(value).replace(/^\s*by\s+/i, "");
+    if (!normalized) {
+        return "";
+    }
+    const lower = normalized.toLowerCase();
+    if (["by", "share", "updated", "published", "author", "authors"].includes(lower)) {
+        return "";
+    }
+    return normalized;
+}
+function normalizeVisibleDateText(value) {
+    const normalized = normalizeText(value);
+    if (!normalized) {
+        return "";
+    }
+    const lower = normalized.toLowerCase();
+    if (["updated", "published", "date", "share"].includes(lower)) {
+        return "";
+    }
+    return normalized;
 }
 function parseIdentifierFromJsonLd(node, collector, source) {
     const directDoi = normalizeText(node?.doi);
@@ -2861,12 +2935,54 @@ function addVisibleTimeCandidates(documentRef, candidates) {
         });
     });
 }
+function addVisibleBylineCandidates(documentRef, candidates) {
+    const authorSeen = new Set(candidates.author_candidates.map((candidate) => `${candidate.value.toLowerCase()}|${candidate.source}`));
+    const dateSeen = new Set(candidates.date_candidates.map((candidate) => `${candidate.value.toLowerCase()}|${candidate.source}`));
+    let authorCount = 0;
+    let dateCount = 0;
+    walkElements(documentRef?.body || null, (node) => {
+        if (authorCount >= VISIBLE_METADATA_LIMIT && dateCount >= VISIBLE_METADATA_LIMIT) {
+            return false;
+        }
+        if (!node || typeof node.tagName !== "string") {
+            return;
+        }
+        if (authorCount < VISIBLE_METADATA_LIMIT && isLikelyVisibleAuthorNode(node)) {
+            const text = normalizeVisibleAuthorText(node.textContent || "");
+            if (text) {
+                authorCount += 1;
+                for (const authorValue of splitAuthorContent(text)) {
+                    pushCandidate(candidates.author_candidates, authorSeen, normalizeVisibleAuthorText(authorValue), 0.58, "dom:byline");
+                }
+                pushEvidence(candidates.raw.visible_bylines, text, "dom:byline");
+            }
+        }
+        if (dateCount < VISIBLE_METADATA_LIMIT && isLikelyVisibleDateNode(node)) {
+            const datetime = normalizeVisibleDateText(readAttribute(node, "datetime"));
+            const text = normalizeVisibleDateText(node.textContent || "");
+            if (datetime || text) {
+                dateCount += 1;
+                if (datetime) {
+                    pushCandidate(candidates.date_candidates, dateSeen, datetime, 0.62, "dom:date");
+                }
+                else if (text) {
+                    pushCandidate(candidates.date_candidates, dateSeen, text, 0.52, "dom:date");
+                }
+                candidates.raw.visible_dates.push({
+                    datetime: datetime || null,
+                    text: text || null,
+                    source: "dom:date",
+                });
+            }
+        }
+    });
+}
 function firstValue(candidates) {
     return candidates.length ? candidates[0].value : "";
 }
 function extractPageMetadata({ documentRef = globalThis.document, windowRef = globalThis.window, } = {}) {
     const url = String(windowRef?.location?.href || "");
-    const canonical_url = readCanonicalUrl(documentRef);
+    const initialCanonicalUrl = readCanonicalUrl(documentRef);
     const metaEntries = collectMetaEntries(documentRef);
     const candidates = {
         title_candidates: [],
@@ -2889,12 +3005,15 @@ function extractPageMetadata({ documentRef = globalThis.document, windowRef = gl
             json_ld: [],
             json_ld_errors: [],
             visible_times: [],
-            canonical_urls: canonical_url ? [{ value: canonical_url, source: "link:canonical" }] : [],
+            visible_bylines: [],
+            visible_dates: [],
+            canonical_urls: initialCanonicalUrl ? [{ value: initialCanonicalUrl, source: "link:canonical" }] : [],
         },
     };
     addMetaCandidates(metaEntries, candidates);
     addJsonLdCandidates(documentRef, candidates);
     addVisibleTimeCandidates(documentRef, candidates);
+    addVisibleBylineCandidates(documentRef, candidates);
     const documentTitle = normalizeText(documentRef?.title || "");
     if (documentTitle && !candidates.title_candidates.length) {
         candidates.title_candidates.push({ value: documentTitle, confidence: 0.9, source: "document.title" });
@@ -2907,6 +3026,7 @@ function extractPageMetadata({ documentRef = globalThis.document, windowRef = gl
     const language = normalizeText(documentRef?.documentElement?.lang || firstValue(candidates.raw.meta_tags.language));
     const title = firstValue(candidates.title_candidates) || documentTitle;
     const author = firstValue(candidates.author_candidates);
+    const canonical_url = initialCanonicalUrl || normalizeUrlCandidate(candidates.raw.canonical_urls[0]?.value);
     let origin = "";
     let host = "";
     try {
@@ -2937,6 +3057,8 @@ function extractPageMetadata({ documentRef = globalThis.document, windowRef = gl
             json_ld: candidates.raw.json_ld,
             json_ld_errors: candidates.raw.json_ld_errors,
             visible_times: candidates.raw.visible_times,
+            visible_bylines: candidates.raw.visible_bylines,
+            visible_dates: candidates.raw.visible_dates,
             canonical_urls: candidates.raw.canonical_urls,
         },
         raw_metadata: {

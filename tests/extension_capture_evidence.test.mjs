@@ -15,6 +15,7 @@ class FakeElement {
     this.attributes = new Map();
     this.textContent = "";
     this.lang = "";
+    this.className = "";
   }
 
   setAttribute(name, value) {
@@ -23,11 +24,17 @@ class FakeElement {
     if (name === "lang") {
       this.lang = normalized;
     }
+    if (name === "class") {
+      this.className = normalized;
+    }
   }
 
   getAttribute(name) {
     if (name === "lang") {
       return this.lang || null;
+    }
+    if (name === "class") {
+      return this.className || null;
     }
     return this.attributes.has(name) ? this.attributes.get(name) : null;
   }
@@ -136,7 +143,7 @@ test("extractPageMetadata collects JSON-LD scholarly evidence and bounded visibl
     "@context": "https://schema.org",
     "@type": "ScholarlyArticle",
     headline: "Structured Evidence in Practice",
-    author: [{ "@type": "Person", name: "Grace Hopper" }],
+    author: [{ "@type": "Person", givenName: "Grace", familyName: "Hopper" }],
     datePublished: "2024-05-06",
     publisher: { "@type": "Organization", name: "ACM Press" },
     isPartOf: { "@type": "Periodical", name: "Journal of Compiler Studies" },
@@ -173,6 +180,37 @@ test("extractPageMetadata degrades safely on malformed JSON-LD", () => {
   assert.equal(metadata.author_candidates.length, 0);
   assert.deepEqual(metadata.extraction_evidence.json_ld_errors, [
     { source: "jsonld:0", reason: "parse_failed" },
+  ]);
+});
+
+test("extractPageMetadata falls back to visible byline/date and canonical meta when head metadata is sparse", () => {
+  const documentRef = new FakeDocument();
+  documentRef.title = "Visible Signals Title";
+  appendMeta(documentRef, { property: "og:url", content: "https://example.com/visible-signals" });
+
+  const byline = documentRef.createElement("div");
+  byline.setAttribute("class", "article-byline");
+  byline.textContent = "By Jane Doe";
+  documentRef.body.appendChild(byline);
+
+  const published = documentRef.createElement("span");
+  published.setAttribute("itemprop", "datePublished");
+  published.textContent = "2024-06-07";
+  documentRef.body.appendChild(published);
+
+  const metadata = extractPageMetadata({
+    documentRef,
+    windowRef: createWindow("https://example.com/visible-signals?utm=feed"),
+  });
+
+  assert.equal(metadata.canonical_url, "https://example.com/visible-signals");
+  assert.ok(metadata.author_candidates.some((entry) => entry.value === "Jane Doe" && entry.source === "dom:byline"));
+  assert.ok(metadata.date_candidates.some((entry) => entry.value === "2024-06-07" && entry.source === "dom:date"));
+  assert.deepEqual(metadata.extraction_evidence.visible_bylines, [
+    { value: "Jane Doe", source: "dom:byline" },
+  ]);
+  assert.deepEqual(metadata.extraction_evidence.visible_dates, [
+    { datetime: null, text: "2024-06-07", source: "dom:date" },
   ]);
 });
 

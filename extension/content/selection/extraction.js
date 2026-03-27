@@ -1,18 +1,9 @@
 // GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
+import { getElementFromNode, isSafeSelectionContext, isWithinEditableContext, } from "../shared/editable_context.js";
 const EXTENSION_UI_ATTR = "data-writior-extension-ui";
 const MINIMUM_WORD_CHARS = 3;
 function normalizeWhitespace(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
-}
-function getElementFromNode(node) {
-    let current = node || null;
-    while (current) {
-        if (typeof current.tagName === "string") {
-            return current;
-        }
-        current = current.parentNode || current.parentElement || null;
-    }
-    return null;
 }
 function getSelectionRange(selection) {
     if (!selection || typeof selection.getRangeAt !== "function" || !selection.rangeCount) {
@@ -66,60 +57,6 @@ function isInsideExtensionUi(node) {
     }
     return false;
 }
-function labelFromElement(element) {
-    if (!element) {
-        return "";
-    }
-    const values = [
-        element.tagName,
-        element.id,
-        element.className,
-        typeof element.getAttribute === "function" ? element.getAttribute("role") : "",
-        typeof element.getAttribute === "function" ? element.getAttribute("data-testid") : "",
-        typeof element.getAttribute === "function" ? element.getAttribute("data-test") : "",
-    ];
-    return values.filter(Boolean).join(" ").toLowerCase();
-}
-function isContentEditableElement(element) {
-    if (!element) {
-        return false;
-    }
-    if (typeof element.isContentEditable === "boolean" && element.isContentEditable) {
-        return true;
-    }
-    const contentEditable = typeof element.getAttribute === "function"
-        ? element.getAttribute("contenteditable")
-        : element.contentEditable;
-    return contentEditable === "" || contentEditable === "true" || contentEditable === "plaintext-only";
-}
-function isEditableElement(element) {
-    if (!element || typeof element.tagName !== "string") {
-        return false;
-    }
-    const tagName = String(element.tagName || "").toUpperCase();
-    if (["INPUT", "TEXTAREA", "SELECT", "OPTION"].includes(tagName)) {
-        return true;
-    }
-    if (isContentEditableElement(element)) {
-        return true;
-    }
-    const label = labelFromElement(element);
-    if (!label) {
-        return false;
-    }
-    return [
-        "ace_editor",
-        "codemirror",
-        "editor",
-        "lexical",
-        "monaco",
-        "prosemirror",
-        "ql-editor",
-        "quill",
-        "slate",
-        "textbox",
-    ].some((token) => label.includes(token));
-}
 function isUnsafeSelectionContainer(element) {
     if (!element || typeof element.tagName !== "string") {
         return false;
@@ -128,7 +65,7 @@ function isUnsafeSelectionContainer(element) {
     if (["BUTTON", "CANVAS", "DIALOG", "EMBED", "IFRAME", "SELECT", "TEXTAREA", "VIDEO", "AUDIO"].includes(tagName)) {
         return true;
     }
-    if (isEditableElement(element)) {
+    if (isWithinEditableContext(element)) {
         return true;
     }
     const role = typeof element.getAttribute === "function"
@@ -145,7 +82,7 @@ function hasEnoughSignal(text, minimumLength) {
 }
 export function extractNormalizedSelection({ documentRef = globalThis.document, minimumLength = 3, } = {}) {
     const selection = documentRef?.getSelection?.();
-    if (!selection || selection.isCollapsed || !selection.rangeCount) {
+    if (!isSafeSelectionContext(selection, documentRef)) {
         return null;
     }
     const range = getSelectionRange(selection);
@@ -195,7 +132,7 @@ export function extractNormalizedSelection({ documentRef = globalThis.document, 
         direction: focusOffset >= anchorOffset ? "forward" : "backward",
         target: {
             tag_name: typeof targetElement.tagName === "string" ? targetElement.tagName.toLowerCase() : "",
-            is_editable: false,
+            is_editable: isWithinEditableContext(targetElement),
             inside_extension_ui: false,
         },
     };

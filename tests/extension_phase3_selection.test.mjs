@@ -118,6 +118,10 @@ class FakeElement extends FakeEventTarget {
     this.parentNode = null;
   }
 
+  focus() {
+    this.ownerDocument.activeElement = this;
+  }
+
   attachShadow() {
     if (!this.shadowRoot) {
       this.shadowRoot = new FakeElement("#shadow-root", this.ownerDocument);
@@ -404,6 +408,29 @@ test("short selection rejected and editable surfaces ignored", () => {
 
   assert.equal(runtime.getState().visible, false);
   assert.equal(documentRef.getElementById("writior-selection-pill"), null);
+});
+
+test("contenteditable selections are ignored and overlay state is cleared without stealing focus", () => {
+  const { documentRef, runtime, timers } = createSelectionEnvironment();
+  const editor = documentRef.createElement("div");
+  editor.setAttribute("contenteditable", "true");
+  const inner = documentRef.createElement("span");
+  editor.appendChild(inner);
+  documentRef.body.appendChild(editor);
+  editor.focus();
+  setSelection(documentRef, {
+    text: "Editor selection should be ignored",
+    rect: { left: 140, top: 140, right: 320, bottom: 164, width: 180, height: 24 },
+    anchorNode: inner,
+    focusNode: inner,
+  });
+
+  runtime.bootstrap();
+  timers.flush();
+
+  assert.equal(runtime.getState().visible, false);
+  assert.equal(documentRef.getElementById("writior-selection-pill"), null);
+  assert.equal(documentRef.activeElement, editor);
 });
 
 test("escape and outside click dismiss the pill", () => {

@@ -6,6 +6,7 @@ import {
   getEventPath,
   isElementNode,
 } from "./dom.ts";
+import { isWithinEditableContext } from "../shared/editable_context.ts";
 
 const STYLE_ID = "writior-copy-unlock-style";
 const DEBUG_KEY = "__WRITIOR_COPY_UNLOCK_DEBUG";
@@ -387,6 +388,9 @@ export function createPageUnlockEngine(options = {}) {
         state.processedNodeCount += 1;
 
         const classification = classifyTarget(node);
+        if (isWithinEditableContext(node)) {
+          continue;
+        }
         if (classification.kind === "safe-content") {
           cleared += clearInlineProps(node, INLINE_BLOCKER_PROPS);
           cleared += clearInlineAttributes(node, INLINE_BLOCKER_ATTRS);
@@ -394,9 +398,6 @@ export function createPageUnlockEngine(options = {}) {
             cleared += clearInlineProps(node, OPTIONAL_INLINE_PROPS);
             cleared += clearInlineAttributes(node, INLINE_OPTIONAL_ATTRS);
           }
-        } else if (classification.kind === "form-control" || classification.kind === "contenteditable") {
-          cleared += clearInlineProps(node, ["oncopy", "oncut", "onpaste", "oncontextmenu", "onselectstart"]);
-          cleared += clearInlineAttributes(node, ["oncopy", "oncut", "onpaste", "oncontextmenu", "onselectstart"]);
         } else if (profile.broadenNeutralCleanup && classification.kind === "neutral") {
           cleared += clearInlineProps(node, INLINE_BLOCKER_PROPS);
           cleared += clearInlineAttributes(node, INLINE_BLOCKER_ATTRS);
@@ -404,8 +405,6 @@ export function createPageUnlockEngine(options = {}) {
 
         if (
           classification.kind === "safe-content"
-          || classification.kind === "form-control"
-          || classification.kind === "contenteditable"
           || (profile.broadenNeutralCleanup && classification.kind === "neutral")
         ) {
           recoverInlineStyles(node, classification);
@@ -491,12 +490,12 @@ export function createPageUnlockEngine(options = {}) {
       return false;
     }
     const top = elements[0];
-    const underneath = elements.find((element, index) => {
+      const underneath = elements.find((element, index) => {
       if (index === 0) {
         return false;
       }
       const classification = classifyTarget(element);
-      return classification.kind === "safe-content" || classification.kind === "form-control";
+      return classification.kind === "safe-content";
     });
     if (!underneath || !isSuspiciousOverlay(top, documentRef, windowRef) || overlayMitigated.has(top)) {
       return false;
@@ -521,6 +520,9 @@ export function createPageUnlockEngine(options = {}) {
   function shouldPreemptEvent(event) {
     const target = firstElementFromPath(event);
     const path = getElementPath(event);
+    if (path.some((node) => isWithinEditableContext(node)) || isWithinEditableContext(target)) {
+      return false;
+    }
     const classification = classifyEventPath(path);
     const type = String(event?.type || "");
     const inlineBlocked = pathHasInlineBlocker(path, type);
@@ -530,9 +532,6 @@ export function createPageUnlockEngine(options = {}) {
         return false;
       }
       const key = String(event?.key || "").toLowerCase();
-      if (classification.kind === "contenteditable" && key === "v") {
-        return false;
-      }
       return true;
     }
     if (type === "copy" || type === "cut") {

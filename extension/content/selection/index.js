@@ -10,6 +10,7 @@ import { getLockedCitationStyles } from "../../shared/types/citation.js";
 import { normalizeCapabilitySurface } from "../../shared/types/capability_surface.js";
 import { SURFACE_NAMES } from "../../shared/types/contracts.js";
 import { createRuntimeClient } from "../../shared/utils/runtime_client.js";
+import { isSafeSelectionContext, isWithinEditableContext } from "../shared/editable_context.js";
 function isCommandShortcut(event) {
     return Boolean(event?.shiftKey && (event?.ctrlKey || event?.metaKey));
 }
@@ -213,6 +214,11 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
             return state.currentSnapshot;
         }
         state.inspectCount += 1;
+        const rawSelection = documentRef?.getSelection?.();
+        if (!isSafeSelectionContext(rawSelection, documentRef)) {
+            hide("editable_context");
+            return null;
+        }
         const selection = extractNormalizedSelection({ documentRef, minimumLength });
         if (!selection) {
             hide("selection_invalid");
@@ -271,6 +277,10 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
     }
     function scheduleInspect(delay = 30) {
         if (state.isPointerSelecting) {
+            return;
+        }
+        if (isWithinEditableContext(documentRef?.activeElement || null)) {
+            hide("editable_context");
             return;
         }
         if (inspectTimer) {
@@ -505,6 +515,10 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         }
     }
     function onKeydown(event) {
+        if (isWithinEditableContext(event?.target || documentRef?.activeElement || null)) {
+            hide("editable_context");
+            return;
+        }
         if (citationModal.isVisible()) {
             if (String(event?.key || "").toLowerCase() === "escape") {
                 closeCitationModal("escape");
@@ -535,6 +549,11 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         void runAction("copy");
     }
     function onPointerDown(event) {
+        if (isWithinEditableContext(event?.target || null)) {
+            hide("editable_context");
+            state.isPointerSelecting = true;
+            return;
+        }
         state.isPointerSelecting = true;
         if (citationModal.isVisible()) {
             if (citationModal.isInside(event?.target)) {
@@ -560,6 +579,10 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
     }
     function onPointerUp() {
         state.isPointerSelecting = false;
+        if (isWithinEditableContext(documentRef?.activeElement || null)) {
+            hide("editable_context");
+            return;
+        }
         scheduleInspect(90);
     }
     function destroy() {

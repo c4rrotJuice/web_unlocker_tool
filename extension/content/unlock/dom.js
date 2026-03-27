@@ -1,4 +1,5 @@
 // GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
+import { isContentEditableElement, isEditorLikeElement, isElementNode as sharedIsElementNode, isFormControl, isWithinEditableContext, } from "../shared/editable_context.js";
 const SAFE_TEXT_TAGS = new Set([
     "A",
     "ARTICLE",
@@ -54,21 +55,7 @@ const INTERACTIVE_TAGS = new Set([
     "VIDEO",
     "AUDIO",
 ]);
-const EDITOR_TOKENS = [
-    "ace_editor",
-    "codemirror",
-    "editor",
-    "lexical",
-    "monaco",
-    "prosemirror",
-    "ql-editor",
-    "quill",
-    "slate",
-    "tox-",
-];
-export function isElementNode(node) {
-    return Boolean(node) && typeof node === "object" && typeof node.tagName === "string";
-}
+export const isElementNode = sharedIsElementNode;
 export function getEventPath(event) {
     if (!event) {
         return [];
@@ -97,52 +84,6 @@ export function firstElementFromPath(event) {
 export function getElementPath(eventOrPath) {
     const rawPath = Array.isArray(eventOrPath) ? eventOrPath : getEventPath(eventOrPath);
     return rawPath.filter(isElementNode);
-}
-function getStringAttributes(element) {
-    if (!isElementNode(element) || typeof element.getAttribute !== "function") {
-        return "";
-    }
-    const values = [
-        element.id,
-        element.className,
-        element.getAttribute("role"),
-        element.getAttribute("aria-label"),
-        element.getAttribute("data-testid"),
-        element.getAttribute("data-test"),
-        element.getAttribute("data-editor"),
-    ];
-    return values.filter(Boolean).join(" ").toLowerCase();
-}
-export function isFormControl(element) {
-    if (!isElementNode(element)) {
-        return false;
-    }
-    return ["INPUT", "TEXTAREA", "SELECT", "OPTION"].includes(String(element.tagName || "").toUpperCase());
-}
-export function isContentEditableElement(element) {
-    if (!isElementNode(element)) {
-        return false;
-    }
-    if (typeof element.isContentEditable === "boolean" && element.isContentEditable) {
-        return true;
-    }
-    const contentEditable = typeof element.getAttribute === "function"
-        ? element.getAttribute("contenteditable")
-        : element.contentEditable;
-    return contentEditable === "" || contentEditable === "true" || contentEditable === "plaintext-only";
-}
-export function isEditorLikeElement(element) {
-    if (!isElementNode(element)) {
-        return false;
-    }
-    const label = getStringAttributes(element);
-    if (!label) {
-        return false;
-    }
-    if (label.includes("role textbox")) {
-        return true;
-    }
-    return EDITOR_TOKENS.some((token) => label.includes(token));
 }
 export function isSensitiveWidget(element) {
     if (!isElementNode(element)) {
@@ -174,7 +115,7 @@ export function isSafeContentElement(element) {
     if (!SAFE_TEXT_TAGS.has(tagName)) {
         return false;
     }
-    if (isSensitiveWidget(element) || isContentEditableElement(element) || isEditorLikeElement(element)) {
+    if (isSensitiveWidget(element) || isWithinEditableContext(element)) {
         return false;
     }
     return true;
@@ -196,24 +137,24 @@ export function classifyTarget(target) {
         return {
             kind: "form-control",
             element: target,
-            allowClipboardGuard: true,
-            allowPassiveGuard: true,
-            allowPasteGuard: true,
-            allowShortcutGuard: true,
-            allowContextMenuGuard: true,
-            allowSelectionGuard: true,
+            allowClipboardGuard: false,
+            allowPassiveGuard: false,
+            allowPasteGuard: false,
+            allowShortcutGuard: false,
+            allowContextMenuGuard: false,
+            allowSelectionGuard: false,
         };
     }
     if (isContentEditableElement(target)) {
         return {
             kind: "contenteditable",
             element: target,
-            allowClipboardGuard: true,
+            allowClipboardGuard: false,
             allowPassiveGuard: false,
             allowPasteGuard: false,
-            allowShortcutGuard: true,
-            allowContextMenuGuard: true,
-            allowSelectionGuard: true,
+            allowShortcutGuard: false,
+            allowContextMenuGuard: false,
+            allowSelectionGuard: false,
         };
     }
     if (isEditorLikeElement(target)) {

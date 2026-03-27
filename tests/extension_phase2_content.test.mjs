@@ -335,11 +335,11 @@ test("capture guards restore copy, contextmenu, and shortcuts for safe content, 
   documentRef.dispatchEvent(editorShortcut);
 
   assert.equal(articleCopy.immediatePropagationStopped, true);
-  assert.equal(inputPaste.immediatePropagationStopped, true);
+  assert.equal(inputPaste.immediatePropagationStopped, false);
   assert.equal(articleContext.immediatePropagationStopped, true);
-  assert.equal(editorCopy.immediatePropagationStopped, true);
+  assert.equal(editorCopy.immediatePropagationStopped, false);
   assert.equal(editorPaste.immediatePropagationStopped, false);
-  assert.equal(inputShortcut.immediatePropagationStopped, true);
+  assert.equal(inputShortcut.immediatePropagationStopped, false);
   assert.equal(editorShortcut.immediatePropagationStopped, false);
 });
 
@@ -377,6 +377,36 @@ test("mutation batching deduplicates repeated nodes before autonomous inline cle
   assert.equal(engine.getState().mutationBatchCount, 1);
   assert.equal(engine.getState().inlineCleanupCount, 2);
   assert.equal(engine.getState().styleRecoveryCount, 1);
+});
+
+test("mutation cleanup skips editable subtrees and does not rewrite their handlers or styles", async () => {
+  const { documentRef, windowRef } = installEnvironment();
+  const queuedCallbacks = [];
+  const engine = createPageUnlockEngine({
+    documentRef,
+    windowRef,
+    MutationObserverRef: FakeMutationObserver,
+    queueMicrotaskRef(callback) {
+      queuedCallbacks.push(callback);
+    },
+  });
+  engine.bootstrap();
+
+  const editor = documentRef.createElement("div");
+  editor.setAttribute("contenteditable", "true");
+  editor.onpaste = () => false;
+  editor.style.userSelect = "none";
+  const inner = documentRef.createElement("span");
+  editor.appendChild(inner);
+  documentRef.body.appendChild(editor);
+
+  const observer = FakeMutationObserver.instances.at(-1);
+  observer.trigger([{ target: editor, addedNodes: [editor] }]);
+  queuedCallbacks.shift()();
+
+  assert.equal(editor.onpaste !== null, true);
+  assert.equal(editor.style.userSelect, "none");
+  assert.equal(engine.getState().styleRecoveryCount, 0);
 });
 
 test("overlay mitigation is event-triggered and conservative", () => {

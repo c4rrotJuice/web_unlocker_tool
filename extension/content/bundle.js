@@ -1171,20 +1171,148 @@ function createRuntimeClient(chromeApi, surface) {
 }
 
 },
-"content/unlock/dom.ts": function(module, exports, require) {
+"content/shared/editable_context.ts": function(module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isElementNode = isElementNode;
-exports.getEventPath = getEventPath;
-exports.firstElementFromPath = firstElementFromPath;
-exports.getElementPath = getElementPath;
+exports.getElementFromNode = getElementFromNode;
 exports.isFormControl = isFormControl;
 exports.isContentEditableElement = isContentEditableElement;
 exports.isEditorLikeElement = isEditorLikeElement;
+exports.isEditableTarget = isEditableTarget;
+exports.isWithinEditableContext = isWithinEditableContext;
+exports.isSafeSelectionContext = isSafeSelectionContext;
+const FORM_CONTROL_TAGS = new Set(["INPUT", "OPTION", "SELECT", "TEXTAREA"]);
+const EDITOR_TOKENS = [
+    "ace_editor",
+    "codemirror",
+    "editor",
+    "lexical",
+    "monaco",
+    "prosemirror",
+    "ql-editor",
+    "quill",
+    "slate",
+    "tox-",
+];
+const EDITOR_ROLES = new Set(["searchbox", "spinbutton", "textbox"]);
+function isElementNode(node) {
+    return Boolean(node) && typeof node === "object" && typeof node.tagName === "string";
+}
+function getStringAttributes(element) {
+    if (!isElementNode(element) || typeof element.getAttribute !== "function") {
+        return "";
+    }
+    const values = [
+        element.id,
+        element.className,
+        element.getAttribute("role"),
+        element.getAttribute("aria-label"),
+        element.getAttribute("data-testid"),
+        element.getAttribute("data-test"),
+        element.getAttribute("data-editor"),
+        element.getAttribute("data-gramm"),
+        element.getAttribute("data-lexical-editor"),
+    ];
+    return values.filter(Boolean).join(" ").toLowerCase();
+}
+function getElementFromNode(node) {
+    let current = node || null;
+    while (current) {
+        if (isElementNode(current)) {
+            return current;
+        }
+        current = current.parentNode || current.parentElement || current.host || null;
+    }
+    return null;
+}
+function isFormControl(element) {
+    if (!isElementNode(element)) {
+        return false;
+    }
+    return FORM_CONTROL_TAGS.has(String(element.tagName || "").toUpperCase());
+}
+function isContentEditableElement(element) {
+    if (!isElementNode(element)) {
+        return false;
+    }
+    if (typeof element.isContentEditable === "boolean" && element.isContentEditable) {
+        return true;
+    }
+    const contentEditable = typeof element.getAttribute === "function"
+        ? element.getAttribute("contenteditable")
+        : element.contentEditable;
+    return contentEditable === "" || contentEditable === "true" || contentEditable === "plaintext-only";
+}
+function isEditorLikeElement(element) {
+    if (!isElementNode(element)) {
+        return false;
+    }
+    const label = getStringAttributes(element);
+    const role = typeof element.getAttribute === "function"
+        ? String(element.getAttribute("role") || "").toLowerCase()
+        : "";
+    if (EDITOR_ROLES.has(role)) {
+        return true;
+    }
+    if (!label) {
+        return false;
+    }
+    return EDITOR_TOKENS.some((token) => label.includes(token));
+}
+function isEditableTarget(element) {
+    return isFormControl(element) || isContentEditableElement(element) || isEditorLikeElement(element);
+}
+function isWithinEditableContext(node) {
+    let current = getElementFromNode(node);
+    while (current) {
+        if (isEditableTarget(current)) {
+            return true;
+        }
+        current = current.parentNode || current.parentElement || current.host || null;
+    }
+    return false;
+}
+function isSafeSelectionContext(selection, documentRef) {
+    if (!selection || selection.isCollapsed || !selection.rangeCount) {
+        return false;
+    }
+    const activeElement = documentRef?.activeElement || null;
+    if (isWithinEditableContext(activeElement)) {
+        return false;
+    }
+    let range = null;
+    if (typeof selection.getRangeAt === "function" && selection.rangeCount) {
+        try {
+            range = selection.getRangeAt(0);
+        }
+        catch {
+            range = null;
+        }
+    }
+    const nodes = [
+        selection.anchorNode || null,
+        selection.focusNode || null,
+        range?.commonAncestorContainer || null,
+        range?.startContainer || null,
+        range?.endContainer || null,
+    ];
+    return !nodes.some((node) => isWithinEditableContext(node));
+}
+
+},
+"content/unlock/dom.ts": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.isElementNode = void 0;
+exports.getEventPath = getEventPath;
+exports.firstElementFromPath = firstElementFromPath;
+exports.getElementPath = getElementPath;
 exports.isSensitiveWidget = isSensitiveWidget;
 exports.isSafeContentElement = isSafeContentElement;
 exports.classifyTarget = classifyTarget;
 exports.classifyEventPath = classifyEventPath;
+const editable_context_ts_1 = require("../shared/editable_context.ts");
 const SAFE_TEXT_TAGS = new Set([
     "A",
     "ARTICLE",
@@ -1240,21 +1368,7 @@ const INTERACTIVE_TAGS = new Set([
     "VIDEO",
     "AUDIO",
 ]);
-const EDITOR_TOKENS = [
-    "ace_editor",
-    "codemirror",
-    "editor",
-    "lexical",
-    "monaco",
-    "prosemirror",
-    "ql-editor",
-    "quill",
-    "slate",
-    "tox-",
-];
-function isElementNode(node) {
-    return Boolean(node) && typeof node === "object" && typeof node.tagName === "string";
-}
+exports.isElementNode = editable_context_ts_1.isElementNode;
 function getEventPath(event) {
     if (!event) {
         return [];
@@ -1274,64 +1388,18 @@ function getEventPath(event) {
 function firstElementFromPath(event) {
     const path = getEventPath(event);
     for (const node of path) {
-        if (isElementNode(node)) {
+        if ((0, exports.isElementNode)(node)) {
             return node;
         }
     }
-    return isElementNode(event?.target) ? event.target : null;
+    return (0, exports.isElementNode)(event?.target) ? event.target : null;
 }
 function getElementPath(eventOrPath) {
     const rawPath = Array.isArray(eventOrPath) ? eventOrPath : getEventPath(eventOrPath);
-    return rawPath.filter(isElementNode);
-}
-function getStringAttributes(element) {
-    if (!isElementNode(element) || typeof element.getAttribute !== "function") {
-        return "";
-    }
-    const values = [
-        element.id,
-        element.className,
-        element.getAttribute("role"),
-        element.getAttribute("aria-label"),
-        element.getAttribute("data-testid"),
-        element.getAttribute("data-test"),
-        element.getAttribute("data-editor"),
-    ];
-    return values.filter(Boolean).join(" ").toLowerCase();
-}
-function isFormControl(element) {
-    if (!isElementNode(element)) {
-        return false;
-    }
-    return ["INPUT", "TEXTAREA", "SELECT", "OPTION"].includes(String(element.tagName || "").toUpperCase());
-}
-function isContentEditableElement(element) {
-    if (!isElementNode(element)) {
-        return false;
-    }
-    if (typeof element.isContentEditable === "boolean" && element.isContentEditable) {
-        return true;
-    }
-    const contentEditable = typeof element.getAttribute === "function"
-        ? element.getAttribute("contenteditable")
-        : element.contentEditable;
-    return contentEditable === "" || contentEditable === "true" || contentEditable === "plaintext-only";
-}
-function isEditorLikeElement(element) {
-    if (!isElementNode(element)) {
-        return false;
-    }
-    const label = getStringAttributes(element);
-    if (!label) {
-        return false;
-    }
-    if (label.includes("role textbox")) {
-        return true;
-    }
-    return EDITOR_TOKENS.some((token) => label.includes(token));
+    return rawPath.filter(exports.isElementNode);
 }
 function isSensitiveWidget(element) {
-    if (!isElementNode(element)) {
+    if (!(0, exports.isElementNode)(element)) {
         return false;
     }
     const tagName = String(element.tagName || "").toUpperCase();
@@ -1353,20 +1421,20 @@ function isSensitiveWidget(element) {
     return false;
 }
 function isSafeContentElement(element) {
-    if (!isElementNode(element)) {
+    if (!(0, exports.isElementNode)(element)) {
         return false;
     }
     const tagName = String(element.tagName || "").toUpperCase();
     if (!SAFE_TEXT_TAGS.has(tagName)) {
         return false;
     }
-    if (isSensitiveWidget(element) || isContentEditableElement(element) || isEditorLikeElement(element)) {
+    if (isSensitiveWidget(element) || (0, editable_context_ts_1.isWithinEditableContext)(element)) {
         return false;
     }
     return true;
 }
 function classifyTarget(target) {
-    if (!isElementNode(target)) {
+    if (!(0, exports.isElementNode)(target)) {
         return {
             kind: "unknown",
             element: null,
@@ -1378,31 +1446,31 @@ function classifyTarget(target) {
             allowSelectionGuard: false,
         };
     }
-    if (isFormControl(target)) {
+    if ((0, editable_context_ts_1.isFormControl)(target)) {
         return {
             kind: "form-control",
             element: target,
-            allowClipboardGuard: true,
-            allowPassiveGuard: true,
-            allowPasteGuard: true,
-            allowShortcutGuard: true,
-            allowContextMenuGuard: true,
-            allowSelectionGuard: true,
+            allowClipboardGuard: false,
+            allowPassiveGuard: false,
+            allowPasteGuard: false,
+            allowShortcutGuard: false,
+            allowContextMenuGuard: false,
+            allowSelectionGuard: false,
         };
     }
-    if (isContentEditableElement(target)) {
+    if ((0, editable_context_ts_1.isContentEditableElement)(target)) {
         return {
             kind: "contenteditable",
             element: target,
-            allowClipboardGuard: true,
+            allowClipboardGuard: false,
             allowPassiveGuard: false,
             allowPasteGuard: false,
-            allowShortcutGuard: true,
-            allowContextMenuGuard: true,
-            allowSelectionGuard: true,
+            allowShortcutGuard: false,
+            allowContextMenuGuard: false,
+            allowSelectionGuard: false,
         };
     }
-    if (isEditorLikeElement(target)) {
+    if ((0, editable_context_ts_1.isEditorLikeElement)(target)) {
         return {
             kind: "editor",
             element: target,
@@ -1481,6 +1549,7 @@ function classifyEventPath(eventOrPath) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createPageUnlockEngine = createPageUnlockEngine;
 const dom_ts_1 = require("./dom.ts");
+const editable_context_ts_1 = require("../shared/editable_context.ts");
 const STYLE_ID = "writior-copy-unlock-style";
 const DEBUG_KEY = "__WRITIOR_COPY_UNLOCK_DEBUG";
 const OVERLAY_ATTR = "data-writior-unlock-overlay";
@@ -1836,6 +1905,9 @@ function createPageUnlockEngine(options = {}) {
                 processedNodes.add(node);
                 state.processedNodeCount += 1;
                 const classification = (0, dom_ts_1.classifyTarget)(node);
+                if ((0, editable_context_ts_1.isWithinEditableContext)(node)) {
+                    continue;
+                }
                 if (classification.kind === "safe-content") {
                     cleared += clearInlineProps(node, INLINE_BLOCKER_PROPS);
                     cleared += clearInlineAttributes(node, INLINE_BLOCKER_ATTRS);
@@ -1844,17 +1916,11 @@ function createPageUnlockEngine(options = {}) {
                         cleared += clearInlineAttributes(node, INLINE_OPTIONAL_ATTRS);
                     }
                 }
-                else if (classification.kind === "form-control" || classification.kind === "contenteditable") {
-                    cleared += clearInlineProps(node, ["oncopy", "oncut", "onpaste", "oncontextmenu", "onselectstart"]);
-                    cleared += clearInlineAttributes(node, ["oncopy", "oncut", "onpaste", "oncontextmenu", "onselectstart"]);
-                }
                 else if (profile.broadenNeutralCleanup && classification.kind === "neutral") {
                     cleared += clearInlineProps(node, INLINE_BLOCKER_PROPS);
                     cleared += clearInlineAttributes(node, INLINE_BLOCKER_ATTRS);
                 }
                 if (classification.kind === "safe-content"
-                    || classification.kind === "form-control"
-                    || classification.kind === "contenteditable"
                     || (profile.broadenNeutralCleanup && classification.kind === "neutral")) {
                     recoverInlineStyles(node, classification);
                 }
@@ -1938,7 +2004,7 @@ function createPageUnlockEngine(options = {}) {
                 return false;
             }
             const classification = (0, dom_ts_1.classifyTarget)(element);
-            return classification.kind === "safe-content" || classification.kind === "form-control";
+            return classification.kind === "safe-content";
         });
         if (!underneath || !isSuspiciousOverlay(top, documentRef, windowRef) || overlayMitigated.has(top)) {
             return false;
@@ -1963,6 +2029,9 @@ function createPageUnlockEngine(options = {}) {
     function shouldPreemptEvent(event) {
         const target = (0, dom_ts_1.firstElementFromPath)(event);
         const path = (0, dom_ts_1.getElementPath)(event);
+        if (path.some((node) => (0, editable_context_ts_1.isWithinEditableContext)(node)) || (0, editable_context_ts_1.isWithinEditableContext)(target)) {
+            return false;
+        }
         const classification = (0, dom_ts_1.classifyEventPath)(path);
         const type = String(event?.type || "");
         const inlineBlocked = pathHasInlineBlocker(path, type);
@@ -1971,9 +2040,6 @@ function createPageUnlockEngine(options = {}) {
                 return false;
             }
             const key = String(event?.key || "").toLowerCase();
-            if (classification.kind === "contenteditable" && key === "v") {
-                return false;
-            }
             return true;
         }
         if (type === "copy" || type === "cut") {
@@ -2191,20 +2257,11 @@ function buildSelectionContextPayload({ selection, page, }) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.extractNormalizedSelection = extractNormalizedSelection;
 exports.selectionSignature = selectionSignature;
+const editable_context_ts_1 = require("../shared/editable_context.ts");
 const EXTENSION_UI_ATTR = "data-writior-extension-ui";
 const MINIMUM_WORD_CHARS = 3;
 function normalizeWhitespace(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
-}
-function getElementFromNode(node) {
-    let current = node || null;
-    while (current) {
-        if (typeof current.tagName === "string") {
-            return current;
-        }
-        current = current.parentNode || current.parentElement || null;
-    }
-    return null;
 }
 function getSelectionRange(selection) {
     if (!selection || typeof selection.getRangeAt !== "function" || !selection.rangeCount) {
@@ -2249,7 +2306,7 @@ function isValidRect(rect) {
     return Boolean(rect) && rect.width >= 0 && rect.height >= 0 && (rect.width > 0 || rect.height > 0);
 }
 function isInsideExtensionUi(node) {
-    let current = getElementFromNode(node);
+    let current = (0, editable_context_ts_1.getElementFromNode)(node);
     while (current) {
         if (typeof current.getAttribute === "function" && current.getAttribute(EXTENSION_UI_ATTR) === "true") {
             return true;
@@ -2257,60 +2314,6 @@ function isInsideExtensionUi(node) {
         current = current.parentNode || current.parentElement || null;
     }
     return false;
-}
-function labelFromElement(element) {
-    if (!element) {
-        return "";
-    }
-    const values = [
-        element.tagName,
-        element.id,
-        element.className,
-        typeof element.getAttribute === "function" ? element.getAttribute("role") : "",
-        typeof element.getAttribute === "function" ? element.getAttribute("data-testid") : "",
-        typeof element.getAttribute === "function" ? element.getAttribute("data-test") : "",
-    ];
-    return values.filter(Boolean).join(" ").toLowerCase();
-}
-function isContentEditableElement(element) {
-    if (!element) {
-        return false;
-    }
-    if (typeof element.isContentEditable === "boolean" && element.isContentEditable) {
-        return true;
-    }
-    const contentEditable = typeof element.getAttribute === "function"
-        ? element.getAttribute("contenteditable")
-        : element.contentEditable;
-    return contentEditable === "" || contentEditable === "true" || contentEditable === "plaintext-only";
-}
-function isEditableElement(element) {
-    if (!element || typeof element.tagName !== "string") {
-        return false;
-    }
-    const tagName = String(element.tagName || "").toUpperCase();
-    if (["INPUT", "TEXTAREA", "SELECT", "OPTION"].includes(tagName)) {
-        return true;
-    }
-    if (isContentEditableElement(element)) {
-        return true;
-    }
-    const label = labelFromElement(element);
-    if (!label) {
-        return false;
-    }
-    return [
-        "ace_editor",
-        "codemirror",
-        "editor",
-        "lexical",
-        "monaco",
-        "prosemirror",
-        "ql-editor",
-        "quill",
-        "slate",
-        "textbox",
-    ].some((token) => label.includes(token));
 }
 function isUnsafeSelectionContainer(element) {
     if (!element || typeof element.tagName !== "string") {
@@ -2320,7 +2323,7 @@ function isUnsafeSelectionContainer(element) {
     if (["BUTTON", "CANVAS", "DIALOG", "EMBED", "IFRAME", "SELECT", "TEXTAREA", "VIDEO", "AUDIO"].includes(tagName)) {
         return true;
     }
-    if (isEditableElement(element)) {
+    if ((0, editable_context_ts_1.isWithinEditableContext)(element)) {
         return true;
     }
     const role = typeof element.getAttribute === "function"
@@ -2337,7 +2340,7 @@ function hasEnoughSignal(text, minimumLength) {
 }
 function extractNormalizedSelection({ documentRef = globalThis.document, minimumLength = 3, } = {}) {
     const selection = documentRef?.getSelection?.();
-    if (!selection || selection.isCollapsed || !selection.rangeCount) {
+    if (!(0, editable_context_ts_1.isSafeSelectionContext)(selection, documentRef)) {
         return null;
     }
     const range = getSelectionRange(selection);
@@ -2351,9 +2354,9 @@ function extractNormalizedSelection({ documentRef = globalThis.document, minimum
     }
     const anchorNode = selection.anchorNode || range.startContainer || null;
     const focusNode = selection.focusNode || range.endContainer || null;
-    const anchorElement = getElementFromNode(anchorNode);
-    const focusElement = getElementFromNode(focusNode);
-    const commonElement = getElementFromNode(range.commonAncestorContainer || anchorElement || focusElement);
+    const anchorElement = (0, editable_context_ts_1.getElementFromNode)(anchorNode);
+    const focusElement = (0, editable_context_ts_1.getElementFromNode)(focusNode);
+    const commonElement = (0, editable_context_ts_1.getElementFromNode)(range.commonAncestorContainer || anchorElement || focusElement);
     const targetElement = commonElement || anchorElement || focusElement || null;
     if (!targetElement) {
         return null;
@@ -2387,7 +2390,7 @@ function extractNormalizedSelection({ documentRef = globalThis.document, minimum
         direction: focusOffset >= anchorOffset ? "forward" : "backward",
         target: {
             tag_name: typeof targetElement.tagName === "string" ? targetElement.tagName.toLowerCase() : "",
-            is_editable: false,
+            is_editable: (0, editable_context_ts_1.isWithinEditableContext)(targetElement),
             inside_extension_ui: false,
         },
     };
@@ -4704,6 +4707,7 @@ const citation_ts_1 = require("../../shared/types/citation.ts");
 const capability_surface_ts_1 = require("../../shared/types/capability_surface.ts");
 const contracts_ts_1 = require("../../shared/types/contracts.ts");
 const runtime_client_ts_1 = require("../../shared/utils/runtime_client.ts");
+const editable_context_ts_1 = require("../shared/editable_context.ts");
 function isCommandShortcut(event) {
     return Boolean(event?.shiftKey && (event?.ctrlKey || event?.metaKey));
 }
@@ -4907,6 +4911,11 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
             return state.currentSnapshot;
         }
         state.inspectCount += 1;
+        const rawSelection = documentRef?.getSelection?.();
+        if (!(0, editable_context_ts_1.isSafeSelectionContext)(rawSelection, documentRef)) {
+            hide("editable_context");
+            return null;
+        }
         const selection = (0, extraction_ts_1.extractNormalizedSelection)({ documentRef, minimumLength });
         if (!selection) {
             hide("selection_invalid");
@@ -4965,6 +4974,10 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
     }
     function scheduleInspect(delay = 30) {
         if (state.isPointerSelecting) {
+            return;
+        }
+        if ((0, editable_context_ts_1.isWithinEditableContext)(documentRef?.activeElement || null)) {
+            hide("editable_context");
             return;
         }
         if (inspectTimer) {
@@ -5199,6 +5212,10 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         }
     }
     function onKeydown(event) {
+        if ((0, editable_context_ts_1.isWithinEditableContext)(event?.target || documentRef?.activeElement || null)) {
+            hide("editable_context");
+            return;
+        }
         if (citationModal.isVisible()) {
             if (String(event?.key || "").toLowerCase() === "escape") {
                 closeCitationModal("escape");
@@ -5229,6 +5246,11 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         void runAction("copy");
     }
     function onPointerDown(event) {
+        if ((0, editable_context_ts_1.isWithinEditableContext)(event?.target || null)) {
+            hide("editable_context");
+            state.isPointerSelecting = true;
+            return;
+        }
         state.isPointerSelecting = true;
         if (citationModal.isVisible()) {
             if (citationModal.isInside(event?.target)) {
@@ -5254,6 +5276,10 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
     }
     function onPointerUp() {
         state.isPointerSelecting = false;
+        if ((0, editable_context_ts_1.isWithinEditableContext)(documentRef?.activeElement || null)) {
+            hide("editable_context");
+            return;
+        }
         scheduleInspect(90);
     }
     function destroy() {

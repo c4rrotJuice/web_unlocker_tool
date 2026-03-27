@@ -1965,7 +1965,6 @@ test("explorer load failure renders a retryable recovery state", async () => {
   });
 
   const refs = {
-    explorerHeading: makeElement(),
     explorerStatus: makeElement(),
     explorerList: makeElement(),
     explorerSearch: makeElement(),
@@ -1987,7 +1986,7 @@ test("explorer load failure renders a retryable recovery state", async () => {
 
   await controller.beginEntityAction({ action: "insert", entityType: "quote" });
 
-  assert.match(refs.explorerStatus.textContent, /failed/i);
+  assert.match(refs.explorerStatus.textContent, /unavailable/i);
   assert.match(refs.explorerList.innerHTML, /Retry/);
 });
 
@@ -2004,7 +2003,7 @@ test("checkpoint refresh failure renders a retryable recovery state", async () =
     tag_ids: [],
   });
 
-  const refs = { checkpointsList: makeElement() };
+  const refs = { checkpointsList: makeElement(), checkpointStatus: makeElement() };
   const controller = createCheckpointController({
     workspaceState,
     workspaceApi: {
@@ -2020,6 +2019,7 @@ test("checkpoint refresh failure renders a retryable recovery state", async () =
 
   assert.match(refs.checkpointsList.innerHTML, /Checkpoint refresh failed/);
   assert.match(refs.checkpointsList.innerHTML, /Retry checkpoints/);
+  assert.match(refs.checkpointStatus.textContent, /Checkpoint error/);
 });
 
 test("explorer picker routes entity clicks into real insert flow callbacks", async () => {
@@ -2038,7 +2038,6 @@ test("explorer picker routes entity clicks into real insert flow callbacks", asy
   const citationsTab = makeElement({ dataset: { explorerTab: "citations" } });
   const quotesTab = makeElement({ dataset: { explorerTab: "quotes" } });
   const refs = {
-    explorerHeading: makeElement(),
     explorerStatus: makeElement(),
     explorerList: makeElement(),
     explorerSearch: makeElement(),

@@ -45,12 +45,10 @@ export function createExplorerController({
   }
 
   async function refreshExplorer() {
-    const heading = currentTab[0].toUpperCase() + currentTab.slice(1);
-    refs.explorerHeading.textContent = heading;
     if (currentTab === "documents") {
       renderDocuments();
       const count = filteredDocuments().length;
-      refs.explorerStatus.textContent = `${count} ${count === 1 ? "result" : "results"}`;
+      refs.explorerStatus.textContent = `${count} ${count === 1 ? "item" : "items"}`;
       return;
     }
     refs.explorerStatus.textContent = "Loading";
@@ -59,9 +57,9 @@ export function createExplorerController({
       const pending = workspaceState.getState().pending_explorer_action;
       refs.explorerStatus.textContent = pending?.entityType === singularType()
         ? `Choose a ${singularType()} to ${pending.action}.`
-        : "Ready";
+        : currentTab;
     } catch (error) {
-      refs.explorerStatus.textContent = `${heading} failed`;
+      refs.explorerStatus.textContent = "Unavailable";
       renderExplorerFailure(error?.message || `Failed to load ${currentTab}.`);
     }
   }
@@ -71,7 +69,7 @@ export function createExplorerController({
       if (currentTab !== "documents") return;
       renderers.renderDocumentList(refs.explorerList, filteredDocuments(), state.active_document_id);
       const count = filteredDocuments().length;
-      refs.explorerStatus.textContent = `${count} ${count === 1 ? "result" : "results"}`;
+      refs.explorerStatus.textContent = `${count} ${count === 1 ? "item" : "items"}`;
     }));
     refs.explorerTabs.forEach((button) => {
       const handler = async () => {

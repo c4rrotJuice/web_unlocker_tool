@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 import { createPageUnlockEngine } from "../extension/content/unlock/engine.js";
-import { bootstrapContent } from "../extension/content/index.js";
+import { bootstrapContent, shouldBootstrapContentRuntime } from "../extension/content/index.js";
 
 class FakeEvent {
   constructor(type, target, init = {}) {
@@ -286,6 +286,27 @@ test("bootstrap is idempotent and injects one style tag plus one listener set", 
   assert.equal(documentRef.listeners.get("contextmenu").length, 1);
   assert.equal(documentRef.listeners.get("mouseup").length, 2);
   assert.equal(documentRef.listeners.get("keyup").length, 2);
+});
+
+test("content runtime skips the first-party editor route", () => {
+  const { documentRef, windowRef } = installEnvironment();
+  windowRef.location.href = "https://app.writior.com/editor?document_id=doc-1";
+
+  const runtime = bootstrapContent({ documentRef, windowRef, MutationObserverRef: FakeMutationObserver });
+
+  assert.equal(runtime, null);
+  assert.equal(documentRef.getElementById("writior-copy-unlock-style"), null);
+  assert.equal(documentRef.listeners.get("mousedown"), undefined);
+  assert.equal(documentRef.listeners.get("click"), undefined);
+});
+
+test("content runtime url guard only excludes first-party editor routes", () => {
+  assert.equal(shouldBootstrapContentRuntime("https://app.writior.com/editor"), false);
+  assert.equal(shouldBootstrapContentRuntime("https://app.writior.com/editor/live"), false);
+  assert.equal(shouldBootstrapContentRuntime("http://localhost:8000/editor"), false);
+  assert.equal(shouldBootstrapContentRuntime("https://example.com/editor"), true);
+  assert.equal(shouldBootstrapContentRuntime("https://app.writior.com/research"), true);
+  assert.equal(shouldBootstrapContentRuntime("not a url"), true);
 });
 
 test("target classification stays conservative for safe content, inputs, and editors", () => {

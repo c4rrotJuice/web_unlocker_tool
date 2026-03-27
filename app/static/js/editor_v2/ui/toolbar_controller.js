@@ -1,4 +1,4 @@
-export function bindToolbarController({ toolbar, onInsertCitation }) {
+export function bindToolbarController({ toolbar, focusTarget, onInsertCitation }) {
   const advancedGroups = Array.from(toolbar.querySelectorAll('[data-toolbar-group="advanced"]'));
   const toggleButton = toolbar.querySelector('[data-toolbar-action="toggle-expand"]');
   const citationButton = toolbar.querySelector('[data-toolbar-action="insert-citation"]');
@@ -21,6 +21,11 @@ export function bindToolbarController({ toolbar, onInsertCitation }) {
     if (actionButton.dataset.toolbarAction === "toggle-expand") {
       expanded = !expanded;
       render();
+      if (focusTarget) {
+        window.requestAnimationFrame(() => {
+          focusTarget.focus?.();
+        });
+      }
       return;
     }
     if (actionButton.dataset.toolbarAction === "insert-citation") {

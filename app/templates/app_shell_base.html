@@ -77,7 +77,7 @@
     </aside>
 
     <div class="app-workspace">
-      <header class="app-header">
+      <header class="app-header{% if page_id == 'editor' %} app-header-minimal{% endif %}">
         <button
           id="app-sidebar-mobile-toggle"
           class="app-sidebar-mobile-toggle"
@@ -86,10 +86,14 @@
           aria-expanded="false"
           aria-label="Open navigation menu"
         >☰</button>
+        {% if page_id != 'editor' %}
         <div>
           <p class="app-eyebrow">Writior v2</p>
           <h1 class="app-page-title">{{ page_title }}</h1>
         </div>
+        {% else %}
+        <div class="app-header-minimal-spacer" aria-hidden="true"></div>
+        {% endif %}
         <div class="app-header-actions" id="app-header-actions"></div>
       </header>
 

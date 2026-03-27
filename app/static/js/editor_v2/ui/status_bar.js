@@ -8,9 +8,9 @@ export function renderStatusBar(target, quillAdapter, workspaceState, statusSnap
   const statusLabel = statusSnapshot?.label || "Saved";
   target.innerHTML = `
     <span class="editor-v2-status-signal" aria-live="polite">${statusLabel}</span>
-    <span>Words: ${words}</span>
-    <span>Characters: ${chars}</span>
-    <span>Citations: ${citations}</span>
-    <span>Notes: ${notes}</span>
+    <span>${words} words</span>
+    <span>${chars} chars</span>
+    <span>${citations} citations</span>
+    <span>${notes} notes</span>
   `;
 }

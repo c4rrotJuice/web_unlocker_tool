@@ -255,6 +255,21 @@ body.app-shell-body.has-open-sidebar-drawer {
   gap: 20px;
 }
 
+.app-header-minimal {
+  min-height: 0;
+  padding: 0;
+  align-items: center;
+}
+
+.app-header-minimal .app-header-actions,
+.app-header-minimal .app-header-minimal-spacer {
+  min-width: 0;
+}
+
+.app-shell[data-page="editor"] .app-workspace {
+  gap: 10px;
+}
+
 .app-sidebar-toggle:focus-visible,
 .app-sidebar-mobile-toggle:focus-visible,
 .app-sidebar-pref-toggle:focus-visible,

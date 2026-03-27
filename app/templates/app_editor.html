@@ -11,6 +11,7 @@
     <aside class="editor-v2-panel editor-v2-explorer" aria-label="Workspace navigation">
       <div class="editor-v2-inline-actions">
         <button class="editor-v2-action" id="editor-new-document" type="button">New</button>
+        <span id="editor-explorer-status" class="editor-v2-meta">0 items</span>
       </div>
       <div class="editor-v2-search-row">
         <input id="editor-explorer-search" type="search" placeholder="Search" aria-label="Search documents, sources, citations, quotes, notes" />
@@ -23,10 +24,6 @@
         <button class="editor-v2-tab" data-explorer-tab="notes" role="tab" aria-selected="false">Notes</button>
       </div>
       <section class="editor-v2-results">
-        <div class="editor-v2-subhead editor-v2-subhead-compact">
-          <h3 id="editor-explorer-heading">Documents</h3>
-          <span id="editor-explorer-status" class="editor-v2-meta">Ready</span>
-        </div>
         <div class="editor-v2-explorer-body">
           <div id="editor-explorer-list" class="editor-v2-scroll editor-v2-list-rows" tabindex="0"></div>
           <aside id="editor-explorer-preview" class="editor-v2-hover-preview" hidden aria-live="polite"></aside>
@@ -39,7 +36,8 @@
         <input id="editor-document-title" class="editor-v2-title" type="text" placeholder="Untitled document" aria-label="Document title" />
         <div class="editor-v2-head-actions">
           <span id="editor-save-state" class="editor-v2-save-state" aria-live="polite">Saved</span>
-          <button class="editor-v2-action" id="editor-checkpoint-button" type="button">Checkpoint</button>
+          <span id="editor-checkpoint-status" class="editor-v2-meta">No checkpoints</span>
+          <button class="editor-v2-action" id="editor-checkpoint-button" type="button">Checkpoints</button>
           <button class="editor-v2-action" id="editor-export-button" type="button">Export</button>
           <button class="editor-v2-action" id="editor-command-button" type="button" aria-label="More actions">•••</button>
         </div>
@@ -124,7 +122,7 @@
           <button class="editor-v2-tab" data-context-tab="notes" role="tab" aria-selected="false">Notes</button>
           <button class="editor-v2-tab" data-context-tab="checkpoints" role="tab" aria-selected="false">Checkpoints</button>
         </div>
-        <span id="editor-context-mode" class="editor-v2-meta">Idle</span>
+        <span id="editor-context-mode" class="editor-v2-meta">Ready</span>
       </div>
       <section class="editor-v2-context-pane" data-context-pane="citations">
         <div id="editor-context-rail" class="editor-v2-scroll" tabindex="0"></div>

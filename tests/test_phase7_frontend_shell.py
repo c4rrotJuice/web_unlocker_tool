@@ -124,6 +124,47 @@ def test_shell_template_exposes_sidebar_controls_for_desktop_and_mobile():
     assert 'id="app-sidebar-backdrop"' in template
 
 
+@pytest.mark.anyio
+async def test_editor_route_uses_minimal_shell_header(monkeypatch):
+    main = _load_main(monkeypatch)
+    async with async_test_client(main.app) as client:
+        response = await client.get("/editor")
+
+    assert response.status_code == 200
+    html = response.text
+    assert 'app-header-minimal' in html
+    assert '<h1 class="app-page-title">Documents</h1>' not in html
+    assert '<p class="app-eyebrow">Writior v2</p>' not in html
+
+
+def test_editor_template_exposes_compact_document_bar_and_checkpoint_affordances():
+    template = open("app/templates/app_editor.html", encoding="utf-8").read()
+
+    assert 'class="editor-v2-document-bar"' in template
+    assert 'id="editor-checkpoint-status"' in template
+    assert 'id="editor-checkpoint-button"' in template
+    assert 'data-toolbar-group="advanced"' in template
+    assert 'id="editor-toolbar-toggle"' in template
+    assert 'id="editor-explorer-preview"' in template
+    assert 'data-context-tab="checkpoints"' in template
+
+
+def test_editor_runtime_keeps_compact_toolbar_toggle_and_hover_preview_modules():
+    app_source = open("app/static/js/editor_v2/core/editor_app.js", encoding="utf-8").read()
+    toolbar_source = open("app/static/js/editor_v2/ui/toolbar_controller.js", encoding="utf-8").read()
+    preview_source = open("app/static/js/editor_v2/ui/explorer_preview.js", encoding="utf-8").read()
+    checkpoint_source = open("app/static/js/editor_v2/document/checkpoint_controller.js", encoding="utf-8").read()
+
+    assert 'focusTarget: quillAdapter' in app_source
+    assert 'summarizeContextMode' in app_source
+    assert 'data-toolbar-group="advanced"' in open("app/templates/app_editor.html", encoding="utf-8").read()
+    assert 'toggle-expand' in toolbar_source
+    assert 'focusTarget.focus?.()' in toolbar_source
+    assert 'panel.addEventListener("mouseenter", onPanelEnter)' in preview_source
+    assert 'list.addEventListener("focusin", onFocus)' in preview_source
+    assert 'refs.checkpointStatus.textContent' in checkpoint_source
+
+
 def test_research_shell_uses_separate_card_and_detail_renderers():
     boot_source = open("app/static/js/app_shell/pages/research.js", encoding="utf-8").read()
     card_source = open("app/static/js/app_shell/renderers/cards.js", encoding="utf-8").read()

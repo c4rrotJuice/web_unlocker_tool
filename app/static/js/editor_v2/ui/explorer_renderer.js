@@ -1,10 +1,16 @@
 import { escapeHtml } from "../../app_shell/core/format.js";
 
+function clip(text, max = 120) {
+  const value = String(text || "").trim();
+  if (!value) return "";
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
 function formatRowData(type, entity = {}) {
   if (type === "document") {
     return {
       title: entity.title || "Untitled document",
-      subtitle: entity.summary || entity.project_name || "",
+      subtitle: "",
       preview: {
         type,
         title: entity.title || "Untitled document",
@@ -17,8 +23,8 @@ function formatRowData(type, entity = {}) {
   }
   if (type === "citation") {
     return {
-      title: entity.title || entity.citation_text || "Citation",
-      subtitle: entity.authors?.[0] || entity.source_title || "",
+      title: clip(entity.title || entity.citation_text || "Citation", 96),
+      subtitle: "",
       preview: {
         type,
         title: entity.title || entity.citation_text || "Citation",
@@ -30,8 +36,8 @@ function formatRowData(type, entity = {}) {
   }
   if (type === "quote") {
     return {
-      title: entity.excerpt || entity.text || "Quote",
-      subtitle: entity.source_title || entity.citation?.source?.title || "",
+      title: clip(entity.excerpt || entity.text || "Quote", 96),
+      subtitle: "",
       preview: {
         type,
         title: entity.excerpt || entity.text || "Quote",
@@ -42,8 +48,8 @@ function formatRowData(type, entity = {}) {
   }
   if (type === "note") {
     return {
-      title: entity.title || entity.text || "Note",
-      subtitle: entity.updated_at || "",
+      title: clip(entity.title || entity.text || "Note", 96),
+      subtitle: "",
       preview: {
         type,
         title: entity.title || "Note",
@@ -53,8 +59,8 @@ function formatRowData(type, entity = {}) {
     };
   }
   return {
-    title: entity.title || entity.url || "Source",
-    subtitle: entity.domain || entity.url || "",
+    title: clip(entity.title || entity.url || "Source", 96),
+    subtitle: "",
     preview: {
       type,
       title: entity.title || "Source",
@@ -65,10 +71,11 @@ function formatRowData(type, entity = {}) {
 }
 
 function rowMarkup({ id, active = false, title = "", subtitle = "", preview = {} }, attributes = "") {
+  const previewId = subtitle && id ? `editor-v2-row-${id}-preview` : "";
   return `
-    <button ${attributes} class="editor-v2-row${active ? " is-active" : ""}" type="button" tabindex="0" data-preview='${escapeHtml(JSON.stringify(preview))}'>
+    <button ${attributes} class="editor-v2-row${active ? " is-active" : ""}" type="button" tabindex="0" data-preview='${escapeHtml(JSON.stringify(preview))}'${previewId ? ` aria-describedby="${escapeHtml(previewId)}"` : ""}>
       <div class="editor-v2-row-primary">${escapeHtml(title)}</div>
-      ${subtitle ? `<div class="editor-v2-row-secondary">${escapeHtml(subtitle)}</div>` : ""}
+      ${subtitle ? `<div class="editor-v2-row-secondary" id="${escapeHtml(previewId)}">${escapeHtml(subtitle)}</div>` : ""}
     </button>
   `;
 }

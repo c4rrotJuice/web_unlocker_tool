@@ -45,7 +45,6 @@ function queryRefs() {
     shell: document.getElementById("editor-v2-shell"),
     explorerSearch: document.getElementById("editor-explorer-search"),
     explorerList: document.getElementById("editor-explorer-list"),
-    explorerHeading: document.getElementById("editor-explorer-heading"),
     explorerStatus: document.getElementById("editor-explorer-status"),
     explorerTabs: Array.from(document.querySelectorAll("[data-explorer-tab]")),
     explorerPreview: document.getElementById("editor-explorer-preview"),
@@ -55,6 +54,7 @@ function queryRefs() {
     toolbar: "#editor-toolbar",
     quill: document.getElementById("editor-quill"),
     saveState: document.getElementById("editor-save-state"),
+    checkpointStatus: document.getElementById("editor-checkpoint-status"),
     statusBar: document.getElementById("editor-status-bar"),
     contextRail: document.getElementById("editor-context-rail"),
     contextMode: document.getElementById("editor-context-mode"),
@@ -97,6 +97,19 @@ function saveStatusLabel(saveStatus) {
     conflict: "Conflict",
     error: "Error",
   }[saveStatus] || "Saved";
+}
+
+function summarizeContextMode(context, state) {
+  if (context.mode === "text_selection") return "Selection active";
+  if (context.mode === "seed_review") return "Seeded research ready";
+  if (context.mode === "citation_focus") return "Citation in focus";
+  if (context.mode === "quote_focus") return "Quote in focus";
+  if (context.mode === "note_focus") return "Note in focus";
+  if (context.mode === "source_focus") return "Source in focus";
+  if (context.mode === "empty_document") return "Open a document";
+  const attached = state.attached_research || {};
+  const count = (attached.citations || []).length + (attached.notes || []).length + (attached.quotes || []).length;
+  return count ? `${count} attached items` : "Ready";
 }
 
 export async function createEditorApp({ boot = readBootPayload() } = {}) {
@@ -244,6 +257,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
 
   const toolbarController = bindToolbarController({
     toolbar: document.getElementById("editor-toolbar"),
+    focusTarget: quillAdapter,
     onInsertCitation() {
       commandRegistry.open("citation");
     },
@@ -280,11 +294,11 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     refs.saveState.textContent = statusSnapshot.label;
     renderStatusBar(refs.statusBar, quillAdapter, workspaceState, statusSnapshot);
     const context = deriveContextState(state, selectionState.getState());
-    refs.contextMode.textContent = context.mode.replace(/_/g, " ");
+    refs.contextMode.textContent = summarizeContextMode(context, state);
     const focused = state.focused_entity;
     const attachedNotes = state.attached_research?.notes || [];
     refs.notesPanel.innerHTML = attachedNotes.length
-      ? `<div class="editor-v2-list">${attachedNotes.map((note) => `<div class="editor-v2-card"><strong>${escapeHtml(note.title || "Note")}</strong><p>${escapeHtml((note.text || "").slice(0, 160))}</p></div>`).join("")}</div>`
+      ? `<div class="editor-v2-list">${attachedNotes.map((note) => `<button class="editor-v2-row" type="button"><div class="editor-v2-row-primary">${escapeHtml(note.title || "Note")}</div><div class="editor-v2-row-secondary">${escapeHtml((note.text || "").slice(0, 120))}</div></button>`).join("")}</div>`
       : `<div class="editor-v2-card">No attached notes yet.</div>`;
     if (!focused && context.mode !== "seed_review" && context.mode !== "quote_focus") {
       renderContextRail(refs.contextRail, context, state, null, {

@@ -3,10 +3,25 @@ import { withTimeout } from "../core/async_operation.js";
 export function createCheckpointController({ workspaceState, workspaceApi, refs, eventBus }) {
   let refreshSeq = 0;
 
+  function updateCheckpointStatus(checkpoints = []) {
+    if (!refs.checkpointStatus) return;
+    if (!workspaceState.getState().active_document_id) {
+      refs.checkpointStatus.textContent = "No document";
+      return;
+    }
+    if (!checkpoints.length) {
+      refs.checkpointStatus.textContent = "No checkpoints";
+      return;
+    }
+    const latest = checkpoints[0];
+    refs.checkpointStatus.textContent = `${checkpoints.length} saved · ${latest.created_at || "recent"}`;
+  }
+
   async function refresh() {
     const documentId = workspaceState.getState().active_document_id;
     if (!documentId) {
       refs.checkpointsList.innerHTML = `<div class="editor-v2-card">No active document.</div>`;
+      updateCheckpointStatus([]);
       return;
     }
     refreshSeq += 1;
@@ -26,6 +41,7 @@ export function createCheckpointController({ workspaceState, workspaceApi, refs,
           </button>
         `).join("")
         : `<div class="editor-v2-card">No checkpoints yet.</div>`;
+      updateCheckpointStatus(checkpoints);
     } catch (error) {
       workspaceState.setCheckpointFailure({
         message: error?.message || "Checkpoint history could not be refreshed.",
@@ -44,6 +60,7 @@ export function createCheckpointController({ workspaceState, workspaceApi, refs,
           <button class="editor-v2-action" type="button" data-checkpoint-retry="true">Retry checkpoints</button>
         </div>
       `;
+      if (refs.checkpointStatus) refs.checkpointStatus.textContent = "Checkpoint error";
     }
   }
 
@@ -65,6 +82,7 @@ export function createCheckpointController({ workspaceState, workspaceApi, refs,
     );
     workspaceState.markSavedFromServer(document);
     eventBus.emit("checkpoint.restored", { documentId: state.active_document_id, checkpointId });
+    await refresh();
   }
 
   const onClick = (event) => {

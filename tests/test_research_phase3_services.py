@@ -391,8 +391,10 @@ async def test_citation_create_get_list_update_delete_and_shape_are_canonical(ci
 
     expected_keys = set(created.keys())
     assert expected_keys == set(loaded.keys()) == set(listed.keys()) == set(rendered.keys())
-    assert {"id", "source_id", "source", "renders", "created_at", "updated_at", "relationship_counts"}.issubset(expected_keys)
+    assert {"id", "source_id", "source", "renders", "primary_render", "available_renders", "created_at", "updated_at", "relationship_counts"}.issubset(expected_keys)
     assert "mla" in created["renders"]
+    assert created["primary_render"]["kind"] == "bibliography"
+    assert created["available_renders"]["primary"] == created["primary_render"]
     assert loaded["relationship_counts"] == {"quote_count": 2, "note_count": 1, "document_count": 3}
     assert listed["relationship_counts"] == {"quote_count": 2, "note_count": 1, "document_count": 3}
     assert rendered["relationship_counts"] == {"quote_count": 2, "note_count": 1, "document_count": 3}
@@ -749,6 +751,33 @@ async def test_render_endpoint_filters_to_requested_allowed_style_and_reuses_cac
     )
     assert set(rendered["renders"].keys()) == {"mla"}
     assert rendered["renders"]["mla"]["bibliography"]
+    assert rendered["available_renders"]["styles"][0]["style"] == "mla"
+
+
+@pytest.mark.anyio
+async def test_citation_list_page_returns_normalized_render_contract(citations_service):
+    created = await citations_service.create_citation(
+        user_id="user-1",
+        access_token=None,
+        account_type="pro",
+        extraction_payload=_canonical_extraction_payload(),
+        excerpt="Excerpt",
+        quote="Excerpt",
+        style="mla",
+    )
+
+    payload = await citations_service.list_citations_page(
+        user_id="user-1",
+        access_token=None,
+        limit=20,
+        account_type="pro",
+    )
+
+    row = payload["data"][0]
+    assert row["id"] == created["id"]
+    assert row["primary_render"]["kind"] == "bibliography"
+    assert row["available_renders"]["primary"]["style"] == "mla"
+    assert row["available_renders"]["styles"][0]["texts"]["bibliography"]
 
     with pytest.raises(HTTPException) as exc:
         await citations_service.render_citation(

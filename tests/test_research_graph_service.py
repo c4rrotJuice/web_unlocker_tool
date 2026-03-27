@@ -329,6 +329,7 @@ class FakeWorkspaceService:
             "archived": False,
             "created_at": "2026-01-06T00:00:00+00:00",
             "updated_at": "2026-01-06T00:00:00+00:00",
+            "revision": "2026-01-06T00:00:00+00:00",
         }
         self.create_calls = []
         self.update_calls = []
@@ -366,20 +367,27 @@ class FakeWorkspaceService:
     async def update_document(self, *, user_id, access_token, capability_state, document_id, payload):
         del user_id, access_token, capability_state, document_id
         self.update_calls.append(deepcopy(payload))
-        return {"data": deepcopy(self.document)}
+        next_document = deepcopy(self.document)
+        next_document["revision"] = "2026-01-06T00:01:00+00:00"
+        next_document["updated_at"] = "2026-01-06T00:01:00+00:00"
+        return {"data": next_document}
 
-    async def replace_document_citations(self, *, user_id, access_token, capability_state, document_id, citation_ids):
-        del user_id, access_token, capability_state, document_id
+    async def replace_document_citations(self, *, user_id, access_token, capability_state, document_id, revision, citation_ids):
+        del user_id, access_token, capability_state, document_id, revision
         self.replace_citation_calls.append(list(citation_ids))
         payload = deepcopy(self.document)
         payload["attached_citation_ids"] = list(citation_ids)
+        payload["revision"] = "2026-01-06T00:02:00+00:00"
+        payload["updated_at"] = "2026-01-06T00:02:00+00:00"
         return {"data": payload}
 
-    async def replace_document_notes(self, *, user_id, access_token, capability_state, document_id, note_ids):
-        del user_id, access_token, capability_state, document_id
+    async def replace_document_notes(self, *, user_id, access_token, capability_state, document_id, revision, note_ids):
+        del user_id, access_token, capability_state, document_id, revision
         self.replace_note_calls.append(list(note_ids))
         payload = deepcopy(self.document)
         payload["attached_note_ids"] = list(note_ids)
+        payload["revision"] = "2026-01-06T00:03:00+00:00"
+        payload["updated_at"] = "2026-01-06T00:03:00+00:00"
         return {"data": payload}
 
     @staticmethod
@@ -489,6 +497,7 @@ async def test_work_in_editor_orchestration_centralizes_lineage_and_document_att
     assert notes_service.create_calls[0]["quote_id"] == QUOTE_ID
     assert notes_service.create_calls[0]["sources"][0]["source_id"] == SOURCE_ID
     assert workspace_service.create_calls == [{"title": "Seeded Draft", "project_id": None}]
+    assert workspace_service.update_calls == [{"revision": "2026-01-06T00:00:00+00:00", "content_delta": {"ops": [{"insert": "Source A\nQuoted context\n\nSynthesis\n"}]}}]
     assert workspace_service.replace_citation_calls == [[CITATION_ID]]
     assert workspace_service.replace_note_calls == [[NOTE_ID]]
     assert workflow["seed"] == {

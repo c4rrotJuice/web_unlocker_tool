@@ -33,6 +33,22 @@ def test_editor_runtime_uses_modular_v2_modules_and_not_legacy_orchestration():
     assert "editor_runtime/" not in source
 
 
+def test_citation_ui_consumers_use_shared_normalized_render_contract():
+    citation_contract = Path("app/static/js/shared/citation_contract.js").read_text(encoding="utf-8")
+    cards_source = Path("app/static/js/app_shell/renderers/cards.js").read_text(encoding="utf-8")
+    details_source = Path("app/static/js/app_shell/renderers/details.js").read_text(encoding="utf-8")
+    insert_actions = Path("app/static/js/editor_v2/actions/insert_actions.js").read_text(encoding="utf-8")
+
+    assert "citationPrimaryText" in citation_contract
+    assert "citationRenderEntries" in citation_contract
+    assert 'citation.renders?.mla?.bibliography' not in cards_source
+    assert 'citation.renders?.mla?.bibliography' not in details_source
+    assert 'citation.renders?.mla?.bibliography' not in insert_actions
+    assert "citationPrimaryText(" in cards_source
+    assert "citationPrimaryText(" in details_source
+    assert "citationPrimaryText(" in insert_actions
+
+
 def test_editor_runtime_uses_summary_boot_and_legacy_denylist():
     workspace_api = Path("app/static/js/editor_v2/api/workspace_api.js").read_text(encoding="utf-8")
     editor_source = Path("app/static/js/editor_v2/core/editor_app.js").read_text(encoding="utf-8")

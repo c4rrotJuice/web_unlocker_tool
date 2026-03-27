@@ -109,7 +109,7 @@ def test_quote_note_document_serializers_exclude_legacy_fields():
 def test_hydration_and_outline_payload_shapes_are_stable():
     hydration = serialize_document_hydration(
         document={"id": "doc-1"},
-        attached_citations=[{"id": "citation-1"}],
+        attached_citations=[{"id": "citation-1", "primary_render": {"style": "mla", "kind": "bibliography", "text": "Source"}}],
         attached_notes=[{"id": "note-1"}],
         attached_quotes=[],
         attached_sources=[],
@@ -117,4 +117,5 @@ def test_hydration_and_outline_payload_shapes_are_stable():
     )
     outline = serialize_outline([{"level": 1, "text": "Heading", "anchor": "heading"}])
     assert set(hydration.keys()) == {"document", "attached_citations", "attached_notes", "attached_quotes", "attached_sources", "seed"}
+    assert hydration["attached_citations"][0]["primary_render"]["kind"] == "bibliography"
     assert outline == {"items": [{"level": 1, "text": "Heading", "anchor": "heading"}]}

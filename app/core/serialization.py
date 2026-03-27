@@ -252,6 +252,43 @@ def serialize_citation(
     renders: dict[str, dict[str, str]],
     relationship_counts: dict[str, int] | None = None,
 ) -> dict[str, object]:
+    normalized_renders: dict[str, dict[str, str]] = {}
+    style_entries: list[dict[str, object]] = []
+    primary_render: dict[str, object] | None = None
+    style_priority = {"mla": 0, "apa": 1, "chicago": 2, "harvard": 3}
+    kind_priority = {"bibliography": 0, "footnote": 1, "quote_attribution": 2, "inline": 3}
+
+    for style in sorted(
+        [key for key, value in renders.items() if isinstance(value, dict) and value],
+        key=lambda value: (style_priority.get(value, 99), value),
+    ):
+        outputs = {
+            str(kind): str(text or "")
+            for kind, text in (renders.get(style) or {}).items()
+            if kind and text is not None
+        }
+        if not outputs:
+            continue
+        normalized_renders[style] = outputs
+        kinds = sorted(outputs.keys(), key=lambda value: (kind_priority.get(value, 99), value))
+        style_entries.append(
+            {
+                "style": style,
+                "kinds": kinds,
+                "texts": outputs,
+            }
+        )
+        if primary_render is None:
+            for kind in kinds:
+                text = outputs.get(kind) or ""
+                if text:
+                    primary_render = {
+                        "style": style,
+                        "kind": kind,
+                        "text": text,
+                    }
+                    break
+
     return {
         "id": row.get("id"),
         "source_id": row.get("source_id"),
@@ -260,7 +297,12 @@ def serialize_citation(
         "annotation": row.get("annotation"),
         "excerpt": row.get("excerpt"),
         "quote_text": row.get("quote_text"),
-        "renders": renders,
+        "renders": normalized_renders,
+        "primary_render": primary_render,
+        "available_renders": {
+            "styles": style_entries,
+            "primary": primary_render,
+        },
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "relationship_counts": relationship_counts or {},

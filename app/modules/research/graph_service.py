@@ -568,7 +568,9 @@ class ResearchGraphService:
                 "project_id": payload.project_id or (payload.note.project_id if payload.note else None),
             },
         )
-        document_id = document["data"]["id"]
+        document = document["data"]
+        document_id = document["id"]
+        revision = document.get("revision") or document.get("updated_at")
         lines: list[str] = []
         if payload.title:
             lines.append(f"{payload.title}\n")
@@ -589,26 +591,34 @@ class ResearchGraphService:
             "note_id": note.get("id") if note else None,
             "mode": "quote_focus" if quote else "seed_review",
         }
-        await self.workspace_service.update_document(
+        updated_document = await self.workspace_service.update_document(
             user_id=user_id,
             access_token=access_token,
             capability_state=capability_state,
             document_id=document_id,
-            payload={"content_delta": {"ops": seed["ops"]}},
+            payload={
+                "revision": revision,
+                "content_delta": {"ops": seed["ops"]},
+            },
         )
+        document = updated_document["data"]
+        revision = document.get("revision") or document.get("updated_at")
         document = await self.workspace_service.replace_document_citations(
             user_id=user_id,
             access_token=access_token,
             capability_state=capability_state,
             document_id=document_id,
+            revision=revision,
             citation_ids=[citation["id"]],
         )
+        revision = document["data"].get("revision") or document["data"].get("updated_at")
         if note is not None:
             document = await self.workspace_service.replace_document_notes(
                 user_id=user_id,
                 access_token=access_token,
                 capability_state=capability_state,
                 document_id=document_id,
+                revision=revision,
                 note_ids=[note["id"]],
             )
         return {

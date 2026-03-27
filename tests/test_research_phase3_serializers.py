@@ -119,10 +119,25 @@ def test_citation_serializer_shape_is_stable():
         "excerpt",
         "quote_text",
         "renders",
+        "primary_render",
+        "available_renders",
         "created_at",
         "updated_at",
         "relationship_counts",
     }
+    assert payload["primary_render"] == {
+        "style": "mla",
+        "kind": "bibliography",
+        "text": "Ada. Source.",
+    }
+    assert payload["available_renders"]["primary"] == payload["primary_render"]
+    assert payload["available_renders"]["styles"] == [
+        {
+            "style": "mla",
+            "kinds": ["bibliography", "inline"],
+            "texts": {"inline": "(Ada)", "bibliography": "Ada. Source."},
+        }
+    ]
 
 
 def test_citation_template_serializer_shape_is_stable():

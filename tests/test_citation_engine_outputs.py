@@ -63,6 +63,29 @@ def test_normalize_citation_payload_dedupes_institutional_author_and_publisher()
     assert normalized["context"]["citation_version"]
 
 
+def test_normalization_logs_input_and_selected_output(caplog):
+    with caplog.at_level("INFO"):
+        normalized = normalize_citation_payload(
+            ExtractionPayload(
+                canonical_url="https://example.com/logged",
+                page_url="https://example.com/logged?utm=feed",
+                title_candidates=[ExtractionCandidate(value="Logged title", confidence=1.0, source="meta:name:citation_title")],
+                author_candidates=[ExtractionCandidate(value="Ada Lovelace", confidence=1.0, source="meta:name:citation_author")],
+                date_candidates=[ExtractionCandidate(value="2024-02-03", confidence=1.0, source="meta:name:citation_publication_date")],
+                identifiers={"doi": "10.1000/logged"},
+            )
+        )
+
+    assert normalized["source"]["identifiers"]["doi"] == "10.1000/logged"
+    start = next(record for record in caplog.records if record.msg == "citation.normalize.start")
+    selected = next(record for record in caplog.records if record.msg == "citation.normalize.selected")
+    assert start.canonical_url == "https://example.com/logged"
+    assert start.identifier_keys == ["doi"]
+    assert selected.author_count == 1
+    assert selected.issued_raw == "2024-02-03"
+    assert selected.fingerprint == "doi:10.1000/logged"
+
+
 def test_render_citation_separates_inline_and_full():
     source, context = _canonical_payload()
     outputs = {
@@ -168,6 +191,58 @@ def test_normalization_handles_multiple_and_organization_authors():
     assert normalized["source"]["source_type"] == "report"
 
 
+def test_normalization_prefers_structured_authors_over_weaker_dom_conflicts():
+    normalized = normalize_citation_payload(
+        ExtractionPayload(
+            canonical_url="https://example.com/structured-authors",
+            page_url="https://example.com/structured-authors",
+            title_candidates=[ExtractionCandidate(value="Structured authors", confidence=1.0, source="jsonld:article")],
+            author_candidates=[
+                ExtractionCandidate(value="Ada Lovelace", confidence=0.7, source="meta:name:citation_author"),
+                ExtractionCandidate(value="Byline Widget", confidence=0.99, source="dom:byline"),
+            ],
+            raw_metadata={"site_name": "Example Journal"},
+        )
+    )
+
+    assert [author["fullName"] for author in normalized["source"]["authors"]] == ["Ada Lovelace"]
+
+
+def test_normalization_composes_given_and_family_names_from_raw_metadata_authors():
+    normalized = normalize_citation_payload(
+        ExtractionPayload(
+            canonical_url="https://example.com/split-author",
+            page_url="https://example.com/split-author",
+            title_candidates=[ExtractionCandidate(value="Split name article", confidence=1.0)],
+            raw_metadata={
+                "authors": [
+                    {"givenName": "Grace", "familyName": "Hopper"},
+                ]
+            },
+        )
+    )
+
+    assert [author["fullName"] for author in normalized["source"]["authors"]] == ["Grace Hopper"]
+
+
+def test_normalization_keeps_organization_author_intact_without_splitting():
+    normalized = normalize_citation_payload(
+        ExtractionPayload(
+            canonical_url="https://example.com/org-author",
+            page_url="https://example.com/org-author",
+            title_candidates=[ExtractionCandidate(value="Org author article", confidence=1.0)],
+            author_candidates=[
+                ExtractionCandidate(value="Center for Research and Policy", confidence=1.0, source="jsonld:report"),
+            ],
+            publisher_candidates=[ExtractionCandidate(value="Center for Research and Policy", confidence=1.0, source="jsonld:report")],
+            source_type_candidates=[ExtractionCandidate(value="report", confidence=1.0, source="jsonld:report")],
+        )
+    )
+
+    assert [author["fullName"] for author in normalized["source"]["authors"]] == ["Center for Research and Policy"]
+    assert normalized["source"]["authors"][0]["isOrganization"] is True
+
+
 def test_normalization_tracks_issued_modified_and_accessed_dates():
     normalized = normalize_citation_payload(
         ExtractionPayload(
@@ -188,6 +263,48 @@ def test_normalization_tracks_issued_modified_and_accessed_dates():
     assert normalized["source"]["metadata"]["modified_date"]["iso"] == "2024-05-07"
     assert normalized["source"]["metadata"]["accessed_date"]["iso"] == "2026-03-23"
     assert normalized["source"]["source_type"] == "article"
+
+
+def test_normalization_prefers_published_date_over_modified_candidate_noise():
+    normalized = normalize_citation_payload(
+        ExtractionPayload(
+            canonical_url="https://example.com/date-ordering",
+            page_url="https://example.com/date-ordering",
+            title_candidates=[ExtractionCandidate(value="Date ordering", confidence=1.0)],
+            date_candidates=[
+                ExtractionCandidate(value="2024-05-07", confidence=0.99, source="meta:property:article:modified_time"),
+                ExtractionCandidate(value="2024-05-06", confidence=0.7, source="meta:property:article:published_time"),
+            ],
+        )
+    )
+
+    assert normalized["source"]["issued"]["raw"] == "2024-05-06"
+
+
+def test_normalization_prefers_explicit_canonical_url_over_page_url():
+    normalized = normalize_citation_payload(
+        ExtractionPayload(
+            canonical_url="https://example.com/article",
+            page_url="https://example.com/article?utm_source=newsletter",
+            title_candidates=[ExtractionCandidate(value="Canonical stability", confidence=1.0)],
+        )
+    )
+
+    assert normalized["source"]["canonical_url"] == "https://example.com/article"
+    assert normalized["source"]["page_url"] == "https://example.com/article?utm_source=newsletter"
+
+
+def test_normalization_preserves_and_normalizes_doi_identifier():
+    normalized = normalize_citation_payload(
+        ExtractionPayload(
+            canonical_url="https://example.com/doi-normalization",
+            page_url="https://example.com/doi-normalization",
+            title_candidates=[ExtractionCandidate(value="DOI normalization", confidence=1.0)],
+            identifiers={"doi": "DOI: 10.5555/ABC-123."},
+        )
+    )
+
+    assert normalized["source"]["identifiers"]["doi"] == "10.5555/abc-123"
 
 
 def test_normalization_infers_dataset_and_preserves_canonical_url_separately():

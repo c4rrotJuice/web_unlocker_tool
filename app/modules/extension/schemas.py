@@ -138,7 +138,7 @@ class WorkInEditorRequest(BaseModel):
     selected_text: str | None = None
     citation_format: str | None = None
     citation_text: str | None = None
-    extraction_payload: dict[str, Any] | None = None
+    extraction_payload: ExtractionPayload | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     locator: dict[str, Any] = Field(default_factory=dict)
     project_id: str | None = None

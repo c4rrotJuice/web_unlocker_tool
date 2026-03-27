@@ -79,6 +79,7 @@ const META_TITLE_KEYS = new Set([
   "title",
   "article:title",
   "og:title",
+  "twitter:title",
   "citation_title",
   "dc.title",
   "dcterms.title",
@@ -92,12 +93,42 @@ const META_CANONICAL_URL_KEYS = new Set([
   "citation_fulltext_html_url",
 ]);
 
+const META_SOURCE_TYPE_KEYS = new Set([
+  "og:type",
+  "citation_document_type",
+  "citation_dissertation_name",
+]);
+
 const IDENTIFIER_META_KEYS = {
-  doi: new Set(["citation_doi", "prism.doi"]),
+  doi: new Set(["citation_doi", "prism.doi", "dc.identifier", "dcterms.identifier"]),
   issn: new Set(["citation_issn", "prism.issn"]),
   isbn: new Set(["citation_isbn"]),
   pdf_url: new Set(["citation_pdf_url"]),
 };
+
+const AUTHOR_JUNK_VALUES = new Set([
+  "by",
+  "share",
+  "updated",
+  "published",
+  "author",
+  "authors",
+  "read more",
+  "follow",
+  "staff",
+]);
+
+const DATE_JUNK_VALUES = new Set([
+  "updated",
+  "published",
+  "date",
+  "share",
+  "posted",
+  "posted on",
+  "last updated",
+]);
+
+const DOI_PATTERN = /\b10\.\d{4,9}\/[-._;()/:a-z0-9]+\b/i;
 
 function normalizeText(value: any) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
@@ -148,6 +179,15 @@ function normalizeUrlCandidate(value: any) {
     return "";
   }
   return normalized;
+}
+
+function extractDoi(value: any) {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+  const match = normalized.match(DOI_PATTERN);
+  return normalizeText(match?.[0] || "");
 }
 
 function pushCandidate(bucket: any[], seen: Set<string>, value: any, confidence: number, source: string) {
@@ -252,6 +292,7 @@ function addMetaCandidates(metaEntries: any[], candidates: any) {
   const dateSeen = new Set<string>();
   const publisherSeen = new Set<string>();
   const containerSeen = new Set<string>();
+  const sourceTypeSeen = new Set<string>();
 
   for (const entry of metaEntries) {
     const key = entry.key.toLowerCase();
@@ -283,9 +324,19 @@ function addMetaCandidates(metaEntries: any[], candidates: any) {
     if (META_LANGUAGE_KEYS.has(key)) {
       pushEvidence(candidates.raw.meta_tags.language, entry.content, entry.source, { key });
     }
+    if (META_SOURCE_TYPE_KEYS.has(key)) {
+      pushCandidate(candidates.source_type_candidates, sourceTypeSeen, entry.content, 0.82, entry.source);
+    }
     for (const [identifierKey, metaKeys] of Object.entries(IDENTIFIER_META_KEYS)) {
       if (metaKeys.has(key)) {
-        pushIdentifier(candidates.identifiers, identifierKey, entry.content, entry.source);
+        const identifierValue = identifierKey === "doi" ? extractDoi(entry.content) || entry.content : entry.content;
+        pushIdentifier(candidates.identifiers, identifierKey, identifierValue, entry.source);
+      }
+    }
+    if (!candidates.identifiers.identifiers.doi && (key.includes("doi") || key.includes("identifier"))) {
+      const doi = extractDoi(entry.content);
+      if (doi) {
+        pushIdentifier(candidates.identifiers, "doi", doi, entry.source);
       }
     }
     if (META_CANONICAL_URL_KEYS.has(key)) {
@@ -369,7 +420,13 @@ function normalizeVisibleAuthorText(value: any) {
     return "";
   }
   const lower = normalized.toLowerCase();
-  if (["by", "share", "updated", "published", "author", "authors"].includes(lower)) {
+  if (AUTHOR_JUNK_VALUES.has(lower)) {
+    return "";
+  }
+  if (/^(share|follow|posted|updated|published)\b/i.test(normalized)) {
+    return "";
+  }
+  if (normalized.length > 120) {
     return "";
   }
   return normalized;
@@ -381,14 +438,20 @@ function normalizeVisibleDateText(value: any) {
     return "";
   }
   const lower = normalized.toLowerCase();
-  if (["updated", "published", "date", "share"].includes(lower)) {
+  if (DATE_JUNK_VALUES.has(lower)) {
+    return "";
+  }
+  if (!/\d/.test(normalized)) {
+    return "";
+  }
+  if (/^(share|follow|author|by)\b/i.test(normalized)) {
     return "";
   }
   return normalized;
 }
 
 function parseIdentifierFromJsonLd(node: any, collector: any, source: string) {
-  const directDoi = normalizeText(node?.doi);
+  const directDoi = extractDoi(node?.doi);
   if (directDoi) {
     pushIdentifier(collector, "doi", directDoi, source);
   }
@@ -402,8 +465,8 @@ function parseIdentifierFromJsonLd(node: any, collector: any, source: string) {
   }
   for (const entry of toArray(node?.identifier)) {
     if (typeof entry === "string") {
-      const normalized = normalizeText(entry);
-      if (/10\.\S+\/\S+/i.test(normalized)) {
+      const normalized = extractDoi(entry);
+      if (normalized) {
         pushIdentifier(collector, "doi", normalized, source);
       }
       continue;
@@ -417,7 +480,7 @@ function parseIdentifierFromJsonLd(node: any, collector: any, source: string) {
       continue;
     }
     if (propertyId.includes("doi")) {
-      pushIdentifier(collector, "doi", value, source);
+      pushIdentifier(collector, "doi", extractDoi(value) || value, source);
     } else if (propertyId.includes("issn")) {
       pushIdentifier(collector, "issn", value, source);
     } else if (propertyId.includes("isbn")) {
@@ -547,48 +610,39 @@ function addJsonLdCandidates(documentRef: any, candidates: any) {
   });
 }
 
-function addVisibleTimeCandidates(documentRef: any, candidates: any) {
-  const dateSeen = new Set<string>(candidates.date_candidates.map((candidate: any) => `${candidate.value.toLowerCase()}|${candidate.source}`));
-  let count = 0;
-  walkElements(documentRef?.body || null, (node) => {
-    if (count >= TIME_ELEMENT_LIMIT) {
-      return false;
-    }
-    if (String(node?.tagName || "").toUpperCase() !== "TIME") {
-      return;
-    }
-    const datetime = readAttribute(node, "datetime");
-    const text = normalizeText(node?.textContent || "");
-    if (!datetime && !text) {
-      return;
-    }
-    count += 1;
-    const source = "dom:time";
-    if (datetime) {
-      pushCandidate(candidates.date_candidates, dateSeen, datetime, 0.68, source);
-    } else if (text) {
-      pushCandidate(candidates.date_candidates, dateSeen, text, 0.55, source);
-    }
-    candidates.raw.visible_times.push({
-      datetime: datetime || null,
-      text: text || null,
-      source,
-    });
-  });
-}
-
-function addVisibleBylineCandidates(documentRef: any, candidates: any) {
+function addVisibleDomCandidates(documentRef: any, candidates: any) {
   const authorSeen = new Set<string>(candidates.author_candidates.map((candidate: any) => `${candidate.value.toLowerCase()}|${candidate.source}`));
   const dateSeen = new Set<string>(candidates.date_candidates.map((candidate: any) => `${candidate.value.toLowerCase()}|${candidate.source}`));
+  let timeCount = 0;
   let authorCount = 0;
   let dateCount = 0;
 
   walkElements(documentRef?.body || null, (node) => {
-    if (authorCount >= VISIBLE_METADATA_LIMIT && dateCount >= VISIBLE_METADATA_LIMIT) {
+    if (timeCount >= TIME_ELEMENT_LIMIT && authorCount >= VISIBLE_METADATA_LIMIT && dateCount >= VISIBLE_METADATA_LIMIT) {
       return false;
     }
     if (!node || typeof node.tagName !== "string") {
       return;
+    }
+    const tagName = String(node.tagName || "").toUpperCase();
+
+    if (timeCount < TIME_ELEMENT_LIMIT && tagName === "TIME") {
+      const datetime = readAttribute(node, "datetime");
+      const text = normalizeVisibleDateText(node?.textContent || "");
+      if (datetime || text) {
+        timeCount += 1;
+        const source = "dom:time";
+        if (datetime) {
+          pushCandidate(candidates.date_candidates, dateSeen, datetime, 0.68, source);
+        } else if (text) {
+          pushCandidate(candidates.date_candidates, dateSeen, text, 0.55, source);
+        }
+        candidates.raw.visible_times.push({
+          datetime: datetime || null,
+          text: text || null,
+          source,
+        });
+      }
     }
 
     if (authorCount < VISIBLE_METADATA_LIMIT && isLikelyVisibleAuthorNode(node)) {
@@ -662,8 +716,7 @@ export function extractPageMetadata({
 
   addMetaCandidates(metaEntries, candidates);
   addJsonLdCandidates(documentRef, candidates);
-  addVisibleTimeCandidates(documentRef, candidates);
-  addVisibleBylineCandidates(documentRef, candidates);
+  addVisibleDomCandidates(documentRef, candidates);
 
   const documentTitle = normalizeText(documentRef?.title || "");
   if (documentTitle && !candidates.title_candidates.length) {

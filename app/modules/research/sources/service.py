@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import HTTPException
@@ -9,6 +10,9 @@ from app.core.serialization import serialize_paging_meta
 from app.core.serialization import serialize_source_detail, serialize_source_summary
 from app.modules.research.sources.repo import SourcesRepository
 from app.services.citation_domain import ExtractionPayload, normalize_citation_payload
+
+
+logger = logging.getLogger(__name__)
 
 
 class SourcesService:
@@ -32,10 +36,23 @@ class SourcesService:
                     "message": "Canonical extraction payload is required.",
                 },
             )
+        logger.info(
+            "sources.resolve_or_create.start",
+            extra={
+                "stage": "source_resolve_start",
+                "canonical_url": extraction_payload.canonical_url,
+                "page_url": extraction_payload.page_url,
+                "identifier_keys": sorted(str(key) for key in (extraction_payload.identifiers or {}).keys()),
+                "author_candidate_count": len(extraction_payload.author_candidates or []),
+                "date_candidate_count": len(extraction_payload.date_candidates or []),
+            },
+        )
         normalized_source = self.normalize_source(extraction_payload)
         existing = await self.repository.get_source_by_fingerprint(fingerprint=normalized_source["fingerprint"])
         row = existing
+        resolution = "reused"
         if row is None:
+            resolution = "created"
             row = await self.repository.create_source(
                 {
                     "fingerprint": normalized_source["fingerprint"],
@@ -58,6 +75,19 @@ class SourcesService:
             )
         if row is None:
             raise HTTPException(status_code=500, detail="Failed to resolve source")
+        logger.info(
+            "sources.resolve_or_create.success",
+            extra={
+                "stage": "source_resolve_success",
+                "source_id": row.get("id"),
+                "fingerprint": normalized_source["fingerprint"],
+                "resolution": resolution,
+                "source_type": normalized_source["source_type"],
+                "author_count": len(normalized_source["authors"] or []),
+                "issued_raw": (normalized_source["issued"] or {}).get("raw"),
+                "canonical_url": normalized_source["canonical_url"],
+            },
+        )
         return serialize_source_detail(row, relationship_counts={})
 
     async def list_sources(

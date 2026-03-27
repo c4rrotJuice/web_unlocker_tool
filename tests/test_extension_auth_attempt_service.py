@@ -406,7 +406,16 @@ async def test_work_in_editor_returns_canonical_seeded_editor_launch_contract():
         url="https://example.com/article",
         title="Example article",
         selected_text="Quoted text",
-        extraction_payload={},
+        extraction_payload={
+            "canonical_url": "https://example.com/article",
+            "page_url": "https://example.com/article",
+            "title_candidates": [{"value": "Example article", "confidence": 1.0}],
+            "author_candidates": [{"value": "Ada Lovelace", "confidence": 0.9}],
+            "date_candidates": [{"value": "2024-02-03", "confidence": 0.9}],
+            "locator": {"paragraph": 2},
+            "raw_metadata": {"quote": "Quoted text", "excerpt": "Quoted text"},
+        },
+        locator={"paragraph": 2},
         citation_text="Example citation text",
         project_id="project-1",
     )

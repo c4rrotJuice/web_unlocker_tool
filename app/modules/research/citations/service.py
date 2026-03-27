@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import HTTPException
@@ -19,6 +20,9 @@ from app.services.citation_domain import (
 )
 from app.services.citation_templates import validate_template
 from app.services.free_tier_gating import allowed_citation_formats
+
+
+logger = logging.getLogger(__name__)
 
 
 class CitationsService:
@@ -119,6 +123,18 @@ class CitationsService:
             "citation_version": citation_row.get("citation_version") or "",
         }
         bundle = generate_render_bundle(source_payload, context_payload)
+        logger.info(
+            "citations.render_bundle.generated",
+            extra={
+                "stage": "render_generation",
+                "citation_id": citation_id,
+                "source_id": source_id,
+                "source_version": bundle["source_version"],
+                "citation_version": bundle["citation_version"],
+                "styles": sorted(bundle["renders"].keys()),
+                "render_kinds": sorted({kind for outputs in bundle["renders"].values() for kind in outputs.keys()}),
+            },
+        )
         rows: list[dict[str, Any]] = []
         for style, outputs in bundle["renders"].items():
             for render_kind, rendered_text in outputs.items():
@@ -454,7 +470,20 @@ class CitationsService:
         style: str | None = None,
     ) -> dict:
         extraction_payload = self._require_extraction_payload(extraction_payload)
-        self._ensure_style_allowed(account_type=account_type, style=style)
+        selected_style = self._ensure_style_allowed(account_type=account_type, style=style)
+        logger.info(
+            "citations.create.start",
+            extra={
+                "stage": "citation_create_start",
+                "user_id": user_id,
+                "style": selected_style,
+                "canonical_url": extraction_payload.canonical_url,
+                "page_url": extraction_payload.page_url,
+                "author_candidate_count": len(extraction_payload.author_candidates or []),
+                "date_candidate_count": len(extraction_payload.date_candidates or []),
+                "identifier_keys": sorted(str(key) for key in (extraction_payload.identifiers or {}).keys()),
+            },
+        )
         source = await self.sources_service.resolve_or_create_source(
             access_token=access_token,
             extraction_payload=extraction_payload,
@@ -472,16 +501,46 @@ class CitationsService:
         )
         if row is None:
             raise HTTPException(status_code=500, detail="Failed to create citation instance")
+        logger.info(
+            "citations.create.instance_persisted",
+            extra={
+                "stage": "citation_instance_persisted",
+                "citation_id": row.get("id"),
+                "source_id": source.get("id"),
+                "citation_version": row.get("citation_version"),
+            },
+        )
         source_rows = await self.sources_service.get_source_rows_by_ids(source_ids=[source["id"]], access_token=access_token)
         source_row = source_rows[0] if source_rows else self._source_detail_to_row(source)
-        await self.refresh_renders(access_token=access_token, citation_row=row, source_row=source_row)
-        return await self.get_citation(
+        try:
+            await self.refresh_renders(access_token=access_token, citation_row=row, source_row=source_row)
+        except Exception:
+            logger.exception(
+                "citations.create.render_refresh_failed",
+                extra={
+                    "stage": "citation_render_refresh_failed",
+                    "citation_id": row.get("id"),
+                    "source_id": source.get("id"),
+                },
+            )
+            raise
+        hydrated = await self.get_citation(
             user_id=user_id,
             access_token=access_token,
             citation_id=str(row["id"]),
             account_type=account_type,
         )
-
+        logger.info(
+            "citations.create.success",
+            extra={
+                "stage": "citation_create_success",
+                "citation_id": hydrated.get("id"),
+                "source_id": hydrated.get("source_id"),
+                "style": selected_style,
+                "render_styles": sorted((hydrated.get("renders") or {}).keys()),
+            },
+        )
+        return hydrated
     async def update_citation(
         self,
         *,

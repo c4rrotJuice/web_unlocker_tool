@@ -214,11 +214,130 @@ test("extractPageMetadata falls back to visible byline/date and canonical meta w
   ]);
 });
 
+test("extractPageMetadata preserves conflicting author signals and prefers canonical fallback from og:url", () => {
+  const documentRef = new FakeDocument();
+  documentRef.title = "Conflicting Signals";
+  appendMeta(documentRef, { name: "author", content: "Meta Author" });
+  appendMeta(documentRef, { property: "article:author", content: "Article Author" });
+  appendMeta(documentRef, { property: "og:url", content: "https://example.com/conflict" });
+
+  const metadata = extractPageMetadata({
+    documentRef,
+    windowRef: createWindow("https://example.com/conflict?campaign=feed"),
+  });
+
+  assert.equal(metadata.canonical_url, "https://example.com/conflict");
+  assert.deepEqual(metadata.author_candidates.map((entry) => entry.value), [
+    "Meta Author",
+    "Article Author",
+  ]);
+});
+
+test("extractPageMetadata composes split JSON-LD author names and captures publisher/site signals", () => {
+  const documentRef = new FakeDocument();
+  appendMeta(documentRef, { property: "og:site_name", content: "Example News" });
+  appendScript(documentRef, "application/ld+json", JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "NewsArticle",
+    headline: "JSON-LD Split Author",
+    author: [
+      { "@type": "Person", givenName: "Grace", familyName: "Hopper" },
+      { "@type": "Person", name: "Rear Admiral Hopper" },
+    ],
+    datePublished: "2024-04-05",
+    publisher: { "@type": "Organization", name: "Example Newsroom" },
+    url: "https://example.com/jsonld-author",
+  }));
+
+  const metadata = extractPageMetadata({
+    documentRef,
+    windowRef: createWindow("https://example.com/jsonld-author"),
+  });
+
+  assert.equal(metadata.canonical_url, "https://example.com/jsonld-author");
+  assert.ok(metadata.author_candidates.some((entry) => entry.value === "Grace Hopper"));
+  assert.ok(metadata.author_candidates.some((entry) => entry.value === "Rear Admiral Hopper"));
+  assert.ok(metadata.publisher_candidates.some((entry) => entry.value === "Example News"));
+  assert.ok(metadata.publisher_candidates.some((entry) => entry.value === "Example Newsroom"));
+  assert.ok(metadata.source_type_candidates.some((entry) => entry.value === "newsarticle"));
+});
+
+test("extractPageMetadata rejects junk visible byline/date candidates", () => {
+  const documentRef = new FakeDocument();
+  documentRef.title = "Junk Candidate Page";
+
+  const junkByline = documentRef.createElement("div");
+  junkByline.setAttribute("class", "author");
+  junkByline.textContent = "Share";
+  documentRef.body.appendChild(junkByline);
+
+  const junkDate = documentRef.createElement("span");
+  junkDate.setAttribute("class", "published");
+  junkDate.textContent = "Updated";
+  documentRef.body.appendChild(junkDate);
+
+  const realByline = documentRef.createElement("div");
+  realByline.setAttribute("data-testid", "article-author");
+  realByline.textContent = "By Janet Morris";
+  documentRef.body.appendChild(realByline);
+
+  const realDate = documentRef.createElement("span");
+  realDate.setAttribute("data-testid", "publish-date");
+  realDate.textContent = "2024-01-09";
+  documentRef.body.appendChild(realDate);
+
+  const metadata = extractPageMetadata({
+    documentRef,
+    windowRef: createWindow("https://example.com/junk-filter"),
+  });
+
+  assert.deepEqual(metadata.author_candidates.map((entry) => entry.value), ["Janet Morris"]);
+  assert.deepEqual(metadata.date_candidates.map((entry) => entry.value), ["2024-01-09"]);
+  assert.deepEqual(metadata.extraction_evidence.visible_bylines, [
+    { value: "Janet Morris", source: "dom:byline" },
+  ]);
+  assert.deepEqual(metadata.extraction_evidence.visible_dates, [
+    { datetime: null, text: "2024-01-09", source: "dom:date" },
+  ]);
+});
+
+test("extractPageMetadata captures DOI from generic identifier metadata", () => {
+  const documentRef = new FakeDocument();
+  appendMeta(documentRef, { name: "dc.identifier", content: "https://doi.org/10.5555/example-doi" });
+
+  const metadata = extractPageMetadata({
+    documentRef,
+    windowRef: createWindow("https://example.com/doi-page"),
+  });
+
+  assert.equal(metadata.identifiers.doi, "10.5555/example-doi");
+});
+
+test("extractPageMetadata captures publisher and container metadata deterministically", () => {
+  const documentRef = new FakeDocument();
+  documentRef.title = "Publisher Test";
+  appendMeta(documentRef, { property: "og:site_name", content: "Example Journal" });
+  appendMeta(documentRef, { name: "citation_journal_title", content: "Proceedings of Deterministic Capture" });
+  appendMeta(documentRef, { property: "og:type", content: "article" });
+  appendMeta(documentRef, { name: "date", content: "2024-07-08" });
+
+  const metadata = extractPageMetadata({
+    documentRef,
+    windowRef: createWindow("https://example.com/publisher-test"),
+  });
+
+  assert.equal(metadata.site_name, "Example Journal");
+  assert.deepEqual(metadata.container_candidates.map((entry) => entry.value), ["Proceedings of Deterministic Capture"]);
+  assert.ok(metadata.source_type_candidates.some((entry) => entry.value === "article"));
+  assert.deepEqual(metadata.date_candidates.map((entry) => entry.value), ["2024-07-08"]);
+});
+
 test("buildSelectionContextPayload preserves citation evidence", () => {
   const payload = buildSelectionContextPayload({
     selection: {
       normalized_text: "Selected sentence",
       text: "Selected sentence",
+      locator: { paragraph: 7, section: "Discussion" },
     },
     page: {
       title: "Evidence Title",
@@ -247,6 +366,7 @@ test("buildSelectionContextPayload preserves citation evidence", () => {
   });
 
   assert.equal(payload.capture.canonicalUrl, "https://example.com/source");
+  assert.deepEqual(payload.capture.locator, { paragraph: 7, section: "Discussion" });
   assert.equal(payload.capture.description, "Evidence description");
   assert.equal(payload.capture.language, "en");
   assert.equal(payload.capture.siteName, "Example Journal");
@@ -276,6 +396,7 @@ test("buildCaptureExtractionPayload populates candidate arrays, identifiers, and
     identifiers: { doi: "10.1000/rich-doi" },
     rawMetadata: { custom_flag: "kept" },
     extractionEvidence: { meta_tags: { dates: [{ value: "2024-02-04", source: "meta:name:citation_date" }] } },
+    locator: { paragraph: 2, section: "Results" },
   });
 
   assert.equal(richPayload.canonical_url, "https://example.com/rich");
@@ -289,6 +410,7 @@ test("buildCaptureExtractionPayload populates candidate arrays, identifiers, and
     { value: "Journal of Rich Sources", confidence: 0.88, source: "meta:name:citation_journal_title" },
   ]);
   assert.deepEqual(richPayload.identifiers, { doi: "10.1000/rich-doi" });
+  assert.deepEqual(richPayload.locator, { paragraph: 2, section: "Results" });
   assert.equal(richPayload.raw_metadata.custom_flag, "kept");
   assert.equal(richPayload.raw_metadata.author, "Jane Smith");
   assert.equal(richPayload.extraction_evidence.capture_source, "extension_selection");

@@ -21,6 +21,7 @@ function createRichCapture() {
     containerCandidates: [{ value: "Journal of Analytical Engines", confidence: 0.88, source: "meta:name:citation_journal_title" }],
     sourceTypeCandidates: [{ value: "scholarlyarticle", confidence: 0.85, source: "jsonld:scholarlyarticle" }],
     identifiers: { doi: "10.1000/example-doi", issn: "1234-5678" },
+    locator: { paragraph: 4, section: "Methods" },
     extractionEvidence: {
       meta_tags: {
         authors: [{ value: "Ada Lovelace", source: "meta:name:author", key: "author" }],
@@ -113,11 +114,11 @@ test("background preview and save preserve identical rich extraction payloads", 
   const richCapture = createRichCapture();
   const previewResult = await citationHandler.preview({
     requestId: "preview-1",
-    payload: { capture: richCapture, style: "mla" },
+    payload: { capture: richCapture, style: "mla", excerpt: "Selected sentence", locator: { paragraph: 4, section: "Methods" }, annotation: "Pinned", quote: "Selected sentence" },
   });
   const saveResult = await citationHandler.save({
     requestId: "save-1",
-    payload: { capture: richCapture, style: "mla", format: "bibliography" },
+    payload: { capture: richCapture, style: "mla", format: "bibliography", excerpt: "Selected sentence", locator: { paragraph: 4, section: "Methods" }, annotation: "Pinned", quote: "Selected sentence" },
   });
 
   assert.equal(previewResult.ok, true);
@@ -134,6 +135,10 @@ test("background preview and save preserve identical rich extraction payloads", 
     doi: "10.1000/example-doi",
     issn: "1234-5678",
   });
+  assert.deepEqual(calls[0].payload.extraction_payload.locator, { paragraph: 4, section: "Methods" });
+  assert.deepEqual(calls[0].payload.locator, { paragraph: 4, section: "Methods" });
+  assert.equal(calls[0].payload.annotation, "Pinned");
+  assert.equal(calls[0].payload.quote, "Selected sentence");
   assert.equal(calls[0].payload.extraction_payload.canonical_url, "https://example.com/articles/structured");
   assert.equal(calls[0].payload.extraction_payload.raw_metadata.custom_flag, "preserved");
 });
@@ -161,7 +166,7 @@ test("extension capture create flow forwards the same rich extraction evidence f
 
   const result = await captureHandler.createCitation({
     requestId: "capture-1",
-    payload: { capture: createRichCapture() },
+    payload: { capture: createRichCapture(), excerpt: "Selected sentence", locator: { paragraph: 4, section: "Methods" }, annotation: "Pinned", quote: "Selected sentence" },
   });
 
   assert.equal(result.ok, true);
@@ -176,6 +181,57 @@ test("extension capture create flow forwards the same rich extraction evidence f
     doi: "10.1000/example-doi",
     issn: "1234-5678",
   });
+  assert.deepEqual(calls[0].extraction_payload.locator, { paragraph: 4, section: "Methods" });
+  assert.deepEqual(calls[0].locator, { paragraph: 4, section: "Methods" });
+  assert.equal(calls[0].annotation, "Pinned");
+  assert.equal(calls[0].quote, "Selected sentence");
   assert.equal(calls[0].extraction_payload.raw_metadata.site_name, "Example Journal");
   assert.equal(calls[0].extraction_payload.extraction_evidence.meta_tags.authors[0].value, "Ada Lovelace");
+});
+
+test("extension quote flow preserves locator and annotation when creating the quote", async () => {
+  const createCitationCalls = [];
+  const createQuoteCalls = [];
+  const captureHandler = createCaptureHandler({
+    captureApi: {
+      async createCitation(payload) {
+        createCitationCalls.push(payload);
+        return {
+          ok: true,
+          status: "ok",
+          data: { id: "citation-3" },
+        };
+      },
+      async createQuote(payload) {
+        createQuoteCalls.push(payload);
+        return {
+          ok: true,
+          status: "ok",
+          data: { id: "quote-1" },
+        };
+      },
+      async createNote() {
+        throw new Error("unexpected createNote");
+      },
+    },
+  });
+
+  const result = await captureHandler.createQuote({
+    requestId: "quote-1",
+    payload: {
+      capture: createRichCapture(),
+      locator: { paragraph: 4, section: "Methods" },
+      annotation: "Pinned",
+      quote: "Selected sentence",
+      excerpt: "Selected sentence",
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(createCitationCalls.length, 1);
+  assert.equal(createQuoteCalls.length, 1);
+  assert.deepEqual(createCitationCalls[0].locator, { paragraph: 4, section: "Methods" });
+  assert.deepEqual(createCitationCalls[0].extraction_payload.locator, { paragraph: 4, section: "Methods" });
+  assert.deepEqual(createQuoteCalls[0].locator, { paragraph: 4, section: "Methods" });
+  assert.equal(createQuoteCalls[0].annotation, "Pinned");
 });

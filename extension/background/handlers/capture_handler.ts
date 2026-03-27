@@ -6,6 +6,18 @@ import {
 } from "../../shared/types/capture.ts";
 import { createErrorResult, createOkResult, ERROR_CODES } from "../../shared/types/messages.ts";
 
+function summarizeCapture(capture: any = {}) {
+  return {
+    pageUrl: capture.pageUrl || null,
+    canonicalUrl: capture.canonicalUrl || null,
+    selectionLength: String(capture.selectionText || "").trim().length,
+    locatorKeys: Object.keys(capture.locator || {}).sort(),
+    authorCandidateCount: Array.isArray(capture.authorCandidates) ? capture.authorCandidates.length : 0,
+    dateCandidateCount: Array.isArray(capture.dateCandidates) ? capture.dateCandidates.length : 0,
+    identifierKeys: Object.keys(capture.identifiers || {}).sort(),
+  };
+}
+
 function normalizeResult(result, requestId) {
   if (!result || typeof result !== "object") {
     return createErrorResult(ERROR_CODES.INVALID_PAYLOAD, "Capture result is invalid.", requestId);
@@ -76,8 +88,18 @@ export function createCaptureHandler({ captureApi }: any = {}) {
     throw new Error("createCaptureHandler requires a captureApi.");
   }
 
-  async function createCitationForContext(capture) {
-    return captureApi.createCitation(buildCitationCaptureRequest(capture));
+  async function createCitationForContext(capture, requestPayload = {}) {
+    console.info("extension.capture.createCitation.start", {
+      requestId: requestPayload?.requestId || null,
+      ...summarizeCapture(capture),
+    });
+    return captureApi.createCitation(buildCitationCaptureRequest({
+      ...capture,
+      excerpt: requestPayload?.excerpt,
+      locator: requestPayload?.locator ?? capture?.locator,
+      annotation: requestPayload?.annotation,
+      quote: requestPayload?.quote,
+    }));
   }
 
   return {
@@ -86,7 +108,13 @@ export function createCaptureHandler({ captureApi }: any = {}) {
       if (isErrorResult(capture)) {
         return capture;
       }
-      const result = await createCitationForContext(capture);
+      const result = await createCitationForContext(capture, { ...(request?.payload || {}), requestId: request?.requestId });
+      if (result?.ok === false) {
+        console.warn("extension.capture.createCitation.failed", {
+          requestId: request?.requestId || null,
+          errorCode: result?.error?.code || null,
+        });
+      }
       return normalizeResult(result, request.requestId);
     },
     async createQuote(request) {
@@ -94,8 +122,12 @@ export function createCaptureHandler({ captureApi }: any = {}) {
       if (isErrorResult(capture)) {
         return capture;
       }
-      const citationResult = await createCitationForContext(capture);
+      const citationResult = await createCitationForContext(capture, { ...(request?.payload || {}), requestId: request?.requestId });
       if (citationResult?.ok === false) {
+        console.warn("extension.capture.createQuote.citation_failed", {
+          requestId: request?.requestId || null,
+          errorCode: citationResult?.error?.code || null,
+        });
         return normalizeResult(citationResult, request.requestId);
       }
       const citationId = getCitationId(citationResult);
@@ -105,7 +137,16 @@ export function createCaptureHandler({ captureApi }: any = {}) {
       const result = await captureApi.createQuote(buildQuoteCaptureRequest({
         citationId,
         selectionText: capture.selectionText,
+        locator: request?.payload?.locator ?? capture.locator,
+        annotation: request?.payload?.annotation,
       }));
+      if (result?.ok === false) {
+        console.warn("extension.capture.createQuote.failed", {
+          requestId: request?.requestId || null,
+          citationId,
+          errorCode: result?.error?.code || null,
+        });
+      }
       return normalizeResult(result, request.requestId);
     },
     async createNote(request) {

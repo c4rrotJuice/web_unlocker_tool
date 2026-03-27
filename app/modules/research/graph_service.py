@@ -7,9 +7,6 @@ from fastapi import HTTPException
 from app.core.serialization import serialize_ok_envelope
 from app.core.serialization import serialize_research_graph
 from app.modules.research.common import normalize_uuid
-from app.services.citation_domain import ExtractionPayload
-
-
 class ResearchGraphService:
     def __init__(
         self,
@@ -514,11 +511,19 @@ class ResearchGraphService:
         payload,
         default_document_title: str,
     ) -> dict[str, object]:
+        if payload.extraction_payload is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "EXTRACTION_PAYLOAD_REQUIRED",
+                    "message": "Canonical extraction payload is required.",
+                },
+            )
         citation = await self.citations_service.create_citation(
             user_id=user_id,
             access_token=access_token,
             account_type=capability_state.tier,
-            extraction_payload=ExtractionPayload.model_validate(payload.extraction_payload),
+            extraction_payload=payload.extraction_payload,
             excerpt=payload.selected_text,
             quote=payload.selected_text,
             locator=payload.locator,

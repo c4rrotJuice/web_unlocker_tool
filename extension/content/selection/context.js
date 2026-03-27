@@ -8,6 +8,7 @@ export function buildSelectionContextPayload({ selection, page, }) {
             pageTitle: page?.title || "",
             pageUrl: page?.url || "",
             pageDomain: page?.host || "",
+            locator: selection?.locator || page?.locator || {},
             canonicalUrl: page?.canonical_url || "",
             description: page?.description || "",
             language: page?.language || "",

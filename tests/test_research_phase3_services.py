@@ -411,6 +411,63 @@ async def test_citation_create_get_list_update_delete_and_shape_are_canonical(ci
 
 
 @pytest.mark.anyio
+async def test_citation_create_persists_normalized_authors_and_issued_date(citations_service):
+    created = await citations_service.create_citation(
+        user_id="user-1",
+        access_token=None,
+        account_type="pro",
+        extraction_payload=ExtractionPayload(
+            canonical_url="https://example.com/normalized-source",
+            page_url="https://example.com/normalized-source?utm=feed",
+            title_candidates=[ExtractionCandidate(value="Normalized source", confidence=1.0, source="meta:name:citation_title")],
+            author_candidates=[
+                ExtractionCandidate(value="Ada Lovelace", confidence=0.7, source="meta:name:citation_author"),
+                ExtractionCandidate(value="Share", confidence=0.99, source="dom:byline"),
+            ],
+            date_candidates=[
+                ExtractionCandidate(value="2024-02-04", confidence=0.99, source="meta:property:article:modified_time"),
+                ExtractionCandidate(value="2024-02-03", confidence=0.7, source="meta:name:citation_publication_date"),
+            ],
+            identifiers={"doi": "https://doi.org/10.1000/Normalized-DOI"},
+            raw_metadata={"site_name": "Example Journal"},
+        ),
+        excerpt="Quoted sentence",
+        quote="Quoted sentence",
+        style="mla",
+    )
+
+    assert created["source"]["authors"][0]["fullName"] == "Ada Lovelace"
+    assert created["source"]["issued_date"]["raw"] == "2024-02-03"
+    assert created["source"]["canonical_url"] == "https://example.com/normalized-source"
+    assert created["source"]["page_url"] == "https://example.com/normalized-source?utm=feed"
+    assert created["source"]["identifiers"]["doi"] == "10.1000/normalized-doi"
+
+
+@pytest.mark.anyio
+async def test_citation_create_logs_flow_context(citations_service, caplog):
+    with caplog.at_level("INFO"):
+        created = await citations_service.create_citation(
+            user_id="user-1",
+            access_token=None,
+            account_type="pro",
+            extraction_payload=_canonical_extraction_payload(),
+            excerpt="Quoted sentence",
+            quote="Quoted sentence",
+            locator={"paragraph": 4},
+            style="mla",
+        )
+
+    start = next(record for record in caplog.records if record.msg == "citations.create.start")
+    persisted = next(record for record in caplog.records if record.msg == "citations.create.instance_persisted")
+    success = next(record for record in caplog.records if record.msg == "citations.create.success")
+    assert start.style == "mla"
+    assert start.identifier_keys == ["doi", "issn"]
+    assert persisted.citation_id == created["id"]
+    assert success.source_id == created["source_id"]
+    assert success.render_styles == ["apa", "chicago", "harvard", "mla"]
+
+
+@pytest.mark.anyio
 async def test_citation_preview_uses_canonical_rendering_without_persisting_rows(citations_service):
     preview = await citations_service.preview_citation(
         account_type="pro",

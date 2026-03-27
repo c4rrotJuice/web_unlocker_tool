@@ -333,27 +333,28 @@ async def test_create_citation_persists_and_hydrates_all_supported_render_kinds_
 
 
 @pytest.mark.anyio
-async def test_replace_renders_surfaces_constraint_failures_with_upstream_detail():
+async def test_replace_renders_surfaces_constraint_failures_with_upstream_detail(caplog):
     repository = CitationsRepository(supabase_repo=_FailingSupabaseRepo(), anon_key="anon")
 
-    with pytest.raises(HTTPException) as exc_info:
-        await repository.replace_renders(
-            citation_id="citation-1",
-            source_id="source-1",
-            rows=[
-                {
-                    "citation_instance_id": "citation-1",
-                    "source_id": "source-1",
-                    "style": "mla",
-                    "render_kind": "quote_attribution",
-                    "rendered_text": "\"Quoted sentence\" (Lovelace, par. 4)",
-                    "cache_key": "cache-key",
-                    "source_version": "source-version-1",
-                    "citation_version": "citation-version-1",
-                    "render_version": 1,
-                }
-            ],
-        )
+    with caplog.at_level("INFO"):
+        with pytest.raises(HTTPException) as exc_info:
+            await repository.replace_renders(
+                citation_id="citation-1",
+                source_id="source-1",
+                rows=[
+                    {
+                        "citation_instance_id": "citation-1",
+                        "source_id": "source-1",
+                        "style": "mla",
+                        "render_kind": "quote_attribution",
+                        "rendered_text": "\"Quoted sentence\" (Lovelace, par. 4)",
+                        "cache_key": "cache-key",
+                        "source_version": "source-version-1",
+                        "citation_version": "citation-version-1",
+                        "render_version": 1,
+                    }
+                ],
+            )
 
     detail = exc_info.value.detail
     assert exc_info.value.status_code == 500
@@ -361,3 +362,10 @@ async def test_replace_renders_surfaces_constraint_failures_with_upstream_detail
     assert detail["message"] == "Failed to persist citation renders."
     assert detail["upstream_code"] == "23514"
     assert "quote_attribution" in detail["upstream_details"]
+    attempt = next(record for record in caplog.records if record.msg == "citations.replace_renders.attempt")
+    failure = next(record for record in caplog.records if record.msg == "citations.replace_renders.failed")
+    assert attempt.citation_id == "citation-1"
+    assert attempt.render_kinds == ["quote_attribution"]
+    assert failure.source_id == "source-1"
+    assert failure.styles == ["mla"]
+    assert failure.upstream_code == "23514"

@@ -630,6 +630,18 @@ class ExtensionService:
         return f"{self.settings.canonical_app_origin}/auth/handoff?{query}"
 
     async def capture_citation(self, access: ExtensionAccessContext, payload) -> dict[str, object]:
+        logger.info(
+            "extension.capture_citation.start",
+            extra={
+                "stage": "extension_capture_citation_start",
+                "user_id": access.user_id,
+                "style": payload.style,
+                "locator_keys": sorted(str(key) for key in (payload.locator or {}).keys()),
+                "canonical_url": getattr(payload.extraction_payload, "canonical_url", None),
+                "author_candidate_count": len(getattr(payload.extraction_payload, "author_candidates", []) or []),
+                "date_candidate_count": len(getattr(payload.extraction_payload, "date_candidates", []) or []),
+            },
+        )
         citation = await self.citations_service.create_citation(
             user_id=access.user_id,
             access_token=access.access_token,
@@ -640,6 +652,15 @@ class ExtensionService:
             annotation=payload.annotation,
             quote=payload.quote,
             style=payload.style,
+        )
+        logger.info(
+            "extension.capture_citation.success",
+            extra={
+                "stage": "extension_capture_citation_success",
+                "user_id": access.user_id,
+                "citation_id": citation.get("id"),
+                "source_id": citation.get("source_id"),
+            },
         )
         return serialize_ok_envelope(citation)
 
@@ -731,6 +752,7 @@ class ExtensionService:
         }
 
     async def work_in_editor(self, request: Request, access: ExtensionAccessContext, payload) -> dict[str, object]:
+        request_id = getattr(getattr(request, "state", None), "request_id", None)
         if payload.idempotency_key:
             request_hash = self._request_hash(payload.model_dump(exclude_none=True))
             cached = await self._idempotency_result(
@@ -740,7 +762,22 @@ class ExtensionService:
                 request_hash=request_hash,
             )
             if cached is not None:
+                logger.info(
+                    "extension.work_in_editor.idempotent_hit",
+                    extra={"request_id": request_id, "user_id": access.user_id, "stage": "work_in_editor_cached"},
+                )
                 return cached
+        logger.info(
+            "extension.work_in_editor.start",
+            extra={
+                "request_id": request_id,
+                "user_id": access.user_id,
+                "stage": "work_in_editor_start",
+                "has_extraction_payload": payload.extraction_payload is not None,
+                "locator_keys": sorted(str(key) for key in ((payload.locator or {}) if hasattr(payload, "locator") else {}).keys()),
+                "idempotency_key_present": bool(payload.idempotency_key),
+            },
+        )
         workflow = await self.graph_service.orchestrate_work_in_editor(
             user_id=access.user_id,
             access_token=access.access_token,
@@ -771,6 +808,17 @@ class ExtensionService:
                 request_hash=request_hash,
                 response=response,
             )
+        logger.info(
+            "extension.work_in_editor.success",
+            extra={
+                "request_id": request_id,
+                "user_id": access.user_id,
+                "stage": "work_in_editor_success",
+                "document_id": document_id,
+                "citation_id": (workflow.get("citation") or {}).get("id"),
+                "source_id": ((workflow.get("citation") or {}).get("source") or {}).get("id"),
+            },
+        )
         return response
 
     async def record_usage_event(self, request: Request, access: ExtensionAccessContext, payload) -> dict[str, object]:

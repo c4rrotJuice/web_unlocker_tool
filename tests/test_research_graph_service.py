@@ -482,6 +482,8 @@ async def test_work_in_editor_orchestration_centralizes_lineage_and_document_att
     quotes_service = graph_service.quotes_service
 
     assert citations_service.create_calls[0]["extraction_payload"].canonical_url == "https://example.com/source"
+    assert citations_service.create_calls[0]["extraction_payload"].locator == {"paragraph": 3}
+    assert citations_service.create_calls[0]["locator"] == {"paragraph": 3}
     assert quotes_service.create_calls[0]["citation_id"] == CITATION_ID
     assert notes_service.create_calls[0]["citation_id"] == CITATION_ID
     assert notes_service.create_calls[0]["quote_id"] == QUOTE_ID

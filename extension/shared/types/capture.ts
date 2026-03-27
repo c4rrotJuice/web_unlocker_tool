@@ -84,6 +84,10 @@ function normalizeIdentifiers(input: any) {
   return normalized;
 }
 
+function normalizeLocator(input: any) {
+  return isPlainObject(input) ? { ...input } : {};
+}
+
 function buildExternalNoteSource({
   pageUrl,
   pageDomain,
@@ -124,12 +128,16 @@ export function normalizeCaptureContext(input: any = {}) {
   const containerCandidates = normalizeCandidateList(input.containerCandidates ?? input.container_candidates);
   const sourceTypeCandidates = normalizeCandidateList(input.sourceTypeCandidates ?? input.source_type_candidates);
   const identifiers = normalizeIdentifiers(input.identifiers);
+  const locator = normalizeLocator(input.locator);
   const extractionEvidence = isPlainObject(input.extractionEvidence ?? input.extraction_evidence)
     ? (input.extractionEvidence ?? input.extraction_evidence)
     : {};
   const rawMetadata = isPlainObject(input.rawMetadata ?? input.raw_metadata)
     ? (input.rawMetadata ?? input.raw_metadata)
     : {};
+  const excerpt = normalizeText(input.excerpt);
+  const annotation = normalizeText(input.annotation);
+  const quote = normalizeText(input.quote);
 
   return {
     selectionText,
@@ -147,8 +155,12 @@ export function normalizeCaptureContext(input: any = {}) {
     containerCandidates,
     sourceTypeCandidates,
     identifiers,
+    locator,
     extractionEvidence,
     rawMetadata,
+    excerpt,
+    annotation,
+    quote,
   };
 }
 
@@ -168,8 +180,12 @@ export function buildContentCapturePayload({
   containerCandidates,
   sourceTypeCandidates,
   identifiers,
+  locator,
   extractionEvidence,
   rawMetadata,
+  excerpt,
+  annotation,
+  quote,
 }: any = {}) {
   return {
     capture: normalizeCaptureContext({
@@ -188,8 +204,12 @@ export function buildContentCapturePayload({
       containerCandidates,
       sourceTypeCandidates,
       identifiers,
+      locator,
       extractionEvidence,
       rawMetadata,
+      excerpt,
+      annotation,
+      quote,
     }),
   };
 }
@@ -239,7 +259,7 @@ export function buildCaptureExtractionPayload(input: any = {}) {
       ? context.sourceTypeCandidates
       : [{ value: "webpage", confidence: 0.8, source: "extension.capture" }],
     selection_text: context.selectionText || null,
-    locator: {},
+    locator: context.locator,
     extraction_evidence: {
       ...context.extractionEvidence,
       capture_source: "extension_selection",
@@ -254,20 +274,23 @@ export function buildCitationCaptureRequest(input: any = {}) {
   const context = normalizeCaptureContext(input);
   return {
     extraction_payload: buildCaptureExtractionPayload(context),
-    excerpt: context.selectionText || null,
-    locator: {},
+    excerpt: context.excerpt || context.selectionText || null,
+    locator: context.locator,
+    annotation: context.annotation || null,
+    quote: context.quote || context.selectionText || null,
   };
 }
 
 export function buildQuoteCaptureRequest({
   citationId,
   selectionText,
+  locator,
   annotation,
 }: any = {}) {
   return {
     citation_id: normalizeText(citationId),
     excerpt: normalizeText(selectionText),
-    locator: {},
+    locator: normalizeLocator(locator),
     annotation: normalizeText(annotation) || null,
   };
 }

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from app.modules.extension.schemas import ExtensionCitationCaptureRequest
+from app.modules.extension.schemas import ExtensionCitationCaptureRequest, WorkInEditorRequest
 from app.modules.research.citations.schemas import CitationCreateRequest, CitationPreviewRequest
 from app.modules.research.routes import create_citation, preview_citation, resolve_source
 from app.modules.research.sources.schemas import SourceResolveRequest
@@ -107,6 +107,21 @@ def test_extension_capture_schema_accepts_canonical_extraction_payload():
     assert payload.extraction_payload.canonical_url == "https://example.com/paper"
     assert payload.extraction_payload.identifiers["doi"] == "10.1000/example-doi"
     assert payload.extraction_payload.container_candidates[0].value == "Journal of Analytical Engines"
+
+
+def test_work_in_editor_schema_accepts_canonical_extraction_payload():
+    payload = WorkInEditorRequest.model_validate(
+        {
+            "url": "https://example.com/paper",
+            "selected_text": "Quoted sentence",
+            "locator": {"paragraph": 4},
+            "extraction_payload": _canonical_extraction_payload(),
+        }
+    )
+
+    assert payload.extraction_payload is not None
+    assert payload.extraction_payload.canonical_url == "https://example.com/paper"
+    assert payload.extraction_payload.locator == {"paragraph": 4}
 
 
 @pytest.mark.anyio

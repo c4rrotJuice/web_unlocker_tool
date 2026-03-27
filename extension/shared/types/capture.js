@@ -79,6 +79,9 @@ function normalizeIdentifiers(input) {
     }
     return normalized;
 }
+function normalizeLocator(input) {
+    return isPlainObject(input) ? { ...input } : {};
+}
 function buildExternalNoteSource({ pageUrl, pageDomain, pageTitle, } = {}) {
     const url = normalizeText(pageUrl);
     if (!url) {
@@ -113,12 +116,16 @@ export function normalizeCaptureContext(input = {}) {
     const containerCandidates = normalizeCandidateList(input.containerCandidates ?? input.container_candidates);
     const sourceTypeCandidates = normalizeCandidateList(input.sourceTypeCandidates ?? input.source_type_candidates);
     const identifiers = normalizeIdentifiers(input.identifiers);
+    const locator = normalizeLocator(input.locator);
     const extractionEvidence = isPlainObject(input.extractionEvidence ?? input.extraction_evidence)
         ? (input.extractionEvidence ?? input.extraction_evidence)
         : {};
     const rawMetadata = isPlainObject(input.rawMetadata ?? input.raw_metadata)
         ? (input.rawMetadata ?? input.raw_metadata)
         : {};
+    const excerpt = normalizeText(input.excerpt);
+    const annotation = normalizeText(input.annotation);
+    const quote = normalizeText(input.quote);
     return {
         selectionText,
         pageTitle,
@@ -135,11 +142,15 @@ export function normalizeCaptureContext(input = {}) {
         containerCandidates,
         sourceTypeCandidates,
         identifiers,
+        locator,
         extractionEvidence,
         rawMetadata,
+        excerpt,
+        annotation,
+        quote,
     };
 }
-export function buildContentCapturePayload({ selectionText, pageTitle, pageUrl, pageDomain, canonicalUrl, description, language, siteName, titleCandidates, authorCandidates, dateCandidates, publisherCandidates, containerCandidates, sourceTypeCandidates, identifiers, extractionEvidence, rawMetadata, } = {}) {
+export function buildContentCapturePayload({ selectionText, pageTitle, pageUrl, pageDomain, canonicalUrl, description, language, siteName, titleCandidates, authorCandidates, dateCandidates, publisherCandidates, containerCandidates, sourceTypeCandidates, identifiers, locator, extractionEvidence, rawMetadata, excerpt, annotation, quote, } = {}) {
     return {
         capture: normalizeCaptureContext({
             selectionText,
@@ -157,8 +168,12 @@ export function buildContentCapturePayload({ selectionText, pageTitle, pageUrl, 
             containerCandidates,
             sourceTypeCandidates,
             identifiers,
+            locator,
             extractionEvidence,
             rawMetadata,
+            excerpt,
+            annotation,
+            quote,
         }),
     };
 }
@@ -205,7 +220,7 @@ export function buildCaptureExtractionPayload(input = {}) {
             ? context.sourceTypeCandidates
             : [{ value: "webpage", confidence: 0.8, source: "extension.capture" }],
         selection_text: context.selectionText || null,
-        locator: {},
+        locator: context.locator,
         extraction_evidence: {
             ...context.extractionEvidence,
             capture_source: "extension_selection",
@@ -219,15 +234,17 @@ export function buildCitationCaptureRequest(input = {}) {
     const context = normalizeCaptureContext(input);
     return {
         extraction_payload: buildCaptureExtractionPayload(context),
-        excerpt: context.selectionText || null,
-        locator: {},
+        excerpt: context.excerpt || context.selectionText || null,
+        locator: context.locator,
+        annotation: context.annotation || null,
+        quote: context.quote || context.selectionText || null,
     };
 }
-export function buildQuoteCaptureRequest({ citationId, selectionText, annotation, } = {}) {
+export function buildQuoteCaptureRequest({ citationId, selectionText, locator, annotation, } = {}) {
     return {
         citation_id: normalizeText(citationId),
         excerpt: normalizeText(selectionText),
-        locator: {},
+        locator: normalizeLocator(locator),
         annotation: normalizeText(annotation) || null,
     };
 }

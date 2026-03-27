@@ -68,12 +68,12 @@ export const MESSAGE_CONTRACTS = Object.freeze({
     }),
     [MESSAGE_NAMES.CAPTURE_CREATE_CITATION]: Object.freeze({
         topic: MESSAGE_TOPICS.CAPTURE,
-        payloadShape: "surface:string, capture:{selectionText:string, pageTitle:string, pageUrl:string, pageDomain?:string}",
+        payloadShape: "surface:string, capture:{selectionText:string, pageTitle:string, pageUrl:string, pageDomain?:string, canonicalUrl?:string, locator?:object, titleCandidates?:Candidate[], authorCandidates?:Candidate[], dateCandidates?:Candidate[], publisherCandidates?:Candidate[], containerCandidates?:Candidate[], sourceTypeCandidates?:Candidate[], identifiers?:object, extractionEvidence?:object, rawMetadata?:object}, excerpt?:string, locator?:object, annotation?:string, quote?:string",
         resultShape: "citation:canonical backend response",
     }),
     [MESSAGE_NAMES.CAPTURE_CREATE_QUOTE]: Object.freeze({
         topic: MESSAGE_TOPICS.CAPTURE,
-        payloadShape: "surface:string, capture:{selectionText:string, pageTitle:string, pageUrl:string, pageDomain?:string}",
+        payloadShape: "surface:string, capture:{selectionText:string, pageTitle:string, pageUrl:string, pageDomain?:string, canonicalUrl?:string, locator?:object, titleCandidates?:Candidate[], authorCandidates?:Candidate[], dateCandidates?:Candidate[], publisherCandidates?:Candidate[], containerCandidates?:Candidate[], sourceTypeCandidates?:Candidate[], identifiers?:object, extractionEvidence?:object, rawMetadata?:object}, locator?:object, annotation?:string",
         resultShape: "quote:canonical backend response",
     }),
     [MESSAGE_NAMES.CAPTURE_CREATE_NOTE]: Object.freeze({
@@ -83,7 +83,7 @@ export const MESSAGE_CONTRACTS = Object.freeze({
     }),
     [MESSAGE_NAMES.CITATION_PREVIEW]: Object.freeze({
         topic: MESSAGE_TOPICS.CITATION,
-        payloadShape: "surface:string, capture:{selectionText:string, pageTitle:string, pageUrl:string, pageDomain?:string}, style:string",
+        payloadShape: "surface:string, capture:{selectionText:string, pageTitle:string, pageUrl:string, pageDomain?:string, canonicalUrl?:string, locator?:object, titleCandidates?:Candidate[], authorCandidates?:Candidate[], dateCandidates?:Candidate[], publisherCandidates?:Candidate[], containerCandidates?:Candidate[], sourceTypeCandidates?:Candidate[], identifiers?:object, extractionEvidence?:object, rawMetadata?:object}, excerpt?:string, locator?:object, annotation?:string, quote?:string, style:string",
         resultShape: "citation:{id:null, renders:...}, render_bundle:{renders:{...quote_attribution:string}}",
     }),
     [MESSAGE_NAMES.CITATION_RENDER]: Object.freeze({
@@ -93,12 +93,12 @@ export const MESSAGE_CONTRACTS = Object.freeze({
     }),
     [MESSAGE_NAMES.CITATION_SAVE]: Object.freeze({
         topic: MESSAGE_TOPICS.CITATION,
-        payloadShape: "surface:string, capture:{selectionText:string, pageTitle:string, pageUrl:string, pageDomain?:string}, style:string, format:string",
+        payloadShape: "surface:string, capture:{selectionText:string, pageTitle:string, pageUrl:string, pageDomain?:string, canonicalUrl?:string, locator?:object, titleCandidates?:Candidate[], authorCandidates?:Candidate[], dateCandidates?:Candidate[], publisherCandidates?:Candidate[], containerCandidates?:Candidate[], sourceTypeCandidates?:Candidate[], identifiers?:object, extractionEvidence?:object, rawMetadata?:object}, excerpt?:string, locator?:object, annotation?:string, quote?:string, style:string, format:string",
         resultShape: "citation:canonical backend response",
     }),
     [MESSAGE_NAMES.WORK_IN_EDITOR_REQUEST]: Object.freeze({
         topic: MESSAGE_TOPICS.EDITOR,
-        payloadShape: "surface:string, url:string, title?:string, selected_text?:string, citation_format?:string, citation_text?:string, extraction_payload?:object, metadata?:object, locator?:object, project_id?:string, document_title?:string, note?:object, idempotency_key?:string",
+        payloadShape: "surface:string, url:string, title?:string, selected_text?:string, citation_format?:string, citation_text?:string, extraction_payload?:ExtractionPayload, metadata?:object, locator?:object, project_id?:string, document_title?:string, note?:object, idempotency_key?:string",
         resultShape: "opened:boolean, destination:string, url:string",
     }),
 });

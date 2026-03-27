@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import logging
 import re
 from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+logger = logging.getLogger(__name__)
 
 
 SUPPORTED_STYLES = {"mla", "apa", "chicago", "harvard"}
@@ -29,6 +33,7 @@ PUBLISHER_EQUIVALENTS = {
 }
 
 PERSON_AUTHOR_DELIMITERS = re.compile(r"\s*(?:;|\|)\s*")
+DOI_PATTERN = re.compile(r"\b10\.\d{4,9}/[-._;()/:a-z0-9]+\b", re.IGNORECASE)
 ORG_HINTS = {
     "academy",
     "agency",
@@ -58,6 +63,29 @@ ORG_HINTS = {
     "society",
     "team",
     "university",
+}
+
+AUTHOR_JUNK_VALUES = {
+    "by",
+    "author",
+    "authors",
+    "share",
+    "updated",
+    "published",
+    "posted",
+    "posted by",
+    "read more",
+    "follow",
+}
+
+DATE_JUNK_VALUES = {
+    "updated",
+    "published",
+    "share",
+    "date",
+    "posted",
+    "posted on",
+    "last updated",
 }
 
 
@@ -128,6 +156,9 @@ def _normalize_doi(value: Any) -> str:
     text = _clean(value)
     if not text:
         return ""
+    match = DOI_PATTERN.search(text)
+    if match:
+        text = match.group(0)
     normalized = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", text, flags=re.IGNORECASE)
     normalized = re.sub(r"^doi:\s*", "", normalized, flags=re.IGNORECASE)
     normalized = normalized.strip().rstrip(".;,)")
@@ -218,6 +249,68 @@ def _source_priority(source: str | None) -> int:
     return 30
 
 
+def _author_source_priority(source: str | None) -> int:
+    normalized = _clean_lower(source)
+    priority = _source_priority(source)
+    if not normalized:
+        return priority
+    if "citation_author" in normalized or "citation_authors" in normalized:
+        return 130
+    if normalized.startswith("jsonld:"):
+        return 110
+    if "author" in normalized and normalized.startswith("meta:"):
+        return 100
+    if normalized.startswith("dom:"):
+        return 40
+    if normalized.startswith("page.") or normalized.startswith("extension.capture"):
+        return 10
+    return priority
+
+
+def _date_source_priority(source: str | None) -> int:
+    normalized = _clean_lower(source)
+    priority = _source_priority(source)
+    if not normalized:
+        return priority
+    if "publication" in normalized or "published" in normalized or "issued" in normalized or "datepublished" in normalized:
+        return 130
+    if normalized.startswith("jsonld:") and "modified" not in normalized:
+        return 115
+    if "modified" in normalized or "updated" in normalized:
+        return 60
+    if normalized.startswith("dom:time"):
+        return 55
+    if normalized.startswith("dom:"):
+        return 45
+    return priority
+
+
+def _publisher_source_priority(source: str | None) -> int:
+    normalized = _clean_lower(source)
+    priority = _source_priority(source)
+    if normalized.startswith("jsonld:"):
+        return 110
+    if "citation_" in normalized:
+        return 120
+    if "og:site_name" in normalized or "publisher" in normalized:
+        return 95
+    return priority
+
+
+def _title_source_priority(source: str | None) -> int:
+    normalized = _clean_lower(source)
+    priority = _source_priority(source)
+    if "citation_title" in normalized:
+        return 130
+    if normalized.startswith("jsonld:"):
+        return 120
+    if "og:title" in normalized or "article:title" in normalized:
+        return 100
+    if "document.title" in normalized:
+        return 70
+    return priority
+
+
 def _candidate_sort_key(candidate: ExtractionCandidate) -> tuple[int, float, int, str]:
     value = _clean(candidate.value)
     return (_source_priority(candidate.source), candidate.confidence, len(value), value.lower())
@@ -231,6 +324,88 @@ def _sorted_candidates(candidates: list[ExtractionCandidate]) -> list[Extraction
 def _candidate_value(candidates: list[ExtractionCandidate], fallback: str = "") -> str:
     ordered = _sorted_candidates(candidates)
     return _clean(ordered[0].value if ordered else fallback)
+
+
+def _ranked_candidates(
+    candidates: list[ExtractionCandidate],
+    *,
+    priority_fn: Any = _source_priority,
+    value_normalizer: Any = _clean,
+    reject_fn: Any | None = None,
+) -> list[tuple[ExtractionCandidate, str, int]]:
+    ranked: list[tuple[ExtractionCandidate, str, int]] = []
+    for candidate in candidates:
+        normalized_value = value_normalizer(candidate.value)
+        if not normalized_value:
+            continue
+        if reject_fn and reject_fn(normalized_value):
+            continue
+        ranked.append((candidate, normalized_value, priority_fn(candidate.source)))
+    ranked.sort(key=lambda item: (item[2], item[0].confidence, len(item[1]), item[1].lower()), reverse=True)
+    return ranked
+
+
+def _candidate_value_ranked(
+    candidates: list[ExtractionCandidate],
+    *,
+    fallback: str = "",
+    priority_fn: Any = _source_priority,
+    value_normalizer: Any = _clean,
+    reject_fn: Any | None = None,
+) -> str:
+    ranked = _ranked_candidates(
+        candidates,
+        priority_fn=priority_fn,
+        value_normalizer=value_normalizer,
+        reject_fn=reject_fn,
+    )
+    return ranked[0][1] if ranked else _clean(fallback)
+
+
+def _summarize_extraction_payload(payload: ExtractionPayload) -> dict[str, Any]:
+    return {
+        "page_url": _normalize_page_url(payload.page_url or ""),
+        "canonical_url": _canonical_url(payload.canonical_url or ""),
+        "locator_keys": sorted(str(key) for key in (payload.locator or {}).keys()),
+        "selection_length": len(_clean(payload.selection_text or "")),
+        "candidate_counts": {
+            "title": len(payload.title_candidates or []),
+            "author": len(payload.author_candidates or []),
+            "date": len(payload.date_candidates or []),
+            "publisher": len(payload.publisher_candidates or []),
+            "container": len(payload.container_candidates or []),
+            "source_type": len(payload.source_type_candidates or []),
+        },
+        "identifier_keys": sorted(str(key) for key in (payload.identifiers or {}).keys()),
+        "evidence_keys": sorted(str(key) for key in (payload.extraction_evidence or {}).keys()),
+        "raw_metadata_keys": sorted(str(key) for key in (payload.raw_metadata or {}).keys())[:16],
+    }
+
+
+def _summarize_normalized_source(source: dict[str, Any]) -> dict[str, Any]:
+    issued = source.get("issued") or {}
+    metadata = source.get("metadata") or {}
+    identifiers = source.get("identifiers") or {}
+    return {
+        "source_type": source.get("source_type"),
+        "title": _clean(source.get("title"))[:120] or None,
+        "author_count": len(source.get("authors") or []),
+        "authors": [
+            _clean((author or {}).get("fullName"))[:80]
+            for author in (source.get("authors") or [])[:3]
+            if _clean((author or {}).get("fullName"))
+        ],
+        "publisher": _clean(source.get("publisher"))[:120] or None,
+        "container_title": _clean(source.get("container_title"))[:120] or None,
+        "issued_raw": issued.get("raw"),
+        "issued_iso": issued.get("iso"),
+        "identifier_keys": sorted(str(key) for key in identifiers.keys()),
+        "fingerprint": source.get("fingerprint"),
+        "canonical_url": source.get("canonical_url"),
+        "page_url": source.get("page_url"),
+        "author_resolution": metadata.get("author_resolution"),
+        "date_resolution": metadata.get("date_resolution"),
+    }
 
 
 def _candidate_values(candidates: list[ExtractionCandidate]) -> list[str]:
@@ -257,6 +432,10 @@ def _parse_date_parts(value: Any) -> dict[str, Any]:
         year = int(iso_match.group(1))
         month = int(iso_match.group(2)) if iso_match.group(2) else None
         day = int(iso_match.group(3)) if iso_match.group(3) else None
+        if month is not None and not 1 <= month <= 12:
+            return {"raw": text, "year": None}
+        if day is not None and not 1 <= day <= 31:
+            return {"raw": text, "year": None}
         payload: dict[str, Any] = {"raw": text, "year": year}
         if month:
             payload["month"] = month
@@ -312,18 +491,56 @@ def _split_author_string(value: Any) -> list[str]:
         return []
     if PERSON_AUTHOR_DELIMITERS.search(text):
         return [part for part in PERSON_AUTHOR_DELIMITERS.split(text) if _clean(part)]
-    if " and " in text.lower() and "," not in text:
+    if " and " in text.lower() and "," not in text and not _is_probable_organization(text):
         return [_clean(part) for part in re.split(r"\s+(?:and|&)\s+", text, flags=re.IGNORECASE) if _clean(part)]
     return [text]
 
 
+def _normalize_author_candidate_value(value: Any) -> str:
+    normalized = _clean(value)
+    normalized = re.sub(r"^\s*by\s+", "", normalized, flags=re.IGNORECASE)
+    return normalized.strip(" \t,;:-")
+
+
+def _is_junk_author_candidate(value: str) -> bool:
+    normalized = _clean_lower(value)
+    if not normalized:
+        return True
+    if normalized in AUTHOR_JUNK_VALUES:
+        return True
+    if _domain(normalized) == normalized.replace("www.", "") and "." in normalized and " " not in normalized:
+        return True
+    if normalized.startswith(("share ", "updated ", "published ", "follow ")):
+        return True
+    return len(normalized) > 140
+
+
+def _is_junk_date_candidate(value: str) -> bool:
+    normalized = _clean_lower(value)
+    if not normalized:
+        return True
+    if normalized in DATE_JUNK_VALUES:
+        return True
+    if normalized.startswith(("share ", "follow ", "author ", "by ")):
+        return True
+    if not any(character.isdigit() for character in normalized):
+        return True
+    parsed = _parse_date_parts(value)
+    return parsed.get("year", "__missing__") is None and not re.search(r"(19|20)\d{2}", normalized)
+
+
 def _parse_author_object(raw: Any) -> dict[str, Any] | None:
     if isinstance(raw, dict):
-        full = _clean(raw.get("fullName") or raw.get("name") or raw.get("author"))
+        given_name = _clean(raw.get("givenName") or raw.get("firstName"))
+        family_name = _clean(raw.get("familyName") or raw.get("lastName"))
+        combined_name = _clean(f"{given_name} {family_name}")
+        full = _clean(raw.get("fullName") or raw.get("name") or raw.get("author") or combined_name)
     else:
-        full = _clean(raw)
+        full = _normalize_author_candidate_value(raw)
 
     if not full:
+        return None
+    if _is_junk_author_candidate(full):
         return None
 
     normalized = INSTITUTION_EQUIVALENTS.get(full.lower(), full)
@@ -394,14 +611,29 @@ def _normalize_authors(
     source_type: str,
 ) -> list[dict[str, Any]]:
     raw_authors: list[Any] = []
-    for candidate in _sorted_candidates(author_candidates):
-        raw_authors.extend(_split_author_string(candidate.value))
+    ranked_candidates = _ranked_candidates(
+        author_candidates,
+        priority_fn=_author_source_priority,
+        value_normalizer=_normalize_author_candidate_value,
+        reject_fn=_is_junk_author_candidate,
+    )
+    best_priority = ranked_candidates[0][2] if ranked_candidates else None
+    for candidate, normalized_value, priority in ranked_candidates:
+        if best_priority is not None and priority < best_priority - 25:
+            continue
+        raw_authors.extend(_split_author_string(normalized_value))
     for raw in _author_fallbacks(raw_metadata):
         if isinstance(raw, list):
             for item in raw:
-                raw_authors.extend(_split_author_string(item))
+                if isinstance(item, dict):
+                    raw_authors.append(item)
+                else:
+                    raw_authors.extend(_split_author_string(item))
         else:
-            raw_authors.extend(_split_author_string(raw))
+            if isinstance(raw, dict):
+                raw_authors.append(raw)
+            else:
+                raw_authors.extend(_split_author_string(raw))
 
     authors: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -473,6 +705,31 @@ def _infer_source_type(
     if container_title and any(_clean(raw_metadata.get(key)) for key in ("volume", "issue", "first_page", "last_page", "pages")):
         return "journal_article"
     return "webpage"
+
+
+def _select_issued_date(
+    date_candidates: list[ExtractionCandidate],
+    raw_metadata: dict[str, Any],
+) -> tuple[dict[str, Any], str, str]:
+    ranked_candidates = _ranked_candidates(
+        date_candidates,
+        priority_fn=_date_source_priority,
+        value_normalizer=_clean,
+        reject_fn=_is_junk_date_candidate,
+    )
+    if ranked_candidates:
+        candidate, normalized_value, _priority = ranked_candidates[0]
+        parsed = _parse_date_parts(normalized_value)
+        if parsed.get("year") is not None:
+            return parsed, normalized_value, _clean(candidate.source)
+    for raw_key in ("datePublished", "issued_date", "date", "year", "dateCreated", "dateModified", "modified", "lastModified"):
+        raw_value = _clean(raw_metadata.get(raw_key))
+        if not raw_value or _is_junk_date_candidate(raw_value):
+            continue
+        parsed = _parse_date_parts(raw_value)
+        if parsed.get("year") is not None:
+            return parsed, raw_value, f"raw:{raw_key}"
+    return {}, "", ""
 
 
 def build_source_fingerprint(source: dict[str, Any]) -> str:
@@ -549,18 +806,37 @@ def compute_citation_version(context: dict[str, Any]) -> str:
 
 def normalize_citation_payload(payload: ExtractionPayload) -> dict[str, Any]:
     raw = dict(payload.raw_metadata or {})
+    logger.info(
+        "citation.normalize.start",
+        extra={"stage": "normalization_input", **_summarize_extraction_payload(payload)},
+    )
     page_url = _normalize_page_url(payload.page_url or raw.get("page_url") or "")
     canonical_url = _canonical_url(payload.canonical_url or raw.get("canonical_url") or page_url)
     identifiers = _normalize_identifiers(payload, raw)
-    title = _candidate_value(payload.title_candidates, raw.get("title") or raw.get("headline") or "Untitled Page") or "Untitled Page"
-    container_title = _candidate_value(
+    title = _candidate_value_ranked(
+        payload.title_candidates,
+        fallback=raw.get("title") or raw.get("headline") or "Untitled Page",
+        priority_fn=_title_source_priority,
+    ) or "Untitled Page"
+    container_title = _candidate_value_ranked(
         payload.container_candidates,
-        raw.get("container_title") or raw.get("journalTitle") or raw.get("journal_title"),
+        fallback=raw.get("container_title") or raw.get("journalTitle") or raw.get("journal_title"),
+        priority_fn=_publisher_source_priority,
     )
     site_name = _normalize_org_name(
-        _candidate_value(payload.publisher_candidates, raw.get("siteName") or raw.get("site_name") or _domain(canonical_url or page_url))
+        _candidate_value_ranked(
+            payload.publisher_candidates,
+            fallback=raw.get("siteName") or raw.get("site_name") or _domain(canonical_url or page_url),
+            priority_fn=_publisher_source_priority,
+        )
     )
-    publisher = _normalize_org_name(_candidate_value(payload.publisher_candidates, raw.get("publisher") or site_name)) or site_name
+    publisher = _normalize_org_name(
+        _candidate_value_ranked(
+            payload.publisher_candidates,
+            fallback=raw.get("publisher") or site_name,
+            priority_fn=_publisher_source_priority,
+        )
+    ) or site_name
     source_type = _infer_source_type(
         payload.source_type_candidates,
         identifiers=identifiers,
@@ -577,16 +853,20 @@ def normalize_citation_payload(payload: ExtractionPayload) -> dict[str, Any]:
     lead_author = authors[0] if authors else None
     explicit_author_inputs = bool(_sorted_candidates(payload.author_candidates)) or bool(_author_fallbacks(raw))
 
-    issued_raw = _candidate_value(payload.date_candidates, raw.get("datePublished") or raw.get("date") or raw.get("year"))
+    issued, issued_raw, issued_source = _select_issued_date(payload.date_candidates, raw)
     modified_raw = _clean(raw.get("dateModified") or raw.get("modified") or raw.get("lastModified"))
     accessed_raw = _clean(raw.get("accessed") or raw.get("accessed_at"))
-    issued = _parse_date_parts(issued_raw) if issued_raw else {}
     if "year" not in issued:
         issued["year"] = None
     issued.setdefault("raw", issued_raw)
     modified = _parse_date_parts(modified_raw) if modified_raw else {}
     accessed = _parse_date_parts(accessed_raw) if accessed_raw else {}
-    date_resolution = "explicit" if issued_raw else "missing"
+    if issued_raw and issued.get("year") is not None:
+        date_resolution = "explicit"
+    elif issued_raw:
+        date_resolution = "raw_unparsed"
+    else:
+        date_resolution = "missing"
     if authors:
         author_resolution = "explicit" if explicit_author_inputs else "organization_fallback"
     else:
@@ -624,6 +904,10 @@ def normalize_citation_payload(payload: ExtractionPayload) -> dict[str, Any]:
         metadata["accessed_date"] = accessed
     metadata["author_resolution"] = author_resolution
     metadata["date_resolution"] = date_resolution
+    metadata["normalization_provenance"] = {
+        "issued_date_source": issued_source or None,
+        "canonical_url_source": "payload.canonical_url" if payload.canonical_url else ("raw_metadata.canonical_url" if raw.get("canonical_url") else ("payload.page_url" if payload.page_url else None)),
+    }
     metadata["limited_metadata"] = bool(
         not authors
         or not issued_raw
@@ -659,6 +943,17 @@ def normalize_citation_payload(payload: ExtractionPayload) -> dict[str, Any]:
         "locator": locator,
     }
     context["citation_version"] = compute_citation_version(context)
+
+    logger.info(
+        "citation.normalize.selected",
+        extra={
+            "stage": "normalization_output",
+            **_summarize_normalized_source(source),
+            "context_locator_keys": sorted(str(key) for key in context["locator"].keys()),
+            "quote_length": len(context["quote"]),
+            "excerpt_length": len(context["excerpt"]),
+        },
+    )
 
     return {
         "source": source,

@@ -177,7 +177,16 @@ async def test_extension_routes_expose_canonical_bootstrap_handoff_and_seeded_ed
                 "url": "https://example.com/article",
                 "selected_text": "Quote",
                 "title": "Example article",
-                "extraction_payload": {},
+                "locator": {"paragraph": 2},
+                "extraction_payload": {
+                    "canonical_url": "https://example.com/article",
+                    "page_url": "https://example.com/article",
+                    "title_candidates": [{"value": "Example article", "confidence": 1.0}],
+                    "author_candidates": [{"value": "Ada Lovelace", "confidence": 0.9}],
+                    "date_candidates": [{"value": "2024-02-03", "confidence": 0.9}],
+                    "locator": {"paragraph": 2},
+                    "raw_metadata": {"quote": "Quote", "excerpt": "Quote"},
+                },
             },
         )
         usage = await client.post(

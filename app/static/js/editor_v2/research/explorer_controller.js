@@ -92,7 +92,7 @@ export function createExplorerController({
     };
     refs.explorerSearch.addEventListener("input", searchHandler);
     cleanups.push(() => refs.explorerSearch.removeEventListener("input", searchHandler));
-    const explorerClick = (event) => {
+    const activateRow = (event) => {
       const retryButton = event.target.closest("[data-explorer-retry]");
       if (retryButton) {
         void refreshExplorer();
@@ -113,8 +113,18 @@ export function createExplorerController({
       }
       onFocusEntity(entity);
     };
+    const explorerClick = (event) => activateRow(event);
+    const explorerKeydown = (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const row = event.target.closest("[data-document-id], [data-entity-id]");
+      if (!row) return;
+      event.preventDefault();
+      activateRow(event);
+    };
     refs.explorerList.addEventListener("click", explorerClick);
+    refs.explorerList.addEventListener("keydown", explorerKeydown);
     cleanups.push(() => refs.explorerList.removeEventListener("click", explorerClick));
+    cleanups.push(() => refs.explorerList.removeEventListener("keydown", explorerKeydown));
   }
 
   return {

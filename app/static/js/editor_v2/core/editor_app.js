@@ -1,5 +1,6 @@
 import { readBootPayload } from "../../app_shell/core/boot.js";
 import { createEventBus } from "./event_bus.js";
+import { escapeHtml } from "../../app_shell/core/format.js";
 import { createWorkspaceState } from "./workspace_state.js";
 import { createSelectionState } from "./selection_state.js";
 import { deriveContextState } from "./context_state.js";
@@ -14,6 +15,9 @@ import { renderDocumentList, renderExplorerList } from "../ui/explorer_renderer.
 import { renderContextRail } from "../ui/context_rail_renderer.js";
 import { renderStatusBar } from "../ui/status_bar.js";
 import { hidePopover, renderCommandMenu } from "../ui/popovers.js";
+import { bindExplorerPreview } from "../ui/explorer_preview.js";
+import { bindToolbarController } from "../ui/toolbar_controller.js";
+import { bindContextTabs } from "../ui/context_tabs_controller.js";
 import { createSourceStore } from "../research/source_store.js";
 import { createCitationStore } from "../research/citation_store.js";
 import { createQuoteStore } from "../research/quote_store.js";
@@ -44,6 +48,7 @@ function queryRefs() {
     explorerHeading: document.getElementById("editor-explorer-heading"),
     explorerStatus: document.getElementById("editor-explorer-status"),
     explorerTabs: Array.from(document.querySelectorAll("[data-explorer-tab]")),
+    explorerPreview: document.getElementById("editor-explorer-preview"),
     titleInput: document.getElementById("editor-document-title"),
     emptyState: document.getElementById("editor-empty-state"),
     writingSurface: document.getElementById("editor-writing-surface"),
@@ -59,6 +64,10 @@ function queryRefs() {
     commandButton: document.getElementById("editor-command-button"),
     checkpointButton: document.getElementById("editor-checkpoint-button"),
     exportButton: document.getElementById("editor-export-button"),
+    toolbarToggle: document.getElementById("editor-toolbar-toggle"),
+    contextTabButtons: Array.from(document.querySelectorAll("[data-context-tab]")),
+    contextPanes: Array.from(document.querySelectorAll("[data-context-pane]")),
+    notesPanel: document.getElementById("editor-notes-panel"),
     newDocumentButton: document.getElementById("editor-new-document"),
     emptyNewDocumentButton: document.getElementById("editor-empty-new-document"),
     emptyFocusExplorerButton: document.getElementById("editor-empty-focus-explorer"),
@@ -233,6 +242,21 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     },
   });
 
+  const toolbarController = bindToolbarController({
+    toolbar: document.getElementById("editor-toolbar"),
+    onInsertCitation() {
+      commandRegistry.open("citation");
+    },
+  });
+  const contextTabsController = bindContextTabs({
+    buttons: refs.contextTabButtons,
+    panes: refs.contextPanes,
+  });
+  const disposeExplorerPreview = bindExplorerPreview({
+    list: refs.explorerList,
+    panel: refs.explorerPreview,
+  });
+
   const cleanupKeyboard = bindKeyboardShortcuts({
     root: quillAdapter.root,
     selectionState,
@@ -258,6 +282,10 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     const context = deriveContextState(state, selectionState.getState());
     refs.contextMode.textContent = context.mode.replace(/_/g, " ");
     const focused = state.focused_entity;
+    const attachedNotes = state.attached_research?.notes || [];
+    refs.notesPanel.innerHTML = attachedNotes.length
+      ? `<div class="editor-v2-list">${attachedNotes.map((note) => `<div class="editor-v2-card"><strong>${escapeHtml(note.title || "Note")}</strong><p>${escapeHtml((note.text || "").slice(0, 160))}</p></div>`).join("")}</div>`
+      : `<div class="editor-v2-card">No attached notes yet.</div>`;
     if (!focused && context.mode !== "seed_review" && context.mode !== "quote_focus") {
       renderContextRail(refs.contextRail, context, state, null, {
         selectionText: () => selectionState.getState().text,
@@ -443,6 +471,9 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       this.dispose = () => {
         uiCleanup?.();
         cleanupKeyboard?.();
+        toolbarController.dispose();
+        contextTabsController.dispose();
+        disposeExplorerPreview?.();
         unsubWorkspace?.();
         unsubSelection?.();
         unsubFeedback?.();

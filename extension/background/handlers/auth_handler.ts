@@ -29,6 +29,32 @@ export function createAuthHandler(options = {}) {
     maxPollAttempts,
   });
 
+  async function restoreSession(request = { requestId: undefined }) {
+    await sessionManager.bootstrapAuthState();
+    const session = await sessionManager.ensureSession({ reason: "restore_session" });
+    if (!session?.access_token) {
+      const auth = stateStore.setSignedOut("missing_session");
+      await sessionManager.persistAuthState(auth);
+      return createOkResult({ auth }, request.requestId);
+    }
+    const bootstrapResult = await bootstrapHandler.fetch({
+      type: "bootstrap.fetch",
+      requestId: request.requestId,
+      payload: { surface: "background" },
+    });
+    if (bootstrapResult.ok === false) {
+      const auth = stateStore.getState();
+      return createErrorResult(
+        bootstrapResult.error?.code || ERROR_CODES.BOOTSTRAP_FAILED,
+        bootstrapResult.error?.message || "Session restore failed.",
+        request.requestId,
+        bootstrapResult.error?.details ?? null,
+        { auth },
+      );
+    }
+    return bootstrapResult;
+  }
+
   return {
     start(request) {
       return handoffManager.start(request);
@@ -36,7 +62,7 @@ export function createAuthHandler(options = {}) {
     async getStatus(request) {
       const currentState = stateStore.getState();
       if (currentState.status === "loading") {
-        await this.restoreSession(request);
+        await restoreSession(request);
       }
       return createOkResult({ auth: stateStore.getState() }, request.requestId);
     },
@@ -46,30 +72,6 @@ export function createAuthHandler(options = {}) {
       const auth = stateStore.getState();
       return createOkResult({ auth }, request.requestId);
     },
-    async restoreSession(request = { requestId: undefined }) {
-      await sessionManager.bootstrapAuthState();
-      const session = await sessionManager.ensureSession({ reason: "restore_session" });
-      if (!session?.access_token) {
-        const auth = stateStore.setSignedOut("missing_session");
-        await sessionManager.persistAuthState(auth);
-        return createOkResult({ auth }, request.requestId);
-      }
-      const bootstrapResult = await bootstrapHandler.fetch({
-        type: "bootstrap.fetch",
-        requestId: request.requestId,
-        payload: { surface: "background" },
-      });
-      if (bootstrapResult.ok === false) {
-        const auth = stateStore.getState();
-        return createErrorResult(
-          bootstrapResult.error?.code || ERROR_CODES.BOOTSTRAP_FAILED,
-          bootstrapResult.error?.message || "Session restore failed.",
-          request.requestId,
-          bootstrapResult.error?.details ?? null,
-          { auth },
-        );
-      }
-      return bootstrapResult;
-    },
+    restoreSession,
   };
 }

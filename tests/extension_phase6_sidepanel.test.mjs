@@ -204,7 +204,17 @@ function createFetchStub({ signedIn = true, citationsBody, notesBody, renderBody
         data: {
           profile: { id: "user-1", display_name: "Researcher", email: "user@example.com" },
           entitlement: { tier: "pro", status: "active" },
-          capabilities: { citation_styles: ["apa", "mla", "chicago", "harvard"], unlocks: true, documents: {} },
+          capabilities: {
+            citation_styles: ["apa", "mla", "chicago", "harvard"],
+            unlocks: true,
+            documents: {},
+            usage: {
+              docs: "3/7",
+              cites: "11/25",
+              quotes: "4/10",
+              notes: "2/8",
+            },
+          },
           app: {
             origin: "https://app.writior.com",
             handoff: { preferred_destination: "/editor/from-bootstrap" },
@@ -256,6 +266,8 @@ function createChromeStub(initialStorage = {}) {
   const storage = { ...initialStorage };
   const messages = [];
   const tabsCreateCalls = [];
+  const sidePanelOpenCalls = [];
+  const sidePanelSetOptionsCalls = [];
   const storageListeners = [];
   function emitStorageChange(changes) {
     for (const listener of storageListeners) {
@@ -265,6 +277,8 @@ function createChromeStub(initialStorage = {}) {
   const chromeApi = {
     messages,
     tabsCreateCalls,
+    sidePanelOpenCalls,
+    sidePanelSetOptionsCalls,
     _dispatch: null,
     runtime: {
       lastError: null,
@@ -285,7 +299,17 @@ function createChromeStub(initialStorage = {}) {
         return args;
       },
       async query() {
-        return [{ title: "Example page", url: "https://example.com/page", windowId: 1 }];
+        return [{ id: 11, title: "Example page", url: "https://example.com/page", windowId: 1 }];
+      },
+    },
+    sidePanel: {
+      async open(args) {
+        sidePanelOpenCalls.push(args);
+        return args;
+      },
+      async setOptions(args) {
+        sidePanelSetOptionsCalls.push(args);
+        return args;
       },
     },
     storage: {
@@ -349,6 +373,11 @@ function createRuntime({ signedIn = true, citationsBody, notesBody } = {}) {
 
 function createClient(runtime, chromeApi) {
   return {
+    openSidepanel: (payload = {}) => runtime.dispatch({
+      type: MESSAGE_NAMES.OPEN_SIDEPANEL,
+      requestId: "open-sidepanel",
+      payload: { surface: "sidepanel", ...payload },
+    }, { tab: { id: 11, windowId: 1 } }),
     bootstrapFetch: () => runtime.dispatch({
       type: MESSAGE_NAMES.BOOTSTRAP_FETCH,
       requestId: "bootstrap-fetch",
@@ -418,16 +447,17 @@ test("signed-out sidepanel stays background-only and does not fetch lists", asyn
     await shell.refresh();
 
     const mountedRoot = root.shadowRoot || root;
-    const profileCard = findByAttr(mountedRoot, "data-profile-card", "true");
-    const actionButtons = profileCard.children[1].children;
-    const signIn = actionButtons.find((child) => child.textContent === "Sign in");
-    const signOut = actionButtons.find((child) => child.textContent === "Sign out");
+    const actionRow = findByAttr(mountedRoot, "data-action-row", "true");
+    const signIn = actionRow.children.find((child) => child.textContent === "Sign In");
+    const signOut = actionRow.children.find((child) => child.textContent === "Sign Out");
     assert.equal(shell.getState().status, "signed_out");
-    assert.equal(collectText(mountedRoot).includes("Signed out"), true);
+    assert.equal(collectText(mountedRoot).includes("Not signed in"), true);
     assert.ok(signIn);
     assert.equal(Boolean(signOut), false);
     assert.equal(requests.some((entry) => entry.url.includes("/api/citations?")), false);
     assert.equal(requests.some((entry) => entry.url.includes("/api/notes?")), false);
+    assert.ok(findByAttr(mountedRoot, "data-tab", "docs"));
+    assert.ok(findByAttr(mountedRoot, "data-gated-state", "true"));
   } finally {
     shell?.destroy?.();
     globalThis.document = previousDocument;
@@ -452,7 +482,7 @@ test("sidepanel runtime client omits blank query values from list requests", asy
   assert.equal(Object.prototype.hasOwnProperty.call(capturedMessage.payload, "query"), false);
 });
 
-test("signed-in sidepanel loads recent items, supports tabs, expand, copy, and background navigation", async () => {
+test("signed-in sidepanel loads compact workspace lists, tabs, hover preview, and background navigation", async () => {
   const previousDocument = globalThis.document;
   const previousWindow = globalThis.window;
   const documentRef = new FakeDocument();
@@ -512,38 +542,37 @@ test("signed-in sidepanel loads recent items, supports tabs, expand, copy, and b
     const mountedRoot = root.shadowRoot || root;
     assert.equal(shell.getState().status, "ready");
     assert.equal(requests.some((entry) => entry.url.includes("/api/citations?limit=8")), true);
-    assert.equal(requests.some((entry) => entry.url.includes("/api/notes?limit=8")), true);
+    assert.equal(requests.some((entry) => entry.url.includes("/api/notes?limit=8")), false);
     assert.equal(collectText(mountedRoot).includes("Source Title"), true);
     assert.equal(collectText(mountedRoot).includes("Researcher"), true);
-    assert.equal(collectText(mountedRoot).includes("user@example.com"), true);
     assert.equal(collectText(mountedRoot).includes("Pro"), true);
+    assert.equal(findByAttr(mountedRoot, "data-usage-gauge-row", "true").style.display, "grid");
+    assert.equal(findByAttr(mountedRoot, "data-list-scroll", "true").style.overflow, "auto");
 
     const citationRow = findByAttr(mountedRoot, "data-citation-id", "citation-1");
     assert.ok(citationRow);
-    const citationExpand = findByText(citationRow, "Expand");
-    citationExpand.dispatchEvent(new FakeEvent("click", citationExpand));
-    assert.equal(shell.getState().expanded_citation_id, "citation-1");
-
-    const citationCopy = findByText(citationRow, "Copy");
-    citationCopy.dispatchEvent(new FakeEvent("click", citationCopy));
+    citationRow.dispatchEvent(new FakeEvent("mouseenter", citationRow));
+    assert.equal(collectText(mountedRoot).includes("Selected excerpt"), true);
+    citationRow.dispatchEvent(new FakeEvent("click", citationRow));
     assert.equal(clipboard.lastText.includes("Author. (2024). Source Title."), true);
 
     const notesTab = findByAttr(mountedRoot, "data-tab", "notes");
     notesTab.dispatchEvent(new FakeEvent("click", notesTab));
+    await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(shell.getState().active_tab, "notes");
+    assert.equal(requests.some((entry) => entry.url.includes("/api/notes?limit=8")), true);
     assert.equal(collectText(mountedRoot).includes("Field note"), true);
     assert.equal(collectText(mountedRoot).includes("Highlight note"), true);
 
     const noteRow = findByAttr(mountedRoot, "data-note-id", "note-1");
-    const noteCopy = findByText(noteRow, "Copy");
-    noteCopy.dispatchEvent(new FakeEvent("click", noteCopy));
+    noteRow.dispatchEvent(new FakeEvent("mouseenter", noteRow));
+    noteRow.dispatchEvent(new FakeEvent("click", noteRow));
     assert.equal(clipboard.lastText.includes("Note body text"), true);
 
-    const profileCard = findByAttr(mountedRoot, "data-profile-card", "true");
-    const actionButtons = profileCard.children[1].children;
-    const openEditor = actionButtons.find((child) => child.textContent === "Open editor");
-    const openDashboard = actionButtons.find((child) => child.textContent === "Open dashboard");
-    const signOut = actionButtons.find((child) => child.textContent === "Sign out");
+    const actionRow = findByAttr(mountedRoot, "data-action-row", "true");
+    const openEditor = actionRow.children.find((child) => child.textContent === "Open Editor");
+    const openDashboard = actionRow.children.find((child) => child.textContent === "Dashboard");
+    const signOut = actionRow.children.find((child) => child.textContent === "Sign Out");
     assert.ok(signOut);
 
     openEditor.dispatchEvent(new FakeEvent("click", openEditor));
@@ -599,9 +628,8 @@ test("sidepanel surfaces launch failures when canonical dashboard truth is unava
     shell.render();
 
     const mountedRoot = root.shadowRoot || root;
-    const profileCard = findByAttr(mountedRoot, "data-profile-card", "true");
-    const actionButtons = profileCard.children[1].children;
-    const openDashboard = actionButtons.find((child) => child.textContent === "Open dashboard");
+    const actionRow = findByAttr(mountedRoot, "data-action-row", "true");
+    const openDashboard = actionRow.children.find((child) => child.textContent === "Dashboard");
     openDashboard.dispatchEvent(new FakeEvent("click", openDashboard));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -612,4 +640,20 @@ test("sidepanel surfaces launch failures when canonical dashboard truth is unava
     globalThis.document = previousDocument;
     globalThis.window = previousWindow;
   }
+});
+
+test("background-owned sidepanel toggle can open and close without relying on the pinned toolbar icon", async () => {
+  const { chromeApi, runtime } = createRuntime({ signedIn: true });
+  const client = createClient(runtime, chromeApi);
+
+  const openResult = await client.openSidepanel({ mode: "toggle" });
+  const closeResult = await client.openSidepanel({ mode: "toggle" });
+
+  assert.equal(openResult.ok, true);
+  assert.equal(openResult.data.opened, true);
+  assert.equal(closeResult.ok, true);
+  assert.equal(closeResult.data.opened, false);
+  assert.equal(chromeApi.sidePanelOpenCalls.length, 1);
+  assert.equal(chromeApi.sidePanelSetOptionsCalls[0].enabled, true);
+  assert.equal(chromeApi.sidePanelSetOptionsCalls[1].enabled, false);
 });

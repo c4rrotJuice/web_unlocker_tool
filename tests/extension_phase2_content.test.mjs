@@ -263,6 +263,22 @@ function installEnvironment() {
   return { documentRef, windowRef };
 }
 
+function findByAttr(node, name, value) {
+  if (!node) {
+    return null;
+  }
+  if (typeof node.getAttribute === "function" && node.getAttribute(name) === value) {
+    return node;
+  }
+  for (const child of node.children || []) {
+    const match = findByAttr(child, name, value);
+    if (match) {
+      return match;
+    }
+  }
+  return null;
+}
+
 test("content runtime ships autonomous unlock bootstrap without background coupling", () => {
   const manifest = JSON.parse(fs.readFileSync("extension/manifest.json", "utf8"));
   const source = fs.readFileSync("extension/content/index.ts", "utf8");
@@ -307,6 +323,40 @@ test("content runtime url guard only excludes first-party editor routes", () => 
   assert.equal(shouldBootstrapContentRuntime("https://example.com/editor"), true);
   assert.equal(shouldBootstrapContentRuntime("https://app.writior.com/research"), true);
   assert.equal(shouldBootstrapContentRuntime("not a url"), true);
+});
+
+test("content runtime injects a fixed launcher that toggles the sidepanel through background messaging", async () => {
+  const { documentRef, windowRef } = installEnvironment();
+  const messages = [];
+  const chromeApi = {
+    runtime: {
+      getURL(path) {
+        return `chrome-extension://test/${path}`;
+      },
+      sendMessage(message, callback) {
+        messages.push(message);
+        callback?.({
+          ok: true,
+          status: "ok",
+          requestId: message.requestId,
+          data: { opened: true, target: "sender_tab" },
+        });
+      },
+    },
+  };
+
+  bootstrapContent({ documentRef, windowRef, chromeApi, MutationObserverRef: FakeMutationObserver });
+
+  const launcherHost = findByAttr(documentRef.documentElement, "data-writior-launcher-host", "true");
+  assert.ok(launcherHost);
+  const launcherButton = findByAttr(launcherHost, "aria-label", "Toggle Writior sidepanel");
+  assert.ok(launcherButton);
+  launcherButton.dispatchEvent(new FakeEvent("click", launcherButton));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(messages.length >= 1, true);
+  assert.equal(messages.at(-1).payload.mode, "toggle");
+  assert.equal(launcherButton.getAttribute("data-open"), "true");
 });
 
 test("target classification stays conservative for safe content, inputs, and editors", () => {

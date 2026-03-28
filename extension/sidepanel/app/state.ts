@@ -1,7 +1,9 @@
 export const SIDEPANEL_TABS = Object.freeze({
   CITATIONS: "citations",
   NOTES: "notes",
+  DOCS: "docs",
   NEW_NOTE: "new-note",
+  QUOTES: "quotes",
 });
 
 export const SIDEPANEL_STATUS = Object.freeze({
@@ -11,8 +13,21 @@ export const SIDEPANEL_STATUS = Object.freeze({
   ERROR: "error",
 });
 
+export const TAB_LOAD_STATUS = Object.freeze({
+  IDLE: "idle",
+  LOADING: "loading",
+  READY: "ready",
+  ERROR: "error",
+  GATED: "gated",
+  UNAVAILABLE: "unavailable",
+});
+
 function clone(value) {
   return typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
+}
+
+function createTabState(status: string = TAB_LOAD_STATUS.IDLE, items = [], message = "") {
+  return { status, items, message };
 }
 
 export function createSidepanelStateStore(initialState = {}) {
@@ -20,10 +35,13 @@ export function createSidepanelStateStore(initialState = {}) {
     status: SIDEPANEL_STATUS.LOADING,
     auth: null,
     active_tab: SIDEPANEL_TABS.CITATIONS,
-    recent_citations: [],
-    recent_notes: [],
-    expanded_citation_id: null,
-    expanded_note_id: null,
+    tabs: {
+      [SIDEPANEL_TABS.CITATIONS]: createTabState(),
+      [SIDEPANEL_TABS.NOTES]: createTabState(),
+      [SIDEPANEL_TABS.DOCS]: createTabState(TAB_LOAD_STATUS.UNAVAILABLE, [], "Documents are opened through the canonical editor flow."),
+      [SIDEPANEL_TABS.NEW_NOTE]: createTabState(TAB_LOAD_STATUS.READY),
+      [SIDEPANEL_TABS.QUOTES]: createTabState(TAB_LOAD_STATUS.UNAVAILABLE, [], "Quotes list hydration is not available from the current extension contract."),
+    },
     noteStatus: "closed",
     noteText: "",
     noteError: "",
@@ -32,18 +50,43 @@ export function createSidepanelStateStore(initialState = {}) {
     ...clone(initialState),
   };
 
+  function getState() {
+    return clone(state);
+  }
+
   function setState(nextState = {}) {
     state = { ...state, ...clone(nextState) };
     return getState();
   }
 
-  function getState() {
-    return clone(state);
+  function updateTab(tabKey, patch = {}) {
+    return setState({
+      tabs: {
+        ...state.tabs,
+        [tabKey]: {
+          ...(state.tabs?.[tabKey] || createTabState()),
+          ...clone(patch),
+        },
+      },
+    });
   }
 
   return {
     getState,
     setState,
+    updateTab,
+    resetSignedOutTabs() {
+      return setState({
+        tabs: {
+          ...state.tabs,
+          [SIDEPANEL_TABS.CITATIONS]: createTabState(TAB_LOAD_STATUS.GATED, [], "Sign in to review recent citations."),
+          [SIDEPANEL_TABS.NOTES]: createTabState(TAB_LOAD_STATUS.GATED, [], "Sign in to review recent notes."),
+          [SIDEPANEL_TABS.DOCS]: createTabState(TAB_LOAD_STATUS.GATED, [], "Sign in to open recent documents."),
+          [SIDEPANEL_TABS.NEW_NOTE]: createTabState(TAB_LOAD_STATUS.GATED, [], "Sign in to save notes into the canonical workspace."),
+          [SIDEPANEL_TABS.QUOTES]: createTabState(TAB_LOAD_STATUS.GATED, [], "Sign in to review captured quotes."),
+        },
+      });
+    },
     setAuth(auth) {
       return setState({
         auth,
@@ -51,27 +94,15 @@ export function createSidepanelStateStore(initialState = {}) {
           ? SIDEPANEL_STATUS.READY
           : auth?.status === "refreshing"
             ? SIDEPANEL_STATUS.LOADING
-          : auth?.status === "signed_out"
-            ? SIDEPANEL_STATUS.SIGNED_OUT
-            : auth?.status === "error"
-              ? SIDEPANEL_STATUS.ERROR
-              : SIDEPANEL_STATUS.LOADING,
+            : auth?.status === "signed_out"
+              ? SIDEPANEL_STATUS.SIGNED_OUT
+              : auth?.status === "error"
+                ? SIDEPANEL_STATUS.ERROR
+                : SIDEPANEL_STATUS.LOADING,
       });
     },
     setActiveTab(active_tab) {
       return setState({ active_tab });
-    },
-    setRecentCitations(recent_citations) {
-      return setState({ recent_citations: Array.isArray(recent_citations) ? recent_citations : [] });
-    },
-    setRecentNotes(recent_notes) {
-      return setState({ recent_notes: Array.isArray(recent_notes) ? recent_notes : [] });
-    },
-    setExpandedCitationId(expanded_citation_id) {
-      return setState({ expanded_citation_id, expanded_note_id: null });
-    },
-    setExpandedNoteId(expanded_note_id) {
-      return setState({ expanded_note_id, expanded_citation_id: null });
     },
     setNotice(notice) {
       return setState({ notice });

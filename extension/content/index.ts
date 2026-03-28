@@ -1,6 +1,7 @@
 import { createRuntimeClient } from "../shared/utils/runtime_client.ts";
 import { createPageUnlockEngine } from "./unlock/engine.ts";
 import { createSelectionRuntime } from "./selection/index.ts";
+import { createSidepanelLauncher } from "./ui/sidepanel_launcher.ts";
 
 const RUNTIME_KEY = "__WRITIOR_CONTENT_RUNTIME__";
 
@@ -38,15 +39,23 @@ export function createContentRuntime(options = {}) {
     windowRef,
     documentRef,
   });
+  const launcher = createSidepanelLauncher({
+    ...typedOptions,
+    windowRef,
+    documentRef,
+  });
 
   return {
     bootstrap() {
+      launcher.mount();
       return {
         unlockState: engine.bootstrap(),
         selectionState: selection.bootstrap(),
+        launcherState: launcher.getState(),
       };
     },
     destroy() {
+      launcher.destroy();
       selection.destroy();
       engine.destroy();
     },
@@ -56,6 +65,7 @@ export function createContentRuntime(options = {}) {
         ...unlockState,
         unlock: unlockState,
         selection: selection.getState(),
+        launcher: launcher.getState(),
       };
     },
     runtimeClientFactory: createRuntimeClient,

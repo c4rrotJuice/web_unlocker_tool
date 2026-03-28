@@ -5,62 +5,73 @@ import { renderPopupAuthSnapshot } from "./app/index.ts";
 
 const logger = createLogger("popup");
 
-function createButton(label, onClick) {
+function createButton(label, onClick, tone = "default") {
   const button = document.createElement("button");
   button.type = "button";
   button.textContent = label;
+  button.style.minHeight = "34px";
+  button.style.padding = "0 12px";
+  button.style.borderRadius = "10px";
+  button.style.border = tone === "primary"
+    ? "1px solid rgba(248, 250, 252, 0.26)"
+    : "1px solid rgba(148, 163, 184, 0.18)";
+  button.style.background = tone === "primary" ? "#e2e8f0" : "rgba(15, 23, 42, 0.72)";
+  button.style.color = tone === "primary" ? "#0f172a" : "#e2e8f0";
+  button.style.fontSize = "12px";
+  button.style.fontWeight = "600";
   button.addEventListener("click", onClick);
   return button;
 }
 
-function describeAuth(auth) {
-  if (!auth) {
-    return "Auth: unavailable";
-  }
-  if (auth.status === "loading") {
-    return "Auth: loading";
-  }
-  if (auth.status === "refreshing") {
-    return "Auth: refreshing";
-  }
-  if (auth.status === "signed_out") {
-    return "Auth: signed out";
-  }
-  if (auth.status === "signed_in") {
-    const name = auth.bootstrap?.profile?.display_name || auth.session?.email || "Signed in";
-    return `Auth: ${name}`;
-  }
-  return `Auth error: ${auth.error?.message || "Unknown error"}`;
-}
-
 function getAuthStatusText(result) {
   const typedResult: any = result;
-  return typedResult.ok ? describeAuth(typedResult.data?.auth) : `Auth error: ${typedResult.error.message}`;
+  return typedResult.ok ? typedResult.data?.auth : { status: "error", error: { message: typedResult?.error?.message || "Auth error" } };
 }
 
 function renderPopup(root) {
   const runtimeClient = createRuntimeClient(globalThis.chrome, SURFACE_NAMES.POPUP);
   const shell = document.createElement("section");
+  shell.style.display = "grid";
+  shell.style.gap = "10px";
+  shell.style.padding = "12px";
+  shell.style.minWidth = "220px";
+  shell.style.background = "linear-gradient(180deg, #020617 0%, #0f172a 100%)";
+  shell.style.color = "#e2e8f0";
+  shell.style.fontFamily = "\"Segoe UI\", Arial, sans-serif";
+
   const snapshotRoot = document.createElement("div");
+  snapshotRoot.style.padding = "12px";
+  snapshotRoot.style.border = "1px solid rgba(148, 163, 184, 0.14)";
+  snapshotRoot.style.borderRadius = "14px";
+  snapshotRoot.style.background = "rgba(15, 23, 42, 0.82)";
+
   const actions = document.createElement("div");
-  const signInButton = createButton("Sign in", async () => {
+  actions.style.display = "grid";
+  actions.style.gridTemplateColumns = "repeat(2, minmax(0, 1fr))";
+  actions.style.gap = "8px";
+
+  const signInButton = createButton("Sign In", async () => {
     renderPopupAuthSnapshot(snapshotRoot, { status: "loading" });
     const result: any = await runtimeClient.authStart({
       trigger: "popup_sign_in",
       redirectPath: "/dashboard",
     });
-    renderPopupAuthSnapshot(snapshotRoot, result?.ok ? result.data?.auth : {
-      status: "error",
-      error: { message: getAuthStatusText(result) },
-    });
-  });
-  const signOutButton = createButton("Sign out", async () => {
+    renderPopupAuthSnapshot(snapshotRoot, getAuthStatusText(result));
+  }, "primary");
+  const signOutButton = createButton("Sign Out", async () => {
     const result: any = await runtimeClient.authLogout();
-    renderPopupAuthSnapshot(snapshotRoot, result?.ok ? result.data?.auth : {
-      status: "error",
-      error: { message: getAuthStatusText(result) },
-    });
+    renderPopupAuthSnapshot(snapshotRoot, getAuthStatusText(result));
   });
+  const openSidepanelButton = createButton("Open Workspace", async () => {
+    const result: any = await runtimeClient.openSidepanel({ mode: "open" });
+    if (!result?.ok) {
+      renderPopupAuthSnapshot(snapshotRoot, {
+        status: "error",
+        error: { message: result?.error?.message || "Open workspace failed." },
+      });
+    }
+  });
+  openSidepanelButton.style.gridColumn = "1 / -1";
 
   function syncActionVisibility(auth) {
     const signedIn = auth?.status === "signed_in" || auth?.status === "refreshing";
@@ -70,33 +81,17 @@ function renderPopup(root) {
 
   async function refreshAuth() {
     const result: any = await runtimeClient.authStatusGet();
-    const auth = result?.ok ? result.data?.auth : {
-      status: "error",
-      error: { message: getAuthStatusText(result) },
-    };
+    const auth = getAuthStatusText(result);
     syncActionVisibility(auth);
     renderPopupAuthSnapshot(snapshotRoot, auth);
-    return result;
   }
 
-  actions.append(
-    signInButton,
-    signOutButton,
-    createButton("Open sidepanel", async () => {
-      const result: any = await runtimeClient.openSidepanel();
-      if (!result?.ok) {
-        renderPopupAuthSnapshot(snapshotRoot, {
-          status: "error",
-          error: { message: result?.error?.message || "Open sidepanel failed." },
-        });
-      }
-    }),
-  );
-
+  actions.append(signInButton, signOutButton, openSidepanelButton);
   renderPopupAuthSnapshot(snapshotRoot, { status: "loading" });
   syncActionVisibility({ status: "loading" });
   shell.append(snapshotRoot, actions);
   root.replaceChildren(shell);
+
   globalThis.chrome?.storage?.onChanged?.addListener?.((changes, areaName) => {
     if (areaName !== "local" || !changes?.[STORAGE_KEYS.AUTH_STATE]) {
       return;

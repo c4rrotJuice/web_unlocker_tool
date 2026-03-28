@@ -4,18 +4,18 @@ import { normalizeCapabilitySurface } from "../../shared/types/capability_surfac
 function summarizeStatus(snapshot) {
   const status = snapshot?.status || AUTH_STATUS.SIGNED_OUT;
   if (status === AUTH_STATUS.LOADING) {
-    return "Loading auth state";
+    return "Loading session";
   }
   if (status === AUTH_STATUS.REFRESHING) {
     return "Refreshing session";
   }
   if (status === AUTH_STATUS.ERROR) {
-    return `Auth error: ${snapshot?.error?.message || "unknown"}`;
+    return snapshot?.error?.message || "Auth error";
   }
   if (status === AUTH_STATUS.SIGNED_IN) {
-    return `Signed in${snapshot?.session?.email ? ` as ${snapshot.session.email}` : ""}`;
+    return snapshot?.bootstrap?.profile?.display_name || snapshot?.session?.email || "Signed in";
   }
-  return "Signed out";
+  return "Not signed in";
 }
 
 export function renderPopupAuthSnapshot(root, snapshot) {
@@ -24,16 +24,28 @@ export function renderPopupAuthSnapshot(root, snapshot) {
   }
   root.innerHTML = "";
   const surface = normalizeCapabilitySurface({ auth: snapshot });
-  const usageText = surface.usageItems.length
-    ? surface.usageItems.map((item) => `${item.label}: ${item.value}`).join(" • ")
-    : "Usage updates appear here when available.";
-  root.innerHTML = `
-    <section data-surface="popup">
-      <h1>Writior</h1>
-      <p>${summarizeStatus(snapshot)}</p>
-      <p>Tier ${surface.tier}</p>
-      <p>${usageText}</p>
-    </section>
-  `;
+  const section = document.createElement("section");
+  section.setAttribute("data-surface", "popup");
+  section.style.display = "grid";
+  section.style.gap = "6px";
+
+  const title = document.createElement("div");
+  title.textContent = "Writior";
+  title.style.fontSize = "16px";
+  title.style.fontWeight = "700";
+  title.style.color = "#f8fafc";
+
+  const identity = document.createElement("div");
+  identity.textContent = summarizeStatus(snapshot);
+  identity.style.fontSize = "12px";
+  identity.style.color = "#cbd5e1";
+
+  const tier = document.createElement("div");
+  tier.textContent = `Tier ${surface.tierLabel || "Guest"}`;
+  tier.style.fontSize = "11px";
+  tier.style.color = "#94a3b8";
+
+  section.append(title, identity, tier);
+  root.appendChild(section);
   return { mounted: true };
 }

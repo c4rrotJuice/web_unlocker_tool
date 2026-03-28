@@ -9,8 +9,11 @@ export function createPingRequest(requestId, payload) {
   return createRequest(MESSAGE_NAMES.PING, requestId, payload);
 }
 
-export function createOpenSidepanelRequest(requestId, surface) {
-  return createRequest(MESSAGE_NAMES.OPEN_SIDEPANEL, requestId, { surface });
+export function createOpenSidepanelRequest(requestId, surface, mode = undefined) {
+  return createRequest(MESSAGE_NAMES.OPEN_SIDEPANEL, requestId, {
+    surface,
+    ...(mode ? { mode } : {}),
+  });
 }
 
 export function createAuthStartRequest(requestId, surface, trigger, redirectPath = undefined) {

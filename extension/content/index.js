@@ -2,6 +2,7 @@
 import { createRuntimeClient } from "../shared/utils/runtime_client.js";
 import { createPageUnlockEngine } from "./unlock/engine.js";
 import { createSelectionRuntime } from "./selection/index.js";
+import { createSidepanelLauncher } from "./ui/sidepanel_launcher.js";
 const RUNTIME_KEY = "__WRITIOR_CONTENT_RUNTIME__";
 function canParseUrl(value) {
     try {
@@ -36,14 +37,22 @@ export function createContentRuntime(options = {}) {
         windowRef,
         documentRef,
     });
+    const launcher = createSidepanelLauncher({
+        ...typedOptions,
+        windowRef,
+        documentRef,
+    });
     return {
         bootstrap() {
+            launcher.mount();
             return {
                 unlockState: engine.bootstrap(),
                 selectionState: selection.bootstrap(),
+                launcherState: launcher.getState(),
             };
         },
         destroy() {
+            launcher.destroy();
             selection.destroy();
             engine.destroy();
         },
@@ -53,6 +62,7 @@ export function createContentRuntime(options = {}) {
                 ...unlockState,
                 unlock: unlockState,
                 selection: selection.getState(),
+                launcher: launcher.getState(),
             };
         },
         runtimeClientFactory: createRuntimeClient,

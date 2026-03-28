@@ -13,9 +13,17 @@ test("phase 0 extension skeleton keeps manifest MV3 and uses only justified perm
   const manifest = JSON.parse(read("manifest.json"));
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.background.service_worker, "background/index.js");
-  assert.deepEqual(manifest.permissions, ["storage", "sidePanel", "tabs"]);
+  assert.deepEqual(manifest.permissions, ["alarms", "storage", "sidePanel", "tabs"]);
   assert.equal(manifest.side_panel.default_path, "sidepanel/index.html");
   assert.equal(manifest.action.default_popup, "popup/index.html");
+});
+
+test("phase 0 manifest maps action and extension icons to Writior logo assets", () => {
+  const manifest = JSON.parse(read("manifest.json"));
+  assert.equal(manifest.action.default_icon["32"], "assets/icons/writior_logo_32.jpg");
+  assert.equal(manifest.action.default_icon["48"], "assets/icons/writior_logo_48.jpg");
+  assert.equal(manifest.icons["32"], "assets/icons/writior_logo_32.jpg");
+  assert.equal(manifest.icons["128"], "assets/icons/writior_logo_128.jpg");
 });
 
 test("phase 0 skeleton centralizes message names, endpoints, and storage keys", () => {

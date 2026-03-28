@@ -54,7 +54,7 @@ exports.MESSAGE_CONTRACTS = Object.freeze({
     }),
     [message_names_ts_1.MESSAGE_NAMES.OPEN_SIDEPANEL]: Object.freeze({
         topic: exports.MESSAGE_TOPICS.UI,
-        payloadShape: "surface:string",
+        payloadShape: "surface:string, mode?:open|toggle",
         resultShape: "opened:boolean, target:string",
     }),
     [message_names_ts_1.MESSAGE_NAMES.AUTH_START]: Object.freeze({
@@ -165,8 +165,11 @@ function createRequest(type, requestId, payload) {
 function createPingRequest(requestId, payload) {
     return createRequest(message_names_ts_1.MESSAGE_NAMES.PING, requestId, payload);
 }
-function createOpenSidepanelRequest(requestId, surface) {
-    return createRequest(message_names_ts_1.MESSAGE_NAMES.OPEN_SIDEPANEL, requestId, { surface });
+function createOpenSidepanelRequest(requestId, surface, mode = undefined) {
+    return createRequest(message_names_ts_1.MESSAGE_NAMES.OPEN_SIDEPANEL, requestId, {
+        surface,
+        ...(mode ? { mode } : {}),
+    });
 }
 function createAuthStartRequest(requestId, surface, trigger, redirectPath = undefined) {
     return createRequest(message_names_ts_1.MESSAGE_NAMES.AUTH_START, requestId, {
@@ -666,7 +669,14 @@ function validatePingPayload(payload) {
     return null;
 }
 function validateOpenSidepanelPayload(payload) {
-    return validateSurface(payload);
+    const surfaceError = validateSurface(payload);
+    if (surfaceError) {
+        return surfaceError;
+    }
+    if (payload.mode != null && payload.mode !== "open" && payload.mode !== "toggle") {
+        return "payload.mode must be open or toggle when provided.";
+    }
+    return null;
 }
 function validateAuthStartPayload(payload) {
     const surfaceError = validateSurface(payload);
@@ -1072,9 +1082,9 @@ function createRuntimeClient(chromeApi, surface) {
                 ...payload,
             }));
         },
-        openSidepanel() {
+        openSidepanel({ mode = undefined } = {}) {
             const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-open-sidepanel`);
-            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createOpenSidepanelRequest)(requestId, surface));
+            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createOpenSidepanelRequest)(requestId, surface, mode));
         },
         authStart({ trigger = "manual", redirectPath = undefined } = {}) {
             const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-auth-start`);
@@ -5394,6 +5404,102 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
 }
 
 },
+"content/ui/sidepanel_launcher.ts": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createSidepanelLauncher = createSidepanelLauncher;
+const runtime_client_ts_1 = require("../../shared/utils/runtime_client.ts");
+function resolveAssetUrl(chromeApi, path) {
+    if (typeof chromeApi?.runtime?.getURL === "function") {
+        return chromeApi.runtime.getURL(path);
+    }
+    return path;
+}
+function createSidepanelLauncher({ windowRef = globalThis.window, documentRef = globalThis.document, chromeApi = globalThis.chrome, runtimeClient = (0, runtime_client_ts_1.createRuntimeClient)(chromeApi, runtime_client_ts_1.SURFACE_NAMES.CONTENT), } = {}) {
+    const host = documentRef.createElement("div");
+    host.setAttribute("data-writior-launcher-host", "true");
+    host.style.position = "fixed";
+    host.style.top = "50%";
+    host.style.right = "12px";
+    host.style.transform = "translateY(-50%)";
+    host.style.zIndex = "2147483647";
+    host.style.pointerEvents = "auto";
+    const mount = typeof host.attachShadow === "function" ? host.attachShadow({ mode: "open" }) : host;
+    const style = documentRef.createElement("style");
+    style.textContent = `
+    :host { all: initial; }
+    .writior-launcher {
+      all: initial;
+      width: 38px;
+      height: 38px;
+      display: inline-grid;
+      place-items: center;
+      border-radius: 12px 0 0 12px;
+      border: 1px solid rgba(148, 163, 184, 0.24);
+      background: rgba(2, 6, 23, 0.94);
+      box-shadow: 0 12px 30px rgba(2, 6, 23, 0.28);
+      cursor: pointer;
+    }
+    .writior-launcher[data-open="true"] {
+      background: rgba(226, 232, 240, 0.96);
+    }
+    .writior-launcher img {
+      width: 22px;
+      height: 22px;
+      display: block;
+      object-fit: cover;
+      border-radius: 7px;
+    }
+  `;
+    const button = documentRef.createElement("button");
+    button.type = "button";
+    button.className = "writior-launcher";
+    button.setAttribute("data-open", "false");
+    button.setAttribute("aria-label", "Toggle Writior sidepanel");
+    const icon = documentRef.createElement("img");
+    icon.alt = "Writior";
+    icon.src = resolveAssetUrl(chromeApi, "assets/icons/writior_logo_32.jpg");
+    button.appendChild(icon);
+    if (typeof mount.append === "function") {
+        mount.append(style, button);
+    }
+    else {
+        mount.appendChild(style);
+        mount.appendChild(button);
+    }
+    let isOpen = false;
+    async function toggle() {
+        const result = await runtimeClient.openSidepanel({ mode: "toggle" });
+        if (result?.ok) {
+            isOpen = result.data?.opened === true;
+            button.setAttribute("data-open", String(isOpen));
+            button.setAttribute("aria-pressed", String(isOpen));
+        }
+    }
+    button.addEventListener("click", (event) => {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        void toggle();
+    });
+    return {
+        host,
+        mount() {
+            const parent = documentRef.body || documentRef.documentElement;
+            if (!parent || host.parentNode) {
+                return;
+            }
+            parent.appendChild(host);
+        },
+        destroy() {
+            host.remove?.();
+        },
+        getState() {
+            return { open: isOpen };
+        },
+    };
+}
+
+},
 "content/index.ts": function(module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -5403,6 +5509,7 @@ exports.bootstrapContent = bootstrapContent;
 const runtime_client_ts_1 = require("../shared/utils/runtime_client.ts");
 const engine_ts_1 = require("./unlock/engine.ts");
 const index_ts_1 = require("./selection/index.ts");
+const sidepanel_launcher_ts_1 = require("./ui/sidepanel_launcher.ts");
 const RUNTIME_KEY = "__WRITIOR_CONTENT_RUNTIME__";
 function canParseUrl(value) {
     try {
@@ -5437,14 +5544,22 @@ function createContentRuntime(options = {}) {
         windowRef,
         documentRef,
     });
+    const launcher = (0, sidepanel_launcher_ts_1.createSidepanelLauncher)({
+        ...typedOptions,
+        windowRef,
+        documentRef,
+    });
     return {
         bootstrap() {
+            launcher.mount();
             return {
                 unlockState: engine.bootstrap(),
                 selectionState: selection.bootstrap(),
+                launcherState: launcher.getState(),
             };
         },
         destroy() {
+            launcher.destroy();
             selection.destroy();
             engine.destroy();
         },
@@ -5454,6 +5569,7 @@ function createContentRuntime(options = {}) {
                 ...unlockState,
                 unlock: unlockState,
                 selection: selection.getState(),
+                launcher: launcher.getState(),
             };
         },
         runtimeClientFactory: runtime_client_ts_1.createRuntimeClient,

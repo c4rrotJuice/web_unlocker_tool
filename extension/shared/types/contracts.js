@@ -23,7 +23,7 @@ export const MESSAGE_CONTRACTS = Object.freeze({
     }),
     [MESSAGE_NAMES.OPEN_SIDEPANEL]: Object.freeze({
         topic: MESSAGE_TOPICS.UI,
-        payloadShape: "surface:string",
+        payloadShape: "surface:string, mode?:open|toggle",
         resultShape: "opened:boolean, target:string",
     }),
     [MESSAGE_NAMES.AUTH_START]: Object.freeze({

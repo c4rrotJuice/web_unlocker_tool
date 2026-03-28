@@ -29,7 +29,14 @@ function validatePingPayload(payload) {
     return null;
 }
 function validateOpenSidepanelPayload(payload) {
-    return validateSurface(payload);
+    const surfaceError = validateSurface(payload);
+    if (surfaceError) {
+        return surfaceError;
+    }
+    if (payload.mode != null && payload.mode !== "open" && payload.mode !== "toggle") {
+        return "payload.mode must be open or toggle when provided.";
+    }
+    return null;
 }
 function validateAuthStartPayload(payload) {
     const surfaceError = validateSurface(payload);

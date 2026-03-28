@@ -22,6 +22,7 @@ import { createNoteActions } from "../../app/static/js/editor_v2/actions/note_ac
 import { renderExplorerList } from "../../app/static/js/editor_v2/ui/explorer_renderer.js";
 import { createAuthSessionError, createAuthSessionErrorFromPayload, isAuthSessionError } from "../../app/static/js/shared/auth/session.js";
 import { initSidebarShell } from "../../app/static/js/app_shell/core/sidebar.js";
+import { citationDisplayTitle } from "../../app/static/js/shared/citation_contract.js";
 
 function okResponse(data) {
   return {
@@ -1557,6 +1558,16 @@ test("structured auth error payloads preserve a readable message instead of obje
 
   assert.equal(error?.code, "missing_credentials");
   assert.equal(error?.message, "Input should be a valid dictionary or object to extract fields from");
+});
+
+test("citation display title falls back to primary citation text when source title is unavailable", () => {
+  assert.equal(
+    citationDisplayTitle({
+      source: { title: "" },
+      primary_render: { style: "mla", kind: "bibliography", text: "Useful source title. Longer bibliography detail follows." },
+    }),
+    "Useful source title.",
+  );
 });
 
 test("attached hydrate payloads are consumed into runtime state and primed stores", async () => {

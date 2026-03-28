@@ -268,6 +268,19 @@ body.app-shell-body.has-open-sidebar-drawer {
 
 .app-shell[data-page="editor"] .app-workspace {
   gap: 10px;
+  overflow: hidden;
+}
+
+.app-shell[data-page="editor"] .app-content-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+
+.app-shell[data-page="editor"] .app-main {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .app-sidebar-toggle:focus-visible,

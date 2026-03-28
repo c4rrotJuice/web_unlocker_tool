@@ -1,5 +1,5 @@
 import { escapeHtml } from "../../app_shell/core/format.js";
-import { citationPrimaryText } from "../../shared/citation_contract.js";
+import { citationDisplayTitle, citationPrimaryText } from "../../shared/citation_contract.js";
 
 function clip(text, max = 120) {
   const value = String(text || "").trim();
@@ -25,13 +25,14 @@ function formatRowData(type, entity = {}) {
   if (type === "citation") {
     const source = entity.source || {};
     const citationText = citationPrimaryText(entity, "Citation");
+    const citationTitle = citationDisplayTitle(entity, "Citation");
     return {
-      title: clip(source.title || citationText || "Citation", 96),
+      title: clip(citationTitle, 96),
       subtitle: clip(source.hostname || source.publisher || "", 72),
       preview: {
         type,
-        title: source.title || citationText || "Citation",
-        source: source.title || "",
+        title: citationTitle,
+        source: String(source.title || "").trim(),
         year: source.issued_date?.year || source.issued_date?.raw || "",
         detail: citationText,
       },

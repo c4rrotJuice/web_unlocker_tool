@@ -1,5 +1,5 @@
 import { escapeHtml, formatDateTime, formatRelativeTime, joinText, limitText } from "../core/format.js";
-import { citationPrimaryText } from "../../shared/citation_contract.js";
+import { citationDisplayTitle, citationPrimaryText } from "../../shared/citation_contract.js";
 
 function chipRow(tags = []) {
   if (!tags.length) return "";
@@ -30,10 +30,11 @@ export function renderSourceCard(source, options = {}) {
 export function renderCitationCard(citation, options = {}) {
   const counts = citation.relationship_counts || {};
   const source = citation.source || {};
+  const title = citationDisplayTitle(citation, "Citation");
   return `
     <article class="research-card${options.selected ? " is-selected" : ""}" data-entity-id="${escapeHtml(citation.id)}" tabindex="0" role="button" aria-pressed="${options.selected ? "true" : "false"}">
       <div class="research-card-header">
-        <h3 class="research-card-title">${escapeHtml(source.title || "Citation")}</h3>
+        <h3 class="research-card-title">${escapeHtml(limitText(title, 96))}</h3>
       </div>
       <p class="research-card-body">${escapeHtml(limitText(citationPrimaryText(citation), 160))}</p>
       <div class="research-card-meta">

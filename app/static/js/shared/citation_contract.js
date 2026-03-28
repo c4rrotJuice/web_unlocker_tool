@@ -10,6 +10,21 @@ export function citationPrimaryText(citation, fallback = "Citation saved") {
   );
 }
 
+export function citationDisplayTitle(citation, fallback = "Citation") {
+  const sourceTitle = String(citation?.source?.title || "").trim();
+  if (sourceTitle) {
+    return sourceTitle;
+  }
+
+  const text = String(citationPrimaryText(citation, "") || "").trim();
+  if (!text) {
+    return fallback;
+  }
+
+  const firstSentence = text.split(/(?<=[.!?])\s+/)[0] || text;
+  return firstSentence.trim() || fallback;
+}
+
 export function citationRenderEntries(citation) {
   const styles = citation?.available_renders?.styles;
   if (Array.isArray(styles) && styles.length) {

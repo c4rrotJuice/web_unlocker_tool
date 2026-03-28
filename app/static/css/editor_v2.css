@@ -230,6 +230,8 @@ html.dark .editor-v2-search-row input {
 
 .editor-v2-row,
 .editor-v2-checkpoint-item {
+  display: block;
+  width: 100%;
   position: relative;
   border: 1px solid transparent;
   border-radius: 0.75rem;

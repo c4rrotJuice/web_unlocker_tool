@@ -258,6 +258,9 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       commandRegistry.open("citation");
     },
   });
+  let activeContextTab = "citations";
+  let checkpointsLoadedDocumentId = null;
+
   function setContextTabContentMode(kind) {
     refs.contextTabContent.classList.remove("editor-v2-list-rows", "editor-v2-outline", "editor-v2-checkpoints");
     if (kind === "outline") {
@@ -271,12 +274,13 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     refs.contextTabContent.classList.add("editor-v2-list-rows");
   }
 
-  function renderActiveContextTab(activeTab = null) {
-    const nextActiveTab = activeTab || contextTabsController.getActive();
+  function renderActiveContextTab(activeTab = null, { tabChanged = false } = {}) {
+    const nextActiveTab = activeTab || activeContextTab || contextTabsController.getActive();
     const state = workspaceState.getState();
     const focused = state.focused_entity;
     const attachedCitations = state.attached_research?.citations || [];
     const attachedNotes = state.attached_research?.notes || [];
+    activeContextTab = nextActiveTab;
 
     if (nextActiveTab === "outline") {
       checkpointController.clearTarget();
@@ -290,7 +294,12 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       outlineController.clearTarget();
       setContextTabContentMode("checkpoints");
       checkpointController.setTarget(refs.contextTabContent);
-      void checkpointController.refresh();
+      const documentId = state.active_document_id || null;
+      const shouldRefresh = tabChanged || checkpointsLoadedDocumentId !== documentId;
+      if (shouldRefresh) {
+        checkpointsLoadedDocumentId = documentId;
+        void checkpointController.refresh();
+      }
       return;
     }
 
@@ -317,7 +326,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     buttons: refs.contextTabButtons,
     panes: refs.contextPanes,
     onChange(nextTab) {
-      renderActiveContextTab(nextTab);
+      renderActiveContextTab(nextTab, { tabChanged: true });
     },
   });
   const disposeExplorerPreview = bindExplorerPreview({
@@ -350,6 +359,9 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     renderStatusBar(refs.statusBar, quillAdapter, workspaceState, statusSnapshot);
     const context = deriveContextState(state, selectionState.getState());
     refs.contextMode.textContent = summarizeContextMode(context, state);
+    if (activeContextTab !== "checkpoints" || checkpointsLoadedDocumentId !== state.active_document_id) {
+      checkpointsLoadedDocumentId = activeContextTab === "checkpoints" ? null : checkpointsLoadedDocumentId;
+    }
     renderActiveContextTab();
     if (!focused && context.mode !== "seed_review" && context.mode !== "quote_focus") {
       renderContextRail(refs.contextRail, context, state, null, {

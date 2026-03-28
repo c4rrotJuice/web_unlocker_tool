@@ -311,6 +311,25 @@ class CitationsService:
         )
         await self.repository.replace_renders(citation_id=str(citation_row["id"]), source_id=str(source_row["id"]), rows=rows)
 
+    def _apply_render_rows(
+        self,
+        *,
+        render_map: dict[str, dict[str, dict[str, str]]],
+        render_versions: dict[str, tuple[str, str]],
+        render_rows: list[dict[str, Any]],
+    ) -> None:
+        for render_row in render_rows:
+            citation_id = render_row.get("citation_instance_id")
+            style = render_row.get("style")
+            render_kind = render_row.get("render_kind")
+            if not citation_id or not style or not render_kind:
+                continue
+            render_map.setdefault(citation_id, {}).setdefault(style, {})[render_kind] = render_row.get("rendered_text") or ""
+            render_versions[citation_id] = (
+                str(render_row.get("source_version") or ""),
+                str(render_row.get("citation_version") or ""),
+            )
+
     async def _hydrate(
         self,
         *,
@@ -340,17 +359,7 @@ class CitationsService:
 
         render_map: dict[str, dict[str, dict[str, str]]] = {}
         render_versions: dict[str, tuple[str, str]] = {}
-        for render_row in render_rows:
-            citation_id = render_row.get("citation_instance_id")
-            style = render_row.get("style")
-            render_kind = render_row.get("render_kind")
-            if not citation_id or not style or not render_kind:
-                continue
-            render_map.setdefault(citation_id, {}).setdefault(style, {})[render_kind] = render_row.get("rendered_text") or ""
-            render_versions[citation_id] = (
-                str(render_row.get("source_version") or ""),
-                str(render_row.get("citation_version") or ""),
-            )
+        self._apply_render_rows(render_map=render_map, render_versions=render_versions, render_rows=render_rows)
 
         stale_rows: list[tuple[dict[str, Any], dict[str, Any]]] = []
         for row in rows:
@@ -362,18 +371,30 @@ class CitationsService:
                 stale_rows.append((row, source_row))
         if stale_rows:
             for row, source_row in stale_rows:
-                await self.refresh_renders(access_token=access_token, citation_row=row, source_row=source_row)
+                try:
+                    await self.refresh_renders(access_token=access_token, citation_row=row, source_row=source_row)
+                except Exception as exc:
+                    fallback_rows = await self._build_render_rows(
+                        citation_id=str(row["id"]),
+                        source_id=str(source_row["id"]),
+                        source_row=source_row,
+                        citation_row=row,
+                    )
+                    logger.warning(
+                        "citations.hydrate.render_refresh_failed_fallback",
+                        extra={
+                            "citation_id": row.get("id"),
+                            "source_id": source_row.get("id"),
+                            "error": str(exc),
+                        },
+                    )
+                    self._apply_render_rows(render_map=render_map, render_versions=render_versions, render_rows=fallback_rows)
             refreshed_ids = [str(row["id"]) for row, _source_row in stale_rows if row.get("id")]
             refreshed_render_rows = await self.repository.list_renders(citation_ids=refreshed_ids, access_token=access_token)
             for citation_id in refreshed_ids:
-                render_map[citation_id] = {}
-            for render_row in refreshed_render_rows:
-                citation_id = render_row.get("citation_instance_id")
-                style = render_row.get("style")
-                render_kind = render_row.get("render_kind")
-                if not citation_id or not style or not render_kind:
-                    continue
-                render_map.setdefault(citation_id, {}).setdefault(style, {})[render_kind] = render_row.get("rendered_text") or ""
+                if citation_id not in render_map:
+                    render_map[citation_id] = {}
+            self._apply_render_rows(render_map=render_map, render_versions=render_versions, render_rows=refreshed_render_rows)
 
         hydrated: list[dict] = []
         for row in rows:

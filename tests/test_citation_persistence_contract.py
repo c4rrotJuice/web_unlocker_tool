@@ -231,6 +231,17 @@ class _StaticSourcesService:
         return [self.source_row] if self.source_row["id"] in source_ids else []
 
 
+class _ReplaceRendersFailingRepository(_SQLiteCitationRepository):
+    async def replace_renders(self, *, citation_id, source_id, rows):
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "CITATION_PERSISTENCE_WRITE_FAILED",
+                "message": "Failed to persist citation renders.",
+            },
+        )
+
+
 def _canonical_payload() -> ExtractionPayload:
     return ExtractionPayload(
         canonical_url="https://example.com/paper",
@@ -369,3 +380,33 @@ async def test_replace_renders_surfaces_constraint_failures_with_upstream_detail
     assert failure.source_id == "source-1"
     assert failure.styles == ["mla"]
     assert failure.upstream_code == "23514"
+
+
+@pytest.mark.anyio
+async def test_hydration_falls_back_to_in_memory_renders_when_persistence_refresh_fails():
+    repository = _ReplaceRendersFailingRepository()
+    service = CitationsService(repository=repository, sources_service=_StaticSourcesService(_source_row()))
+
+    created_row = await repository.create_citation_instance(
+        user_id="user-1",
+        access_token=None,
+        payload={
+            "source_id": "source-1",
+            "locator": {"paragraph": 4},
+            "quote_text": "Quoted sentence",
+            "excerpt": "Quoted sentence",
+            "annotation": None,
+            "citation_version": "citation-version-1",
+        },
+    )
+
+    hydrated = await service.list_citations(
+        user_id="user-1",
+        access_token=None,
+        ids=[created_row["id"]],
+        account_type="pro",
+    )
+
+    assert len(hydrated) == 1
+    assert hydrated[0]["id"] == created_row["id"]
+    assert hydrated[0]["renders"]["mla"]["quote_attribution"] == "\"Quoted sentence\" (Lovelace, par. 4)"

@@ -169,6 +169,16 @@ def test_editor_shell_uses_viewport_bounded_height_and_internal_scroll():
     assert "min-height: calc(100vh - 12rem)" not in css_source
 
 
+def test_editor_rail_items_are_width_bounded_and_clip_horizontal_overflow():
+    css_source = Path("app/static/css/editor_v2.css").read_text(encoding="utf-8")
+
+    assert ".editor-v2-list-rows {\n  display: grid;" in css_source
+    assert ".editor-v2-row,\n.editor-v2-checkpoint-item {\n  display: block;\n  width: 100%;\n  max-width: 100%;\n  min-width: 0;" in css_source
+    assert ".editor-v2-card {\n  width: 100%;\n  max-width: 100%;\n  min-width: 0;" in css_source
+    assert "overflow-x: hidden;" in css_source
+    assert "text-overflow: ellipsis;" in css_source
+
+
 def test_workspace_state_is_single_truth_and_context_state_is_pure():
     workspace_source = Path("app/static/js/editor_v2/core/workspace_state.js").read_text(encoding="utf-8")
     selection_source = Path("app/static/js/editor_v2/core/selection_state.js").read_text(encoding="utf-8")

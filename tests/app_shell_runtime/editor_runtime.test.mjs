@@ -19,6 +19,7 @@ import { renderContextRail } from "../../app/static/js/editor_v2/ui/context_rail
 import { createExplorerController } from "../../app/static/js/editor_v2/research/explorer_controller.js";
 import { createCheckpointController } from "../../app/static/js/editor_v2/document/checkpoint_controller.js";
 import { createNoteActions } from "../../app/static/js/editor_v2/actions/note_actions.js";
+import { renderExplorerList } from "../../app/static/js/editor_v2/ui/explorer_renderer.js";
 import { createAuthSessionError, isAuthSessionError } from "../../app/static/js/shared/auth/session.js";
 import { initSidebarShell } from "../../app/static/js/app_shell/core/sidebar.js";
 
@@ -2198,6 +2199,27 @@ test("explorer picker routes entity clicks into real insert flow callbacks", asy
     pending: { action: "insert", entityType: "citation" },
     entity: { type: "citation", id: "citation-9" },
   }]);
+});
+
+test("citation explorer rows render canonical citation titles and primary text", () => {
+  const target = makeElement();
+
+  renderExplorerList(target, "citations", [{
+    id: "citation-1",
+    source: {
+      id: "source-1",
+      title: "Source 1",
+      hostname: "example.com",
+      issued_date: { raw: "2026" },
+    },
+    primary_render: { style: "mla", kind: "bibliography", text: "Source 1 bibliography" },
+    renders: { mla: { bibliography: "Source 1 bibliography" } },
+    excerpt: "Source 1 excerpt",
+  }], null);
+
+  assert.match(target.innerHTML, /Source 1/);
+  assert.match(target.innerHTML, /Source 1 bibliography/);
+  assert.match(target.innerHTML, /example\.com/);
 });
 
 test("context rail note actions use canonical note creation routes", async () => {

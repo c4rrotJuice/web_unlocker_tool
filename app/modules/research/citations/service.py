@@ -199,6 +199,38 @@ class CitationsService:
             "updated_at": source.get("updated_at"),
         }
 
+    def _fallback_source_row(self, *, citation_row: dict[str, Any], source_row: dict[str, Any] | None) -> dict[str, Any]:
+        if source_row is not None:
+            return source_row
+        logger.warning(
+            "citations.hydrate.source_missing",
+            extra={
+                "citation_id": citation_row.get("id"),
+                "source_id": citation_row.get("source_id"),
+            },
+        )
+        return {
+            "id": citation_row.get("source_id"),
+            "fingerprint": None,
+            "title": None,
+            "source_type": None,
+            "authors": [],
+            "container_title": None,
+            "publisher": None,
+            "issued_date": {},
+            "identifiers": {},
+            "canonical_url": None,
+            "page_url": None,
+            "metadata": {},
+            "raw_extraction": {},
+            "normalization_version": None,
+            "source_version": None,
+            "hostname": None,
+            "language_code": None,
+            "created_at": None,
+            "updated_at": None,
+        }
+
     def _serialize_preview(
         self,
         *,
@@ -345,9 +377,7 @@ class CitationsService:
 
         hydrated: list[dict] = []
         for row in rows:
-            source_row = source_map.get(row.get("source_id"))
-            if source_row is None:
-                continue
+            source_row = self._fallback_source_row(citation_row=row, source_row=source_map.get(row.get("source_id")))
             hydrated.append(
                 serialize_citation(
                     row,

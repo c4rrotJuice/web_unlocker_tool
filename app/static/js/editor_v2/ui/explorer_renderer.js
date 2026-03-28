@@ -1,4 +1,5 @@
 import { escapeHtml } from "../../app_shell/core/format.js";
+import { citationPrimaryText } from "../../shared/citation_contract.js";
 
 function clip(text, max = 120) {
   const value = String(text || "").trim();
@@ -22,15 +23,17 @@ function formatRowData(type, entity = {}) {
     };
   }
   if (type === "citation") {
+    const source = entity.source || {};
+    const citationText = citationPrimaryText(entity, "Citation");
     return {
-      title: clip(entity.title || entity.citation_text || "Citation", 96),
-      subtitle: "",
+      title: clip(source.title || citationText || "Citation", 96),
+      subtitle: clip(source.hostname || source.publisher || "", 72),
       preview: {
         type,
-        title: entity.title || entity.citation_text || "Citation",
-        source: entity.source_title || entity.source?.title || "",
-        year: entity.year || "",
-        detail: entity.citation_text || entity.snippet || "",
+        title: source.title || citationText || "Citation",
+        source: source.title || "",
+        year: source.issued_date?.year || source.issued_date?.raw || "",
+        detail: citationText,
       },
     };
   }
@@ -53,7 +56,7 @@ function formatRowData(type, entity = {}) {
       preview: {
         type,
         title: entity.title || "Note",
-        detail: entity.text || "",
+        detail: entity.note_body || entity.highlight_text || entity.text || "",
         updated: entity.updated_at || "",
       },
     };
@@ -64,8 +67,8 @@ function formatRowData(type, entity = {}) {
     preview: {
       type,
       title: entity.title || "Source",
-      source: entity.url || entity.domain || "",
-      detail: entity.summary || "",
+      source: entity.canonical_url || entity.page_url || entity.url || entity.domain || "",
+      detail: entity.container_title || entity.summary || "",
     },
   };
 }

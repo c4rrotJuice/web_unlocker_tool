@@ -856,3 +856,30 @@ async def test_research_list_pages_return_cursor_meta_for_citations(citations_se
     assert page["data"][0]["id"] in {first["id"], second["id"]}
     assert page["meta"]["has_more"] is True
     assert page["meta"]["next_cursor"] == "1"
+
+
+@pytest.mark.anyio
+async def test_citation_list_keeps_rows_when_source_enrichment_is_missing(citations_service, sources_service):
+    created = await citations_service.create_citation(
+        user_id="user-1",
+        access_token=None,
+        account_type="pro",
+        extraction_payload=_canonical_extraction_payload(url="https://example.com/source-gap", title="Source Gap", excerpt="Gap excerpt", quote="Gap excerpt"),
+        excerpt="Gap excerpt",
+        quote="Gap excerpt",
+        style="mla",
+    )
+    sources_service.repository.by_id.clear()
+
+    rows = await citations_service.list_citations(
+        user_id="user-1",
+        access_token=None,
+        ids=[created["id"]],
+        limit=1,
+        account_type="pro",
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["id"] == created["id"]
+    assert rows[0]["source"]["id"] == created["source_id"]
+    assert rows[0]["excerpt"] == "Gap excerpt"

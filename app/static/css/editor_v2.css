@@ -1,7 +1,7 @@
 .editor-v2-page {
   display: flex;
+  flex: 1 1 auto;
   min-height: 0;
-  height: 100%;
   min-width: 0;
   overflow: hidden;
 }
@@ -9,11 +9,12 @@
 .editor-v2-shell {
   display: grid;
   grid-template-columns: minmax(13rem, 16rem) minmax(0, 1fr) minmax(14rem, 18rem);
+  grid-template-rows: minmax(0, 1fr);
   gap: 0.5rem;
   align-items: stretch;
   flex: 1 1 auto;
   min-height: 0;
-  height: 100%;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -194,7 +195,7 @@ html.dark .editor-v2-search-row input {
 
 .editor-v2-explorer,
 .editor-v2-context {
-  height: 100%;
+  flex: 1 1 auto;
 }
 
 .editor-v2-context-summary,
@@ -665,7 +666,8 @@ html.dark .editor-v2-surface {
 }
 
 .editor-v2-context-summary {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-height: 0;
   gap: 0.35rem;
   padding-bottom: 0.45rem;
   border-bottom: 1px solid rgba(15, 23, 42, 0.06);
@@ -721,6 +723,11 @@ html.dark .editor-v2-surface {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
+}
+
+.app-shell[data-page="editor"] .app-content-frame,
+.app-shell[data-page="editor"] .app-main {
+  height: auto;
 }
 
 @keyframes editor-v2-shimmer {

@@ -157,7 +157,9 @@ def test_editor_shell_uses_viewport_bounded_height_and_internal_scroll():
     css_source = Path("app/static/css/editor_v2.css").read_text(encoding="utf-8")
 
     assert ".editor-v2-page {" in css_source
-    assert "height: 100%;" in css_source
+    assert "grid-template-rows: minmax(0, 1fr);" in css_source
+    assert ".editor-v2-context-summary {\n  flex: 1 1 auto;" in css_source
+    assert ".app-shell[data-page=\"editor\"] .app-content-frame,\n.app-shell[data-page=\"editor\"] .app-main {\n  height: auto;" in css_source
     assert ".app-shell[data-page=\"editor\"] .app-workspace" in css_source
     assert ".app-shell[data-page=\"editor\"] .app-main" in css_source
     assert ".editor-v2-quill .ql-editor" in css_source

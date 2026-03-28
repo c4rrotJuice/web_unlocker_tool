@@ -502,11 +502,12 @@ class ExtensionService:
 
     async def _refresh_or_validate_session(self, session_payload: dict[str, Any], *, expected_user_id: str) -> dict[str, Any]:
         access_token = session_payload["access_token"]
+        expected_user = str(expected_user_id or "").strip()
         auth_client = self.auth_client
         try:
             response = auth_client.auth.get_user(access_token)
             user = getattr(response, "user", None)
-            if user is None or str(getattr(user, "id", "")) != expected_user_id:
+            if user is None or (expected_user and str(getattr(user, "id", "")) != expected_user):
                 raise InvalidTokenError("Stored handoff access token is invalid.")
             return session_payload
         except Exception:
@@ -527,7 +528,7 @@ class ExtensionService:
         except Exception as exc:
             raise HandoffRefreshFailedError("Handoff session revalidation failed.") from exc
         user = getattr(revalidated, "user", None)
-        if user is None or str(getattr(user, "id", "")) != expected_user_id:
+        if user is None or (expected_user and str(getattr(user, "id", "")) != expected_user):
             raise HandoffRefreshFailedError("Handoff session revalidation failed.")
         return {
             "access_token": str(new_access_token),
@@ -535,6 +536,25 @@ class ExtensionService:
             "expires_in": getattr(session, "expires_in", None),
             "token_type": str(getattr(session, "token_type", "bearer")),
         }
+
+    async def refresh_session(self, request: Request, payload) -> dict[str, object]:
+        await self._enforce_rate_limit(
+            request,
+            scope="handoff_refresh",
+            identity=self._rate_limit_identity(request),
+            limit=self.settings.rate_limits.auth_sensitive_limit,
+            window_seconds=self.settings.rate_limits.auth_sensitive_window_seconds,
+        )
+        session_payload = await self._refresh_or_validate_session(
+            {
+                "access_token": "",
+                "refresh_token": payload.refresh_token,
+                "expires_in": None,
+                "token_type": "bearer",
+            },
+            expected_user_id="",
+        )
+        return serialize_ok_envelope({ "session": session_payload })
 
     async def exchange_handoff(self, request: Request, payload) -> dict[str, object]:
         phase = "rate_limit"

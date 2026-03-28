@@ -18,6 +18,7 @@ from app.modules.extension.schemas import (
     ExtensionUsageEventRequest,
     HandoffExchangeRequest,
     HandoffIssueRequest,
+    HandoffRefreshRequest,
     WorkInEditorRequest,
 )
 from app.modules.extension.service import build_extension_service
@@ -192,6 +193,11 @@ async def complete_auth_attempt(
 @router.post("/api/auth/handoff/exchange")
 async def exchange_handoff(request: Request, payload: HandoffExchangeRequest):
     return await service.exchange_handoff(request, payload)
+
+
+@router.post("/api/auth/handoff/refresh")
+async def refresh_handoff_session(request: Request, payload: HandoffRefreshRequest):
+    return await service.refresh_session(request, payload)
 
 
 @router.get("/auth/handoff", response_class=HTMLResponse)

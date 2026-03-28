@@ -1,3 +1,4 @@
+import { STORAGE_KEYS } from "../../shared/constants/storage_keys.ts";
 import { normalizeCapabilitySurface } from "../../shared/types/capability_surface.ts";
 import { createSidepanelClient } from "../messaging/client.ts";
 import { createNewNoteView } from "../new_note_view.ts";
@@ -84,6 +85,12 @@ function renderSnapshotBody(snapshot) {
       <p>Loading auth state</p>
     `;
   }
+  if (status === "refreshing") {
+    return `
+      <h1>Writior</h1>
+      <p>Refreshing session</p>
+    `;
+  }
   if (status === "error") {
     return `
       <h1>Writior</h1>
@@ -133,6 +140,7 @@ export function createSidepanelShell(options: any = {}) {
   const host = typeof root.attachShadow === "function" ? root.attachShadow({ mode: "open" }) : root;
   const style = createShellStyles(documentRef);
   const stateStore = createSidepanelStateStore();
+  let removeStorageListener = null as any;
 
   const shell = documentRef.createElement("section");
   shell.className = "writior-sidepanel-shell";
@@ -156,6 +164,22 @@ export function createSidepanelShell(options: any = {}) {
         ? { tone: "info", message: "Opening dashboard..." }
         : { tone: "error", message: result?.error?.message || "Dashboard launch failed." });
       render();
+    },
+    onSignIn: async () => {
+      stateStore.setState({ status: SIDEPANEL_STATUS.LOADING });
+      render();
+      const result = await client.authStart?.({
+        trigger: "sidepanel_sign_in",
+        redirectPath: "/dashboard",
+      });
+      if (result?.ok) {
+        stateStore.setAuth(result.data?.auth || null);
+        stateStore.setNotice({ tone: "info", message: "Signed in." });
+        await refresh();
+      } else {
+        stateStore.setNotice({ tone: "error", message: result?.error?.message || "Sign in failed." });
+        render();
+      }
     },
     onSignOut: async () => {
       const result = await client.authLogout?.();
@@ -316,6 +340,28 @@ export function createSidepanelShell(options: any = {}) {
     render();
   }
 
+  function applyAuthSnapshot(auth, reason = "storage_update") {
+    if (!auth) {
+      return;
+    }
+    stateStore.setAuth(auth);
+    if (auth.status === "signed_in") {
+      void Promise.all([loadRecentCitations(), loadRecentNotes()]).finally(() => {
+        stateStore.clearNotice();
+        render();
+      });
+      return;
+    }
+    if (auth.status === "signed_out") {
+      stateStore.setRecentCitations([]);
+      stateStore.setRecentNotes([]);
+      if (reason === "storage_update") {
+        stateStore.setNotice({ tone: "info", message: "Signed out." });
+      }
+    }
+    render();
+  }
+
   function renderContent(state) {
     content.innerHTML = "";
     statusBanner.render(state.notice);
@@ -378,6 +424,7 @@ export function createSidepanelShell(options: any = {}) {
       state.auth?.bootstrap?.profile || null,
       state.auth?.bootstrap?.entitlement || null,
       state.auth?.session?.email || "",
+      state.auth,
     );
     usageSummary.render(surface.usageItems);
     tabs.render([
@@ -399,7 +446,21 @@ export function createSidepanelShell(options: any = {}) {
   return {
     refresh,
     render,
+    initialize() {
+      if (typeof chromeApi?.storage?.onChanged?.addListener === "function") {
+        const handleStorageChange = (changes, areaName) => {
+          if (areaName !== "local" || !changes?.[STORAGE_KEYS.AUTH_STATE]) {
+            return;
+          }
+          applyAuthSnapshot(changes[STORAGE_KEYS.AUTH_STATE].newValue || null);
+        };
+        chromeApi.storage.onChanged.addListener(handleStorageChange);
+        removeStorageListener = () => chromeApi.storage.onChanged.removeListener?.(handleStorageChange);
+      }
+    },
     destroy() {
+      removeStorageListener?.();
+      removeStorageListener = null;
       host.innerHTML = "";
     },
     getState() {
@@ -411,6 +472,7 @@ export function createSidepanelShell(options: any = {}) {
 export function renderSidepanelShell(root, options = {}) {
   const shell = createSidepanelShell({ root, ...options });
   shell.render();
+  shell.initialize?.();
   void shell.refresh();
   return shell;
 }

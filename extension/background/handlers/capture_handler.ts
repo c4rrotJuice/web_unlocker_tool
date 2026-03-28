@@ -88,7 +88,7 @@ export function createCaptureHandler({ captureApi }: any = {}) {
     throw new Error("createCaptureHandler requires a captureApi.");
   }
 
-  async function createCitationForContext(capture, requestPayload = {}) {
+  async function createCitationForContext(capture, requestPayload: any = {}) {
     console.info("extension.capture.createCitation.start", {
       requestId: requestPayload?.requestId || null,
       ...summarizeCapture(capture),

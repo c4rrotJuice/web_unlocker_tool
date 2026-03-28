@@ -57,6 +57,7 @@ export function createApiClient({
   baseUrl = API_ORIGIN,
   fetchImpl = globalThis.fetch,
   getAccessToken = async () => null,
+  refreshAccessToken = async () => null,
 } = {}) {
   if (typeof fetchImpl !== "function") {
     throw new Error("fetch is required for the API client.");
@@ -70,35 +71,52 @@ export function createApiClient({
     const headers = typedOptions.headers || {};
     const fallbackCode = typedOptions.fallbackCode || ERROR_CODES.NETWORK_ERROR;
     const label = typedOptions.label || "Backend response";
-    const requestHeaders = new Headers(headers);
-    requestHeaders.set("Accept", "application/json");
 
-    if (body !== undefined) {
-      requestHeaders.set("Content-Type", "application/json");
-    }
+    async function performRequest(accessTokenOverride: string | null = null) {
+      const requestHeaders = new Headers(headers);
+      requestHeaders.set("Accept", "application/json");
 
-    if (auth) {
-      const accessToken = await getAccessToken();
-      if (!accessToken) {
-        return createErrorResult(ERROR_CODES.UNAUTHORIZED, "No bearer token is available.");
+      if (body !== undefined) {
+        requestHeaders.set("Content-Type", "application/json");
       }
-      requestHeaders.set("Authorization", `Bearer ${accessToken}`);
+
+      if (auth) {
+        const accessToken = accessTokenOverride || await getAccessToken();
+        if (!accessToken) {
+          return createErrorResult(ERROR_CODES.UNAUTHORIZED, "No bearer token is available.");
+        }
+        requestHeaders.set("Authorization", `Bearer ${accessToken}`);
+      }
+
+      try {
+        return await fetchImpl(toUrl(baseUrl, path), {
+          method,
+          headers: requestHeaders,
+          body: body !== undefined ? JSON.stringify(body) : undefined,
+        });
+      } catch (error) {
+        return createErrorResult(
+          ERROR_CODES.NETWORK_ERROR,
+          "Network request failed.",
+          undefined,
+          { cause: error?.message || String(error) },
+        );
+      }
     }
 
-    let response;
-    try {
-      response = await fetchImpl(toUrl(baseUrl, path), {
-        method,
-        headers: requestHeaders,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-      });
-    } catch (error) {
-      return createErrorResult(
-        ERROR_CODES.NETWORK_ERROR,
-        "Network request failed.",
-        undefined,
-        { cause: error?.message || String(error) },
-      );
+    let response: any = await performRequest();
+    if (response?.ok === false && response?.status === "error") {
+      return response;
+    }
+
+    if (auth && (response.status === 401 || response.status === 403)) {
+      const refreshedAccessToken = await refreshAccessToken();
+      if (refreshedAccessToken) {
+        response = await performRequest(refreshedAccessToken);
+        if (response?.ok === false && response?.status === "error") {
+          return response;
+        }
+      }
     }
 
     const parsed = await parseJson(response);
@@ -159,6 +177,14 @@ export function createApiClient({
         body: payload,
         fallbackCode: ERROR_CODES.HANDOFF_INVALID,
         label: "Handoff exchange response",
+      });
+    },
+    refreshSession(payload) {
+      return request(ENDPOINTS.AUTH_HANDOFF_REFRESH, {
+        method: "POST",
+        body: payload,
+        fallbackCode: ERROR_CODES.HANDOFF_REFRESH_FAILED,
+        label: "Handoff refresh response",
       });
     },
     loadBootstrap() {

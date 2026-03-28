@@ -1,7 +1,8 @@
 import { createTierBadge } from "./tier_badge.ts";
 
 function createActionButton(documentRef, label, onClick, tone = "neutral") {
-  const button = documentRef.createElement("button");
+  const button: any = documentRef.createElement("button");
+  let clickHandler = onClick;
   button.type = "button";
   button.textContent = label;
   button.style.padding = "8px 10px";
@@ -11,8 +12,11 @@ function createActionButton(documentRef, label, onClick, tone = "neutral") {
   button.style.color = tone === "primary" ? "#f8fafc" : "#0f172a";
   button.addEventListener("click", (event) => {
     event.preventDefault?.();
-    void onClick?.();
+    void clickHandler?.();
   });
+  button.setHandler = (nextHandler) => {
+    clickHandler = nextHandler;
+  };
   return button;
 }
 
@@ -21,6 +25,7 @@ export function createProfileCard(options: any = {}) {
     documentRef = globalThis.document,
     onOpenEditor,
     onOpenDashboard,
+    onSignIn,
     onSignOut,
   } = options;
   const root = documentRef.createElement("section");
@@ -68,20 +73,28 @@ export function createProfileCard(options: any = {}) {
   actions.style.display = "flex";
   actions.style.gap = "8px";
   actions.style.flexWrap = "wrap";
-  actions.appendChild(createActionButton(documentRef, "Open editor", onOpenEditor, "primary"));
-  actions.appendChild(createActionButton(documentRef, "Open dashboard", onOpenDashboard));
-  actions.appendChild(createActionButton(documentRef, "Sign out", onSignOut));
+  const openEditorButton = createActionButton(documentRef, "Open editor", onOpenEditor, "primary");
+  const openDashboardButton = createActionButton(documentRef, "Open dashboard", onOpenDashboard);
+  const authButton = createActionButton(documentRef, "Sign in", onSignIn);
+  actions.appendChild(openEditorButton);
+  actions.appendChild(openDashboardButton);
+  actions.appendChild(authButton);
 
   root.appendChild(header);
   root.appendChild(actions);
 
-  function render(profile = null, entitlement = null, fallbackEmail = "") {
+  function render(profile = null, entitlement = null, fallbackEmail = "", auth = null) {
     const tier = String(entitlement?.tier || "guest").trim().toLowerCase() || "guest";
     const tierLabel = tier.charAt(0).toUpperCase() + tier.slice(1);
+    const signedIn = auth?.status === "signed_in" || auth?.status === "refreshing";
     name.textContent = profile?.display_name || profile?.email || fallbackEmail || "Writior";
     email.textContent = profile?.email || fallbackEmail || (tier === "guest" ? "Guest session" : "Signed in");
     planMeta.textContent = `Plan ${tierLabel}`;
     badge.setTier(tier);
+    openEditorButton.disabled = !signedIn;
+    openDashboardButton.disabled = !signedIn;
+    authButton.textContent = signedIn ? "Sign out" : "Sign in";
+    authButton.setHandler?.(signedIn ? onSignOut : onSignIn);
   }
 
   return { root, render };

@@ -1,5 +1,6 @@
 // GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { createLogger } from "../shared/utils/logger.js";
+import { STORAGE_KEYS } from "../shared/constants/storage_keys.js";
 import { createRuntimeClient, SURFACE_NAMES } from "../shared/utils/runtime_client.js";
 import { renderPopupAuthSnapshot } from "./app/index.js";
 const logger = createLogger("popup");
@@ -16,6 +17,9 @@ function describeAuth(auth) {
     }
     if (auth.status === "loading") {
         return "Auth: loading";
+    }
+    if (auth.status === "refreshing") {
+        return "Auth: refreshing";
     }
     if (auth.status === "signed_out") {
         return "Auth: signed out";
@@ -35,15 +39,7 @@ function renderPopup(root) {
     const shell = document.createElement("section");
     const snapshotRoot = document.createElement("div");
     const actions = document.createElement("div");
-    async function refreshAuth() {
-        const result = await runtimeClient.authStatusGet();
-        renderPopupAuthSnapshot(snapshotRoot, result?.ok ? result.data?.auth : {
-            status: "error",
-            error: { message: getAuthStatusText(result) },
-        });
-        return result;
-    }
-    actions.append(createButton("Sign in", async () => {
+    const signInButton = createButton("Sign in", async () => {
         renderPopupAuthSnapshot(snapshotRoot, { status: "loading" });
         const result = await runtimeClient.authStart({
             trigger: "popup_sign_in",
@@ -53,13 +49,30 @@ function renderPopup(root) {
             status: "error",
             error: { message: getAuthStatusText(result) },
         });
-    }), createButton("Sign out", async () => {
+    });
+    const signOutButton = createButton("Sign out", async () => {
         const result = await runtimeClient.authLogout();
         renderPopupAuthSnapshot(snapshotRoot, result?.ok ? result.data?.auth : {
             status: "error",
             error: { message: getAuthStatusText(result) },
         });
-    }), createButton("Open sidepanel", async () => {
+    });
+    function syncActionVisibility(auth) {
+        const signedIn = auth?.status === "signed_in" || auth?.status === "refreshing";
+        signInButton.style.display = signedIn ? "none" : "";
+        signOutButton.style.display = signedIn ? "" : "none";
+    }
+    async function refreshAuth() {
+        const result = await runtimeClient.authStatusGet();
+        const auth = result?.ok ? result.data?.auth : {
+            status: "error",
+            error: { message: getAuthStatusText(result) },
+        };
+        syncActionVisibility(auth);
+        renderPopupAuthSnapshot(snapshotRoot, auth);
+        return result;
+    }
+    actions.append(signInButton, signOutButton, createButton("Open sidepanel", async () => {
         const result = await runtimeClient.openSidepanel();
         if (!result?.ok) {
             renderPopupAuthSnapshot(snapshotRoot, {
@@ -69,8 +82,17 @@ function renderPopup(root) {
         }
     }));
     renderPopupAuthSnapshot(snapshotRoot, { status: "loading" });
+    syncActionVisibility({ status: "loading" });
     shell.append(snapshotRoot, actions);
     root.replaceChildren(shell);
+    globalThis.chrome?.storage?.onChanged?.addListener?.((changes, areaName) => {
+        if (areaName !== "local" || !changes?.[STORAGE_KEYS.AUTH_STATE]) {
+            return;
+        }
+        const auth = changes[STORAGE_KEYS.AUTH_STATE].newValue || { status: "signed_out" };
+        syncActionVisibility(auth);
+        renderPopupAuthSnapshot(snapshotRoot, auth);
+    });
     void refreshAuth();
 }
 export function bootstrapPopup() {

@@ -44,11 +44,13 @@ export function createSidepanelStateStore(initialState = {}) {
                 auth,
                 status: auth?.status === "signed_in"
                     ? SIDEPANEL_STATUS.READY
-                    : auth?.status === "signed_out"
-                        ? SIDEPANEL_STATUS.SIGNED_OUT
-                        : auth?.status === "error"
-                            ? SIDEPANEL_STATUS.ERROR
-                            : SIDEPANEL_STATUS.LOADING,
+                    : auth?.status === "refreshing"
+                        ? SIDEPANEL_STATUS.LOADING
+                        : auth?.status === "signed_out"
+                            ? SIDEPANEL_STATUS.SIGNED_OUT
+                            : auth?.status === "error"
+                                ? SIDEPANEL_STATUS.ERROR
+                                : SIDEPANEL_STATUS.LOADING,
             });
         },
         setActiveTab(active_tab) {

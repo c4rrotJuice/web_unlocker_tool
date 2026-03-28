@@ -14,8 +14,23 @@ import { STORAGE_KEYS } from "../extension/shared/constants/storage_keys.js";
 function createChromeStub(initialStorage = {}) {
   const storage = { ...initialStorage };
   const openedTabs = [];
+  const openedWindows = [];
+  const closedWindows = [];
+  const storageListeners = [];
+  const alarmListeners = [];
+  const createdAlarms = [];
+  const clearedAlarms = [];
+  function emitStorageChange(changes) {
+    for (const listener of storageListeners) {
+      listener(changes, "local");
+    }
+  }
   return {
     openedTabs,
+    openedWindows,
+    closedWindows,
+    createdAlarms,
+    clearedAlarms,
     runtime: {
       lastError: null,
       onMessage: { addListener() {} },
@@ -23,16 +38,51 @@ function createChromeStub(initialStorage = {}) {
       onStartup: { addListener() {} },
       sendMessage() {},
     },
+    alarms: {
+      create(name, info) {
+        createdAlarms.push({ name, info });
+      },
+      async clear(name) {
+        clearedAlarms.push(name);
+      },
+      onAlarm: {
+        addListener(listener) {
+          alarmListeners.push(listener);
+        },
+      },
+    },
     storage: {
+      onChanged: {
+        addListener(listener) {
+          storageListeners.push(listener);
+        },
+        removeListener(listener) {
+          const index = storageListeners.indexOf(listener);
+          if (index >= 0) {
+            storageListeners.splice(index, 1);
+          }
+        },
+      },
       local: {
         async get(defaults) {
           return { ...defaults, ...storage };
         },
         async set(values) {
+          const changes = {};
+          for (const [key, value] of Object.entries(values)) {
+            changes[key] = { oldValue: storage[key], newValue: value };
+          }
           Object.assign(storage, values);
+          emitStorageChange(changes);
         },
         async remove(key) {
-          delete storage[key];
+          const keys = Array.isArray(key) ? key : [key];
+          const changes = {};
+          for (const entry of keys) {
+            changes[entry] = { oldValue: storage[entry], newValue: undefined };
+            delete storage[entry];
+          }
+          emitStorageChange(changes);
         },
       },
     },
@@ -43,6 +93,15 @@ function createChromeStub(initialStorage = {}) {
       },
       async query() {
         return [{ windowId: 1 }];
+      },
+    },
+    windows: {
+      async create(payload) {
+        openedWindows.push(payload);
+        return { id: openedWindows.length, ...payload };
+      },
+      async remove(windowId) {
+        closedWindows.push(windowId);
       },
     },
     sidePanel: {
@@ -61,7 +120,14 @@ function createResponse(body, status = 200) {
   };
 }
 
-function createFetchStub({ bootstrapBody, attemptBody, statusBody, exchangeBody, forceNetworkError = false } = {}) {
+function createFetchStub({
+  bootstrapBody,
+  attemptBody,
+  statusBody,
+  exchangeBody,
+  refreshBody,
+  forceNetworkError = false,
+} = {}) {
   const requests = [];
   const fetchImpl = async (url, init = {}) => {
     if (forceNetworkError) {
@@ -112,6 +178,21 @@ function createFetchStub({ bootstrapBody, attemptBody, statusBody, exchangeBody,
             token_type: "bearer",
             user_id: "user-1",
             email: "user@example.com",
+          },
+        },
+      });
+    }
+    if (normalizedUrl.endsWith("/api/auth/handoff/refresh")) {
+      return createResponse(refreshBody || {
+        ok: true,
+        data: {
+          session: {
+            access_token: "access-2",
+            refresh_token: "refresh-2",
+            token_type: "bearer",
+            user_id: "user-1",
+            email: "user@example.com",
+            expires_in: 300,
           },
         },
       });
@@ -361,11 +442,114 @@ test("auth start runs attempt exchange bootstrap flow and stores token only in b
 
   assert.equal(result.ok, true);
   assert.equal(stateResult.data.auth.status, "signed_in");
-  assert.equal(chromeApi.openedTabs.length, 1);
-  assert.match(chromeApi.openedTabs[0].url, /\/auth\?source=extension&attempt=attempt-1&next=%2Fdashboard/);
+  assert.equal(chromeApi.openedTabs.length, 0);
+  assert.equal(chromeApi.openedWindows.length, 1);
+  assert.match(chromeApi.openedWindows[0].url, /\/auth\?source=extension&attempt=attempt-1&next=%2Fdashboard/);
+  assert.equal(chromeApi.closedWindows.length, 1);
   assert.equal(requests[2].url.endsWith("/api/auth/handoff/exchange"), true);
   assert.equal(requests[3].url.endsWith("/api/extension/bootstrap"), true);
   assert.equal(read("content/index.ts").includes(STORAGE_KEYS.AUTH_SESSION), false);
+});
+
+test("startup restore refreshes an expired session before bootstrap and keeps auth signed in", async () => {
+  const chromeApi = createChromeStub({
+    [STORAGE_KEYS.AUTH_SESSION]: {
+      access_token: "expired-token",
+      refresh_token: "refresh-123",
+      token_type: "bearer",
+      user_id: "user-1",
+      email: "user@example.com",
+      issued_at: "2026-01-01T00:00:00.000Z",
+      expires_at: "2026-01-01T00:04:00.000Z",
+      source: "background",
+    },
+  });
+  const { fetchImpl, requests } = createFetchStub();
+  const runtime = createBackgroundRuntime({
+    chromeApi,
+    fetchImpl,
+    baseUrl: "https://app.writior.com",
+  });
+
+  const result = await runtime.bootstrap();
+  const stored = await chromeApi.storage.local.get({ [STORAGE_KEYS.AUTH_SESSION]: null });
+
+  assert.equal(result.ok, true);
+  assert.equal(stored[STORAGE_KEYS.AUTH_SESSION].access_token, "access-2");
+  assert.equal(requests[0].url.endsWith("/api/auth/handoff/refresh"), true);
+  assert.equal(requests[1].url.endsWith("/api/extension/bootstrap"), true);
+});
+
+test("authenticated API request retries once after refresh and does not strand a valid session on worker restart", async () => {
+  const chromeApi = createChromeStub({
+    [STORAGE_KEYS.AUTH_SESSION]: {
+      access_token: "token-123",
+      refresh_token: "refresh-123",
+      token_type: "bearer",
+      user_id: "user-1",
+      email: "user@example.com",
+      issued_at: new Date(Date.now() - 295_000).toISOString(),
+      expires_in: 300,
+      expires_at: new Date(Date.now() + 5_000).toISOString(),
+      source: "background",
+    },
+  });
+  let bootstrapCalls = 0;
+  const requests = [];
+  const fetchImpl = async (url, init = {}) => {
+    const normalizedUrl = String(url);
+    requests.push({
+      url: normalizedUrl,
+      headers: Object.fromEntries(new Headers(init.headers || {}).entries()),
+    });
+    if (normalizedUrl.endsWith("/api/auth/handoff/refresh")) {
+      return createResponse({
+        ok: true,
+        data: {
+          session: {
+            access_token: "token-456",
+            refresh_token: "refresh-456",
+            token_type: "bearer",
+            user_id: "user-1",
+            email: "user@example.com",
+            expires_in: 300,
+          },
+        },
+      });
+    }
+    if (normalizedUrl.endsWith("/api/extension/bootstrap")) {
+      bootstrapCalls += 1;
+      return createResponse({
+        ok: true,
+        data: {
+          profile: { display_name: "User One", email: "user@example.com" },
+          entitlement: { tier: "standard", status: "active" },
+          capabilities: { tier: "standard", documents: {} },
+          app: { origin: "https://app.writior.com", handoff: { preferred_destination: "/editor" } },
+          taxonomy: { recent_projects: [], recent_tags: [] },
+        },
+      });
+    }
+    return createResponse({ ok: true, data: [] });
+  };
+
+  const runtime = createBackgroundRuntime({
+    chromeApi,
+    fetchImpl,
+    baseUrl: "https://app.writior.com",
+  });
+
+  await runtime.bootstrap();
+  const restarted = createBackgroundRuntime({
+    chromeApi,
+    fetchImpl,
+    baseUrl: "https://app.writior.com",
+  });
+  const secondBootstrap = await restarted.bootstrap();
+
+  assert.equal(secondBootstrap.ok, true);
+  assert.equal(bootstrapCalls, 2);
+  assert.equal(requests.some((entry) => entry.url.endsWith("/api/auth/handoff/refresh")), true);
 });
 
 test("canonical auth exchange errors surface explicitly and leave auth state in error", async () => {

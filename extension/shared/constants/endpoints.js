@@ -12,6 +12,7 @@ export const ENDPOINTS = Object.freeze({
     CITATION_RENDER: "/api/citations/render",
     AUTH_HANDOFF: "/api/auth/handoff",
     AUTH_HANDOFF_EXCHANGE: "/api/auth/handoff/exchange",
+    AUTH_HANDOFF_REFRESH: "/api/auth/handoff/refresh",
     AUTH_HANDOFF_ATTEMPTS: "/api/auth/handoff/attempts",
     AUTH_HANDOFF_ATTEMPT_STATUS: "/api/auth/handoff/attempts/{attempt_id}",
     AUTH_PAGE: "/auth",

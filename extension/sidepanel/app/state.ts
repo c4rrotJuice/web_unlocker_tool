@@ -49,6 +49,8 @@ export function createSidepanelStateStore(initialState = {}) {
         auth,
         status: auth?.status === "signed_in"
           ? SIDEPANEL_STATUS.READY
+          : auth?.status === "refreshing"
+            ? SIDEPANEL_STATUS.LOADING
           : auth?.status === "signed_out"
             ? SIDEPANEL_STATUS.SIGNED_OUT
             : auth?.status === "error"

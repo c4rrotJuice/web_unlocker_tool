@@ -256,6 +256,12 @@ function createChromeStub(initialStorage = {}) {
   const storage = { ...initialStorage };
   const messages = [];
   const tabsCreateCalls = [];
+  const storageListeners = [];
+  function emitStorageChange(changes) {
+    for (const listener of storageListeners) {
+      listener(changes, "local");
+    }
+  }
   const chromeApi = {
     messages,
     tabsCreateCalls,
@@ -283,15 +289,37 @@ function createChromeStub(initialStorage = {}) {
       },
     },
     storage: {
+      onChanged: {
+        addListener(listener) {
+          storageListeners.push(listener);
+        },
+        removeListener(listener) {
+          const index = storageListeners.indexOf(listener);
+          if (index >= 0) {
+            storageListeners.splice(index, 1);
+          }
+        },
+      },
       local: {
         async get(defaults) {
           return { ...defaults, ...storage };
         },
         async set(values) {
+          const changes = {};
+          for (const [key, value] of Object.entries(values)) {
+            changes[key] = { oldValue: storage[key], newValue: value };
+          }
           Object.assign(storage, values);
+          emitStorageChange(changes);
         },
         async remove(key) {
-          delete storage[key];
+          const keys = Array.isArray(key) ? key : [key];
+          const changes = {};
+          for (const entry of keys) {
+            changes[entry] = { oldValue: storage[entry], newValue: undefined };
+            delete storage[entry];
+          }
+          emitStorageChange(changes);
         },
       },
     },
@@ -390,8 +418,14 @@ test("signed-out sidepanel stays background-only and does not fetch lists", asyn
     await shell.refresh();
 
     const mountedRoot = root.shadowRoot || root;
+    const profileCard = findByAttr(mountedRoot, "data-profile-card", "true");
+    const actionButtons = profileCard.children[1].children;
+    const signIn = actionButtons.find((child) => child.textContent === "Sign in");
+    const signOut = actionButtons.find((child) => child.textContent === "Sign out");
     assert.equal(shell.getState().status, "signed_out");
     assert.equal(collectText(mountedRoot).includes("Signed out"), true);
+    assert.ok(signIn);
+    assert.equal(Boolean(signOut), false);
     assert.equal(requests.some((entry) => entry.url.includes("/api/citations?")), false);
     assert.equal(requests.some((entry) => entry.url.includes("/api/notes?")), false);
   } finally {
@@ -510,6 +544,7 @@ test("signed-in sidepanel loads recent items, supports tabs, expand, copy, and b
     const openEditor = actionButtons.find((child) => child.textContent === "Open editor");
     const openDashboard = actionButtons.find((child) => child.textContent === "Open dashboard");
     const signOut = actionButtons.find((child) => child.textContent === "Sign out");
+    assert.ok(signOut);
 
     openEditor.dispatchEvent(new FakeEvent("click", openEditor));
     openDashboard.dispatchEvent(new FakeEvent("click", openDashboard));

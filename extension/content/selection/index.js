@@ -6,6 +6,7 @@ import { createSelectionActionPill } from "../ui/selection_action_pill.js";
 import { createCitationModalHost } from "../ui/citation_modal_host.js";
 import { createQuickNotePanel } from "../ui/quick_note_panel.js";
 import { createContentToastController } from "../ui/toast.js";
+import { STORAGE_KEYS } from "../../shared/constants/storage_keys.js";
 import { getLockedCitationStyles } from "../../shared/types/citation.js";
 import { normalizeCapabilitySurface } from "../../shared/types/capability_surface.js";
 import { SURFACE_NAMES } from "../../shared/types/contracts.js";
@@ -633,6 +634,22 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
                 attributes: true,
                 characterData: true,
             });
+        }
+        if (typeof chromeApi?.storage?.onChanged?.addListener === "function") {
+            const handleStorageChange = (changes, areaName) => {
+                if (areaName !== "local" || !changes?.[STORAGE_KEYS.AUTH_STATE]) {
+                    return;
+                }
+                state.authSnapshot = changes[STORAGE_KEYS.AUTH_STATE].newValue || null;
+                if (state.visible && state.currentSnapshot) {
+                    pill.render({
+                        ...state.currentSnapshot,
+                        actions: buildSelectionActions(),
+                    });
+                }
+            };
+            chromeApi.storage.onChanged.addListener(handleStorageChange);
+            listeners.push(() => chromeApi.storage.onChanged.removeListener?.(handleStorageChange));
         }
         inspectSelection();
         void refreshAuthSnapshot();

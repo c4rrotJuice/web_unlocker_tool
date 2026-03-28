@@ -35,14 +35,15 @@ export function createHandoffManager(options = {}) {
   const typedOptions: any = options;
   const apiClient = typedOptions.apiClient;
   const sessionStore = typedOptions.sessionStore;
+  const sessionManager = typedOptions.sessionManager;
   const stateStore = typedOptions.stateStore;
   const bootstrapHandler = typedOptions.bootstrapHandler;
   const chromeApi = typedOptions.chromeApi || globalThis.chrome;
   const baseUrl = typedOptions.baseUrl || API_ORIGIN;
   const pollIntervalMs = typedOptions.pollIntervalMs || 250;
   const maxPollAttempts = typedOptions.maxPollAttempts || 40;
-  if (!apiClient || !sessionStore || !stateStore || !bootstrapHandler) {
-    throw new Error("createHandoffManager requires apiClient, sessionStore, stateStore, and bootstrapHandler.");
+  if (!apiClient || !sessionStore || !sessionManager || !stateStore || !bootstrapHandler) {
+    throw new Error("createHandoffManager requires apiClient, sessionStore, sessionManager, stateStore, and bootstrapHandler.");
   }
 
   async function pollForReadyAttempt({ attemptId, attemptToken, requestId }) {
@@ -69,24 +70,40 @@ export function createHandoffManager(options = {}) {
     );
   }
 
-  async function openAuthTab(url) {
-    if (typeof chromeApi?.tabs?.create !== "function") {
-      return createErrorResult(ERROR_CODES.INVALID_CONTEXT, "tabs.create is unavailable for auth start.");
+  async function openAuthWindow(url) {
+    if (typeof chromeApi?.windows?.create !== "function") {
+      return createErrorResult(ERROR_CODES.INVALID_CONTEXT, "windows.create is unavailable for auth start.");
     }
-    const created = await chromeApi.tabs.create({ url, active: true });
-    return createOkResult({ tabId: created?.id || null, url });
+    const created = await chromeApi.windows.create({
+      url,
+      focused: true,
+      type: "popup",
+      width: 540,
+      height: 720,
+    });
+    return createOkResult({ windowId: created?.id || null, url });
+  }
+
+  async function closeAuthWindow(windowId) {
+    if (!windowId || typeof chromeApi?.windows?.remove !== "function") {
+      return;
+    }
+    try {
+      await chromeApi.windows.remove(windowId);
+    } catch {}
   }
 
   async function exchangeAndBootstrap({ code, requestId }) {
     const exchangeResult: any = await apiClient.exchangeHandoff({ code });
     if (exchangeResult.ok === false) {
       const codeValue = mapAuthError(exchangeResult, ERROR_CODES.AUTH_INVALID);
-      await sessionStore.clear();
-      stateStore.setError({
+      await sessionManager.clearSession("handoff_exchange_failed");
+      const auth = stateStore.setError({
         code: codeValue,
         message: exchangeResult.error.message,
         details: exchangeResult.error.details ?? null,
       }, "handoff_exchange_failed");
+      await sessionManager.persistAuthState(auth);
       return createErrorResult(codeValue, exchangeResult.error.message, requestId, exchangeResult.error.details ?? null);
     }
 
@@ -99,6 +116,10 @@ export function createHandoffManager(options = {}) {
     }
 
     await sessionStore.write(normalizedSession);
+    await sessionManager.persistAuthState(stateStore.setSignedIn({
+      session: normalizedSession,
+      bootstrap: stateStore.getState()?.bootstrap || null,
+    }));
     const bootstrapResult: any = await bootstrapHandler.fetch({
       type: "bootstrap.fetch",
       requestId,
@@ -122,38 +143,46 @@ export function createHandoffManager(options = {}) {
       const attemptResult: any = await apiClient.createAuthAttempt({ redirect_path: redirectPath });
       if (attemptResult.ok === false) {
         const code = mapAuthError(attemptResult, ERROR_CODES.AUTH_ATTEMPT_INVALID);
-        stateStore.setError({
+        const auth = stateStore.setError({
           code,
           message: attemptResult.error.message,
           details: attemptResult.error.details ?? null,
         }, "auth_attempt_create_failed");
+        await sessionManager.persistAuthState(auth);
         return createErrorResult(code, attemptResult.error.message, request.requestId, attemptResult.error.details ?? null);
       }
 
       const attemptId = attemptResult.data?.attempt_id;
       const attemptToken = attemptResult.data?.attempt_token;
       if (typeof attemptId !== "string" || typeof attemptToken !== "string") {
-        stateStore.setError({ code: ERROR_CODES.AUTH_ATTEMPT_INVALID, message: "Auth attempt response was invalid." }, "auth_attempt_invalid");
+        const auth = stateStore.setError({ code: ERROR_CODES.AUTH_ATTEMPT_INVALID, message: "Auth attempt response was invalid." }, "auth_attempt_invalid");
+        await sessionManager.persistAuthState(auth);
         return createErrorResult(ERROR_CODES.AUTH_ATTEMPT_INVALID, "Auth attempt response was invalid.", request.requestId);
       }
 
       const authUrl = buildAuthAttemptUrl(baseUrl, { attemptId, redirectPath });
-      const openResult: any = await openAuthTab(authUrl);
+      const openResult: any = await openAuthWindow(authUrl);
       if (openResult.ok === false) {
-        stateStore.setError(openResult.error, "auth_tab_open_failed");
+        const auth = stateStore.setError(openResult.error, "auth_tab_open_failed");
+        await sessionManager.persistAuthState(auth);
         return createErrorResult(openResult.error.code, openResult.error.message, request.requestId, openResult.error.details ?? null);
       }
 
       const readyResult: any = await pollForReadyAttempt({ attemptId, attemptToken, requestId: request.requestId });
       if (readyResult.ok === false) {
-        stateStore.setError(readyResult.error, "auth_attempt_poll_failed");
+        const auth = stateStore.setError(readyResult.error, "auth_attempt_poll_failed");
+        await sessionManager.persistAuthState(auth);
         return readyResult;
       }
 
-      return exchangeAndBootstrap({
+      const exchanged = await exchangeAndBootstrap({
         code: readyResult.data.exchangeCode,
         requestId: request.requestId,
       });
+      if (exchanged.ok) {
+        await closeAuthWindow(openResult.data?.windowId || null);
+      }
+      return exchanged;
     },
   };
 }

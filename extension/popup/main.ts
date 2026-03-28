@@ -1,4 +1,5 @@
 import { createLogger } from "../shared/utils/logger.ts";
+import { STORAGE_KEYS } from "../shared/constants/storage_keys.ts";
 import { createRuntimeClient, SURFACE_NAMES } from "../shared/utils/runtime_client.ts";
 import { renderPopupAuthSnapshot } from "./app/index.ts";
 
@@ -18,6 +19,9 @@ function describeAuth(auth) {
   }
   if (auth.status === "loading") {
     return "Auth: loading";
+  }
+  if (auth.status === "refreshing") {
+    return "Auth: refreshing";
   }
   if (auth.status === "signed_out") {
     return "Auth: signed out";
@@ -39,35 +43,45 @@ function renderPopup(root) {
   const shell = document.createElement("section");
   const snapshotRoot = document.createElement("div");
   const actions = document.createElement("div");
-
-  async function refreshAuth() {
-    const result: any = await runtimeClient.authStatusGet();
+  const signInButton = createButton("Sign in", async () => {
+    renderPopupAuthSnapshot(snapshotRoot, { status: "loading" });
+    const result: any = await runtimeClient.authStart({
+      trigger: "popup_sign_in",
+      redirectPath: "/dashboard",
+    });
     renderPopupAuthSnapshot(snapshotRoot, result?.ok ? result.data?.auth : {
       status: "error",
       error: { message: getAuthStatusText(result) },
     });
+  });
+  const signOutButton = createButton("Sign out", async () => {
+    const result: any = await runtimeClient.authLogout();
+    renderPopupAuthSnapshot(snapshotRoot, result?.ok ? result.data?.auth : {
+      status: "error",
+      error: { message: getAuthStatusText(result) },
+    });
+  });
+
+  function syncActionVisibility(auth) {
+    const signedIn = auth?.status === "signed_in" || auth?.status === "refreshing";
+    signInButton.style.display = signedIn ? "none" : "";
+    signOutButton.style.display = signedIn ? "" : "none";
+  }
+
+  async function refreshAuth() {
+    const result: any = await runtimeClient.authStatusGet();
+    const auth = result?.ok ? result.data?.auth : {
+      status: "error",
+      error: { message: getAuthStatusText(result) },
+    };
+    syncActionVisibility(auth);
+    renderPopupAuthSnapshot(snapshotRoot, auth);
     return result;
   }
 
   actions.append(
-    createButton("Sign in", async () => {
-      renderPopupAuthSnapshot(snapshotRoot, { status: "loading" });
-      const result: any = await runtimeClient.authStart({
-        trigger: "popup_sign_in",
-        redirectPath: "/dashboard",
-      });
-      renderPopupAuthSnapshot(snapshotRoot, result?.ok ? result.data?.auth : {
-        status: "error",
-        error: { message: getAuthStatusText(result) },
-      });
-    }),
-    createButton("Sign out", async () => {
-      const result: any = await runtimeClient.authLogout();
-      renderPopupAuthSnapshot(snapshotRoot, result?.ok ? result.data?.auth : {
-        status: "error",
-        error: { message: getAuthStatusText(result) },
-      });
-    }),
+    signInButton,
+    signOutButton,
     createButton("Open sidepanel", async () => {
       const result: any = await runtimeClient.openSidepanel();
       if (!result?.ok) {
@@ -80,8 +94,17 @@ function renderPopup(root) {
   );
 
   renderPopupAuthSnapshot(snapshotRoot, { status: "loading" });
+  syncActionVisibility({ status: "loading" });
   shell.append(snapshotRoot, actions);
   root.replaceChildren(shell);
+  globalThis.chrome?.storage?.onChanged?.addListener?.((changes, areaName) => {
+    if (areaName !== "local" || !changes?.[STORAGE_KEYS.AUTH_STATE]) {
+      return;
+    }
+    const auth = changes[STORAGE_KEYS.AUTH_STATE].newValue || { status: "signed_out" };
+    syncActionVisibility(auth);
+    renderPopupAuthSnapshot(snapshotRoot, auth);
+  });
   void refreshAuth();
 }
 

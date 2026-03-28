@@ -33,7 +33,7 @@ async function parseJson(response) {
         return createErrorResult(ERROR_CODES.NETWORK_ERROR, "Response body was not valid JSON.", undefined, { cause: error?.message || String(error) });
     }
 }
-export function createApiClient({ baseUrl = API_ORIGIN, fetchImpl = globalThis.fetch, getAccessToken = async () => null, } = {}) {
+export function createApiClient({ baseUrl = API_ORIGIN, fetchImpl = globalThis.fetch, getAccessToken = async () => null, refreshAccessToken = async () => null, } = {}) {
     if (typeof fetchImpl !== "function") {
         throw new Error("fetch is required for the API client.");
     }
@@ -45,28 +45,42 @@ export function createApiClient({ baseUrl = API_ORIGIN, fetchImpl = globalThis.f
         const headers = typedOptions.headers || {};
         const fallbackCode = typedOptions.fallbackCode || ERROR_CODES.NETWORK_ERROR;
         const label = typedOptions.label || "Backend response";
-        const requestHeaders = new Headers(headers);
-        requestHeaders.set("Accept", "application/json");
-        if (body !== undefined) {
-            requestHeaders.set("Content-Type", "application/json");
-        }
-        if (auth) {
-            const accessToken = await getAccessToken();
-            if (!accessToken) {
-                return createErrorResult(ERROR_CODES.UNAUTHORIZED, "No bearer token is available.");
+        async function performRequest(accessTokenOverride = null) {
+            const requestHeaders = new Headers(headers);
+            requestHeaders.set("Accept", "application/json");
+            if (body !== undefined) {
+                requestHeaders.set("Content-Type", "application/json");
             }
-            requestHeaders.set("Authorization", `Bearer ${accessToken}`);
+            if (auth) {
+                const accessToken = accessTokenOverride || await getAccessToken();
+                if (!accessToken) {
+                    return createErrorResult(ERROR_CODES.UNAUTHORIZED, "No bearer token is available.");
+                }
+                requestHeaders.set("Authorization", `Bearer ${accessToken}`);
+            }
+            try {
+                return await fetchImpl(toUrl(baseUrl, path), {
+                    method,
+                    headers: requestHeaders,
+                    body: body !== undefined ? JSON.stringify(body) : undefined,
+                });
+            }
+            catch (error) {
+                return createErrorResult(ERROR_CODES.NETWORK_ERROR, "Network request failed.", undefined, { cause: error?.message || String(error) });
+            }
         }
-        let response;
-        try {
-            response = await fetchImpl(toUrl(baseUrl, path), {
-                method,
-                headers: requestHeaders,
-                body: body !== undefined ? JSON.stringify(body) : undefined,
-            });
+        let response = await performRequest();
+        if (response?.ok === false && response?.status === "error") {
+            return response;
         }
-        catch (error) {
-            return createErrorResult(ERROR_CODES.NETWORK_ERROR, "Network request failed.", undefined, { cause: error?.message || String(error) });
+        if (auth && (response.status === 401 || response.status === 403)) {
+            const refreshedAccessToken = await refreshAccessToken();
+            if (refreshedAccessToken) {
+                response = await performRequest(refreshedAccessToken);
+                if (response?.ok === false && response?.status === "error") {
+                    return response;
+                }
+            }
         }
         const parsed = await parseJson(response);
         if (parsed?.ok === false && parsed?.status === "error") {
@@ -114,6 +128,14 @@ export function createApiClient({ baseUrl = API_ORIGIN, fetchImpl = globalThis.f
                 label: "Handoff exchange response",
             });
         },
+        refreshSession(payload) {
+            return request(ENDPOINTS.AUTH_HANDOFF_REFRESH, {
+                method: "POST",
+                body: payload,
+                fallbackCode: ERROR_CODES.HANDOFF_REFRESH_FAILED,
+                label: "Handoff refresh response",
+            });
+        },
         loadBootstrap() {
             return request(ENDPOINTS.BOOTSTRAP, {
                 auth: true,
@@ -121,19 +143,19 @@ export function createApiClient({ baseUrl = API_ORIGIN, fetchImpl = globalThis.f
                 label: "Extension bootstrap response",
             });
         },
-    listCitations({ limit = 8, offset = 0, query = "" } = {}) {
-        const params = new URLSearchParams();
-        params.set("limit", String(limit));
-        if (Number.isInteger(offset) && offset > 0) {
-            params.set("cursor", String(offset));
-        }
-        if (String(query || "").trim()) {
-            params.set("search", String(query).trim());
-        }
-        return request(`${ENDPOINTS.CITATIONS}?${params.toString()}`, {
-            auth: true,
-            fallbackCode: ERROR_CODES.NETWORK_ERROR,
-            label: "Citations list response",
+        listCitations({ limit = 8, offset = 0, query = "" } = {}) {
+            const params = new URLSearchParams();
+            params.set("limit", String(limit));
+            if (Number.isInteger(offset) && offset > 0) {
+                params.set("cursor", String(offset));
+            }
+            if (String(query || "").trim()) {
+                params.set("search", String(query).trim());
+            }
+            return request(`${ENDPOINTS.CITATIONS}?${params.toString()}`, {
+                auth: true,
+                fallbackCode: ERROR_CODES.NETWORK_ERROR,
+                label: "Citations list response",
             });
         },
         listNotes({ limit = 8, offset = 0, query = "" } = {}) {

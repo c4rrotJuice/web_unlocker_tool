@@ -130,6 +130,27 @@ async def test_extension_contract_uses_canonical_handoff_workflow(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_extension_contract_exposes_handoff_refresh(monkeypatch):
+    app, extension_routes = _load_app(monkeypatch)
+
+    async def fake_refresh(_request, payload):
+        return {
+            "ok": True,
+            "data": {"session": {"access_token": "access-2", "refresh_token": payload.refresh_token}},
+            "meta": {},
+            "error": None,
+        }
+
+    extension_routes.service.refresh_session = fake_refresh
+
+    async with async_test_client(app) as client:
+        refreshed = await client.post("/api/auth/handoff/refresh", json={"refresh_token": "refresh-1"})
+
+    assert refreshed.status_code == 200
+    assert refreshed.json()["data"]["session"]["access_token"] == "access-2"
+
+
+@pytest.mark.anyio
 async def test_extension_contract_supports_attempt_create_complete_and_status(monkeypatch):
     app, extension_routes = _load_app(monkeypatch)
 

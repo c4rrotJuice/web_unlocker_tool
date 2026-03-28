@@ -4553,6 +4553,19 @@ function createContentToastController({ documentRef = globalThis.document, windo
 }
 
 },
+"shared/constants/storage_keys.ts": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.STORAGE_KEYS = void 0;
+exports.STORAGE_KEYS = Object.freeze({
+    AUTH_SESSION: "writior.auth_session",
+    AUTH_SESSION_LEGACY: "writior_auth_session",
+    AUTH_STATE: "writior.auth_state",
+    CITATION_SELECTION: "writior.citation_selection",
+    LAST_BOOT: "writior.last_boot",
+});
+
+},
 "shared/types/capability_surface.ts": function(module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -4703,6 +4716,7 @@ const selection_action_pill_ts_1 = require("../ui/selection_action_pill.ts");
 const citation_modal_host_ts_1 = require("../ui/citation_modal_host.ts");
 const quick_note_panel_ts_1 = require("../ui/quick_note_panel.ts");
 const toast_ts_1 = require("../ui/toast.ts");
+const storage_keys_ts_1 = require("../../shared/constants/storage_keys.ts");
 const citation_ts_1 = require("../../shared/types/citation.ts");
 const capability_surface_ts_1 = require("../../shared/types/capability_surface.ts");
 const contracts_ts_1 = require("../../shared/types/contracts.ts");
@@ -5331,6 +5345,22 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
                 characterData: true,
             });
         }
+        if (typeof chromeApi?.storage?.onChanged?.addListener === "function") {
+            const handleStorageChange = (changes, areaName) => {
+                if (areaName !== "local" || !changes?.[storage_keys_ts_1.STORAGE_KEYS.AUTH_STATE]) {
+                    return;
+                }
+                state.authSnapshot = changes[storage_keys_ts_1.STORAGE_KEYS.AUTH_STATE].newValue || null;
+                if (state.visible && state.currentSnapshot) {
+                    pill.render({
+                        ...state.currentSnapshot,
+                        actions: buildSelectionActions(),
+                    });
+                }
+            };
+            chromeApi.storage.onChanged.addListener(handleStorageChange);
+            listeners.push(() => chromeApi.storage.onChanged.removeListener?.(handleStorageChange));
+        }
         inspectSelection();
         void refreshAuthSnapshot();
         return getState();
@@ -5367,12 +5397,32 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
 "content/index.ts": function(module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.shouldBootstrapContentRuntime = shouldBootstrapContentRuntime;
 exports.createContentRuntime = createContentRuntime;
 exports.bootstrapContent = bootstrapContent;
 const runtime_client_ts_1 = require("../shared/utils/runtime_client.ts");
 const engine_ts_1 = require("./unlock/engine.ts");
 const index_ts_1 = require("./selection/index.ts");
 const RUNTIME_KEY = "__WRITIOR_CONTENT_RUNTIME__";
+function canParseUrl(value) {
+    try {
+        return new URL(value);
+    }
+    catch {
+        return null;
+    }
+}
+function shouldBootstrapContentRuntime(urlLike) {
+    const parsed = canParseUrl(String(urlLike || ""));
+    if (!parsed) {
+        return true;
+    }
+    const hostname = parsed.hostname.toLowerCase();
+    const pathname = parsed.pathname || "/";
+    const isFirstPartyEditorHost = hostname === "app.writior.com" || hostname === "localhost" || hostname === "127.0.0.1";
+    const isEditorRoute = pathname === "/editor" || pathname.startsWith("/editor/");
+    return !(isFirstPartyEditorHost && isEditorRoute);
+}
 function createContentRuntime(options = {}) {
     const typedOptions = options;
     const windowRef = typedOptions.windowRef || globalThis.window;
@@ -5416,6 +5466,9 @@ function bootstrapContent(options = {}) {
     const windowRef = typedOptions.windowRef || globalThis.window;
     const documentRef = typedOptions.documentRef || globalThis.document;
     if (!windowRef || !documentRef) {
+        return null;
+    }
+    if (!shouldBootstrapContentRuntime(String(windowRef?.location?.href || ""))) {
         return null;
     }
     const runtimeWindow = windowRef;

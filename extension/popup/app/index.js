@@ -6,6 +6,9 @@ function summarizeStatus(snapshot) {
     if (status === AUTH_STATUS.LOADING) {
         return "Loading auth state";
     }
+    if (status === AUTH_STATUS.REFRESHING) {
+        return "Refreshing session";
+    }
     if (status === AUTH_STATUS.ERROR) {
         return `Auth error: ${snapshot?.error?.message || "unknown"}`;
     }

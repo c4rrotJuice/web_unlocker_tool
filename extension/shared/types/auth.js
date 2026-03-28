@@ -3,6 +3,7 @@ export const AUTH_STATUS = Object.freeze({
     LOADING: "loading",
     SIGNED_OUT: "signed_out",
     SIGNED_IN: "signed_in",
+    REFRESHING: "refreshing",
     ERROR: "error",
 });
 export function createLoadingAuthState(reason = "startup") {
@@ -27,6 +28,15 @@ export function createSignedInAuthState({ session, bootstrap }) {
     return {
         status: AUTH_STATUS.SIGNED_IN,
         reason: null,
+        session,
+        bootstrap,
+        error: null,
+    };
+}
+export function createRefreshingAuthState({ reason = "refreshing", session = null, bootstrap = null, } = {}) {
+    return {
+        status: AUTH_STATUS.REFRESHING,
+        reason,
         session,
         bootstrap,
         error: null,
@@ -59,15 +69,42 @@ export function normalizeSession(session) {
     if (!session || typeof session !== "object" || typeof session.access_token !== "string" || !session.access_token.trim()) {
         return null;
     }
+    const issuedAt = typeof session.issued_at === "string" && session.issued_at.trim() ? session.issued_at : new Date().toISOString();
+    const expiresIn = Number.isFinite(session.expires_in) ? session.expires_in : null;
+    const expiresAt = typeof session.expires_at === "string" && session.expires_at.trim()
+        ? session.expires_at
+        : deriveExpiresAt(issuedAt, expiresIn);
     return {
         access_token: session.access_token,
         refresh_token: typeof session.refresh_token === "string" && session.refresh_token.trim() ? session.refresh_token : null,
         token_type: typeof session.token_type === "string" && session.token_type.trim() ? session.token_type : "bearer",
         user_id: typeof session.user_id === "string" && session.user_id.trim() ? session.user_id : null,
         email: typeof session.email === "string" && session.email.trim() ? session.email : null,
-        issued_at: typeof session.issued_at === "string" && session.issued_at.trim() ? session.issued_at : new Date().toISOString(),
-        expires_at: typeof session.expires_at === "string" && session.expires_at.trim() ? session.expires_at : null,
-        expires_in: Number.isFinite(session.expires_in) ? session.expires_in : null,
+        issued_at: issuedAt,
+        expires_at: expiresAt,
+        expires_in: expiresIn,
         source: typeof session.source === "string" && session.source.trim() ? session.source : "background",
     };
+}
+export function getSessionExpiryTime(session) {
+    const normalized = normalizeSession(session);
+    if (!normalized?.expires_at) {
+        return null;
+    }
+    const expiryTime = Date.parse(normalized.expires_at);
+    return Number.isFinite(expiryTime) ? expiryTime : null;
+}
+export function isSessionExpired(session, now = Date.now()) {
+    const expiryTime = getSessionExpiryTime(session);
+    return expiryTime !== null ? expiryTime <= now : false;
+}
+function deriveExpiresAt(issuedAt, expiresIn) {
+    if (!Number.isFinite(expiresIn) || expiresIn === null) {
+        return null;
+    }
+    const issuedTime = Date.parse(issuedAt);
+    if (!Number.isFinite(issuedTime)) {
+        return null;
+    }
+    return new Date(issuedTime + (expiresIn * 1000)).toISOString();
 }

@@ -41,6 +41,18 @@ class HandoffExchangeRequest(BaseModel):
         return normalized
 
 
+class HandoffRefreshRequest(BaseModel):
+    refresh_token: str
+
+    @field_validator("refresh_token")
+    @classmethod
+    def validate_refresh_token(cls, value: str) -> str:
+        normalized = (value or "").strip()
+        if not normalized:
+            raise ValueError("refresh_token is required")
+        return normalized
+
+
 class AuthAttemptCreateRequest(BaseModel):
     redirect_path: str | None = None
 

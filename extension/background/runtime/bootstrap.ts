@@ -6,7 +6,9 @@ import { createApiClient } from "../api/client.ts";
 import { createCaptureApi } from "../api/captures.ts";
 import { createCitationApi } from "../api/citations.ts";
 import { createWorkInEditorApi } from "../api/work_in_editor.ts";
+import { createAuthStateStorage } from "../auth/auth_state_store.ts";
 import { createSessionStore } from "../auth/session_store.ts";
+import { createSessionManager } from "../auth/session_manager.ts";
 import {
   createAuthHandler,
   createBootstrapHandler,
@@ -26,12 +28,28 @@ export function createBackgroundRuntime(deps = {}) {
   const typedDeps: any = deps;
   const chromeApi = typedDeps.chromeApi || globalThis.chrome;
   const sessionStore = typedDeps.sessionStore || createSessionStore({ chromeApi });
-  const stateStore = typedDeps.stateStore || createBackgroundStateStore();
+  const authStateStorage = typedDeps.authStateStorage || createAuthStateStorage({ chromeApi });
+  const stateStore = typedDeps.stateStore || createBackgroundStateStore(undefined, {
+    onChange(nextState) {
+      void authStateStorage.write(nextState);
+    },
+  });
   const citationStateStore = typedDeps.citationStateStore || createCitationStateStore(undefined, { chromeApi });
+  let sessionManager: any = typedDeps.sessionManager || null;
   const apiClient = typedDeps.apiClient || createApiClient({
     baseUrl: typedDeps.baseUrl || API_ORIGIN,
     fetchImpl: typedDeps.fetchImpl || globalThis.fetch,
-    getAccessToken: () => sessionStore.getToken(),
+    getAccessToken: () => sessionManager?.getAccessToken?.() || null,
+    refreshAccessToken: () => sessionManager?.refreshAccessToken?.() || null,
+  });
+  sessionManager = sessionManager || createSessionManager({
+    apiClient,
+    sessionStore,
+    stateStore,
+    authStateStorage,
+    chromeApi,
+    refreshLeadMs: typedDeps.refreshLeadMs,
+    retryDelayMs: typedDeps.retryDelayMs,
   });
   const captureApi = typedDeps.captureApi || createCaptureApi(apiClient);
   const citationApi = typedDeps.citationApi || createCitationApi(apiClient);
@@ -40,12 +58,14 @@ export function createBackgroundRuntime(deps = {}) {
   const bootstrapHandler = typedDeps.bootstrapHandler || createBootstrapHandler({
     apiClient,
     sessionStore,
+    sessionManager,
     stateStore,
   });
   const handlers = typedDeps.handlers || {
     auth: createAuthHandler({
       apiClient,
       sessionStore,
+      sessionManager,
       stateStore,
       citationStateStore,
       bootstrapHandler,
@@ -104,6 +124,7 @@ export function createBackgroundRuntime(deps = {}) {
   return {
     chromeApi,
     sessionStore,
+    sessionManager,
     stateStore,
     apiClient,
     captureApi,
@@ -153,6 +174,16 @@ export function createBackgroundRuntime(deps = {}) {
         chromeApi.runtime.onStartup.addListener(() => {
           logger.info("runtime startup");
           bootstrapFromLifecycle("worker-startup");
+        });
+      }
+
+      if (typeof chromeApi.alarms?.onAlarm?.addListener === "function") {
+        chromeApi.alarms.onAlarm.addListener((alarm) => {
+          void sessionManager.onAlarm(alarm).catch((error) => {
+            logger.warn("auth refresh alarm failed", {
+              message: error?.message || String(error),
+            });
+          });
         });
       }
 

@@ -5,6 +5,7 @@ export function createAuthHandler(options = {}) {
   const typedOptions: any = options;
   const apiClient = typedOptions.apiClient;
   const sessionStore = typedOptions.sessionStore;
+  const sessionManager = typedOptions.sessionManager;
   const stateStore = typedOptions.stateStore;
   const citationStateStore = typedOptions.citationStateStore;
   const bootstrapHandler = typedOptions.bootstrapHandler;
@@ -12,13 +13,14 @@ export function createAuthHandler(options = {}) {
   const baseUrl = typedOptions.baseUrl;
   const pollIntervalMs = typedOptions.pollIntervalMs;
   const maxPollAttempts = typedOptions.maxPollAttempts;
-  if (!apiClient || !sessionStore || !stateStore || !bootstrapHandler) {
-    throw new Error("createAuthHandler requires apiClient, sessionStore, stateStore, and bootstrapHandler.");
+  if (!apiClient || !sessionStore || !sessionManager || !stateStore || !bootstrapHandler) {
+    throw new Error("createAuthHandler requires apiClient, sessionStore, sessionManager, stateStore, and bootstrapHandler.");
   }
 
   const handoffManager = createHandoffManager({
     apiClient,
     sessionStore,
+    sessionManager,
     stateStore,
     bootstrapHandler,
     chromeApi,
@@ -32,18 +34,24 @@ export function createAuthHandler(options = {}) {
       return handoffManager.start(request);
     },
     async getStatus(request) {
+      const currentState = stateStore.getState();
+      if (currentState.status === "loading") {
+        await this.restoreSession(request);
+      }
       return createOkResult({ auth: stateStore.getState() }, request.requestId);
     },
     async logout(request) {
-      await sessionStore.clear();
+      await sessionManager.clearSession("signed_out");
       await citationStateStore?.clear?.();
-      const auth = stateStore.setSignedOut("signed_out");
+      const auth = stateStore.getState();
       return createOkResult({ auth }, request.requestId);
     },
     async restoreSession(request = { requestId: undefined }) {
-      const session = await sessionStore.read();
+      await sessionManager.bootstrapAuthState();
+      const session = await sessionManager.ensureSession({ reason: "restore_session" });
       if (!session?.access_token) {
         const auth = stateStore.setSignedOut("missing_session");
+        await sessionManager.persistAuthState(auth);
         return createOkResult({ auth }, request.requestId);
       }
       const bootstrapResult = await bootstrapHandler.fetch({

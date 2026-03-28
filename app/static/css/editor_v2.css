@@ -3,6 +3,7 @@
   min-height: 0;
   height: 100%;
   min-width: 0;
+  overflow: hidden;
 }
 
 .editor-v2-shell {
@@ -34,6 +35,8 @@ html.dark .editor-v2-panel {
 .editor-v2-surface,
 .editor-v2-context,
 .editor-v2-explorer,
+.editor-v2-context-summary,
+.editor-v2-context-stack,
 .editor-v2-context-pane,
 .editor-v2-results {
   display: flex;
@@ -163,6 +166,8 @@ html.dark .editor-v2-search-row input {
 .editor-v2-outline,
 .editor-v2-checkpoints,
 .editor-v2-context,
+.editor-v2-context-summary,
+.editor-v2-context-stack,
 .editor-v2-context-pane,
 .editor-v2-results,
 .editor-v2-explorer-body,
@@ -178,10 +183,13 @@ html.dark .editor-v2-search-row input {
 .editor-v2-list-rows {
   overflow: auto;
   scrollbar-width: thin;
+  overscroll-behavior: contain;
 }
 
 .editor-v2-scroll,
-.editor-v2-context-pane {
+.editor-v2-context-pane,
+.editor-v2-results,
+.editor-v2-context-stack {
   flex: 1 1 auto;
 }
 
@@ -601,6 +609,11 @@ html.dark .editor-v2-status-signal { color: #5eead4; }
   padding-top: 0.4rem;
 }
 
+.editor-v2-explorer,
+.editor-v2-context {
+  min-height: 0;
+}
+
 .editor-v2-explorer {
   border-right-color: rgba(15, 23, 42, 0.06);
 }
@@ -621,12 +634,30 @@ html.dark .editor-v2-surface {
 .editor-v2-context-head {
   align-items: flex-start;
   gap: 0.35rem;
-  padding: 0.05rem 0.05rem 0.4rem;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  padding: 0.05rem 0.05rem 0.2rem;
 }
 
 .editor-v2-context-head .editor-v2-tablist {
   margin-top: 0;
+}
+
+.editor-v2-context-summary {
+  flex: 0 0 auto;
+  gap: 0.35rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.editor-v2-context-summary > .editor-v2-scroll {
+  max-height: clamp(9rem, 28vh, 16rem);
+  min-height: 0;
+  padding-right: 0.2rem;
+}
+
+.editor-v2-context-stack {
+  min-height: 0;
+  overflow: hidden;
+  padding-top: 0.45rem;
 }
 
 .editor-v2-context-pane {
@@ -635,10 +666,12 @@ html.dark .editor-v2-surface {
 
 .editor-v2-context-pane > .editor-v2-scroll,
 .editor-v2-context-pane > .editor-v2-outline,
-.editor-v2-context-pane > .editor-v2-checkpoints {
+.editor-v2-context-pane > .editor-v2-checkpoints,
+.editor-v2-context-pane > .editor-v2-list-rows {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  padding-right: 0.2rem;
 }
 
 .editor-v2-context-pane .editor-v2-card h3,
@@ -653,12 +686,6 @@ html.dark .editor-v2-surface {
 }
 
 .editor-v2-empty-actions { justify-content: center; flex-wrap: wrap; }
-
-.editor-v2-notes-placeholder {
-  font-size: 0.86rem;
-  color: #64748b;
-  padding: 0.4rem;
-}
 
 .app-shell[data-page="editor"] .app-workspace,
 .app-shell[data-page="editor"] .app-main {

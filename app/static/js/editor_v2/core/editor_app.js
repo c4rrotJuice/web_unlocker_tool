@@ -1,6 +1,5 @@
 import { readBootPayload } from "../../app_shell/core/boot.js";
 import { createEventBus } from "./event_bus.js";
-import { escapeHtml } from "../../app_shell/core/format.js";
 import { createWorkspaceState } from "./workspace_state.js";
 import { createSelectionState } from "./selection_state.js";
 import { deriveContextState } from "./context_state.js";
@@ -57,6 +56,7 @@ function queryRefs() {
     checkpointStatus: document.getElementById("editor-checkpoint-status"),
     statusBar: document.getElementById("editor-status-bar"),
     contextRail: document.getElementById("editor-context-rail"),
+    attachedCitationsPanel: document.getElementById("editor-attached-citations-panel"),
     contextMode: document.getElementById("editor-context-mode"),
     outlineList: document.getElementById("editor-outline-list"),
     checkpointsList: document.getElementById("editor-checkpoints-list"),
@@ -295,10 +295,22 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     const context = deriveContextState(state, selectionState.getState());
     refs.contextMode.textContent = summarizeContextMode(context, state);
     const focused = state.focused_entity;
+    const attachedCitations = state.attached_research?.citations || [];
     const attachedNotes = state.attached_research?.notes || [];
-    refs.notesPanel.innerHTML = attachedNotes.length
-      ? `<div class="editor-v2-list">${attachedNotes.map((note) => `<button class="editor-v2-row" type="button"><div class="editor-v2-row-primary">${escapeHtml(note.title || "Note")}</div><div class="editor-v2-row-secondary">${escapeHtml((note.text || "").slice(0, 120))}</div></button>`).join("")}</div>`
-      : `<div class="editor-v2-list-state">No attached notes yet.</div>`;
+    if (refs.attachedCitationsPanel) {
+      if (attachedCitations.length) {
+        renderExplorerList(refs.attachedCitationsPanel, "citations", attachedCitations, focused?.type === "citation" ? focused.id : null);
+      } else {
+        renderExplorerState(refs.attachedCitationsPanel, "No attached citations yet.");
+      }
+    }
+    if (refs.notesPanel) {
+      if (attachedNotes.length) {
+        renderExplorerList(refs.notesPanel, "notes", attachedNotes, focused?.type === "note" ? focused.id : null);
+      } else {
+        renderExplorerState(refs.notesPanel, "No attached notes yet.");
+      }
+    }
     if (!focused && context.mode !== "seed_review" && context.mode !== "quote_focus") {
       renderContextRail(refs.contextRail, context, state, null, {
         selectionText: () => selectionState.getState().text,
@@ -430,6 +442,19 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
         quillAdapter.insertText(quillAdapter.getSelection()?.index || 0, "\n## Outline\n");
       }
     };
+    const attachedAssetActivate = (event) => {
+      const row = event.target.closest("[data-entity-id][data-entity-type]");
+      if (!row) return;
+      workspaceState.setPendingExplorerAction(null);
+      workspaceState.setFocusedEntity({
+        type: row.dataset.entityType,
+        id: row.dataset.entityId,
+      });
+      eventBus.emit("focus:changed", {
+        type: row.dataset.entityType,
+        id: row.dataset.entityId,
+      });
+    };
     refs.commandButton.addEventListener("click", commandClick);
     refs.checkpointButton.addEventListener("click", checkpointClick);
     refs.exportButton.addEventListener("click", exportClick);
@@ -439,6 +464,8 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     refs.outlineRefreshButton.addEventListener("click", outlineRefreshClick);
     refs.commandMenu.addEventListener("click", commandMenuClick);
     refs.contextRail.addEventListener("click", contextRailClick);
+    refs.attachedCitationsPanel?.addEventListener("click", attachedAssetActivate);
+    refs.notesPanel?.addEventListener("click", attachedAssetActivate);
     cleanups.push(() => refs.commandButton.removeEventListener("click", commandClick));
     cleanups.push(() => refs.checkpointButton.removeEventListener("click", checkpointClick));
     cleanups.push(() => refs.exportButton.removeEventListener("click", exportClick));
@@ -448,6 +475,8 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     cleanups.push(() => refs.outlineRefreshButton.removeEventListener("click", outlineRefreshClick));
     cleanups.push(() => refs.commandMenu.removeEventListener("click", commandMenuClick));
     cleanups.push(() => refs.contextRail.removeEventListener("click", contextRailClick));
+    cleanups.push(() => refs.attachedCitationsPanel?.removeEventListener("click", attachedAssetActivate));
+    cleanups.push(() => refs.notesPanel?.removeEventListener("click", attachedAssetActivate));
     return () => {
       while (cleanups.length) {
         cleanups.pop()();

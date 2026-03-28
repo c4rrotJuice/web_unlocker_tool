@@ -731,19 +731,22 @@ html.dark .editor-v2-surface {
 }
 
 .app-shell[data-page="editor"] .app-workspace {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
 }
 
 .app-shell[data-page="editor"] .app-content-frame {
+  display: flex;
+  flex: 1 1 auto;
   min-height: 0;
-  display: block;
   height: auto;
+  overflow: hidden;
 }
 
 .app-shell[data-page="editor"] .app-main {
   display: flex;
   flex: 1 1 auto;
+  min-width: 0;
   height: auto;
 }
 

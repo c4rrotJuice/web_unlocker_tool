@@ -251,6 +251,26 @@ test("api client surfaces FastAPI detail payloads instead of envelope-shape erro
   assert.equal(result.meta.status, 500);
 });
 
+test("api client uses canonical citations query params for search and cursor pagination", async () => {
+  const requests = [];
+  const backendClient = createApiClient({
+    fetchImpl: async (url, init = {}) => {
+      requests.push({
+        url: String(url),
+        headers: Object.fromEntries(new Headers(init.headers || {}).entries()),
+      });
+      return createResponse({ ok: true, data: [], meta: {} }, 200);
+    },
+    getAccessToken: async () => "token-1",
+  });
+
+  const result = await backendClient.listCitations({ limit: 8, offset: 16, query: "lorem ipsum" });
+
+  assert.equal(result.ok, true);
+  assert.match(requests[0].url, /\/api\/citations\?limit=8&cursor=16&search=lorem\+ipsum$/);
+  assert.equal(requests[0].headers.authorization, "Bearer token-1");
+});
+
 test("worker restore uses stored token to fetch bootstrap and expose signed-in auth state", async () => {
   const chromeApi = createChromeStub({
     [STORAGE_KEYS.AUTH_SESSION]: {

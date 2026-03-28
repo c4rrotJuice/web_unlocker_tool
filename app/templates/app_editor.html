@@ -123,23 +123,18 @@
       </div>
       <div class="editor-v2-context-stack">
         <div class="editor-v2-tablist" role="tablist" aria-label="Attached asset tabs">
-          <button class="editor-v2-tab is-active" data-context-tab="citations" role="tab" aria-selected="true">Citations</button>
-          <button class="editor-v2-tab" data-context-tab="notes" role="tab" aria-selected="false">Notes</button>
-          <button class="editor-v2-tab" data-context-tab="outline" role="tab" aria-selected="false">Outline</button>
-          <button class="editor-v2-tab" data-context-tab="checkpoints" role="tab" aria-selected="false">Checkpoints</button>
+          <button class="editor-v2-tab is-active" type="button" data-context-tab="citations" role="tab" aria-selected="true">Citations</button>
+          <button class="editor-v2-tab" type="button" data-context-tab="notes" role="tab" aria-selected="false">Notes</button>
+          <button class="editor-v2-tab" type="button" data-context-tab="outline" role="tab" aria-selected="false">Outline</button>
+          <button class="editor-v2-tab" type="button" data-context-tab="checkpoints" role="tab" aria-selected="false">Checkpoints</button>
         </div>
-        <section class="editor-v2-context-pane" data-context-pane="citations">
-          <div id="editor-attached-citations-panel" class="editor-v2-scroll editor-v2-list-rows" tabindex="0"></div>
-        </section>
-        <section class="editor-v2-context-pane" data-context-pane="notes" hidden>
-          <div id="editor-notes-panel" class="editor-v2-scroll editor-v2-list-rows" tabindex="0"></div>
-        </section>
-        <section class="editor-v2-context-pane" data-context-pane="outline" hidden>
-          <div id="editor-outline-list" class="editor-v2-outline" tabindex="0"></div>
-        </section>
-        <section class="editor-v2-context-pane" data-context-pane="checkpoints" hidden>
-          <div id="editor-checkpoints-list" class="editor-v2-checkpoints" tabindex="0"></div>
-        </section>
+        <div
+          id="editor-context-tab-content"
+          class="editor-v2-context-tab-content editor-v2-scroll editor-v2-list-rows"
+          tabindex="0"
+          role="tabpanel"
+          aria-live="polite"
+        ></div>
       </div>
     </aside>
   </div>

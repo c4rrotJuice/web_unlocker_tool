@@ -171,9 +171,11 @@ export function createApiClient({
     listCitations({ limit = 8, offset = 0, query = "" } = {}) {
       const params = new URLSearchParams();
       params.set("limit", String(limit));
-      params.set("offset", String(offset));
+      if (Number.isInteger(offset) && offset > 0) {
+        params.set("cursor", String(offset));
+      }
       if (String(query || "").trim()) {
-        params.set("query", String(query).trim());
+        params.set("search", String(query).trim());
       }
       return request(`${ENDPOINTS.CITATIONS}?${params.toString()}`, {
         auth: true,

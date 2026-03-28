@@ -50,18 +50,21 @@ function extractHeadingItemsFromDelta(delta) {
   return items;
 }
 
-export function createOutlineController({ refs, quillAdapter }) {
+export function createOutlineController({ refs = {}, quillAdapter }) {
   let timer = null;
+  let target = refs.outlineList || null;
+  let lastItems = [];
 
-  function render(items) {
-    if (!refs.outlineList) return;
-    refs.outlineList.innerHTML = items.length
+  function render(items, renderTarget = target) {
+    if (!renderTarget) return;
+    renderTarget.innerHTML = items.length
       ? items.map((item) => `<button class="editor-v2-link" type="button" data-outline-index="${item.index}">${"&nbsp;".repeat(Math.max(item.level - 1, 0) * 2)}${item.text}</button>`).join("")
       : `<div class="editor-v2-card">No headings yet.</div>`;
   }
 
   function compute() {
     const items = extractHeadingItemsFromDom(quillAdapter) ?? extractHeadingItemsFromDelta(quillAdapter.getContents());
+    lastItems = items;
     render(items);
     return items;
   }
@@ -80,14 +83,21 @@ export function createOutlineController({ refs, quillAdapter }) {
     quillAdapter.focus();
     quillAdapter.setSelection(Number(button.dataset.outlineIndex) || 0, 0, "user");
   };
-  refs.outlineList.addEventListener("click", onClick);
 
   return {
     compute,
     schedule,
+    setTarget(nextTarget) {
+      target = nextTarget || null;
+      render(lastItems);
+    },
+    clearTarget() {
+      if (target) target.innerHTML = "";
+      target = null;
+    },
+    handleClick: onClick,
     dispose() {
       if (timer) window.clearTimeout(timer);
-      refs.outlineList.removeEventListener("click", onClick);
     },
   };
 }

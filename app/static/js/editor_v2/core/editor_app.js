@@ -56,17 +56,14 @@ function queryRefs() {
     checkpointStatus: document.getElementById("editor-checkpoint-status"),
     statusBar: document.getElementById("editor-status-bar"),
     contextRail: document.getElementById("editor-context-rail"),
-    attachedCitationsPanel: document.getElementById("editor-attached-citations-panel"),
+    contextTabContent: document.getElementById("editor-context-tab-content"),
     contextMode: document.getElementById("editor-context-mode"),
-    outlineList: document.getElementById("editor-outline-list"),
-    checkpointsList: document.getElementById("editor-checkpoints-list"),
     commandMenu: document.getElementById("editor-command-menu"),
     commandButton: document.getElementById("editor-command-button"),
     checkpointButton: document.getElementById("editor-checkpoint-button"),
     exportButton: document.getElementById("editor-export-button"),
     contextTabButtons: Array.from(document.querySelectorAll("[data-context-tab]")),
     contextPanes: Array.from(document.querySelectorAll("[data-context-pane]")),
-    notesPanel: document.getElementById("editor-notes-panel"),
     newDocumentButton: document.getElementById("editor-new-document"),
     emptyNewDocumentButton: document.getElementById("editor-empty-new-document"),
     emptyFocusExplorerButton: document.getElementById("editor-empty-focus-explorer"),
@@ -261,9 +258,67 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       commandRegistry.open("citation");
     },
   });
+  function setContextTabContentMode(kind) {
+    refs.contextTabContent.classList.remove("editor-v2-list-rows", "editor-v2-outline", "editor-v2-checkpoints");
+    if (kind === "outline") {
+      refs.contextTabContent.classList.add("editor-v2-outline");
+      return;
+    }
+    if (kind === "checkpoints") {
+      refs.contextTabContent.classList.add("editor-v2-checkpoints");
+      return;
+    }
+    refs.contextTabContent.classList.add("editor-v2-list-rows");
+  }
+
+  function renderActiveContextTab(activeTab = null) {
+    const nextActiveTab = activeTab || contextTabsController.getActive();
+    const state = workspaceState.getState();
+    const focused = state.focused_entity;
+    const attachedCitations = state.attached_research?.citations || [];
+    const attachedNotes = state.attached_research?.notes || [];
+
+    if (nextActiveTab === "outline") {
+      checkpointController.clearTarget();
+      setContextTabContentMode("outline");
+      outlineController.setTarget(refs.contextTabContent);
+      outlineController.compute();
+      return;
+    }
+
+    if (nextActiveTab === "checkpoints") {
+      outlineController.clearTarget();
+      setContextTabContentMode("checkpoints");
+      checkpointController.setTarget(refs.contextTabContent);
+      void checkpointController.refresh();
+      return;
+    }
+
+    outlineController.clearTarget();
+    checkpointController.clearTarget();
+    setContextTabContentMode("list");
+    if (nextActiveTab === "notes") {
+      if (attachedNotes.length) {
+        renderExplorerList(refs.contextTabContent, "notes", attachedNotes, focused?.type === "note" ? focused.id : null);
+      } else {
+        renderExplorerState(refs.contextTabContent, "No attached notes yet.");
+      }
+      return;
+    }
+
+    if (attachedCitations.length) {
+      renderExplorerList(refs.contextTabContent, "citations", attachedCitations, focused?.type === "citation" ? focused.id : null);
+    } else {
+      renderExplorerState(refs.contextTabContent, "No attached citations yet.");
+    }
+  }
+
   const contextTabsController = bindContextTabs({
     buttons: refs.contextTabButtons,
     panes: refs.contextPanes,
+    onChange(nextTab) {
+      renderActiveContextTab(nextTab);
+    },
   });
   const disposeExplorerPreview = bindExplorerPreview({
     list: refs.explorerList,
@@ -286,6 +341,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
 
   function renderShell() {
     const state = workspaceState.getState();
+    const focused = state.focused_entity;
     const sessionFailure = state.runtime_failures?.session;
     const statusSnapshot = sessionFailure
       ? { label: sessionFailure.label || sessionFailure.message || "Session expired" }
@@ -294,23 +350,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     renderStatusBar(refs.statusBar, quillAdapter, workspaceState, statusSnapshot);
     const context = deriveContextState(state, selectionState.getState());
     refs.contextMode.textContent = summarizeContextMode(context, state);
-    const focused = state.focused_entity;
-    const attachedCitations = state.attached_research?.citations || [];
-    const attachedNotes = state.attached_research?.notes || [];
-    if (refs.attachedCitationsPanel) {
-      if (attachedCitations.length) {
-        renderExplorerList(refs.attachedCitationsPanel, "citations", attachedCitations, focused?.type === "citation" ? focused.id : null);
-      } else {
-        renderExplorerState(refs.attachedCitationsPanel, "No attached citations yet.");
-      }
-    }
-    if (refs.notesPanel) {
-      if (attachedNotes.length) {
-        renderExplorerList(refs.notesPanel, "notes", attachedNotes, focused?.type === "note" ? focused.id : null);
-      } else {
-        renderExplorerState(refs.notesPanel, "No attached notes yet.");
-      }
-    }
+    renderActiveContextTab();
     if (!focused && context.mode !== "seed_review" && context.mode !== "quote_focus") {
       renderContextRail(refs.contextRail, context, state, null, {
         selectionText: () => selectionState.getState().text,
@@ -443,6 +483,8 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       }
     };
     const attachedAssetActivate = (event) => {
+      checkpointController.handleClick(event);
+      outlineController.handleClick(event);
       const row = event.target.closest("[data-entity-id][data-entity-type]");
       if (!row) return;
       workspaceState.setPendingExplorerAction(null);
@@ -464,8 +506,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     refs.outlineRefreshButton.addEventListener("click", outlineRefreshClick);
     refs.commandMenu.addEventListener("click", commandMenuClick);
     refs.contextRail.addEventListener("click", contextRailClick);
-    refs.attachedCitationsPanel?.addEventListener("click", attachedAssetActivate);
-    refs.notesPanel?.addEventListener("click", attachedAssetActivate);
+    refs.contextTabContent?.addEventListener("click", attachedAssetActivate);
     cleanups.push(() => refs.commandButton.removeEventListener("click", commandClick));
     cleanups.push(() => refs.checkpointButton.removeEventListener("click", checkpointClick));
     cleanups.push(() => refs.exportButton.removeEventListener("click", exportClick));
@@ -475,8 +516,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     cleanups.push(() => refs.outlineRefreshButton.removeEventListener("click", outlineRefreshClick));
     cleanups.push(() => refs.commandMenu.removeEventListener("click", commandMenuClick));
     cleanups.push(() => refs.contextRail.removeEventListener("click", contextRailClick));
-    cleanups.push(() => refs.attachedCitationsPanel?.removeEventListener("click", attachedAssetActivate));
-    cleanups.push(() => refs.notesPanel?.removeEventListener("click", attachedAssetActivate));
+    cleanups.push(() => refs.contextTabContent?.removeEventListener("click", attachedAssetActivate));
     return () => {
       while (cleanups.length) {
         cleanups.pop()();

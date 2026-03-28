@@ -1,4 +1,4 @@
-export function bindContextTabs({ buttons, panes }) {
+export function bindContextTabs({ buttons, panes = [], onChange = null }) {
   let currentTab = "citations";
 
   function setActive(nextTab) {
@@ -11,6 +11,7 @@ export function bindContextTabs({ buttons, panes }) {
     for (const pane of panes) {
       pane.hidden = pane.dataset.contextPane !== nextTab;
     }
+    onChange?.(nextTab);
   }
 
   const listeners = buttons.map((button) => {

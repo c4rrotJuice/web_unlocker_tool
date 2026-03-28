@@ -20,7 +20,7 @@ import { createExplorerController } from "../../app/static/js/editor_v2/research
 import { createCheckpointController } from "../../app/static/js/editor_v2/document/checkpoint_controller.js";
 import { createNoteActions } from "../../app/static/js/editor_v2/actions/note_actions.js";
 import { renderExplorerList } from "../../app/static/js/editor_v2/ui/explorer_renderer.js";
-import { createAuthSessionError, isAuthSessionError } from "../../app/static/js/shared/auth/session.js";
+import { createAuthSessionError, createAuthSessionErrorFromPayload, isAuthSessionError } from "../../app/static/js/shared/auth/session.js";
 import { initSidebarShell } from "../../app/static/js/app_shell/core/sidebar.js";
 
 function okResponse(data) {
@@ -1544,6 +1544,19 @@ test("session loss renders a recoverable editor state instead of a generic timeo
   assert.match(target.innerHTML, /Session lost/);
   assert.match(target.innerHTML, /Sign in again/);
   assert.match(target.innerHTML, /Unsaved work stays in the editor/i);
+});
+
+test("structured auth error payloads preserve a readable message instead of object stringification", () => {
+  const error = createAuthSessionErrorFromPayload({
+    detail: {
+      type: "model_attributes_type",
+      msg: "Input should be a valid dictionary or object to extract fields from",
+      input: "[object Object]",
+    },
+  }, 401, "/api/citations");
+
+  assert.equal(error?.code, "missing_credentials");
+  assert.equal(error?.message, "Input should be a valid dictionary or object to extract fields from");
 });
 
 test("attached hydrate payloads are consumed into runtime state and primed stores", async () => {

@@ -7,6 +7,28 @@ const AUTH_ERROR_CODES = new Set([
   "session_lost",
 ]);
 
+function extractMessageCandidate(value) {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  if (Array.isArray(value)) {
+    const messages = value
+      .map((entry) => extractMessageCandidate(entry))
+      .filter(Boolean);
+    return messages.length ? messages.join("; ") : null;
+  }
+  if (value && typeof value === "object") {
+    return (
+      extractMessageCandidate(value.message)
+      || extractMessageCandidate(value.msg)
+      || extractMessageCandidate(value.detail)
+      || extractMessageCandidate(value.description)
+      || null
+    );
+  }
+  return null;
+}
+
 function defaultMessageForCode(code) {
   if (code === "expired_token") return "Session expired. Please sign in again.";
   if (code === "invalid_token") return "The current session is invalid. Please sign in again.";
@@ -42,7 +64,12 @@ export function createAuthSessionErrorFromPayload(payload, status, requestPath =
   const code = AUTH_ERROR_CODES.has(payloadCode) ? payloadCode : (status === 401 ? "missing_credentials" : null);
   if (!code) return null;
 
-  const message = payload?.error?.message || payload?.detail || payload?.message || defaultMessageForCode(code);
+  const message = (
+    extractMessageCandidate(payload?.error?.message)
+    || extractMessageCandidate(payload?.detail)
+    || extractMessageCandidate(payload?.message)
+    || defaultMessageForCode(code)
+  );
   return createAuthSessionError(code, message, { status, payload, requestPath });
 }
 

@@ -223,6 +223,28 @@
     return "Missing bearer token.";
   }
 
+  function extractMessageCandidate(value) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+    if (Array.isArray(value)) {
+      const messages = value
+        .map((entry) => extractMessageCandidate(entry))
+        .filter(Boolean);
+      return messages.length ? messages.join("; ") : null;
+    }
+    if (value && typeof value === "object") {
+      return (
+        extractMessageCandidate(value.message)
+        || extractMessageCandidate(value.msg)
+        || extractMessageCandidate(value.detail)
+        || extractMessageCandidate(value.description)
+        || null
+      );
+    }
+    return null;
+  }
+
   async function waitForSessionReady({ timeoutMs = 900 } = {}) {
     runtimeDebugCounts.waitForSessionReadyCalls += 1;
     debugAuth("wait_for_session_ready", {
@@ -258,7 +280,12 @@
     if (!code) {
       return null;
     }
-    const message = payload?.error?.message || payload?.detail || payload?.message || defaultMessageForCode(code);
+    const message = (
+      extractMessageCandidate(payload?.error?.message)
+      || extractMessageCandidate(payload?.detail)
+      || extractMessageCandidate(payload?.message)
+      || defaultMessageForCode(code)
+    );
     return createAuthSessionError(code, message, { status, payload, requestPath });
   }
 
@@ -336,7 +363,12 @@
       if (authError) {
         throw authError;
       }
-      const error = new Error(payload?.detail || payload?.error?.message || "Request failed");
+      const error = new Error(
+        extractMessageCandidate(payload?.detail)
+        || extractMessageCandidate(payload?.error?.message)
+        || extractMessageCandidate(payload?.message)
+        || "Request failed"
+      );
       error.status = res.status;
       error.payload = payload;
       throw error;

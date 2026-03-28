@@ -37,7 +37,6 @@ html.dark .editor-v2-panel {
 .editor-v2-explorer,
 .editor-v2-context-summary,
 .editor-v2-context-stack,
-.editor-v2-context-pane,
 .editor-v2-results {
   display: flex;
   flex-direction: column;
@@ -165,10 +164,10 @@ html.dark .editor-v2-search-row input {
 .editor-v2-scroll,
 .editor-v2-outline,
 .editor-v2-checkpoints,
+.editor-v2-context-tab-content,
 .editor-v2-context,
 .editor-v2-context-summary,
 .editor-v2-context-stack,
-.editor-v2-context-pane,
 .editor-v2-results,
 .editor-v2-explorer-body,
 .editor-v2-list-rows,
@@ -187,10 +186,32 @@ html.dark .editor-v2-search-row input {
 }
 
 .editor-v2-scroll,
-.editor-v2-context-pane,
+.editor-v2-context-tab-content,
 .editor-v2-results,
 .editor-v2-context-stack {
   flex: 1 1 auto;
+}
+
+.editor-v2-explorer,
+.editor-v2-context {
+  height: 100%;
+}
+
+.editor-v2-context-summary,
+.editor-v2-search-row,
+.editor-v2-tablist,
+.editor-v2-inline-actions,
+.editor-v2-context-head {
+  flex: 0 0 auto;
+}
+
+.editor-v2-context-stack,
+.editor-v2-results {
+  overflow: hidden;
+}
+
+.editor-v2-context-tab-content {
+  padding-right: 0.2rem;
 }
 
 .editor-v2-explorer-body {

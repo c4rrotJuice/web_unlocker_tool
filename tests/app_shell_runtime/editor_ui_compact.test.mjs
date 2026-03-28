@@ -84,23 +84,22 @@ test("toolbar keeps citation action without collapse state", () => {
   controller.dispose();
 });
 
-test("context tabs keep a single visible pane", () => {
+test("context tabs notify active tab changes", () => {
   const citationsButton = makeElement({ dataset: { contextTab: "citations" } });
   const checkpointsButton = makeElement({ dataset: { contextTab: "checkpoints" } });
-  const citationsPane = makeElement({ dataset: { contextPane: "citations" } });
-  const checkpointsPane = makeElement({ dataset: { contextPane: "checkpoints" } });
+  const activations = [];
 
   bindContextTabs({
     buttons: [citationsButton, checkpointsButton],
-    panes: [citationsPane, checkpointsPane],
+    onChange(nextTab) {
+      activations.push(nextTab);
+    },
   });
 
-  assert.equal(citationsPane.hidden, false);
-  assert.equal(checkpointsPane.hidden, true);
+  assert.deepEqual(activations, ["citations"]);
 
   checkpointsButton.dispatch("click", { target: checkpointsButton });
-  assert.equal(citationsPane.hidden, true);
-  assert.equal(checkpointsPane.hidden, false);
+  assert.deepEqual(activations, ["citations", "checkpoints"]);
   assert.equal(checkpointsButton.getAttribute("aria-selected"), "true");
 });
 

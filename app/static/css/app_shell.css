@@ -272,15 +272,27 @@ body.app-shell-body.has-open-sidebar-drawer {
 }
 
 .app-shell[data-page="editor"] .app-content-frame {
+  display: flex;
   flex: 1 1 auto;
   min-height: 0;
-  height: 100%;
+  min-width: 0;
+  height: auto;
+  overflow: hidden;
 }
 
 .app-shell[data-page="editor"] .app-main {
+  display: flex;
+  flex: 1 1 auto;
   min-height: 0;
-  height: 100%;
+  min-width: 0;
+  height: auto;
   overflow: hidden;
+}
+
+.app-shell[data-page="editor"] .app-main > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
 }
 
 .app-sidebar-toggle:focus-visible,

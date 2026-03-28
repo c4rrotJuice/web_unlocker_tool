@@ -155,15 +155,16 @@ def test_editor_empty_state_copy_is_removed_but_primary_ctas_remain():
 
 def test_editor_shell_uses_viewport_bounded_height_and_internal_scroll():
     css_source = Path("app/static/css/editor_v2.css").read_text(encoding="utf-8")
+    shell_css_source = Path("app/static/css/app_shell.css").read_text(encoding="utf-8")
 
     assert ".editor-v2-page {" in css_source
     assert "grid-template-rows: minmax(0, 1fr);" in css_source
     assert ".editor-v2-context-summary {\n  flex: 1 1 auto;" in css_source
-    assert ".app-shell[data-page=\"editor\"] .app-content-frame {\n  display: flex;\n  flex: 1 1 auto;" in css_source
-    assert ".app-shell[data-page=\"editor\"] .app-main {\n  display: flex;\n  flex: 1 1 auto;\n  min-width: 0;" in css_source
-    assert ".app-shell[data-page=\"editor\"] .app-main > .editor-v2-page {\n  flex: 1 1 auto;\n  min-height: 0;\n  min-width: 0;" in css_source
-    assert ".app-shell[data-page=\"editor\"] .app-workspace" in css_source
-    assert ".app-shell[data-page=\"editor\"] .app-main" in css_source
+    assert ".app-shell[data-page=\"editor\"] .app-content-frame {\n  display: flex;\n  flex: 1 1 auto;" in shell_css_source
+    assert ".app-shell[data-page=\"editor\"] .app-main {\n  display: flex;\n  flex: 1 1 auto;" in shell_css_source
+    assert ".app-shell[data-page=\"editor\"] .app-main > * {\n  flex: 1 1 auto;\n  min-height: 0;\n  min-width: 0;" in shell_css_source
+    assert ".app-shell[data-page=\"editor\"] .app-content-frame" not in css_source
+    assert ".app-shell[data-page=\"editor\"] .app-main > .editor-v2-page" not in css_source
     assert ".editor-v2-quill .ql-editor" in css_source
     assert ".editor-v2-list-rows" in css_source
     assert ".editor-v2-context-pane > .editor-v2-scroll" in css_source

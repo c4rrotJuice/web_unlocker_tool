@@ -725,37 +725,6 @@ html.dark .editor-v2-surface {
 
 .editor-v2-empty-actions { justify-content: center; flex-wrap: wrap; }
 
-.app-shell[data-page="editor"] .app-workspace,
-.app-shell[data-page="editor"] .app-main {
-  overflow: hidden;
-}
-
-.app-shell[data-page="editor"] .app-workspace {
-  display: flex;
-  flex-direction: column;
-}
-
-.app-shell[data-page="editor"] .app-content-frame {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-  height: auto;
-  overflow: hidden;
-}
-
-.app-shell[data-page="editor"] .app-main {
-  display: flex;
-  flex: 1 1 auto;
-  min-width: 0;
-  height: auto;
-}
-
-.app-shell[data-page="editor"] .app-main > .editor-v2-page {
-  flex: 1 1 auto;
-  min-height: 0;
-  min-width: 0;
-}
-
 @keyframes editor-v2-shimmer {
   from { background-position: 200% 0; }
   to { background-position: -200% 0; }

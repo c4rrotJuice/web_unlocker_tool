@@ -730,17 +730,27 @@ html.dark .editor-v2-surface {
   overflow: hidden;
 }
 
-.app-shell[data-page="editor"] .app-content-frame,
-.app-shell[data-page="editor"] .app-main,
-.app-shell[data-page="editor"] .app-main > * {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
+.app-shell[data-page="editor"] .app-workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
-.app-shell[data-page="editor"] .app-content-frame,
-.app-shell[data-page="editor"] .app-main {
+.app-shell[data-page="editor"] .app-content-frame {
+  min-height: 0;
+  display: block;
   height: auto;
+}
+
+.app-shell[data-page="editor"] .app-main {
+  display: flex;
+  flex: 1 1 auto;
+  height: auto;
+}
+
+.app-shell[data-page="editor"] .app-main > .editor-v2-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
 }
 
 @keyframes editor-v2-shimmer {

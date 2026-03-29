@@ -4799,6 +4799,7 @@ exports.STORAGE_KEYS = Object.freeze({
     AUTH_SESSION: "writior.auth_session",
     AUTH_SESSION_LEGACY: "writior_auth_session",
     AUTH_STATE: "writior.auth_state",
+    SIDEPANEL_STATE: "writior.sidepanel_state",
     CITATION_SELECTION: "writior.citation_selection",
     LAST_BOOT: "writior.last_boot",
 });
@@ -5730,7 +5731,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createSidepanelLauncher = createSidepanelLauncher;
 const runtime_client_ts_1 = require("../../shared/utils/runtime_client.ts");
 const assets_ts_1 = require("../../shared/constants/assets.ts");
+const toast_ts_1 = require("./toast.ts");
 function createSidepanelLauncher({ windowRef = globalThis.window, documentRef = globalThis.document, chromeApi = globalThis.chrome, runtimeClient = (0, runtime_client_ts_1.createRuntimeClient)(chromeApi, runtime_client_ts_1.SURFACE_NAMES.CONTENT), } = {}) {
+    const toast = (0, toast_ts_1.createContentToastController)({ documentRef, windowRef });
     const host = documentRef.createElement("div");
     host.setAttribute("data-writior-launcher-host", "true");
     host.style.position = "fixed";
@@ -5784,13 +5787,25 @@ function createSidepanelLauncher({ windowRef = globalThis.window, documentRef = 
         mount.appendChild(button);
     }
     let isOpen = false;
+    let toggleInFlight = null;
     async function toggle() {
-        const result = await runtimeClient.openSidepanel({ mode: "toggle" });
-        if (result?.ok) {
+        if (toggleInFlight) {
+            return toggleInFlight;
+        }
+        toggleInFlight = (async () => {
+            const result = await runtimeClient.openSidepanel({ mode: "toggle" });
+            if (!result?.ok) {
+                toast.show(result?.error?.message || "Workspace toggle failed.", { duration: 2200 });
+                return;
+            }
+            toast.hide();
             isOpen = result.data?.opened === true;
             button.setAttribute("data-open", String(isOpen));
             button.setAttribute("aria-pressed", String(isOpen));
-        }
+        })().finally(() => {
+            toggleInFlight = null;
+        });
+        return toggleInFlight;
     }
     button.addEventListener("click", (event) => {
         event.preventDefault?.();
@@ -5807,6 +5822,7 @@ function createSidepanelLauncher({ windowRef = globalThis.window, documentRef = 
             parent.appendChild(host);
         },
         destroy() {
+            toast.destroy();
             host.remove?.();
         },
         getState() {

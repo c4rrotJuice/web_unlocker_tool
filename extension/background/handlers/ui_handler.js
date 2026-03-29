@@ -1,9 +1,34 @@
 // GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { createErrorResult, createOkResult, ERROR_CODES } from "../../shared/types/messages.js";
+import { STORAGE_KEYS } from "../../shared/constants/storage_keys.js";
 export function createUiHandler(options = {}) {
     const typedOptions = options;
     const chromeApi = typedOptions.chromeApi;
     const panelStateByTarget = new Map();
+    const toggleInFlightByTarget = new Map();
+    let storageHydration = null;
+    async function hydratePersistedPanelState() {
+        if (storageHydration) {
+            return storageHydration;
+        }
+        storageHydration = (async () => {
+            const storage = chromeApi?.storage?.local;
+            if (typeof storage?.get !== "function") {
+                return;
+            }
+            const result = await storage.get({ [STORAGE_KEYS.SIDEPANEL_STATE]: {} });
+            const snapshot = result?.[STORAGE_KEYS.SIDEPANEL_STATE];
+            if (!snapshot || typeof snapshot !== "object") {
+                return;
+            }
+            for (const [key, isOpen] of Object.entries(snapshot)) {
+                if (isOpen === true) {
+                    panelStateByTarget.set(key, true);
+                }
+            }
+        })();
+        return storageHydration;
+    }
     function getTargetKey(context) {
         if (Number.isInteger(context?.tabId)) {
             return `tab:${context.tabId}`;
@@ -13,19 +38,49 @@ export function createUiHandler(options = {}) {
         }
         return null;
     }
-    function updatePanelState(context, isOpen) {
+    async function persistPanelState() {
+        const storage = chromeApi?.storage?.local;
+        if (typeof storage?.set !== "function") {
+            return;
+        }
+        const snapshot = Object.fromEntries(panelStateByTarget.entries());
+        await storage.set({ [STORAGE_KEYS.SIDEPANEL_STATE]: snapshot });
+    }
+    async function updatePanelState(context, isOpen) {
         const key = getTargetKey(context);
         if (!key) {
             return;
         }
-        panelStateByTarget.set(key, isOpen);
+        await hydratePersistedPanelState();
+        if (isOpen) {
+            panelStateByTarget.set(key, true);
+        }
+        else {
+            panelStateByTarget.delete(key);
+        }
+        await persistPanelState();
     }
-    function isPanelOpen(context) {
+    async function isPanelOpen(context) {
         const key = getTargetKey(context);
         if (!key) {
             return false;
         }
+        await hydratePersistedPanelState();
         return panelStateByTarget.get(key) === true;
+    }
+    function runWithTargetLock(context, run) {
+        const key = getTargetKey(context) || "__global__";
+        const inFlight = toggleInFlightByTarget.get(key);
+        if (inFlight) {
+            return inFlight;
+        }
+        const nextRun = Promise.resolve()
+            .then(run)
+            .finally(() => {
+            toggleInFlightByTarget.delete(key);
+        });
+        toggleInFlightByTarget.set(key, nextRun);
+        return nextRun;
     }
     async function resolveContext(sender = {}) {
         const typedSender = sender;
@@ -58,7 +113,7 @@ export function createUiHandler(options = {}) {
         else {
             await chromeApi.sidePanel.open({ windowId: context.windowId });
         }
-        updatePanelState(context, true);
+        await updatePanelState(context, true);
         return createOkResult({
             opened: true,
             target: Number.isInteger(tabId) ? "sender_tab" : "active_window",
@@ -68,35 +123,37 @@ export function createUiHandler(options = {}) {
         const tabId = context?.tabId;
         if (Number.isInteger(tabId) && typeof chromeApi?.sidePanel?.close === "function") {
             await chromeApi.sidePanel.close({ tabId });
-            updatePanelState(context, false);
+            await updatePanelState(context, false);
             return createOkResult({ opened: false, target: "sender_tab" });
         }
         if (Number.isInteger(context?.windowId) && typeof chromeApi?.sidePanel?.close === "function") {
             await chromeApi.sidePanel.close({ windowId: context.windowId });
-            updatePanelState(context, false);
+            await updatePanelState(context, false);
             return createOkResult({ opened: false, target: "active_window" });
         }
         if (Number.isInteger(tabId) && typeof chromeApi?.sidePanel?.setOptions === "function") {
             await chromeApi.sidePanel.setOptions({ tabId, enabled: false });
-            updatePanelState(context, false);
+            await updatePanelState(context, false);
             return createOkResult({ opened: false, target: "sender_tab" });
         }
         return createErrorResult(ERROR_CODES.NOT_IMPLEMENTED, "ui.open_sidepanel toggle-close is not implemented in this browser.");
     }
     async function toggleSidepanelForContext(context, requestId) {
-        const result = isPanelOpen(context)
-            ? await closeSidepanelForContext(context)
-            : await openSidepanelForContext(context);
-        return {
-            ...result,
-            requestId,
-        };
+        return runWithTargetLock(context, async () => {
+            const result = await (await isPanelOpen(context)
+                ? closeSidepanelForContext(context)
+                : openSidepanelForContext(context));
+            return {
+                ...result,
+                requestId,
+            };
+        });
     }
     function registerPanelStateListeners() {
         const onOpened = chromeApi?.sidePanel?.onOpened;
         if (typeof onOpened?.addListener === "function") {
             onOpened.addListener((event = {}) => {
-                updatePanelState({
+                void updatePanelState({
                     tabId: Number.isInteger(event?.tabId) ? event.tabId : null,
                     windowId: Number.isInteger(event?.windowId) ? event.windowId : null,
                 }, true);
@@ -105,7 +162,7 @@ export function createUiHandler(options = {}) {
         const onClosed = chromeApi?.sidePanel?.onClosed;
         if (typeof onClosed?.addListener === "function") {
             onClosed.addListener((event = {}) => {
-                updatePanelState({
+                void updatePanelState({
                     tabId: Number.isInteger(event?.tabId) ? event.tabId : null,
                     windowId: Number.isInteger(event?.windowId) ? event.windowId : null,
                 }, false);
@@ -145,11 +202,13 @@ export function createUiHandler(options = {}) {
             if (request?.payload?.mode === "toggle") {
                 return toggleSidepanelForContext(context, request.requestId);
             }
-            const result = await openSidepanelForContext(context);
-            return {
-                ...result,
-                requestId: request.requestId,
-            };
+            return runWithTargetLock(context, async () => {
+                const result = await openSidepanelForContext(context);
+                return {
+                    ...result,
+                    requestId: request.requestId,
+                };
+            });
         },
     };
 }

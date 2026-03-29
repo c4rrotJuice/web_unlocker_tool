@@ -54,6 +54,7 @@ export function createActionButtonRow({
   function render(auth: any = null) {
     const signedIn = shouldPresentSignedInUi(auth);
     openEditorButton.disabled = !signedIn;
+    dashboardButton.disabled = !signedIn;
     authButton.textContent = signedIn ? "Sign Out" : "Sign In";
     authButton.setAttribute("data-auth-state", signedIn ? "signed_in" : "signed_out");
   }

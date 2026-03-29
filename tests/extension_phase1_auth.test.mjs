@@ -359,6 +359,71 @@ test("api client uses canonical citations query params for search and cursor pag
   assert.equal(requests[0].headers.authorization, "Bearer token-1");
 });
 
+test("auth start deduplicates rapid launches and sanitizes redirect targets to canonical app paths", async () => {
+  let attemptCreateCalls = 0;
+  const chromeApi = createChromeStub({
+    [STORAGE_KEYS.AUTH_SESSION]: {
+      access_token: "token-1",
+      refresh_token: "refresh-1",
+      token_type: "bearer",
+      user_id: "user-1",
+      email: "user@example.com",
+    },
+  });
+  const { fetchImpl, requests } = createFetchStub({
+    attemptBody: {
+      ok: true,
+      data: {
+        attempt_id: "attempt-1",
+        attempt_token: "token-1",
+        status: "pending",
+        redirect_path: "/dashboard",
+        expires_at: "2030-01-01T00:00:00Z",
+      },
+    },
+  });
+  const runtime = createBackgroundRuntime({
+    chromeApi,
+    baseUrl: "https://app.writior.com",
+    fetchImpl: async (url, init = {}) => {
+      if (String(url).endsWith("/api/auth/handoff/attempts")) {
+        attemptCreateCalls += 1;
+      }
+      return fetchImpl(url, init);
+    },
+  });
+
+  const firstStart = runtime.dispatch({
+    type: MESSAGE_NAMES.AUTH_START,
+    requestId: "auth-start-1",
+    payload: {
+      surface: "popup",
+      trigger: "popup_sign_in",
+      redirectPath: "https://evil.example/steal-session",
+    },
+  });
+  const secondStart = runtime.dispatch({
+    type: MESSAGE_NAMES.AUTH_START,
+    requestId: "auth-start-2",
+    payload: {
+      surface: "popup",
+      trigger: "popup_sign_in",
+      redirectPath: "https://evil.example/steal-session",
+    },
+  });
+
+  const [firstResult, secondResult] = await Promise.all([firstStart, secondStart]);
+
+  assert.equal(firstResult.ok, true);
+  assert.equal(secondResult.ok, true);
+  assert.equal(attemptCreateCalls, 1);
+  assert.equal(chromeApi.openedWindows.length, 1);
+  assert.match(chromeApi.openedWindows[0].url, /next=%2Fdashboard/);
+  const attemptRequest = requests.find((entry) => entry.url.endsWith("/api/auth/handoff/attempts"));
+  assert.ok(attemptRequest);
+  assert.equal(attemptRequest.body.redirect_path, "/dashboard");
+});
+
 test("worker restore uses stored token to fetch bootstrap and expose signed-in auth state", async () => {
   const chromeApi = createChromeStub({
     [STORAGE_KEYS.AUTH_SESSION]: {

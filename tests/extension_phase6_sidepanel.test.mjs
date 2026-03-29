@@ -5,6 +5,7 @@ import { createBackgroundRuntime } from "../extension/background/index.js";
 import { MESSAGE_NAMES } from "../extension/shared/constants/message_names.js";
 import { createRuntimeClient } from "../extension/shared/utils/runtime_client.js";
 import { bootstrapPopup } from "../extension/popup/main.js";
+import { createSidepanelLauncher } from "../extension/content/ui/sidepanel_launcher.js";
 import { createSidepanelShell } from "../extension/sidepanel/app/index.js";
 
 class FakeEvent {
@@ -807,6 +808,39 @@ test("toolbar action click registers once and uses the same background sidepanel
   assert.deepEqual(chromeApi.sidePanelCloseCalls[0], { tabId: 11 });
 });
 
+test("sidepanel toggle restores persisted open state after worker restart instead of reopening stale panels", async () => {
+  const seededState = {
+    "tab:11": true,
+  };
+  const chromeApi = createChromeStub({
+    writior_auth_session: {
+      access_token: "token-1",
+      token_type: "bearer",
+      user_id: "user-1",
+      email: "user@example.com",
+      source: "background",
+    },
+    "writior.sidepanel_state": seededState,
+  });
+  const { fetchImpl } = createFetchStub({ signedIn: true });
+  const runtime = createBackgroundRuntime({
+    chromeApi,
+    fetchImpl,
+    baseUrl: "https://app.writior.com",
+  });
+
+  const result = await runtime.dispatch({
+    type: MESSAGE_NAMES.OPEN_SIDEPANEL,
+    requestId: "toggle-after-restart",
+    payload: { surface: "content", mode: "toggle" },
+  }, { tab: { id: 11, windowId: 1 } });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.data.opened, false);
+  assert.equal(chromeApi.sidePanelOpenCalls.length, 0);
+  assert.equal(chromeApi.sidePanelCloseCalls.length, 1);
+});
+
 test("popup launcher button sends the canonical sidepanel toggle request and stays lightweight", async () => {
   const previousDocument = globalThis.document;
   const previousWindow = globalThis.window;
@@ -875,6 +909,62 @@ test("popup launcher button sends the canonical sidepanel toggle request and sta
     assert.equal(toggleMessage.payload.mode, "toggle");
     assert.equal(collectText(root).includes("Writior"), true);
     assert.equal(closeCount, 1);
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+    globalThis.chrome = previousChrome;
+  }
+});
+
+test("page icon surfaces sidepanel toggle failures instead of failing silently", async () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const previousChrome = globalThis.chrome;
+  const documentRef = new FakeDocument();
+  const timers = [];
+  const windowRef = {
+    setTimeout(handler) {
+      timers.push(handler);
+      return timers.length;
+    },
+    clearTimeout() {},
+  };
+  globalThis.document = documentRef;
+  globalThis.window = windowRef;
+  globalThis.chrome = {
+    runtime: {
+      lastError: null,
+    },
+  };
+
+  try {
+    const launcher = createSidepanelLauncher({
+      documentRef,
+      windowRef,
+      chromeApi: globalThis.chrome,
+      runtimeClient: {
+        async openSidepanel() {
+          return {
+            ok: false,
+            status: "error",
+            error: {
+              code: "not_implemented",
+              message: "Workspace toggle failed.",
+            },
+          };
+        },
+      },
+    });
+    launcher.mount();
+    const button = findByAttr(documentRef.body, "aria-label", "Toggle Writior sidepanel");
+    assert.ok(button);
+
+    button.dispatchEvent(new FakeEvent("click", button));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(collectText(documentRef.body).includes("Workspace toggle failed."), true);
+    timers.splice(0).forEach((handler) => handler());
+    launcher.destroy();
   } finally {
     globalThis.document = previousDocument;
     globalThis.window = previousWindow;

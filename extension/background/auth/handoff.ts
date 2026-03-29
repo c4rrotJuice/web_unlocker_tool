@@ -31,6 +31,28 @@ function buildAuthAttemptUrl(baseUrl, { attemptId, redirectPath = "/dashboard" }
   return url.toString();
 }
 
+function sanitizeRedirectPath(baseUrl, redirectPath) {
+  if (typeof redirectPath !== "string" || !redirectPath.trim()) {
+    return "/dashboard";
+  }
+
+  const normalized = redirectPath.trim();
+  if (normalized.startsWith("/")) {
+    return normalized;
+  }
+
+  try {
+    const base = new URL(baseUrl);
+    const parsed = new URL(normalized, base);
+    if (parsed.origin !== base.origin) {
+      return "/dashboard";
+    }
+    return `${parsed.pathname}${parsed.search}${parsed.hash}` || "/dashboard";
+  } catch {
+    return "/dashboard";
+  }
+}
+
 export function createHandoffManager(options = {}) {
   const typedOptions: any = options;
   const apiClient = typedOptions.apiClient;
@@ -45,6 +67,7 @@ export function createHandoffManager(options = {}) {
   if (!apiClient || !sessionStore || !sessionManager || !stateStore || !bootstrapHandler) {
     throw new Error("createHandoffManager requires apiClient, sessionStore, sessionManager, stateStore, and bootstrapHandler.");
   }
+  let startInFlight: Promise<any> | null = null;
 
   async function pollForReadyAttempt({ attemptId, attemptToken, requestId }) {
     for (let index = 0; index < maxPollAttempts; index += 1) {
@@ -112,6 +135,12 @@ export function createHandoffManager(options = {}) {
       source: "handoff_exchange",
     });
     if (!normalizedSession?.access_token) {
+      await sessionManager.clearSession("handoff_exchange_failed");
+      const auth = stateStore.setError({
+        code: ERROR_CODES.AUTH_INVALID,
+        message: "Handoff exchange did not return a session.",
+      }, "handoff_exchange_failed");
+      await sessionManager.persistAuthState(auth);
       return createErrorResult(ERROR_CODES.AUTH_INVALID, "Handoff exchange did not return a session.", requestId);
     }
 
@@ -137,52 +166,62 @@ export function createHandoffManager(options = {}) {
 
   return {
     async start(request) {
-      const redirectPath = request.payload.redirectPath || "/dashboard";
-      stateStore.setLoading("auth_start");
-
-      const attemptResult: any = await apiClient.createAuthAttempt({ redirect_path: redirectPath });
-      if (attemptResult.ok === false) {
-        const code = mapAuthError(attemptResult, ERROR_CODES.AUTH_ATTEMPT_INVALID);
-        const auth = stateStore.setError({
-          code,
-          message: attemptResult.error.message,
-          details: attemptResult.error.details ?? null,
-        }, "auth_attempt_create_failed");
-        await sessionManager.persistAuthState(auth);
-        return createErrorResult(code, attemptResult.error.message, request.requestId, attemptResult.error.details ?? null);
+      if (startInFlight) {
+        return startInFlight;
       }
 
-      const attemptId = attemptResult.data?.attempt_id;
-      const attemptToken = attemptResult.data?.attempt_token;
-      if (typeof attemptId !== "string" || typeof attemptToken !== "string") {
-        const auth = stateStore.setError({ code: ERROR_CODES.AUTH_ATTEMPT_INVALID, message: "Auth attempt response was invalid." }, "auth_attempt_invalid");
-        await sessionManager.persistAuthState(auth);
-        return createErrorResult(ERROR_CODES.AUTH_ATTEMPT_INVALID, "Auth attempt response was invalid.", request.requestId);
-      }
+      startInFlight = (async () => {
+        const redirectPath = sanitizeRedirectPath(baseUrl, request?.payload?.redirectPath);
+        stateStore.setLoading("auth_start");
 
-      const authUrl = buildAuthAttemptUrl(baseUrl, { attemptId, redirectPath });
-      const openResult: any = await openAuthWindow(authUrl);
-      if (openResult.ok === false) {
-        const auth = stateStore.setError(openResult.error, "auth_tab_open_failed");
-        await sessionManager.persistAuthState(auth);
-        return createErrorResult(openResult.error.code, openResult.error.message, request.requestId, openResult.error.details ?? null);
-      }
+        const attemptResult: any = await apiClient.createAuthAttempt({ redirect_path: redirectPath });
+        if (attemptResult.ok === false) {
+          const code = mapAuthError(attemptResult, ERROR_CODES.AUTH_ATTEMPT_INVALID);
+          const auth = stateStore.setError({
+            code,
+            message: attemptResult.error.message,
+            details: attemptResult.error.details ?? null,
+          }, "auth_attempt_create_failed");
+          await sessionManager.persistAuthState(auth);
+          return createErrorResult(code, attemptResult.error.message, request.requestId, attemptResult.error.details ?? null);
+        }
 
-      const readyResult: any = await pollForReadyAttempt({ attemptId, attemptToken, requestId: request.requestId });
-      if (readyResult.ok === false) {
-        const auth = stateStore.setError(readyResult.error, "auth_attempt_poll_failed");
-        await sessionManager.persistAuthState(auth);
-        return readyResult;
-      }
+        const attemptId = attemptResult.data?.attempt_id;
+        const attemptToken = attemptResult.data?.attempt_token;
+        if (typeof attemptId !== "string" || typeof attemptToken !== "string") {
+          const auth = stateStore.setError({ code: ERROR_CODES.AUTH_ATTEMPT_INVALID, message: "Auth attempt response was invalid." }, "auth_attempt_invalid");
+          await sessionManager.persistAuthState(auth);
+          return createErrorResult(ERROR_CODES.AUTH_ATTEMPT_INVALID, "Auth attempt response was invalid.", request.requestId);
+        }
 
-      const exchanged = await exchangeAndBootstrap({
-        code: readyResult.data.exchangeCode,
-        requestId: request.requestId,
+        const authUrl = buildAuthAttemptUrl(baseUrl, { attemptId, redirectPath });
+        const openResult: any = await openAuthWindow(authUrl);
+        if (openResult.ok === false) {
+          const auth = stateStore.setError(openResult.error, "auth_tab_open_failed");
+          await sessionManager.persistAuthState(auth);
+          return createErrorResult(openResult.error.code, openResult.error.message, request.requestId, openResult.error.details ?? null);
+        }
+
+        const readyResult: any = await pollForReadyAttempt({ attemptId, attemptToken, requestId: request.requestId });
+        if (readyResult.ok === false) {
+          const auth = stateStore.setError(readyResult.error, "auth_attempt_poll_failed");
+          await sessionManager.persistAuthState(auth);
+          return readyResult;
+        }
+
+        const exchanged = await exchangeAndBootstrap({
+          code: readyResult.data.exchangeCode,
+          requestId: request.requestId,
+        });
+        if (exchanged.ok) {
+          await closeAuthWindow(openResult.data?.windowId || null);
+        }
+        return exchanged;
+      })().finally(() => {
+        startInFlight = null;
       });
-      if (exchanged.ok) {
-        await closeAuthWindow(openResult.data?.windowId || null);
-      }
-      return exchanged;
+
+      return startInFlight;
     },
   };
 }

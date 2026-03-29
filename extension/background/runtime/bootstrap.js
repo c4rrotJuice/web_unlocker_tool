@@ -21,11 +21,7 @@ export function createBackgroundRuntime(deps = {}) {
     const chromeApi = typedDeps.chromeApi || globalThis.chrome;
     const sessionStore = typedDeps.sessionStore || createSessionStore({ chromeApi });
     const authStateStorage = typedDeps.authStateStorage || createAuthStateStorage({ chromeApi });
-    const stateStore = typedDeps.stateStore || createBackgroundStateStore(undefined, {
-        onChange(nextState) {
-            void authStateStorage.write(nextState);
-        },
-    });
+    const stateStore = typedDeps.stateStore || createBackgroundStateStore();
     const citationStateStore = typedDeps.citationStateStore || createCitationStateStore(undefined, { chromeApi });
     let sessionManager = typedDeps.sessionManager || null;
     const apiClient = typedDeps.apiClient || createApiClient({

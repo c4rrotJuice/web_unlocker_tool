@@ -2,6 +2,7 @@ export const STORAGE_KEYS = Object.freeze({
   AUTH_SESSION: "writior.auth_session",
   AUTH_SESSION_LEGACY: "writior_auth_session",
   AUTH_STATE: "writior.auth_state",
+  SIDEPANEL_STATE: "writior.sidepanel_state",
   CITATION_SELECTION: "writior.citation_selection",
   LAST_BOOT: "writior.last_boot",
 });

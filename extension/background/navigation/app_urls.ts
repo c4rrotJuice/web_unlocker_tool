@@ -20,7 +20,12 @@ export function resolveCanonicalUrl(urlOrPath, stateStore) {
     return "";
   }
   try {
-    return new URL(urlOrPath.trim(), getAppOrigin(stateStore)).toString();
+    const appOrigin = getAppOrigin(stateStore);
+    const resolved = new URL(urlOrPath.trim(), appOrigin);
+    if (resolved.origin !== new URL(appOrigin).origin) {
+      return "";
+    }
+    return resolved.toString();
   } catch {
     return "";
   }

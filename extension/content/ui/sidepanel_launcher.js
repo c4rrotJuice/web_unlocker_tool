@@ -1,7 +1,9 @@
 // GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { createRuntimeClient, SURFACE_NAMES } from "../../shared/utils/runtime_client.js";
 import { getWritiorLogoAssetUrl } from "../../shared/constants/assets.js";
+import { createContentToastController } from "./toast.js";
 export function createSidepanelLauncher({ windowRef = globalThis.window, documentRef = globalThis.document, chromeApi = globalThis.chrome, runtimeClient = createRuntimeClient(chromeApi, SURFACE_NAMES.CONTENT), } = {}) {
+    const toast = createContentToastController({ documentRef, windowRef });
     const host = documentRef.createElement("div");
     host.setAttribute("data-writior-launcher-host", "true");
     host.style.position = "fixed";
@@ -55,13 +57,25 @@ export function createSidepanelLauncher({ windowRef = globalThis.window, documen
         mount.appendChild(button);
     }
     let isOpen = false;
+    let toggleInFlight = null;
     async function toggle() {
-        const result = await runtimeClient.openSidepanel({ mode: "toggle" });
-        if (result?.ok) {
+        if (toggleInFlight) {
+            return toggleInFlight;
+        }
+        toggleInFlight = (async () => {
+            const result = await runtimeClient.openSidepanel({ mode: "toggle" });
+            if (!result?.ok) {
+                toast.show(result?.error?.message || "Workspace toggle failed.", { duration: 2200 });
+                return;
+            }
+            toast.hide();
             isOpen = result.data?.opened === true;
             button.setAttribute("data-open", String(isOpen));
             button.setAttribute("aria-pressed", String(isOpen));
-        }
+        })().finally(() => {
+            toggleInFlight = null;
+        });
+        return toggleInFlight;
     }
     button.addEventListener("click", (event) => {
         event.preventDefault?.();
@@ -78,6 +92,7 @@ export function createSidepanelLauncher({ windowRef = globalThis.window, documen
             parent.appendChild(host);
         },
         destroy() {
+            toast.destroy();
             host.remove?.();
         },
         getState() {

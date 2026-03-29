@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { createBackgroundRuntime } from "../extension/background/index.js";
 import { createBackgroundRouter } from "../extension/background/messaging/router.js";
+import { resolveCanonicalUrl } from "../extension/background/navigation/app_urls.js";
 import { createCitationStateStore } from "../extension/background/state/citation_state.js";
 import { MESSAGE_NAMES } from "../extension/shared/constants/message_names.js";
 import { renderSidepanelAuthSnapshot } from "../extension/sidepanel/app/index.js";
@@ -197,7 +198,7 @@ test("router surfaces invalid handler results explicitly instead of returning ma
   assert.match(result.error.message, /invalid result/);
 });
 
-test("sidepanel auth snapshot does not fabricate a manual editor path fallback", () => {
+test("sidepanel auth snapshot stays descriptive and does not fabricate a manual editor path fallback", () => {
   const root = new FakeElement("section");
   renderSidepanelAuthSnapshot(root, {
     status: "signed_in",
@@ -210,8 +211,26 @@ test("sidepanel auth snapshot does not fabricate a manual editor path fallback",
     },
   });
 
-  assert.match(root.innerHTML, /Unavailable until bootstrap resolves/);
+  assert.match(root.innerHTML, /Researcher/);
+  assert.match(root.innerHTML, /Usage unavailable/);
   assert.equal(root.innerHTML.includes("/editor"), false);
+});
+
+test("canonical app url resolution rejects cross-origin launch targets from bootstrap drift", () => {
+  const stateStore = {
+    getState() {
+      return {
+        bootstrap: {
+          app: {
+            origin: "https://app.writior.com",
+          },
+        },
+      };
+    },
+  };
+
+  assert.equal(resolveCanonicalUrl("https://evil.example/dashboard", stateStore), "");
+  assert.equal(resolveCanonicalUrl("/dashboard", stateStore), "https://app.writior.com/dashboard");
 });
 
 test("build output is regenerated from ts sources and stamped as generated", () => {

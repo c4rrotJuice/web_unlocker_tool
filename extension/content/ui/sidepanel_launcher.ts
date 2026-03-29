@@ -1,5 +1,6 @@
 import { createRuntimeClient, SURFACE_NAMES } from "../../shared/utils/runtime_client.ts";
 import { getWritiorLogoAssetUrl } from "../../shared/constants/assets.ts";
+import { createContentToastController } from "./toast.ts";
 
 export function createSidepanelLauncher({
   windowRef = globalThis.window,
@@ -7,6 +8,7 @@ export function createSidepanelLauncher({
   chromeApi = globalThis.chrome,
   runtimeClient = createRuntimeClient(chromeApi, SURFACE_NAMES.CONTENT),
 } = {}) {
+  const toast = createContentToastController({ documentRef, windowRef });
   const host = documentRef.createElement("div");
   host.setAttribute("data-writior-launcher-host", "true");
   host.style.position = "fixed";
@@ -63,14 +65,26 @@ export function createSidepanelLauncher({
   }
 
   let isOpen = false;
+  let toggleInFlight: Promise<void> | null = null;
 
   async function toggle() {
-    const result: any = await runtimeClient.openSidepanel({ mode: "toggle" });
-    if (result?.ok) {
+    if (toggleInFlight) {
+      return toggleInFlight;
+    }
+    toggleInFlight = (async () => {
+      const result: any = await runtimeClient.openSidepanel({ mode: "toggle" });
+      if (!result?.ok) {
+        toast.show(result?.error?.message || "Workspace toggle failed.", { duration: 2200 });
+        return;
+      }
+      toast.hide();
       isOpen = result.data?.opened === true;
       button.setAttribute("data-open", String(isOpen));
       button.setAttribute("aria-pressed", String(isOpen));
-    }
+    })().finally(() => {
+      toggleInFlight = null;
+    });
+    return toggleInFlight;
   }
 
   button.addEventListener("click", (event: any) => {
@@ -89,6 +103,7 @@ export function createSidepanelLauncher({
       parent.appendChild(host);
     },
     destroy() {
+      toast.destroy();
       host.remove?.();
     },
     getState() {

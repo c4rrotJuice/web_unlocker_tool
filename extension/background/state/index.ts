@@ -25,8 +25,9 @@ export function createBackgroundStateStore(initialState = createLoadingAuthState
       onChange?.(snapshot);
       return snapshot;
     },
-    setLoading(reason = "startup") {
-      return this.setState(createLoadingAuthState(reason));
+    setLoading(reason = "startup", previousState = null) {
+      const baseline = previousState && typeof previousState === "object" ? previousState : state;
+      return this.setState(createLoadingAuthState(reason, baseline));
     },
     setSignedOut(reason = "signed_out") {
       return this.setState(createSignedOutAuthState(reason));
@@ -42,8 +43,9 @@ export function createBackgroundStateStore(initialState = createLoadingAuthState
         bootstrap: baseline?.bootstrap || null,
       }));
     },
-    setError(error, reason = "auth_error") {
-      return this.setState(createAuthErrorState(error, reason));
+    setError(error, reason = "auth_error", previousState = null) {
+      const baseline = previousState && typeof previousState === "object" ? previousState : state;
+      return this.setState(createAuthErrorState(error, reason, baseline));
     },
     clear() {
       return this.setSignedOut("cleared");

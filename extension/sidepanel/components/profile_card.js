@@ -1,4 +1,5 @@
 // GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
+import { shouldPresentSignedInUi } from "../../shared/types/auth.js";
 import { createTierBadge } from "./tier_badge.js";
 function createActionButton(documentRef, label, onClick, tone = "neutral") {
     const button = documentRef.createElement("button");
@@ -69,7 +70,7 @@ export function createProfileCard(options = {}) {
     function render(profile = null, entitlement = null, fallbackEmail = "", auth = null) {
         const tier = String(entitlement?.tier || "guest").trim().toLowerCase() || "guest";
         const tierLabel = tier.charAt(0).toUpperCase() + tier.slice(1);
-        const signedIn = auth?.status === "signed_in" || auth?.status === "refreshing";
+        const signedIn = shouldPresentSignedInUi(auth);
         name.textContent = profile?.display_name || profile?.email || fallbackEmail || "Writior";
         email.textContent = profile?.email || fallbackEmail || (tier === "guest" ? "Guest session" : "Signed in");
         planMeta.textContent = `Plan ${tierLabel}`;

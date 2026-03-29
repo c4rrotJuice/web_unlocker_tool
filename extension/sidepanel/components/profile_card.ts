@@ -1,3 +1,4 @@
+import { shouldPresentSignedInUi } from "../../shared/types/auth.ts";
 import { createTierBadge } from "./tier_badge.ts";
 
 function createActionButton(documentRef, label, onClick, tone = "neutral") {
@@ -86,7 +87,7 @@ export function createProfileCard(options: any = {}) {
   function render(profile = null, entitlement = null, fallbackEmail = "", auth = null) {
     const tier = String(entitlement?.tier || "guest").trim().toLowerCase() || "guest";
     const tierLabel = tier.charAt(0).toUpperCase() + tier.slice(1);
-    const signedIn = auth?.status === "signed_in" || auth?.status === "refreshing";
+    const signedIn = shouldPresentSignedInUi(auth);
     name.textContent = profile?.display_name || profile?.email || fallbackEmail || "Writior";
     email.textContent = profile?.email || fallbackEmail || (tier === "guest" ? "Guest session" : "Signed in");
     planMeta.textContent = `Plan ${tierLabel}`;

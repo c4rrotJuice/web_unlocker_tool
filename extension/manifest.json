@@ -9,7 +9,6 @@
   },
   "action": {
     "default_title": "Writior",
-    "default_popup": "popup/index.html",
     "default_icon": {
       "16": "assets/icons/writior_logo_32.jpg",
       "32": "assets/icons/writior_logo_32.jpg",

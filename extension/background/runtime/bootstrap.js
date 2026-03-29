@@ -145,6 +145,8 @@ export function createBackgroundRuntime(deps = {}) {
                 });
                 return true;
             });
+            handlers.ui?.registerPanelStateListeners?.();
+            handlers.ui?.registerActionClickHandler?.();
             if (typeof chromeApi.runtime.onInstalled?.addListener === "function") {
                 chromeApi.runtime.onInstalled.addListener(() => {
                     logger.info("runtime installed");

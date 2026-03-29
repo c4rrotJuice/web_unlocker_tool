@@ -1,6 +1,7 @@
 // GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { createLogger } from "../shared/utils/logger.js";
 import { STORAGE_KEYS } from "../shared/constants/storage_keys.js";
+import { shouldPresentSignedInUi } from "../shared/types/auth.js";
 import { createRuntimeClient, SURFACE_NAMES } from "../shared/utils/runtime_client.js";
 import { renderPopupAuthSnapshot } from "./app/index.js";
 const logger = createLogger("popup");
@@ -56,18 +57,20 @@ function renderPopup(root) {
         const result = await runtimeClient.authLogout();
         renderPopupAuthSnapshot(snapshotRoot, getAuthStatusText(result));
     });
-    const openSidepanelButton = createButton("Open Workspace", async () => {
-        const result = await runtimeClient.openSidepanel({ mode: "open" });
+    const openSidepanelButton = createButton("Toggle Workspace", async () => {
+        const result = await runtimeClient.openSidepanel({ mode: "toggle" });
         if (!result?.ok) {
             renderPopupAuthSnapshot(snapshotRoot, {
                 status: "error",
                 error: { message: result?.error?.message || "Open workspace failed." },
             });
+            return;
         }
+        globalThis.window?.close?.();
     });
     openSidepanelButton.style.gridColumn = "1 / -1";
     function syncActionVisibility(auth) {
-        const signedIn = auth?.status === "signed_in" || auth?.status === "refreshing";
+        const signedIn = shouldPresentSignedInUi(auth);
         signInButton.style.display = signedIn ? "none" : "";
         signOutButton.style.display = signedIn ? "" : "none";
     }

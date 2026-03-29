@@ -3,7 +3,33 @@ import { createErrorResult, createOkResult, ERROR_CODES } from "../../shared/typ
 export function createUiHandler(options = {}) {
   const typedOptions: any = options;
   const chromeApi = typedOptions.chromeApi;
-  const panelStateByTab = new Map();
+  const panelStateByTarget = new Map();
+
+  function getTargetKey(context: any) {
+    if (Number.isInteger(context?.tabId)) {
+      return `tab:${context.tabId}`;
+    }
+    if (Number.isInteger(context?.windowId)) {
+      return `window:${context.windowId}`;
+    }
+    return null;
+  }
+
+  function updatePanelState(context: any, isOpen: boolean) {
+    const key = getTargetKey(context);
+    if (!key) {
+      return;
+    }
+    panelStateByTarget.set(key, isOpen);
+  }
+
+  function isPanelOpen(context: any) {
+    const key = getTargetKey(context);
+    if (!key) {
+      return false;
+    }
+    return panelStateByTarget.get(key) === true;
+  }
 
   async function resolveContext(sender = {}) {
     const typedSender: any = sender;
@@ -26,7 +52,93 @@ export function createUiHandler(options = {}) {
     };
   }
 
+  async function openSidepanelForContext(context: any) {
+    const tabId = context?.tabId;
+    if (Number.isInteger(tabId) && typeof chromeApi?.sidePanel?.setOptions === "function") {
+      await chromeApi.sidePanel.setOptions({ tabId, enabled: true, path: "sidepanel/index.html" });
+    }
+    if (Number.isInteger(tabId)) {
+      await chromeApi.sidePanel.open({ tabId });
+    } else {
+      await chromeApi.sidePanel.open({ windowId: context.windowId });
+    }
+    updatePanelState(context, true);
+    return createOkResult({
+      opened: true,
+      target: Number.isInteger(tabId) ? "sender_tab" : "active_window",
+    });
+  }
+
+  async function closeSidepanelForContext(context: any) {
+    const tabId = context?.tabId;
+    if (Number.isInteger(tabId) && typeof chromeApi?.sidePanel?.close === "function") {
+      await chromeApi.sidePanel.close({ tabId });
+      updatePanelState(context, false);
+      return createOkResult({ opened: false, target: "sender_tab" });
+    }
+    if (Number.isInteger(context?.windowId) && typeof chromeApi?.sidePanel?.close === "function") {
+      await chromeApi.sidePanel.close({ windowId: context.windowId });
+      updatePanelState(context, false);
+      return createOkResult({ opened: false, target: "active_window" });
+    }
+    if (Number.isInteger(tabId) && typeof chromeApi?.sidePanel?.setOptions === "function") {
+      await chromeApi.sidePanel.setOptions({ tabId, enabled: false });
+      updatePanelState(context, false);
+      return createOkResult({ opened: false, target: "sender_tab" });
+    }
+    return createErrorResult(
+      ERROR_CODES.NOT_IMPLEMENTED,
+      "ui.open_sidepanel toggle-close is not implemented in this browser.",
+    );
+  }
+
+  async function toggleSidepanelForContext(context: any, requestId: string | undefined) {
+    const result = isPanelOpen(context)
+      ? await closeSidepanelForContext(context)
+      : await openSidepanelForContext(context);
+    return {
+      ...result,
+      requestId,
+    };
+  }
+
+  function registerPanelStateListeners() {
+    const onOpened = chromeApi?.sidePanel?.onOpened;
+    if (typeof onOpened?.addListener === "function") {
+      onOpened.addListener((event: any = {}) => {
+        updatePanelState({
+          tabId: Number.isInteger(event?.tabId) ? event.tabId : null,
+          windowId: Number.isInteger(event?.windowId) ? event.windowId : null,
+        }, true);
+      });
+    }
+    const onClosed = chromeApi?.sidePanel?.onClosed;
+    if (typeof onClosed?.addListener === "function") {
+      onClosed.addListener((event: any = {}) => {
+        updatePanelState({
+          tabId: Number.isInteger(event?.tabId) ? event.tabId : null,
+          windowId: Number.isInteger(event?.windowId) ? event.windowId : null,
+        }, false);
+      });
+    }
+  }
+
+  function registerActionClickHandler() {
+    if (typeof chromeApi?.action?.onClicked?.addListener !== "function") {
+      return false;
+    }
+    chromeApi.action.onClicked.addListener((tab: any = {}) => {
+      void toggleSidepanelForContext({
+        tabId: Number.isInteger(tab?.id) ? tab.id : null,
+        windowId: Number.isInteger(tab?.windowId) ? tab.windowId : null,
+      }, "action-click").catch(() => {});
+    });
+    return true;
+  }
+
   return {
+    registerPanelStateListeners,
+    registerActionClickHandler,
     ping(request) {
       return createOkResult({
         ack: true,
@@ -52,22 +164,14 @@ export function createUiHandler(options = {}) {
           request.requestId,
         );
       }
-      const toggleMode = request?.payload?.mode === "toggle";
-      const tabId = context.tabId;
-      const currentOpen = Number.isInteger(tabId) ? panelStateByTab.get(tabId) === true : false;
-      if (toggleMode && currentOpen && Number.isInteger(tabId) && typeof chromeApi?.sidePanel?.setOptions === "function") {
-        await chromeApi.sidePanel.setOptions({ tabId, enabled: false });
-        panelStateByTab.set(tabId, false);
-        return createOkResult({ opened: false, target: "sender_tab" }, request.requestId);
+      if (request?.payload?.mode === "toggle") {
+        return toggleSidepanelForContext(context, request.requestId);
       }
-      if (Number.isInteger(tabId) && typeof chromeApi?.sidePanel?.setOptions === "function") {
-        await chromeApi.sidePanel.setOptions({ tabId, enabled: true, path: "sidepanel/index.html" });
-      }
-      await chromeApi.sidePanel.open({ windowId: context.windowId });
-      if (Number.isInteger(tabId)) {
-        panelStateByTab.set(tabId, true);
-      }
-      return createOkResult({ opened: true, target: Number.isInteger(tabId) ? "sender_tab" : "active_window" }, request.requestId);
+      const result = await openSidepanelForContext(context);
+      return {
+        ...result,
+        requestId: request.requestId,
+      };
     },
   };
 }

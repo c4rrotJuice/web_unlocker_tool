@@ -1,3 +1,4 @@
+import { shouldPresentSignedInUi } from "../../shared/types/auth.ts";
 import { createTierBadge } from "./tier_badge.ts";
 import { createWritiorLogo } from "./writior_logo.ts";
 
@@ -41,7 +42,7 @@ export function createPanelHeader({ documentRef = globalThis.document } = {}) {
   root.append(logo, copy, badge.root);
 
   function render({ profile = null, fallbackEmail = "", auth = null, tier = "guest" } = {}) {
-    const signedIn = auth?.status === "signed_in" || auth?.status === "refreshing";
+    const signedIn = shouldPresentSignedInUi(auth);
     const displayName = normalizeText(profile?.display_name || profile?.username || profile?.name);
     const email = normalizeText(profile?.email || fallbackEmail || auth?.session?.email);
     identity.textContent = signedIn ? (displayName || email || "Signed in") : "Not signed in";

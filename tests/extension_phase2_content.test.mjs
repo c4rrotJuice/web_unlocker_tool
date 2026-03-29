@@ -349,6 +349,10 @@ test("content runtime injects a fixed launcher that toggles the sidepanel throug
 
   const launcherHost = findByAttr(documentRef.documentElement, "data-writior-launcher-host", "true");
   assert.ok(launcherHost);
+  assert.equal(launcherHost.style.top || "", "");
+  assert.equal(launcherHost.style.transform || "", "");
+  assert.equal(launcherHost.style.bottom, "24px");
+  assert.equal(launcherHost.style.right, "16px");
   const launcherButton = findByAttr(launcherHost, "aria-label", "Toggle Writior sidepanel");
   assert.ok(launcherButton);
   launcherButton.dispatchEvent(new FakeEvent("click", launcherButton));

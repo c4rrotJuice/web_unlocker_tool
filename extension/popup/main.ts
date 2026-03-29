@@ -1,5 +1,6 @@
 import { createLogger } from "../shared/utils/logger.ts";
 import { STORAGE_KEYS } from "../shared/constants/storage_keys.ts";
+import { shouldPresentSignedInUi } from "../shared/types/auth.ts";
 import { createRuntimeClient, SURFACE_NAMES } from "../shared/utils/runtime_client.ts";
 import { renderPopupAuthSnapshot } from "./app/index.ts";
 
@@ -62,19 +63,21 @@ function renderPopup(root) {
     const result: any = await runtimeClient.authLogout();
     renderPopupAuthSnapshot(snapshotRoot, getAuthStatusText(result));
   });
-  const openSidepanelButton = createButton("Open Workspace", async () => {
-    const result: any = await runtimeClient.openSidepanel({ mode: "open" });
+  const openSidepanelButton = createButton("Toggle Workspace", async () => {
+    const result: any = await runtimeClient.openSidepanel({ mode: "toggle" });
     if (!result?.ok) {
       renderPopupAuthSnapshot(snapshotRoot, {
         status: "error",
         error: { message: result?.error?.message || "Open workspace failed." },
       });
+      return;
     }
+    globalThis.window?.close?.();
   });
   openSidepanelButton.style.gridColumn = "1 / -1";
 
   function syncActionVisibility(auth) {
-    const signedIn = auth?.status === "signed_in" || auth?.status === "refreshing";
+    const signedIn = shouldPresentSignedInUi(auth);
     signInButton.style.display = signedIn ? "none" : "";
     signOutButton.style.display = signedIn ? "" : "none";
   }

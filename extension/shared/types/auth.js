@@ -6,13 +6,13 @@ export const AUTH_STATUS = Object.freeze({
     REFRESHING: "refreshing",
     ERROR: "error",
 });
-export function createLoadingAuthState(reason = "startup") {
+export function createLoadingAuthState(reason = "startup", baseline = {}) {
     return {
         status: AUTH_STATUS.LOADING,
         reason,
-        session: null,
-        bootstrap: null,
-        error: null,
+        session: normalizeSession(baseline?.session),
+        bootstrap: baseline?.bootstrap ?? null,
+        error: baseline?.error ?? null,
     };
 }
 export function createSignedOutAuthState(reason = "signed_out") {
@@ -42,12 +42,12 @@ export function createRefreshingAuthState({ reason = "refreshing", session = nul
         error: null,
     };
 }
-export function createAuthErrorState(error, reason = "auth_error") {
+export function createAuthErrorState(error, reason = "auth_error", baseline = {}) {
     return {
         status: AUTH_STATUS.ERROR,
         reason,
-        session: null,
-        bootstrap: null,
+        session: normalizeSession(baseline?.session),
+        bootstrap: baseline?.bootstrap ?? null,
         error: normalizeAuthError(error),
     };
 }
@@ -97,6 +97,18 @@ export function getSessionExpiryTime(session) {
 export function isSessionExpired(session, now = Date.now()) {
     const expiryTime = getSessionExpiryTime(session);
     return expiryTime !== null ? expiryTime <= now : false;
+}
+export function hasAuthSession(authState) {
+    return Boolean(normalizeSession(authState?.session));
+}
+export function shouldPresentSignedInUi(authState) {
+    if (authState?.status === AUTH_STATUS.SIGNED_IN || authState?.status === AUTH_STATUS.REFRESHING) {
+        return true;
+    }
+    if ((authState?.status === AUTH_STATUS.LOADING || authState?.status === AUTH_STATUS.ERROR) && hasAuthSession(authState)) {
+        return true;
+    }
+    return false;
 }
 function deriveExpiresAt(issuedAt, expiresIn) {
     if (!Number.isFinite(expiresIn) || expiresIn === null) {

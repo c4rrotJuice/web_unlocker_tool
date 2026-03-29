@@ -10,9 +10,8 @@ export function createSidepanelLauncher({ windowRef = globalThis.window, documen
     const host = documentRef.createElement("div");
     host.setAttribute("data-writior-launcher-host", "true");
     host.style.position = "fixed";
-    host.style.top = "50%";
-    host.style.right = "12px";
-    host.style.transform = "translateY(-50%)";
+    host.style.right = "16px";
+    host.style.bottom = "24px";
     host.style.zIndex = "2147483647";
     host.style.pointerEvents = "auto";
     const mount = typeof host.attachShadow === "function" ? host.attachShadow({ mode: "open" }) : host;
@@ -47,6 +46,7 @@ export function createSidepanelLauncher({ windowRef = globalThis.window, documen
     button.className = "writior-launcher";
     button.setAttribute("data-open", "false");
     button.setAttribute("aria-label", "Toggle Writior sidepanel");
+    button.setAttribute("aria-pressed", "false");
     const icon = documentRef.createElement("img");
     icon.alt = "Writior";
     icon.src = resolveAssetUrl(chromeApi, "assets/icons/writior_logo_32.jpg");

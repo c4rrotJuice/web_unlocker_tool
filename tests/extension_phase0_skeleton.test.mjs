@@ -15,7 +15,7 @@ test("phase 0 extension skeleton keeps manifest MV3 and uses only justified perm
   assert.equal(manifest.background.service_worker, "background/index.js");
   assert.deepEqual(manifest.permissions, ["alarms", "storage", "sidePanel", "tabs"]);
   assert.equal(manifest.side_panel.default_path, "sidepanel/index.html");
-  assert.equal(manifest.action.default_popup, "popup/index.html");
+  assert.equal(Object.prototype.hasOwnProperty.call(manifest.action, "default_popup"), false);
 });
 
 test("phase 0 manifest maps action and extension icons to Writior logo assets", () => {
@@ -62,6 +62,6 @@ test("phase 0 manifest points at buildable artifacts", () => {
   const manifest = JSON.parse(read("manifest.json"));
   assert.equal(fs.existsSync(path.join(extensionRoot, "background/index.ts")), true);
   assert.equal(fs.existsSync(path.join(extensionRoot, "content/index.ts")), true);
-  assert.equal(fs.existsSync(path.join(extensionRoot, manifest.action.default_popup)), true);
+  assert.equal(fs.existsSync(path.join(extensionRoot, "popup/index.html")), true);
   assert.equal(fs.existsSync(path.join(extensionRoot, manifest.side_panel.default_path)), true);
 });

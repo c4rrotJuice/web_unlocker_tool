@@ -1,3 +1,5 @@
+import { shouldPresentSignedInUi } from "../../shared/types/auth.ts";
+
 function createButton(documentRef, label, tone = "default") {
   const button = documentRef.createElement("button");
   button.type = "button";
@@ -50,7 +52,7 @@ export function createActionButtonRow({
   root.append(openEditorButton, dashboardButton, authButton);
 
   function render(auth: any = null) {
-    const signedIn = auth?.status === "signed_in" || auth?.status === "refreshing";
+    const signedIn = shouldPresentSignedInUi(auth);
     openEditorButton.disabled = !signedIn;
     authButton.textContent = signedIn ? "Sign Out" : "Sign In";
     authButton.setAttribute("data-auth-state", signedIn ? "signed_in" : "signed_out");

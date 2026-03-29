@@ -480,6 +480,128 @@ test("startup restore refreshes an expired session before bootstrap and keeps au
   assert.equal(requests[1].url.endsWith("/api/extension/bootstrap"), true);
 });
 
+test("auth status get self-heals stale signed-out cache when a valid session still exists", async () => {
+  const chromeApi = createChromeStub({
+    [STORAGE_KEYS.AUTH_SESSION]: {
+      access_token: "token-123",
+      refresh_token: "refresh-123",
+      token_type: "bearer",
+      user_id: "user-1",
+      email: "user@example.com",
+      source: "background",
+    },
+    [STORAGE_KEYS.AUTH_STATE]: {
+      status: "signed_out",
+      reason: "stale_cache",
+      session: null,
+      bootstrap: null,
+      error: null,
+    },
+  });
+  const { fetchImpl, requests } = createFetchStub();
+  const runtime = createBackgroundRuntime({
+    chromeApi,
+    fetchImpl,
+    baseUrl: "https://app.writior.com",
+  });
+
+  const result = await runtime.dispatch({
+    type: MESSAGE_NAMES.AUTH_STATUS_GET,
+    requestId: "status-heal-1",
+    payload: { surface: "popup" },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.data.auth.status, "signed_in");
+  assert.equal(result.data.auth.session.access_token, "token-123");
+  assert.equal(requests.some((entry) => entry.url.endsWith("/api/extension/bootstrap")), true);
+});
+
+test("startup restore clears expired invalid session cleanly when refresh recovery fails", async () => {
+  const chromeApi = createChromeStub({
+    [STORAGE_KEYS.AUTH_SESSION]: {
+      access_token: "expired-token",
+      refresh_token: "refresh-123",
+      token_type: "bearer",
+      user_id: "user-1",
+      email: "user@example.com",
+      issued_at: "2026-01-01T00:00:00.000Z",
+      expires_at: "2026-01-01T00:04:00.000Z",
+      source: "background",
+    },
+  });
+  const { fetchImpl } = createFetchStub({
+    refreshBody: {
+      ok: false,
+      error: {
+        code: "handoff_refresh_failed",
+        message: "Refresh token rejected.",
+      },
+    },
+  });
+  const runtime = createBackgroundRuntime({
+    chromeApi,
+    fetchImpl,
+    baseUrl: "https://app.writior.com",
+  });
+
+  const result = await runtime.bootstrap();
+  const stored = await chromeApi.storage.local.get({
+    [STORAGE_KEYS.AUTH_SESSION]: null,
+    [STORAGE_KEYS.AUTH_STATE]: null,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.data.auth.status, "signed_out");
+  assert.equal(result.data.auth.reason, "missing_session");
+  assert.equal(stored[STORAGE_KEYS.AUTH_SESSION], null);
+  assert.equal(stored[STORAGE_KEYS.AUTH_STATE].status, "signed_out");
+});
+
+test("refresh failure propagates signed-out auth state to storage listeners", async () => {
+  const chromeApi = createChromeStub({
+    [STORAGE_KEYS.AUTH_SESSION]: {
+      access_token: "expired-token",
+      refresh_token: "refresh-123",
+      token_type: "bearer",
+      user_id: "user-1",
+      email: "user@example.com",
+      issued_at: "2026-01-01T00:00:00.000Z",
+      expires_at: "2026-01-01T00:04:00.000Z",
+      source: "background",
+    },
+  });
+  const changes = [];
+  chromeApi.storage.onChanged.addListener((nextChanges, areaName) => {
+    changes.push({ nextChanges, areaName });
+  });
+  const { fetchImpl } = createFetchStub({
+    refreshBody: {
+      ok: false,
+      error: {
+        code: "auth_invalid",
+        message: "Refresh session is invalid.",
+      },
+    },
+  });
+  const runtime = createBackgroundRuntime({
+    chromeApi,
+    fetchImpl,
+    baseUrl: "https://app.writior.com",
+  });
+
+  const result = await runtime.dispatch({
+    type: MESSAGE_NAMES.AUTH_STATUS_GET,
+    requestId: "status-refresh-fail-1",
+    payload: { surface: "sidepanel" },
+  });
+
+  const authChange = changes.find((entry) => entry.nextChanges?.[STORAGE_KEYS.AUTH_STATE]?.newValue?.status === "signed_out");
+  assert.equal(result.ok, true);
+  assert.equal(result.data.auth.status, "signed_out");
+  assert.ok(authChange);
+});
+
 test("authenticated API request retries once after refresh and does not strand a valid session on worker restart", async () => {
   const chromeApi = createChromeStub({
     [STORAGE_KEYS.AUTH_SESSION]: {
@@ -588,8 +710,8 @@ test("canonical auth exchange errors surface explicitly and leave auth state in 
 
   assert.equal(result.ok, false);
   assert.equal(result.error.code, "handoff_expired");
-  assert.equal(stateResult.data.auth.status, "error");
-  assert.equal(stateResult.data.auth.error.code, "handoff_expired");
+  assert.equal(stateResult.data.auth.status, "signed_out");
+  assert.equal(stateResult.data.auth.reason, "missing_session");
 });
 
 test("auth logout clears stored session and returns signed-out state", async () => {

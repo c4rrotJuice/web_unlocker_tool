@@ -1,5 +1,6 @@
 // GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { STORAGE_KEYS } from "../../shared/constants/storage_keys.js";
+import { shouldPresentSignedInUi } from "../../shared/types/auth.js";
 import { normalizeCapabilitySurface } from "../../shared/types/capability_surface.js";
 import { CITATION_FORMATS, CITATION_STYLES, getCitationPreviewText, normalizeCitationFormat, normalizeCitationStyle } from "../../shared/types/citation.js";
 import { createSidepanelClient } from "../messaging/client.js";
@@ -119,7 +120,7 @@ function createShellStyles(documentRef) {
 }
 function renderSnapshotBody(snapshot) {
     const surface = normalizeCapabilitySurface({ auth: snapshot });
-    const signedIn = snapshot?.status === "signed_in" || snapshot?.status === "refreshing";
+    const signedIn = shouldPresentSignedInUi(snapshot);
     const identity = signedIn
         ? snapshot?.bootstrap?.profile?.display_name || snapshot?.session?.email || "Signed in"
         : "Not signed in";
@@ -401,7 +402,7 @@ export function createSidepanelShell(options = {}) {
     }
     async function ensureTabHydrated(tabKey, force = false) {
         const state = stateStore.getState();
-        const signedIn = state.auth?.status === "signed_in";
+        const signedIn = shouldPresentSignedInUi(state.auth);
         if (!signedIn) {
             stateStore.resetSignedOutTabs();
             render();
@@ -1071,7 +1072,7 @@ export function createSidepanelShell(options = {}) {
     function renderWorkspaceBody() {
         const state = stateStore.getState();
         if (state.active_tab === SIDEPANEL_TABS.NEW_NOTE) {
-            const signedIn = state.auth?.status === "signed_in";
+            const signedIn = shouldPresentSignedInUi(state.auth);
             if (!signedIn) {
                 workspaceBody.replaceChildren(createGatedState({
                     documentRef,
@@ -1123,9 +1124,9 @@ export function createSidepanelShell(options = {}) {
         }
         const auth = changes[STORAGE_KEYS.AUTH_STATE].newValue || { status: "signed_out" };
         stateStore.setAuth(auth);
-        if (auth?.status === "signed_in") {
-            createSignedInTabDefaults(stateStore);
+        if (shouldPresentSignedInUi(auth)) {
             void ensureTabHydrated(stateStore.getState().active_tab, true);
+            render();
         }
         else {
             stateStore.resetSignedOutTabs();
@@ -1135,8 +1136,7 @@ export function createSidepanelShell(options = {}) {
     chromeApi?.storage?.onChanged?.addListener?.(handleStorageChange);
     async function refresh() {
         const auth = await loadAuth();
-        if (auth?.status === "signed_in") {
-            createSignedInTabDefaults(stateStore);
+        if (shouldPresentSignedInUi(auth)) {
             render();
             await ensureTabHydrated(stateStore.getState().active_tab, true);
         }

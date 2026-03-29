@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { createBackgroundRuntime } from "../extension/background/index.js";
 import { MESSAGE_NAMES } from "../extension/shared/constants/message_names.js";
 import { createRuntimeClient } from "../extension/shared/utils/runtime_client.js";
+import { bootstrapPopup } from "../extension/popup/main.js";
 import { createSidepanelShell } from "../extension/sidepanel/app/index.js";
 
 class FakeEvent {
@@ -109,6 +110,10 @@ class FakeDocument extends FakeEventTarget {
 
   createElement(tagName) {
     return new FakeElement(tagName, this);
+  }
+
+  getElementById(id) {
+    return findByAttr(this.documentElement, "id", id);
   }
 }
 
@@ -270,8 +275,14 @@ function createChromeStub(initialStorage = {}) {
   const messages = [];
   const tabsCreateCalls = [];
   const sidePanelOpenCalls = [];
+  const sidePanelCloseCalls = [];
   const sidePanelSetOptionsCalls = [];
   const storageListeners = [];
+  const listeners = {
+    actionClicked: null,
+    sidePanelOpened: null,
+    sidePanelClosed: null,
+  };
   function emitStorageChange(changes) {
     for (const listener of storageListeners) {
       listener(changes, "local");
@@ -281,8 +292,17 @@ function createChromeStub(initialStorage = {}) {
     messages,
     tabsCreateCalls,
     sidePanelOpenCalls,
+    sidePanelCloseCalls,
     sidePanelSetOptionsCalls,
+    listeners,
     _dispatch: null,
+    action: {
+      onClicked: {
+        addListener(listener) {
+          listeners.actionClicked = listener;
+        },
+      },
+    },
     runtime: {
       lastError: null,
       onMessage: { addListener() {} },
@@ -308,11 +328,27 @@ function createChromeStub(initialStorage = {}) {
     sidePanel: {
       async open(args) {
         sidePanelOpenCalls.push(args);
+        listeners.sidePanelOpened?.(args);
+        return args;
+      },
+      async close(args) {
+        sidePanelCloseCalls.push(args);
+        listeners.sidePanelClosed?.(args);
         return args;
       },
       async setOptions(args) {
         sidePanelSetOptionsCalls.push(args);
         return args;
+      },
+      onOpened: {
+        addListener(listener) {
+          listeners.sidePanelOpened = listener;
+        },
+      },
+      onClosed: {
+        addListener(listener) {
+          listeners.sidePanelClosed = listener;
+        },
       },
     },
     storage: {
@@ -741,6 +777,255 @@ test("background-owned sidepanel toggle can open and close without relying on th
   assert.equal(closeResult.ok, true);
   assert.equal(closeResult.data.opened, false);
   assert.equal(chromeApi.sidePanelOpenCalls.length, 1);
+  assert.equal(chromeApi.sidePanelCloseCalls.length, 1);
   assert.equal(chromeApi.sidePanelSetOptionsCalls[0].enabled, true);
-  assert.equal(chromeApi.sidePanelSetOptionsCalls[1].enabled, false);
+});
+
+test("toolbar action click registers once and uses the same background sidepanel toggle path", async () => {
+  const { chromeApi, runtime } = createRuntime({ signedIn: true });
+
+  assert.equal(runtime.registerLifecycleHooks(), true);
+  assert.equal(typeof chromeApi.listeners.actionClicked, "function");
+
+  await chromeApi.listeners.actionClicked({ id: 11, windowId: 1 });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await chromeApi.listeners.actionClicked({ id: 11, windowId: 1 });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(chromeApi.sidePanelOpenCalls.length, 1);
+  assert.equal(chromeApi.sidePanelCloseCalls.length, 1);
+  assert.deepEqual(chromeApi.sidePanelOpenCalls[0], { tabId: 11 });
+  assert.deepEqual(chromeApi.sidePanelCloseCalls[0], { tabId: 11 });
+});
+
+test("popup launcher button sends the canonical sidepanel toggle request and stays lightweight", async () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const previousChrome = globalThis.chrome;
+  const documentRef = new FakeDocument();
+  const root = documentRef.createElement("div");
+  root.setAttribute("id", "app");
+  documentRef.body.appendChild(root);
+  let closeCount = 0;
+  const sentMessages = [];
+
+  globalThis.document = documentRef;
+  globalThis.window = {
+    close() {
+      closeCount += 1;
+    },
+  };
+  globalThis.chrome = {
+    runtime: {
+      lastError: null,
+      sendMessage(message, callback) {
+        sentMessages.push(message);
+        if (message.type === MESSAGE_NAMES.AUTH_STATUS_GET) {
+          callback?.({
+            ok: true,
+            status: "ok",
+            requestId: message.requestId,
+            data: { auth: { status: "signed_out" } },
+          });
+          return;
+        }
+        callback?.({
+          ok: true,
+          status: "ok",
+          requestId: message.requestId,
+          data: { opened: true, target: "sender_tab" },
+        });
+      },
+    },
+    storage: {
+      onChanged: {
+        addListener() {},
+      },
+    },
+  };
+
+  try {
+    bootstrapPopup();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const button = findByText(root, "Toggle Workspace");
+    assert.ok(button);
+    button.dispatchEvent(new FakeEvent("click", button));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const toggleMessage = sentMessages.find((message) => message.type === MESSAGE_NAMES.OPEN_SIDEPANEL);
+    assert.ok(toggleMessage);
+    assert.equal(toggleMessage.payload.surface, "popup");
+    assert.equal(toggleMessage.payload.mode, "toggle");
+    assert.equal(collectText(root).includes("Writior"), true);
+    assert.equal(closeCount, 1);
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+    globalThis.chrome = previousChrome;
+  }
+});
+
+test("popup auth actions follow canonical auth-state storage updates without stale sign-in UI", async () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const previousChrome = globalThis.chrome;
+  const documentRef = new FakeDocument();
+  const root = documentRef.createElement("div");
+  root.setAttribute("id", "app");
+  documentRef.body.appendChild(root);
+  let storageListener = null;
+
+  globalThis.document = documentRef;
+  globalThis.window = { close() {} };
+  globalThis.chrome = {
+    runtime: {
+      lastError: null,
+      sendMessage(message, callback) {
+        callback?.({
+          ok: true,
+          status: "ok",
+          requestId: message.requestId,
+          data: {
+            auth: {
+              status: "signed_in",
+              session: { access_token: "token-1", email: "user@example.com" },
+              bootstrap: { profile: { display_name: "Researcher" } },
+            },
+          },
+        });
+      },
+    },
+    storage: {
+      onChanged: {
+        addListener(listener) {
+          storageListener = listener;
+        },
+      },
+    },
+  };
+
+  try {
+    bootstrapPopup();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    let signOutButton = findByText(root, "Sign Out");
+    let signInButton = findByText(root, "Sign In");
+    assert.ok(signOutButton);
+    assert.equal(signOutButton.style.display || "", "");
+    assert.ok(signInButton);
+    assert.equal(signInButton.style.display, "none");
+
+    storageListener?.({
+      "writior.auth_state": {
+        oldValue: { status: "signed_in", session: { access_token: "token-1" } },
+        newValue: { status: "signed_out", reason: "refresh_failed", session: null, bootstrap: null, error: null },
+      },
+    }, "local");
+
+    signOutButton = findByText(root, "Sign Out");
+    signInButton = findByText(root, "Sign In");
+    assert.ok(signInButton);
+    assert.equal(signOutButton.style.display, "none");
+    assert.equal(signInButton.style.display || "", "");
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+    globalThis.chrome = previousChrome;
+  }
+});
+
+test("sidepanel reacts to canonical auth-state changes and clears stale signed-in workspace UI", async () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const documentRef = new FakeDocument();
+  globalThis.document = documentRef;
+  globalThis.window = new FakeEventTarget();
+  let storageListener = null;
+  let authState = {
+    status: "signed_in",
+    session: { access_token: "token-1", email: "user@example.com" },
+    bootstrap: {
+      profile: { display_name: "Researcher", email: "user@example.com" },
+      entitlement: { tier: "pro", status: "active" },
+      capabilities: { citation_styles: ["apa"], unlocks: true, documents: {} },
+      app: { origin: "https://app.writior.com", handoff: { preferred_destination: "/editor" } },
+      taxonomy: { recent_projects: [], recent_tags: [] },
+    },
+  };
+  const chromeApi = {
+    tabs: {
+      async query() {
+        return [{ id: 11, title: "Example page", url: "https://example.com/page", windowId: 1 }];
+      },
+    },
+    storage: {
+      onChanged: {
+        addListener(listener) {
+          storageListener = listener;
+        },
+        removeListener() {},
+      },
+    },
+  };
+  const client = {
+    async authStatusGet() {
+      return { ok: true, data: { auth: authState } };
+    },
+    async listRecentCitations() {
+      return { ok: true, data: { items: [] } };
+    },
+    async listRecentNotes() {
+      return { ok: true, data: { items: [] } };
+    },
+    async openEditor() {
+      return { ok: true };
+    },
+    async openDashboard() {
+      return { ok: true };
+    },
+    async authStart() {
+      return { ok: true, data: { auth: authState } };
+    },
+    async authLogout() {
+      return { ok: true, data: { auth: { status: "signed_out" } } };
+    },
+  };
+  let shell;
+
+  try {
+    const root = documentRef.createElement("div");
+    shell = createSidepanelShell({
+      root,
+      client,
+      chromeApi,
+      documentRef,
+      navigatorRef: { clipboard: { async writeText() {} } },
+    });
+    shell.render();
+    await shell.refresh();
+
+    let mountedRoot = root.shadowRoot || root;
+    let actionRow = findByAttr(mountedRoot, "data-action-row", "true");
+    let authButton = actionRow.children.find((child) => child.textContent === "Sign Out");
+    assert.ok(authButton);
+
+    authState = { status: "signed_out", reason: "refresh_failed", session: null, bootstrap: null, error: null };
+    storageListener?.({
+      "writior.auth_state": {
+        oldValue: { status: "signed_in", session: { access_token: "token-1" } },
+        newValue: authState,
+      },
+    }, "local");
+
+    mountedRoot = root.shadowRoot || root;
+    actionRow = findByAttr(mountedRoot, "data-action-row", "true");
+    authButton = actionRow.children.find((child) => child.textContent === "Sign In");
+    assert.ok(authButton);
+    assert.equal(shell.getState().status, "signed_out");
+  } finally {
+    shell?.destroy?.();
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+  }
 });

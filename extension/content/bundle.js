@@ -126,7 +126,7 @@ exports.MESSAGE_CONTRACTS = Object.freeze({
     [message_names_ts_1.MESSAGE_NAMES.CITATION_RENDER]: Object.freeze({
         topic: exports.MESSAGE_TOPICS.CITATION,
         payloadShape: "surface:string, citationId:string, style:string",
-        resultShape: "renders:{apa|mla|chicago|harvard:{inline|footnote|bibliography:string}}",
+        resultShape: "citation-like:{renders:{apa|mla|chicago|harvard:{inline|footnote|bibliography|quote_attribution:string}}, render_bundle:{renders,styles,primary}, primary_render:{style,kind,text}, available_renders:{styles,primary}}",
     }),
     [message_names_ts_1.MESSAGE_NAMES.CITATION_SAVE]: Object.freeze({
         topic: exports.MESSAGE_TOPICS.CITATION,
@@ -339,7 +339,11 @@ function getLockedCitationStyles(allowedStyles) {
 function getCitationPreviewText(record, style = "apa", format = "bibliography") {
     const normalizedStyle = normalizeCitationStyle(style);
     const normalizedFormat = normalizeCitationFormat(format);
-    const styleBundle = record?.render_bundle?.renders?.[normalizedStyle] || record?.renders?.[normalizedStyle] || null;
+    const styleBundle = record?.render_bundle?.renders?.[normalizedStyle]
+        || record?.citation?.render_bundle?.renders?.[normalizedStyle]
+        || record?.renders?.[normalizedStyle]
+        || record?.citation?.renders?.[normalizedStyle]
+        || null;
     if (styleBundle && typeof styleBundle[normalizedFormat] === "string" && styleBundle[normalizedFormat].trim()) {
         return styleBundle[normalizedFormat].trim();
     }
@@ -3939,7 +3943,8 @@ function renderCitationModal(root, snapshot = {}, options = {}) {
         });
         if (result?.ok) {
             state.citation = result.data || state.citation;
-            state.renderBundle = result?.data?.renders ? { renders: result.data.renders } : state.renderBundle;
+            state.renderBundle = result?.data?.render_bundle
+                || (result?.data?.renders ? { renders: result.data.renders } : state.renderBundle);
             state.saveStatus = "saved";
             state.error = null;
             render();

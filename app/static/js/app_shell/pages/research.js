@@ -3,6 +3,7 @@ import { renderEmpty, renderError, renderLoading, bindRetry } from "../core/dom.
 import { getResearchStateFromUrl, updateResearchUrl } from "../core/url_state.js";
 import { renderCitationCard, renderNoteCard, renderQuoteCard, renderSourceCard } from "../renderers/cards.js";
 import { renderCitationDetail, renderGraphDetail, renderNoteDetail, renderQuoteDetail, renderSourceDetail } from "../renderers/details.js";
+import { mergeCitationRenderPayload, resolveCitationView } from "../../shared/citation_contract.js";
 import { ensureFeedbackRuntime } from "../../shared/feedback/feedback_bus_singleton.js";
 import { FEEDBACK_EVENTS } from "../../shared/feedback/feedback_tokens.js";
 
@@ -71,6 +72,7 @@ export async function initResearch() {
   let activeDatasetKey = "";
   let currentMeta = { has_more: false, next_cursor: null };
   const graphCache = new Map();
+  const citationViewState = new Map();
   let lastDetailId = "";
   let lastDetailType = "";
 
@@ -232,17 +234,76 @@ export async function initResearch() {
     return `/api/research/${encodeURIComponent(type)}/${encodeURIComponent(id)}/graph`;
   }
 
+  async function requestCitationRender(citationId, style) {
+    return window.webUnlockerAuth.authJson("/api/citations/render", {
+      method: "POST",
+      body: {
+        citation_id: citationId,
+        style,
+      },
+    });
+  }
+
+  function mergeGraphCitation(citationId, payload) {
+    latestListItems = latestListItems.map((item) => (
+      item?.id === citationId ? mergeCitationRenderPayload(item, payload) : item
+    ));
+    for (const [cacheKey, graph] of graphCache.entries()) {
+      if (graph?.node?.type === "citation" && graph?.node?.data?.id === citationId) {
+        graph.node.data = mergeCitationRenderPayload(graph.node.data, payload);
+      }
+      if (Array.isArray(graph?.collections?.citations)) {
+        graph.collections.citations = graph.collections.citations.map((citation) => (
+          citation?.id === citationId ? mergeCitationRenderPayload(citation, payload) : citation
+        ));
+      }
+      graphCache.set(cacheKey, graph);
+    }
+  }
+
+  function renderCurrentContext() {
+    const state = getState();
+    const selectedId = state.selected;
+    if (!selectedId) {
+      clearContext();
+      return;
+    }
+    const cacheKey = `${state.tab}:${selectedId}`;
+    if (graphCache.has(cacheKey)) {
+      contextBody.innerHTML = renderGraphDetail(graphCache.get(cacheKey), {
+        citationViewState,
+      });
+      return;
+    }
+    const baseItem = localSelection(state, selectedId);
+    if (state.tab === "citations" && baseItem) {
+      contextBody.innerHTML = renderCitationDetail(baseItem, {
+        citationView: citationViewState.get(baseItem.id) || {},
+      });
+      return;
+    }
+    if (baseItem) {
+      contextBody.innerHTML = TAB_CONFIG[state.tab].detailRenderer(baseItem);
+    }
+  }
+
   async function loadDetail(id) {
     const state = getState();
     const config = TAB_CONFIG[state.tab];
     const baseItem = localSelection(state, id);
-    const baseMarkup = config.detailRenderer(baseItem || { id, title: id });
+    const baseMarkup = state.tab === "citations"
+      ? config.detailRenderer(baseItem || { id, title: id }, {
+        citationView: citationViewState.get(id) || {},
+      })
+      : config.detailRenderer(baseItem || { id, title: id });
     renderContextLoading(id, baseMarkup);
     lastDetailId = id;
     lastDetailType = tabEntityType(state.tab);
 
     if (graphCache.has(`${state.tab}:${id}`)) {
-      contextBody.innerHTML = renderGraphDetail(graphCache.get(`${state.tab}:${id}`));
+      contextBody.innerHTML = renderGraphDetail(graphCache.get(`${state.tab}:${id}`), {
+        citationViewState,
+      });
       return;
     }
 
@@ -255,7 +316,9 @@ export async function initResearch() {
       if (!detailTracker.isLatest(requestId)) return;
       graphCache.set(`${state.tab}:${id}`, graph);
       if (getState().selected !== id || getState().tab !== state.tab) return;
-      contextBody.innerHTML = renderGraphDetail(graph);
+      contextBody.innerHTML = renderGraphDetail(graph, {
+        citationViewState,
+      });
     } catch (error) {
       if (error.name === "AbortError") return;
       if (!detailTracker.isLatest(requestId)) return;
@@ -343,6 +406,25 @@ export async function initResearch() {
   });
 
   contextBody.addEventListener("click", (event) => {
+    const copyButton = event.target.closest("[data-citation-copy]");
+    if (copyButton) {
+      const citationId = copyButton.dataset.citationCopy || "";
+      const state = getState();
+      const graph = graphCache.get(`${state.tab}:${citationId}`);
+      const citation = graph?.node?.type === "citation"
+        ? graph.node.data
+        : latestListItems.find((item) => item.id === citationId);
+      const text = citation ? resolveCitationView(citation, citationViewState.get(citationId) || {}).text : "";
+      navigator.clipboard.writeText(text || "").then(() => {
+        feedback.emitDomainEvent(FEEDBACK_EVENTS.RESEARCH_PANEL_READY, { label: "Citation copied" });
+      }).catch((error) => {
+        feedback.emitDomainEvent(FEEDBACK_EVENTS.RESEARCH_PANEL_FAILED, {
+          title: "Copy failed",
+          message: error?.message || "Citation copy failed.",
+        });
+      });
+      return;
+    }
     const relatedEntity = event.target.closest("[data-related-entity-id]");
     if (relatedEntity) {
       navigateToEntity(relatedEntity.dataset.relatedEntityType || "", relatedEntity.dataset.relatedEntityId || "");
@@ -352,6 +434,43 @@ export async function initResearch() {
     if (relatedDocument) {
       navigateToDocument(relatedDocument.dataset.relatedDocumentId || "");
     }
+  });
+  contextBody.addEventListener("change", async (event) => {
+    const styleSelect = event.target.closest("[data-citation-style-select]");
+    const kindSelect = event.target.closest("[data-citation-kind-select]");
+    const citationId = styleSelect?.dataset?.citationStyleSelect || kindSelect?.dataset?.citationKindSelect || "";
+    if (!citationId) return;
+    const nextView = { ...(citationViewState.get(citationId) || {}) };
+    if (kindSelect) {
+      nextView.kind = kindSelect.value;
+      nextView.message = "";
+      citationViewState.set(citationId, nextView);
+      renderCurrentContext();
+      refreshListSelection();
+      return;
+    }
+    nextView.style = styleSelect.value;
+    nextView.loading = true;
+    nextView.message = "Loading backend citation render…";
+    citationViewState.set(citationId, nextView);
+    renderCurrentContext();
+    try {
+      const payload = await requestCitationRender(citationId, nextView.style);
+      mergeGraphCitation(citationId, payload);
+      citationViewState.set(citationId, {
+        ...nextView,
+        loading: false,
+        message: "",
+      });
+    } catch (error) {
+      citationViewState.set(citationId, {
+        ...nextView,
+        loading: false,
+        message: error?.message || "Citation render unavailable.",
+      });
+    }
+    renderCurrentContext();
+    refreshListSelection();
   });
 
   closeButton.addEventListener("click", clearSelection);

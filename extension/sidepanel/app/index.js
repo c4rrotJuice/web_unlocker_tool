@@ -1,6 +1,7 @@
 // GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { STORAGE_KEYS } from "../../shared/constants/storage_keys.js";
 import { normalizeCapabilitySurface } from "../../shared/types/capability_surface.js";
+import { CITATION_FORMATS, CITATION_STYLES, getCitationPreviewText, normalizeCitationFormat, normalizeCitationStyle } from "../../shared/types/citation.js";
 import { createSidepanelClient } from "../messaging/client.js";
 import { createNewNoteView } from "../new_note_view.js";
 import { summarizeNote } from "../components/list_rows.js";
@@ -165,6 +166,15 @@ export function createSidepanelShell(options = {}) {
         saving: false,
         top: 8,
         pendingFocusAttr: "",
+    };
+    const citationPreviewState = {
+        citationId: null,
+        style: "apa",
+        format: "bibliography",
+        top: 8,
+        locked: false,
+        loading: false,
+        message: "",
     };
     const shell = documentRef.createElement("section");
     shell.className = "writior-sidepanel-shell";
@@ -386,9 +396,8 @@ export function createSidepanelShell(options = {}) {
     }
     function getPreviewTop(row) {
         const rowOffset = Number(row?.offsetTop) || 0;
-        const rowHeight = Number(row?.offsetHeight) || 0;
         const scrollTop = Number(listPane.scroll?.scrollTop) || 0;
-        return Math.max(10, 10 + rowOffset - scrollTop + Math.max(0, (rowHeight - 58) / 2));
+        return Math.max(10, rowOffset - scrollTop - 104);
     }
     function bindPreview(row, summary) {
         const show = () => listPane.preview.render({
@@ -408,6 +417,13 @@ export function createSidepanelShell(options = {}) {
     }
     function getNoteById(noteId) {
         return getNotesItems().find((item) => item?.id === noteId) || null;
+    }
+    function getCitationItems() {
+        const citationsTab = stateStore.getState().tabs?.[SIDEPANEL_TABS.CITATIONS];
+        return Array.isArray(citationsTab?.items) ? citationsTab.items : [];
+    }
+    function getCitationById(citationId) {
+        return getCitationItems().find((item) => item?.id === citationId) || null;
     }
     function findByAttribute(node, name, value) {
         if (!node) {
@@ -432,7 +448,208 @@ export function createSidepanelShell(options = {}) {
         catch (error) {
             stateStore.setNotice({ tone: "error", message: error?.message || "Copy failed." });
         }
+        if (notePreviewState.noteId === note?.id && stateStore.getState().active_tab === SIDEPANEL_TABS.NOTES) {
+            renderNotePreview();
+        }
+    }
+    function hideCitationPreview(force = false) {
+        if (citationPreviewState.locked && !force) {
+            return;
+        }
+        if (force) {
+            citationPreviewState.citationId = null;
+            citationPreviewState.locked = false;
+            citationPreviewState.loading = false;
+            citationPreviewState.message = "";
+            listPane.preview.clear(true);
+            return;
+        }
+        listPane.preview.hide(120);
+    }
+    async function copyCitationPreview(citation, style = citationPreviewState.style, format = citationPreviewState.format) {
+        const text = getCitationPreviewText({ citation }, style, format);
+        if (!text) {
+            stateStore.setNotice({ tone: "error", message: "No citation text available for this render." });
+            render();
+            return;
+        }
+        try {
+            await navigatorRef?.clipboard?.writeText?.(text);
+            stateStore.setNotice({ tone: "info", message: "Citation copied." });
+        }
+        catch (error) {
+            stateStore.setNotice({ tone: "error", message: error?.message || "Copy failed." });
+        }
         render();
+    }
+    async function ensureCitationStyleLoaded(citationId, style) {
+        const citation = getCitationById(citationId);
+        if (!citation?.id) {
+            return;
+        }
+        if (citation?.renders?.[style] || citation?.render_bundle?.renders?.[style]) {
+            return;
+        }
+        citationPreviewState.loading = true;
+        citationPreviewState.message = "Loading backend citation render...";
+        renderCitationPreview();
+        const result = await client.renderCitation?.({
+            citationId,
+            style,
+        });
+        if (!result?.ok) {
+            citationPreviewState.loading = false;
+            citationPreviewState.message = result?.error?.message || "Citation render unavailable.";
+            renderCitationPreview();
+            return;
+        }
+        const payload = result.data || {};
+        const nextItems = getCitationItems().map((item) => {
+            if (item?.id !== citationId) {
+                return item;
+            }
+            return {
+                ...item,
+                ...payload,
+                renders: {
+                    ...(item?.renders || {}),
+                    ...(payload?.renders || payload?.render_bundle?.renders || {}),
+                },
+                render_bundle: {
+                    ...(item?.render_bundle || {}),
+                    ...(payload?.render_bundle || {}),
+                    renders: {
+                        ...(item?.render_bundle?.renders || {}),
+                        ...(payload?.render_bundle?.renders || payload?.renders || {}),
+                    },
+                },
+            };
+        });
+        stateStore.updateTab(SIDEPANEL_TABS.CITATIONS, {
+            status: TAB_LOAD_STATUS.READY,
+            items: nextItems,
+            message: "",
+        });
+        citationPreviewState.loading = false;
+        citationPreviewState.message = "";
+    }
+    function renderCitationPreview() {
+        const citation = getCitationById(citationPreviewState.citationId);
+        if (!citation || stateStore.getState().active_tab !== SIDEPANEL_TABS.CITATIONS) {
+            hideCitationPreview(true);
+            return;
+        }
+        const container = documentRef.createElement("div");
+        container.style.display = "grid";
+        container.style.gap = "10px";
+        const title = documentRef.createElement("div");
+        title.style.fontSize = "14px";
+        title.style.fontWeight = "700";
+        title.style.lineHeight = "1.35";
+        title.style.color = "#f8fafc";
+        title.textContent = citation?.source?.title || "Citation";
+        const meta = documentRef.createElement("div");
+        meta.style.fontSize = "11px";
+        meta.style.lineHeight = "1.4";
+        meta.style.color = "#94a3b8";
+        meta.textContent = [
+            citation?.source?.hostname || citation?.source?.publisher || "",
+            citationPreviewState.style.toUpperCase(),
+            citationPreviewState.format.replace(/_/g, " "),
+        ].filter(Boolean).join(" • ");
+        const controls = documentRef.createElement("div");
+        controls.style.display = "flex";
+        controls.style.flexWrap = "wrap";
+        controls.style.gap = "8px";
+        const styleSelect = documentRef.createElement("select");
+        styleSelect.setAttribute("data-citation-preview-style", "true");
+        styleSelect.style.padding = "7px 10px";
+        styleSelect.style.borderRadius = "10px";
+        styleSelect.style.background = "rgba(15, 23, 42, 0.72)";
+        styleSelect.style.color = "#f8fafc";
+        styleSelect.style.border = "1px solid rgba(148, 163, 184, 0.22)";
+        CITATION_STYLES.forEach((style) => {
+            const option = documentRef.createElement("option");
+            option.value = style;
+            option.textContent = style.toUpperCase();
+            option.selected = style === citationPreviewState.style;
+            styleSelect.appendChild(option);
+        });
+        const formatSelect = documentRef.createElement("select");
+        formatSelect.setAttribute("data-citation-preview-format", "true");
+        formatSelect.style.padding = "7px 10px";
+        formatSelect.style.borderRadius = "10px";
+        formatSelect.style.background = "rgba(15, 23, 42, 0.72)";
+        formatSelect.style.color = "#f8fafc";
+        formatSelect.style.border = "1px solid rgba(148, 163, 184, 0.22)";
+        CITATION_FORMATS.forEach((format) => {
+            const option = documentRef.createElement("option");
+            option.value = format;
+            option.textContent = format.replace(/_/g, " ");
+            option.selected = format === citationPreviewState.format;
+            formatSelect.appendChild(option);
+        });
+        const body = documentRef.createElement("div");
+        body.style.fontSize = "12px";
+        body.style.lineHeight = "1.5";
+        body.style.color = "#cbd5e1";
+        body.style.whiteSpace = "pre-wrap";
+        body.style.wordBreak = "break-word";
+        body.style.overflowWrap = "anywhere";
+        const citationText = getCitationPreviewText({ citation }, citationPreviewState.style, citationPreviewState.format);
+        body.textContent = citationPreviewState.loading
+            ? "Loading citation render..."
+            : (citationText || "This citation render is not available in the current backend bundle.");
+        const message = documentRef.createElement("div");
+        message.style.fontSize = "11px";
+        message.style.lineHeight = "1.4";
+        message.style.color = citationPreviewState.message ? "#fca5a5" : "#94a3b8";
+        message.textContent = citationPreviewState.message || "";
+        const copy = documentRef.createElement("button");
+        copy.type = "button";
+        copy.textContent = "Copy";
+        copy.setAttribute("data-citation-preview-copy", "true");
+        copy.style.padding = "7px 10px";
+        copy.style.borderRadius = "999px";
+        copy.style.border = "1px solid rgba(148, 163, 184, 0.22)";
+        copy.style.background = "rgba(15, 23, 42, 0.64)";
+        copy.style.color = "#f8fafc";
+        copy.disabled = citationPreviewState.loading;
+        copy.addEventListener("click", () => {
+            void copyCitationPreview(citation);
+        });
+        styleSelect.addEventListener("change", async () => {
+            citationPreviewState.style = normalizeCitationStyle(styleSelect.value, citationPreviewState.style);
+            await ensureCitationStyleLoaded(citation.id, citationPreviewState.style);
+            renderCitationPreview();
+            render();
+        });
+        formatSelect.addEventListener("change", () => {
+            citationPreviewState.format = normalizeCitationFormat(formatSelect.value, citationPreviewState.format);
+            const nextText = getCitationPreviewText({ citation }, citationPreviewState.style, citationPreviewState.format);
+            citationPreviewState.message = nextText ? "" : "This render kind is not available for the current citation bundle.";
+            renderCitationPreview();
+        });
+        controls.append(styleSelect, formatSelect, copy);
+        container.append(title, meta, controls, body, message);
+        listPane.preview.mount(container, {
+            top: citationPreviewState.top,
+            pinned: citationPreviewState.locked,
+            tone: "default",
+        });
+    }
+    function showCitationPreview(citation, row, options = {}) {
+        if (!citation?.id) {
+            return;
+        }
+        citationPreviewState.citationId = citation.id;
+        citationPreviewState.top = getPreviewTop(row);
+        citationPreviewState.locked = Boolean(options.locked);
+        citationPreviewState.style = normalizeCitationStyle(citationPreviewState.style || citation?.selected_style || citation?.style || "apa");
+        citationPreviewState.format = normalizeCitationFormat(citationPreviewState.format || citation?.selected_format || citation?.format || "bibliography");
+        citationPreviewState.loading = false;
+        citationPreviewState.message = "";
+        renderCitationPreview();
     }
     function hideNotePreview(force = false) {
         if (force) {
@@ -687,23 +904,21 @@ export function createSidepanelShell(options = {}) {
     function buildCitationRows(items = []) {
         return items.map((citation) => {
             const entry = createCitationListRow({ documentRef, citation });
-            bindPreview(entry.root, entry.summary);
+            const show = () => showCitationPreview(citation, entry.root);
+            entry.root.addEventListener("mouseenter", show);
+            entry.root.addEventListener("focusin", show);
+            entry.root.addEventListener("mouseleave", () => hideCitationPreview());
+            entry.root.addEventListener("focusout", () => hideCitationPreview());
             entry.root.addEventListener("click", async (event) => {
                 event.preventDefault?.();
-                try {
-                    const citationText = citation?.renders?.apa?.bibliography
-                        || citation?.renders?.mla?.bibliography
-                        || citation?.quote_text
-                        || citation?.excerpt
-                        || entry.summary.body
-                        || "";
-                    await navigatorRef?.clipboard?.writeText?.(citationText);
-                    stateStore.setNotice({ tone: "info", message: "Citation copied." });
+                showCitationPreview(citation, entry.root, { locked: true });
+            });
+            entry.root.addEventListener("keydown", (event) => {
+                if (event.key !== "Enter" && event.key !== " ") {
+                    return;
                 }
-                catch (error) {
-                    stateStore.setNotice({ tone: "error", message: error?.message || "Copy failed." });
-                }
-                render();
+                event.preventDefault?.();
+                showCitationPreview(citation, entry.root, { locked: true });
             });
             return entry.root;
         });
@@ -752,6 +967,9 @@ export function createSidepanelShell(options = {}) {
     function renderListTab(tabKey) {
         if (tabKey !== SIDEPANEL_TABS.NOTES) {
             hideNotePreview(true);
+        }
+        if (tabKey !== SIDEPANEL_TABS.CITATIONS) {
+            hideCitationPreview(true);
         }
         const state = stateStore.getState();
         const tabState = state.tabs?.[tabKey] || { status: TAB_LOAD_STATUS.IDLE, items: [], message: "" };

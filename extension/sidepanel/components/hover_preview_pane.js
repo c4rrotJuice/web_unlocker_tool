@@ -10,10 +10,11 @@ export function createHoverPreviewPane({ documentRef = globalThis.document } = {
     const root = documentRef.createElement("aside");
     root.setAttribute("data-hover-preview-pane", "true");
     root.style.position = "absolute";
-    root.style.left = "0";
+    root.style.left = "10px";
+    root.style.right = "10px";
     root.style.top = "8px";
-    root.style.width = "272px";
-    root.style.maxWidth = "calc(100vw - 24px)";
+    root.style.width = "auto";
+    root.style.maxWidth = "none";
     root.style.padding = "14px";
     root.style.borderRadius = "14px";
     root.style.border = "1px solid rgba(148, 163, 184, 0.16)";
@@ -21,7 +22,7 @@ export function createHoverPreviewPane({ documentRef = globalThis.document } = {
     root.style.boxShadow = "0 18px 40px rgba(2, 6, 23, 0.36)";
     root.style.display = "none";
     root.style.zIndex = "2";
-    root.style.transform = "translateX(calc(-100% - 14px))";
+    root.style.transform = "none";
     const content = documentRef.createElement("div");
     root.append(content);
     let hideTimer = null;

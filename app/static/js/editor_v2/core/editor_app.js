@@ -38,6 +38,7 @@ import { createDocumentController } from "../document/document_controller.js";
 import { ensureFeedbackRuntime } from "../../shared/feedback/feedback_bus_singleton.js";
 import { FEEDBACK_EVENTS, STATUS_SCOPES } from "../../shared/feedback/feedback_tokens.js";
 import { isAuthSessionError } from "../../shared/auth/session.js";
+import { mergeCitationRenderPayload, resolveCitationView } from "../../shared/citation_contract.js";
 
 function queryRefs() {
   return {
@@ -116,6 +117,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
   const feedback = ensureFeedbackRuntime({ mountTarget: document.body });
   const workspaceState = createWorkspaceState();
   const selectionState = createSelectionState();
+  const citationViewState = new Map();
 
   const quillAdapter = createQuillAdapter({
     element: refs.quill,
@@ -366,6 +368,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     if (!focused && context.mode !== "seed_review" && context.mode !== "quote_focus") {
       renderContextRail(refs.contextRail, context, state, null, {
         selectionText: () => selectionState.getState().text,
+        citationViewState,
       });
       return;
     }
@@ -378,10 +381,12 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     void promise.then((detail) => {
       renderContextRail(refs.contextRail, context, state, detail, {
         selectionText: () => selectionState.getState().text,
+        citationViewState,
       });
     }).catch(() => {
       renderContextRail(refs.contextRail, context, workspaceState.getState(), null, {
         selectionText: () => selectionState.getState().text,
+        citationViewState,
       });
     });
   }
@@ -451,6 +456,22 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       hidePopover(refs.commandMenu);
     };
     const contextRailClick = async (event) => {
+      const copyButton = event.target.closest("[data-citation-copy]");
+      if (copyButton) {
+        const citationId = copyButton.dataset.citationCopy || "";
+        const citation = await stores.citations.get(citationId);
+        const text = citation ? resolveCitationView(citation, citationViewState.get(citationId) || {}).text : "";
+        try {
+          await navigator.clipboard.writeText(text || "");
+          feedback.emitDomainEvent(FEEDBACK_EVENTS.RESEARCH_PANEL_READY, { label: "Citation copied" });
+        } catch (error) {
+          feedback.emitDomainEvent(FEEDBACK_EVENTS.RESEARCH_PANEL_FAILED, {
+            title: "Copy failed",
+            message: error?.message || "Citation copy failed.",
+          });
+        }
+        return;
+      }
       const action = event.target.closest("[data-context-action]");
       if (!action) return;
       const state = workspaceState.getState();
@@ -494,6 +515,42 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
         quillAdapter.insertText(quillAdapter.getSelection()?.index || 0, "\n## Outline\n");
       }
     };
+    const contextRailChange = async (event) => {
+      const styleSelect = event.target.closest("[data-citation-style-select]");
+      const kindSelect = event.target.closest("[data-citation-kind-select]");
+      const citationId = styleSelect?.dataset?.citationStyleSelect || kindSelect?.dataset?.citationKindSelect || "";
+      if (!citationId) return;
+      const nextView = { ...(citationViewState.get(citationId) || {}) };
+      if (kindSelect) {
+        nextView.kind = kindSelect.value;
+        nextView.message = "";
+        citationViewState.set(citationId, nextView);
+        renderShell();
+        return;
+      }
+      nextView.style = styleSelect.value;
+      nextView.loading = true;
+      nextView.message = "Loading backend citation render…";
+      citationViewState.set(citationId, nextView);
+      renderShell();
+      try {
+        const payload = await researchApi.renderCitation(citationId, nextView.style);
+        const merged = mergeCitationRenderPayload(await stores.citations.get(citationId), payload);
+        stores.citations.prime([merged]);
+        citationViewState.set(citationId, {
+          ...nextView,
+          loading: false,
+          message: "",
+        });
+      } catch (error) {
+        citationViewState.set(citationId, {
+          ...nextView,
+          loading: false,
+          message: error?.message || "Citation render unavailable.",
+        });
+      }
+      renderShell();
+    };
     const attachedAssetActivate = (event) => {
       checkpointController.handleClick(event);
       outlineController.handleClick(event);
@@ -518,6 +575,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     refs.outlineRefreshButton.addEventListener("click", outlineRefreshClick);
     refs.commandMenu.addEventListener("click", commandMenuClick);
     refs.contextRail.addEventListener("click", contextRailClick);
+    refs.contextRail.addEventListener("change", contextRailChange);
     refs.contextTabContent?.addEventListener("click", attachedAssetActivate);
     cleanups.push(() => refs.commandButton.removeEventListener("click", commandClick));
     cleanups.push(() => refs.checkpointButton.removeEventListener("click", checkpointClick));
@@ -528,6 +586,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     cleanups.push(() => refs.outlineRefreshButton.removeEventListener("click", outlineRefreshClick));
     cleanups.push(() => refs.commandMenu.removeEventListener("click", commandMenuClick));
     cleanups.push(() => refs.contextRail.removeEventListener("click", contextRailClick));
+    cleanups.push(() => refs.contextRail.removeEventListener("change", contextRailChange));
     cleanups.push(() => refs.contextTabContent?.removeEventListener("click", attachedAssetActivate));
     return () => {
       while (cleanups.length) {

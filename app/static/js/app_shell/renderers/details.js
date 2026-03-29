@@ -1,5 +1,10 @@
 import { escapeHtml, formatDateTime, limitText } from "../core/format.js";
-import { citationPrimaryText, citationRenderEntries } from "../../shared/citation_contract.js";
+import {
+  CITATION_RENDER_KINDS,
+  CITATION_STYLES,
+  citationRenderEntries,
+  resolveCitationView,
+} from "../../shared/citation_contract.js";
 import { renderCitationCard, renderDocumentCard, renderNoteCard, renderQuoteCard, renderSourceCard } from "./cards.js";
 
 function detailList(title, items, emptyLabel) {
@@ -28,18 +33,47 @@ export function renderSourceDetail(source) {
   `;
 }
 
-export function renderCitationDetail(citation) {
+function renderCitationControls(citation, view) {
+  const citationId = escapeHtml(citation?.id || "");
+  return `
+    <section class="detail-section" data-citation-controls="${citationId}">
+      <p class="section-kicker">Citation View</p>
+      <div class="detail-chip-row">
+        <label>
+          <span class="surface-note">Style</span>
+          <select data-citation-style-select="${citationId}">
+            ${CITATION_STYLES.map((style) => `<option value="${escapeHtml(style)}"${style === view.style ? " selected" : ""}>${escapeHtml(style.toUpperCase())}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          <span class="surface-note">Render</span>
+          <select data-citation-kind-select="${citationId}">
+            ${CITATION_RENDER_KINDS.map((kind) => `<option value="${escapeHtml(kind)}"${kind === view.kind ? " selected" : ""}>${escapeHtml(kind.replace(/_/g, " "))}</option>`).join("")}
+          </select>
+        </label>
+        <button type="button" class="app-button-secondary" data-citation-copy="${citationId}">Copy</button>
+      </div>
+      ${view.message ? `<div class="surface-note" data-citation-status="${citationId}">${escapeHtml(view.message)}</div>` : ""}
+    </section>
+  `;
+}
+
+export function renderCitationDetail(citation, options = {}) {
   const source = citation.source || {};
+  const view = resolveCitationView(citation, options?.citationView || {});
   return `
     <section class="detail-section">
       <h3>${escapeHtml(source.title || "Citation")}</h3>
-      <p class="detail-copy">${escapeHtml(citationPrimaryText(citation))}</p>
+      <p class="detail-copy">${escapeHtml(view.text || "Citation render unavailable.")}</p>
       <div class="detail-chip-row">
+        <span class="meta-pill">${escapeHtml(view.style.toUpperCase())}</span>
+        <span class="meta-pill">${escapeHtml(view.kind.replace(/_/g, " "))}</span>
         <span class="meta-pill">${escapeHtml(source.hostname || source.publisher || "Source")}</span>
         <span class="meta-pill">${escapeHtml(formatDateTime(citation.updated_at || citation.created_at))}</span>
       </div>
     </section>
-    ${detailList("Available renders", citationRenderEntries(citation).map(({ style, text }) => `<strong>${escapeHtml((style || "").toUpperCase())}</strong><br>${escapeHtml(text || "")}`), "No render output available.")}
+    ${renderCitationControls(citation, view)}
+    ${detailList(`Available renders in ${view.style.toUpperCase()}`, citationRenderEntries(citation, { style: view.style }).map(({ style, kind, text }) => `<strong>${escapeHtml((style || "").toUpperCase())} · ${escapeHtml((kind || "").replace(/_/g, " "))}</strong><br>${escapeHtml(text || "")}`), "No render output available.")}
   `;
 }
 
@@ -138,7 +172,7 @@ function buildEditorHref(graph) {
   return `/editor?${params.toString()}`;
 }
 
-export function renderGraphDetail(graph) {
+export function renderGraphDetail(graph, options = {}) {
   const node = graph?.node || {};
   const collections = graph?.collections || {};
   const current = node.data || {};
@@ -156,7 +190,9 @@ export function renderGraphDetail(graph) {
     primarySections.push(renderEntitySection("Notes", "note", notes, "No notes connected to this source yet."));
     primarySections.push(renderEntitySection("Documents using this source", "document", documents, "No documents use this source yet."));
   } else if (node.type === "citation") {
-    primarySections.push(renderCitationDetail(current));
+    primarySections.push(renderCitationDetail(current, {
+      citationView: options?.citationViewState?.get?.(current.id) || {},
+    }));
     primarySections.push(renderEntitySection("Source", "source", current.source ? [current.source] : [], "No source linked to this citation."));
     primarySections.push(renderEntitySection("Quotes", "quote", quotes, "No quotes linked to this citation yet."));
     primarySections.push(renderEntitySection("Notes", "note", notes, "No notes linked to this citation yet."));

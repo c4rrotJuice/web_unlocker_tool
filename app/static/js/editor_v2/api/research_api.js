@@ -16,6 +16,15 @@ export function createResearchApi() {
     getCitation(citationId) {
       return window.webUnlockerAuth.authJson(`/api/citations/${encodeURIComponent(citationId)}`, { method: "GET" });
     },
+    renderCitation(citationId, style) {
+      return window.webUnlockerAuth.authJson("/api/citations/render", {
+        method: "POST",
+        body: {
+          citation_id: citationId,
+          style,
+        },
+      });
+    },
     listQuotes({ query = "", documentId = "", limit = 24 } = {}) {
       const params = new URLSearchParams({ limit: String(limit) });
       if (query) params.set("query", query);

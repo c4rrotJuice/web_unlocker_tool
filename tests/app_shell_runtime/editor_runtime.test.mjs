@@ -261,7 +261,10 @@ test("citation contract helpers prefer canonical render bundle shape", () => {
   assert.equal(citationPrimaryText(citation), "Doe, Jane. Example Source.");
   assert.equal(citationDisplayTitle(citation), "Ignored title");
   assert.deepEqual(citationRenderEntries(citation), [
-    { style: "chicago", text: "Doe, Jane. Example Source." },
+    { style: "chicago", kind: "bibliography", text: "Doe, Jane. Example Source." },
+    { style: "chicago", kind: "footnote", text: "Jane Doe, Example Source." },
+    { style: "chicago", kind: "quote_attribution", text: "\"Quoted sentence\" (Doe 2024)" },
+    { style: "chicago", kind: "inline", text: "(Doe 2024)" },
   ]);
 });
 

@@ -107,7 +107,9 @@ export function renderContextRail(target, context, state, detail, handlers = {})
     return;
   }
   if (context.mode === "citation_focus" && detail) {
-    target.innerHTML = renderCitationDetail(detail);
+    target.innerHTML = renderCitationDetail(detail, {
+      citationView: handlers.citationViewState?.get?.(detail.id) || {},
+    });
     return;
   }
   if (context.mode === "quote_focus" && detail) {

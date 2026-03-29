@@ -552,9 +552,16 @@ test("signed-in sidepanel loads compact workspace lists, tabs, hover preview, an
     const citationRow = findByAttr(mountedRoot, "data-citation-id", "citation-1");
     assert.ok(citationRow);
     citationRow.dispatchEvent(new FakeEvent("mouseenter", citationRow));
-    assert.equal(collectText(mountedRoot).includes("Selected excerpt"), true);
+    assert.equal(collectText(mountedRoot).includes("Author. (2024). Source Title."), true);
     citationRow.dispatchEvent(new FakeEvent("click", citationRow));
-    assert.equal(clipboard.lastText.includes("Author. (2024). Source Title."), true);
+    const formatSelect = findByAttr(mountedRoot, "data-citation-preview-format", "true");
+    assert.ok(formatSelect);
+    formatSelect.value = "footnote";
+    formatSelect.dispatchEvent(new FakeEvent("change", formatSelect));
+    const copyButton = findByAttr(mountedRoot, "data-citation-preview-copy", "true");
+    assert.ok(copyButton);
+    copyButton.dispatchEvent(new FakeEvent("click", copyButton));
+    assert.equal(clipboard.lastText.includes("Author. Source Title."), true);
 
     const notesTab = findByAttr(mountedRoot, "data-tab", "notes");
     notesTab.dispatchEvent(new FakeEvent("click", notesTab));

@@ -16,6 +16,7 @@ function createDefaultHandlers() {
         sidepanel: {
             listRecentCitations: (request) => createNotImplementedResult(request.type, request.requestId),
             listRecentNotes: (request) => createNotImplementedResult(request.type, request.requestId),
+            updateNote: (request) => createNotImplementedResult(request.type, request.requestId),
             openEditor: (request) => createNotImplementedResult(request.type, request.requestId),
             openDashboard: (request) => createNotImplementedResult(request.type, request.requestId),
         },
@@ -63,6 +64,7 @@ function createRouteTable(handlers) {
         [MESSAGE_NAMES.BOOTSTRAP_FETCH]: handlers.bootstrap.fetch,
         [MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_CITATIONS]: handlers.sidepanel.listRecentCitations,
         [MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_NOTES]: handlers.sidepanel.listRecentNotes,
+        [MESSAGE_NAMES.SIDEPANEL_UPDATE_NOTE]: handlers.sidepanel.updateNote,
         [MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR]: handlers.sidepanel.openEditor,
         [MESSAGE_NAMES.SIDEPANEL_OPEN_DASHBOARD]: handlers.sidepanel.openDashboard,
         [MESSAGE_NAMES.CAPTURE_CREATE_CITATION]: handlers.capture.createCitation,

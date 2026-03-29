@@ -44,6 +44,10 @@ export function createSidepanelListRecentNotesRequest(requestId, payload) {
   return createRequest(MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_NOTES, requestId, payload);
 }
 
+export function createSidepanelUpdateNoteRequest(requestId, payload) {
+  return createRequest(MESSAGE_NAMES.SIDEPANEL_UPDATE_NOTE, requestId, payload);
+}
+
 export function createSidepanelOpenEditorRequest(requestId, surface) {
   return createRequest(MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR, requestId, { surface });
 }

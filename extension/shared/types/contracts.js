@@ -56,6 +56,11 @@ export const MESSAGE_CONTRACTS = Object.freeze({
         payloadShape: "surface:string, limit?:number, offset?:number, query?:string",
         resultShape: "items:Note[]",
     }),
+    [MESSAGE_NAMES.SIDEPANEL_UPDATE_NOTE]: Object.freeze({
+        topic: MESSAGE_TOPICS.SIDEPANEL,
+        payloadShape: "surface:string, noteId:string, title:string, note_body:string",
+        resultShape: "note:Note",
+    }),
     [MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR]: Object.freeze({
         topic: MESSAGE_TOPICS.SIDEPANEL,
         payloadShape: "surface:string",

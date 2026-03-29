@@ -8,6 +8,7 @@ export const MESSAGE_NAMES = Object.freeze({
     BOOTSTRAP_FETCH: "bootstrap.fetch",
     SIDEPANEL_LIST_RECENT_CITATIONS: "sidepanel.list_recent_citations",
     SIDEPANEL_LIST_RECENT_NOTES: "sidepanel.list_recent_notes",
+    SIDEPANEL_UPDATE_NOTE: "sidepanel.update_note",
     SIDEPANEL_OPEN_EDITOR: "sidepanel.open_editor",
     SIDEPANEL_OPEN_DASHBOARD: "sidepanel.open_dashboard",
     CAPTURE_CREATE_CITATION: "capture.create_citation",

@@ -121,118 +121,214 @@ function findByAttr(node, name, value) {
   return null;
 }
 
-test("plain note flow in sidepanel saves through background with active-tab page context", async () => {
-  const documentRef = new FakeDocument();
-  const root = documentRef.createElement("main");
-  const calls = [];
-  const chromeApi = {
-    tabs: {
-      async query() {
-        return [{ title: "Example article", url: "https://example.com/article" }];
-      },
-    },
+function collectText(node) {
+  if (!node) {
+    return "";
+  }
+  return [node.textContent || "", ...(node.children || []).map((child) => collectText(child))].join(" ").replace(/\s+/g, " ").trim();
+}
+
+async function nextTick() {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function createSignedInAuth() {
+  return { status: "signed_in", bootstrap: { profile: { display_name: "Researcher" } } };
+}
+
+function createNote(id, title = "Draft note", body = "Original body") {
+  return {
+    id,
+    title,
+    note_body: body,
+    highlight_text: null,
+    page_url: "https://example.com/article",
+    created_at: "2026-03-20T10:00:00Z",
+    updated_at: "2026-03-20T10:00:00Z",
+    source: { url: "https://example.com/article" },
   };
-  const runtimeClient = {
-    async bootstrapFetch() {
-      return { ok: true, data: { auth: { status: "signed_in", bootstrap: { profile: { display_name: "Researcher" } } } } };
-    },
-    async authStatusGet() {
-      return { ok: true, data: { auth: { status: "signed_in", bootstrap: { profile: { display_name: "Researcher" } } } } };
-    },
-    async authStart() {
-      return { ok: true, data: { auth: { status: "signed_in" } } };
-    },
-    async authLogout() {
-      return { ok: true, data: { auth: { status: "signed_out" } } };
-    },
-    async createNote(payload) {
-      calls.push(payload);
-      return { ok: true, data: { id: "note-1" } };
-    },
-  };
+}
 
-  renderSidepanel(root, {
-    documentRef,
-    chromeApi,
-    runtimeClient,
-    setTimeoutRef(callback) {
-      callback();
-      return 1;
-    },
-    clearTimeoutRef() {},
-  });
-
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  const newNoteTab = findByAttr(root, "data-tab", "new-note");
-  newNoteTab.dispatchEvent(new FakeEvent("click", newNoteTab));
-  const openButton = findByAttr(root, "data-note-open", "true");
-  openButton.dispatchEvent(new FakeEvent("click", openButton));
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  const noteInput = findByAttr(root, "data-note-text", "true");
-  noteInput.value = "Plain note from sidepanel";
-  noteInput.dispatchEvent(new FakeEvent("input", noteInput));
-  const saveButton = findByAttr(root, "data-note-save", "true");
-  saveButton.dispatchEvent(new FakeEvent("click", saveButton));
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].noteText, "Plain note from sidepanel");
-  assert.equal(calls[0].capture.pageTitle, "Example article");
-  assert.equal(calls[0].capture.pageUrl, "https://example.com/article");
-  assert.equal(calls[0].capture.pageDomain, "example.com");
-});
-
-test("sidepanel note failures keep the typed text available for retry", async () => {
+async function setupNotesView({ notes = [createNote("note-1")], updateNote = async () => ({ ok: true, data: { note: notes[0] } }), clipboard = [] } = {}) {
   const documentRef = new FakeDocument();
   const root = documentRef.createElement("main");
   const runtimeClient = {
     async bootstrapFetch() {
-      return { ok: true, data: { auth: { status: "signed_in", bootstrap: { profile: { display_name: "Researcher" } } } } };
+      return { ok: true, data: { auth: createSignedInAuth() } };
     },
     async authStatusGet() {
-      return { ok: true, data: { auth: { status: "signed_in", bootstrap: { profile: { display_name: "Researcher" } } } } };
+      return { ok: true, data: { auth: createSignedInAuth() } };
     },
     async authStart() {
-      return { ok: true, data: { auth: { status: "signed_in" } } };
+      return { ok: true, data: { auth: createSignedInAuth() } };
     },
     async authLogout() {
       return { ok: true, data: { auth: { status: "signed_out" } } };
     },
-    async createNote() {
-      return { ok: false, error: { code: "network_error", message: "Note save failed." } };
+    async listRecentCitations() {
+      return { ok: true, data: { items: [] } };
+    },
+    async listRecentNotes() {
+      return { ok: true, data: { items: notes } };
+    },
+    async updateNote(payload) {
+      return updateNote(payload);
     },
   };
 
   const view = renderSidepanel(root, {
     documentRef,
     chromeApi: {
-      tabs: {
-        async query() {
-          return [];
+      storage: {
+        onChanged: {
+          addListener() {},
+          removeListener() {},
+        },
+      },
+    },
+    navigatorRef: {
+      clipboard: {
+        async writeText(text) {
+          clipboard.push(text);
         },
       },
     },
     runtimeClient,
-    setTimeoutRef() {
-      return 1;
-    },
-    clearTimeoutRef() {},
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  const newNoteTab = findByAttr(root, "data-tab", "new-note");
-  newNoteTab.dispatchEvent(new FakeEvent("click", newNoteTab));
-  const openButton = findByAttr(root, "data-note-open", "true");
-  openButton.dispatchEvent(new FakeEvent("click", openButton));
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  const noteInput = findByAttr(root, "data-note-text", "true");
-  noteInput.value = "Retry me";
-  noteInput.dispatchEvent(new FakeEvent("input", noteInput));
-  const saveButton = findByAttr(root, "data-note-save", "true");
-  saveButton.dispatchEvent(new FakeEvent("click", saveButton));
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await view.refresh();
+  await nextTick();
 
-  assert.equal(view.getState().noteStatus, "error");
-  assert.equal(view.getState().noteText, "Retry me");
-  assert.equal(view.getState().noteError, "Note save failed.");
+  const notesTab = findByAttr(root, "data-tab", "notes");
+  notesTab.dispatchEvent(new FakeEvent("click", notesTab));
+  await nextTick();
+
+  return {
+    root,
+    view,
+    clipboard,
+    getNoteRow(noteId = "note-1") {
+      return findByAttr(root, "data-note-id", noteId);
+    },
+    getPreview() {
+      return findByAttr(root, "data-hover-preview-pane", "true");
+    },
+  };
+}
+
+test("hover preview opens for a note", async () => {
+  const screen = await setupNotesView();
+  const row = screen.getNoteRow();
+  row.dispatchEvent(new FakeEvent("mouseenter", row));
+
+  const preview = screen.getPreview();
+  assert.equal(preview.style.display, "block");
+  assert.match(collectText(preview), /Draft note/);
+  assert.ok(findByAttr(preview, "data-note-preview-copy", "true"));
+  assert.ok(findByAttr(preview, "data-note-preview-edit", "true"));
+});
+
+test("edit mode enters correctly and applies inline editors", async () => {
+  const screen = await setupNotesView();
+  const row = screen.getNoteRow();
+  row.dispatchEvent(new FakeEvent("mouseenter", row));
+
+  const preview = screen.getPreview();
+  const editButton = findByAttr(preview, "data-note-preview-edit", "true");
+  editButton.dispatchEvent(new FakeEvent("click", editButton));
+
+  assert.ok(findByAttr(preview, "data-note-preview-title-input", "true"));
+  assert.ok(findByAttr(preview, "data-note-preview-body-input", "true"));
+  assert.ok(findByAttr(preview, "data-note-preview-save", "true"));
+  assert.ok(findByAttr(preview, "data-note-preview-cancel", "true"));
+  assert.match(String(preview.style.background || ""), /6, 78, 59|linear-gradient/i);
+});
+
+test("save persists through background and refreshes preview plus list", async () => {
+  const updatedNote = createNote("note-1", "Edited title", "Edited body");
+  const updateCalls = [];
+  const screen = await setupNotesView({
+    updateNote: async (payload) => {
+      updateCalls.push(payload);
+      return { ok: true, data: { note: updatedNote } };
+    },
+  });
+
+  const row = screen.getNoteRow();
+  row.dispatchEvent(new FakeEvent("mouseenter", row));
+
+  const preview = screen.getPreview();
+  findByAttr(preview, "data-note-preview-edit", "true").dispatchEvent(new FakeEvent("click", preview));
+
+  const titleInput = findByAttr(preview, "data-note-preview-title-input", "true");
+  const bodyInput = findByAttr(preview, "data-note-preview-body-input", "true");
+  titleInput.value = "Edited title";
+  titleInput.dispatchEvent(new FakeEvent("input", titleInput));
+  bodyInput.value = "Edited body";
+  bodyInput.dispatchEvent(new FakeEvent("input", bodyInput));
+
+  const saveButton = findByAttr(preview, "data-note-preview-save", "true");
+  saveButton.dispatchEvent(new FakeEvent("click", saveButton));
+  await nextTick();
+
+  assert.deepEqual(updateCalls, [{
+    noteId: "note-1",
+    title: "Edited title",
+    note_body: "Edited body",
+  }]);
+  assert.match(collectText(screen.getNoteRow()), /Edited title/);
+  assert.match(collectText(preview), /Edited title/);
+  assert.match(collectText(preview), /Edited body/);
+});
+
+test("cancel discards unsaved local changes", async () => {
+  const screen = await setupNotesView();
+  const row = screen.getNoteRow();
+  row.dispatchEvent(new FakeEvent("mouseenter", row));
+
+  const preview = screen.getPreview();
+  findByAttr(preview, "data-note-preview-edit", "true").dispatchEvent(new FakeEvent("click", preview));
+
+  const titleInput = findByAttr(preview, "data-note-preview-title-input", "true");
+  const bodyInput = findByAttr(preview, "data-note-preview-body-input", "true");
+  titleInput.value = "Changed title";
+  titleInput.dispatchEvent(new FakeEvent("input", titleInput));
+  bodyInput.value = "Changed body";
+  bodyInput.dispatchEvent(new FakeEvent("input", bodyInput));
+
+  const cancelButton = findByAttr(preview, "data-note-preview-cancel", "true");
+  cancelButton.dispatchEvent(new FakeEvent("click", cancelButton));
+
+  assert.match(collectText(preview), /Draft note/);
+  assert.match(collectText(preview), /Original body/);
+  assert.match(collectText(screen.getNoteRow()), /Draft note/);
+  assert.doesNotMatch(collectText(preview), /Changed title/);
+});
+
+test("copy works from preview in read and edit contexts", async () => {
+  const clipboard = [];
+  const screen = await setupNotesView({ clipboard });
+  const row = screen.getNoteRow();
+  row.dispatchEvent(new FakeEvent("mouseenter", row));
+
+  const preview = screen.getPreview();
+  const copyButton = findByAttr(preview, "data-note-preview-copy", "true");
+  copyButton.dispatchEvent(new FakeEvent("click", copyButton));
+  await nextTick();
+
+  findByAttr(preview, "data-note-preview-edit", "true").dispatchEvent(new FakeEvent("click", preview));
+  const titleInput = findByAttr(preview, "data-note-preview-title-input", "true");
+  const bodyInput = findByAttr(preview, "data-note-preview-body-input", "true");
+  titleInput.value = "Copied title";
+  titleInput.dispatchEvent(new FakeEvent("input", titleInput));
+  bodyInput.value = "Copied body";
+  bodyInput.dispatchEvent(new FakeEvent("input", bodyInput));
+
+  findByAttr(preview, "data-note-preview-copy", "true").dispatchEvent(new FakeEvent("click", preview));
+  await nextTick();
+
+  assert.deepEqual(clipboard, [
+    "Draft note\n\nOriginal body",
+    "Copied title\n\nCopied body",
+  ]);
 });

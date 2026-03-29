@@ -3,8 +3,8 @@ import { resolveCanonicalDestinationUrl } from "../navigation/app_urls.ts";
 
 export function createSidepanelHandler(options: any = {}) {
   const { apiClient, stateStore, tabOpener } = options;
-  if (!apiClient?.listCitations || !apiClient?.listNotes) {
-    throw new Error("createSidepanelHandler requires listCitations and listNotes support.");
+  if (!apiClient?.listCitations || !apiClient?.listNotes || !apiClient?.updateNote) {
+    throw new Error("createSidepanelHandler requires listCitations, listNotes, and updateNote support.");
   }
   if (!stateStore) {
     throw new Error("createSidepanelHandler requires a stateStore.");
@@ -32,6 +32,16 @@ export function createSidepanelHandler(options: any = {}) {
       }
       return createOkResult({
         items: Array.isArray(result.data) ? result.data : result.data?.items || [],
+      }, request?.requestId);
+    },
+    async updateNote(request) {
+      const payload = request?.payload || {};
+      const result = await apiClient.updateNote(payload);
+      if (result?.ok === false) {
+        return result;
+      }
+      return createOkResult({
+        note: result.data,
       }, request?.requestId);
     },
     async openEditor(request) {

@@ -79,6 +79,23 @@ function validateListPayload(payload) {
   return null;
 }
 
+function validateSidepanelUpdateNotePayload(payload) {
+  const surfaceError = validateSurface(payload);
+  if (surfaceError) {
+    return surfaceError;
+  }
+  if (!isNonEmptyString(payload.noteId)) {
+    return "payload.noteId must be a non-empty string.";
+  }
+  if (!isNonEmptyString(payload.title)) {
+    return "payload.title must be a non-empty string.";
+  }
+  if (!isNonEmptyString(payload.note_body)) {
+    return "payload.note_body must be a non-empty string.";
+  }
+  return null;
+}
+
 function validateCaptureEntityPayload(payload, contentField) {
   const surfaceError = validateSurface(payload);
   if (surfaceError) {
@@ -193,6 +210,7 @@ export const REQUEST_PAYLOAD_VALIDATORS = Object.freeze({
   [MESSAGE_NAMES.BOOTSTRAP_FETCH]: validateStatusPayload,
   [MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_CITATIONS]: validateListPayload,
   [MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_NOTES]: validateListPayload,
+  [MESSAGE_NAMES.SIDEPANEL_UPDATE_NOTE]: validateSidepanelUpdateNotePayload,
   [MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR]: validateStatusPayload,
   [MESSAGE_NAMES.SIDEPANEL_OPEN_DASHBOARD]: validateStatusPayload,
   [MESSAGE_NAMES.CAPTURE_CREATE_CITATION]: (payload) => validateCaptureEntityPayload(payload, "selectionText"),

@@ -171,5 +171,14 @@ export function createApiClient({ baseUrl = API_ORIGIN, fetchImpl = globalThis.f
                 label: "Notes list response",
             });
         },
+        updateNote({ noteId, ...payload }) {
+            return request(`${ENDPOINTS.NOTES}/${encodeURIComponent(String(noteId || ""))}`, {
+                method: "PATCH",
+                body: payload,
+                auth: true,
+                fallbackCode: ERROR_CODES.NETWORK_ERROR,
+                label: "Note update response",
+            });
+        },
     };
 }

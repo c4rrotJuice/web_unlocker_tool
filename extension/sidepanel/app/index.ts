@@ -2,6 +2,7 @@ import { STORAGE_KEYS } from "../../shared/constants/storage_keys.ts";
 import { normalizeCapabilitySurface } from "../../shared/types/capability_surface.ts";
 import { createSidepanelClient } from "../messaging/client.ts";
 import { createNewNoteView } from "../new_note_view.ts";
+import { summarizeNote } from "../components/list_rows.ts";
 import {
   createActionButtonRow,
   createCitationListRow,
@@ -49,6 +50,16 @@ function describePageContext(pageContext) {
 
 function normalizeText(value: any) {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function trimText(value: any) {
+  return String(value || "").trim();
+}
+
+function getNoteCopyText(note: any = {}, draft = undefined) {
+  const title = trimText(draft?.title ?? note?.title ?? "");
+  const body = String(draft?.note_body ?? note?.note_body ?? "").trim();
+  return [title, body].filter(Boolean).join("\n\n");
 }
 
 function createShellStyles(documentRef) {
@@ -174,6 +185,17 @@ export function createSidepanelShell(options: any = {}) {
 
   const host = typeof root.attachShadow === "function" ? root.attachShadow({ mode: "open" }) : root;
   const stateStore = createSidepanelStateStore();
+  const notePreviewState = {
+    noteId: null,
+    mode: "closed",
+    locked: false,
+    draftTitle: "",
+    draftBody: "",
+    error: "",
+    saving: false,
+    top: 8,
+    pendingFocusAttr: "",
+  };
 
   const shell = documentRef.createElement("section");
   shell.className = "writior-sidepanel-shell";
@@ -411,6 +433,314 @@ export function createSidepanelShell(options: any = {}) {
     row.addEventListener("focusout", () => listPane.preview.hide(120));
   }
 
+  function getNotesItems() {
+    const notesTab = stateStore.getState().tabs?.[SIDEPANEL_TABS.NOTES];
+    return Array.isArray(notesTab?.items) ? notesTab.items : [];
+  }
+
+  function getNoteById(noteId) {
+    return getNotesItems().find((item) => item?.id === noteId) || null;
+  }
+
+  function findByAttribute(node, name, value) {
+    if (!node) {
+      return null;
+    }
+    if (typeof node.getAttribute === "function" && node.getAttribute(name) === value) {
+      return node;
+    }
+    for (const child of node.children || []) {
+      const match = findByAttribute(child, name, value);
+      if (match) {
+        return match;
+      }
+    }
+    return null;
+  }
+
+  async function copyNotePreview(note, draft = undefined) {
+    try {
+      await navigatorRef?.clipboard?.writeText?.(getNoteCopyText(note, draft));
+      stateStore.setNotice({ tone: "info", message: "Note copied." });
+    } catch (error) {
+      stateStore.setNotice({ tone: "error", message: error?.message || "Copy failed." });
+    }
+    render();
+  }
+
+  function hideNotePreview(force = false) {
+    if (force) {
+      notePreviewState.noteId = null;
+      notePreviewState.mode = "closed";
+      notePreviewState.locked = false;
+      notePreviewState.error = "";
+      notePreviewState.saving = false;
+      notePreviewState.pendingFocusAttr = "";
+      listPane.preview.clear(true);
+      return;
+    }
+    if (notePreviewState.mode === "edit" || notePreviewState.saving || notePreviewState.locked) {
+      return;
+    }
+    listPane.preview.hide(120);
+  }
+
+  function renderNotePreview() {
+    const note = getNoteById(notePreviewState.noteId);
+    if (!note || stateStore.getState().active_tab !== SIDEPANEL_TABS.NOTES) {
+      hideNotePreview(true);
+      return;
+    }
+
+    const inEditMode = notePreviewState.mode === "edit";
+    const draft = {
+      title: notePreviewState.draftTitle,
+      note_body: notePreviewState.draftBody,
+    };
+    const summary = summarizeNote(note);
+    const container = documentRef.createElement("div");
+    container.style.display = "grid";
+    container.style.gap = "10px";
+
+    const title = documentRef.createElement("div");
+    title.style.fontSize = "14px";
+    title.style.fontWeight = "700";
+    title.style.lineHeight = "1.35";
+    title.style.color = "#f8fafc";
+
+    const meta = documentRef.createElement("div");
+    meta.style.fontSize = "11px";
+    meta.style.lineHeight = "1.4";
+    meta.style.color = inEditMode ? "#bbf7d0" : "#94a3b8";
+    meta.textContent = summary.meta || "";
+
+    const message = documentRef.createElement("div");
+    message.style.fontSize = "11px";
+    message.style.lineHeight = "1.4";
+    message.style.color = inEditMode ? "#86efac" : "#cbd5e1";
+    message.textContent = inEditMode
+      ? (notePreviewState.error || (notePreviewState.saving ? "Saving note..." : "Edit mode is locked to this preview."))
+      : "";
+
+    const controls = documentRef.createElement("div");
+    controls.style.display = "flex";
+    controls.style.flexWrap = "wrap";
+    controls.style.gap = "8px";
+
+    function createActionButton(label, attrs = {}) {
+      const button = documentRef.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      Object.entries(attrs).forEach(([name, value]) => button.setAttribute(name, String(value)));
+      button.style.padding = "7px 10px";
+      button.style.borderRadius = "999px";
+      button.style.border = inEditMode
+        ? "1px solid rgba(134, 239, 172, 0.32)"
+        : "1px solid rgba(148, 163, 184, 0.22)";
+      button.style.background = inEditMode ? "rgba(240, 253, 244, 0.14)" : "rgba(15, 23, 42, 0.64)";
+      button.style.color = "#f8fafc";
+      return button;
+    }
+
+    async function saveNotePreviewEdits() {
+      const currentNote = getNoteById(notePreviewState.noteId);
+      if (!currentNote) {
+        hideNotePreview(true);
+        return;
+      }
+      const titleValue = trimText(notePreviewState.draftTitle);
+      const bodyValue = trimText(notePreviewState.draftBody);
+      if (!titleValue || !bodyValue) {
+        notePreviewState.error = "Title and note body are required.";
+        notePreviewState.saving = false;
+        renderNotePreview();
+        return;
+      }
+      notePreviewState.error = "";
+      notePreviewState.saving = true;
+      renderNotePreview();
+      const result = await client.updateNote?.({
+        noteId: currentNote.id,
+        title: titleValue,
+        note_body: bodyValue,
+      });
+      if (!result?.ok) {
+        notePreviewState.saving = false;
+        notePreviewState.error = result?.error?.message || "Note update failed.";
+        renderNotePreview();
+        return;
+      }
+      const savedNote = result.data?.note || currentNote;
+      const nextItems = getNotesItems().map((item) => item?.id === savedNote?.id ? savedNote : item);
+      stateStore.updateTab(SIDEPANEL_TABS.NOTES, {
+        status: TAB_LOAD_STATUS.READY,
+        items: nextItems,
+        message: "",
+      });
+      notePreviewState.mode = "read";
+      notePreviewState.locked = false;
+      notePreviewState.saving = false;
+      notePreviewState.error = "";
+      notePreviewState.draftTitle = savedNote?.title || "";
+      notePreviewState.draftBody = savedNote?.note_body || "";
+      stateStore.setNotice({ tone: "info", message: "Note saved." });
+      render();
+      renderNotePreview();
+    }
+
+    function cancelNotePreviewEdits() {
+      notePreviewState.mode = "read";
+      notePreviewState.locked = false;
+      notePreviewState.saving = false;
+      notePreviewState.error = "";
+      notePreviewState.draftTitle = note?.title || "";
+      notePreviewState.draftBody = note?.note_body || "";
+      renderNotePreview();
+    }
+
+    function handleEditorHotkeys(event) {
+      if (event.key === "Escape") {
+        event.preventDefault?.();
+        cancelNotePreviewEdits();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault?.();
+        void saveNotePreviewEdits();
+      }
+    }
+
+    if (inEditMode) {
+      title.textContent = "Editing note";
+
+      const titleInput = documentRef.createElement("input");
+      titleInput.type = "text";
+      titleInput.value = notePreviewState.draftTitle;
+      titleInput.setAttribute("data-note-preview-title-input", "true");
+      titleInput.style.width = "100%";
+      titleInput.style.padding = "9px 10px";
+      titleInput.style.borderRadius = "10px";
+      titleInput.style.border = "1px solid rgba(134, 239, 172, 0.3)";
+      titleInput.style.background = "rgba(240, 253, 244, 0.12)";
+      titleInput.style.color = "#f0fdf4";
+      titleInput.addEventListener("input", () => {
+        notePreviewState.draftTitle = titleInput.value;
+        if (notePreviewState.error) {
+          notePreviewState.error = "";
+          renderNotePreview();
+        }
+      });
+      titleInput.addEventListener("keydown", handleEditorHotkeys);
+
+      const bodyInput = documentRef.createElement("textarea");
+      bodyInput.value = notePreviewState.draftBody;
+      bodyInput.setAttribute("data-note-preview-body-input", "true");
+      bodyInput.style.width = "100%";
+      bodyInput.style.minHeight = "160px";
+      bodyInput.style.padding = "10px";
+      bodyInput.style.borderRadius = "12px";
+      bodyInput.style.border = "1px solid rgba(134, 239, 172, 0.3)";
+      bodyInput.style.background = "rgba(240, 253, 244, 0.12)";
+      bodyInput.style.color = "#f0fdf4";
+      bodyInput.style.resize = "vertical";
+      bodyInput.style.whiteSpace = "pre-wrap";
+      bodyInput.addEventListener("input", () => {
+        notePreviewState.draftBody = bodyInput.value;
+        if (notePreviewState.error) {
+          notePreviewState.error = "";
+          renderNotePreview();
+        }
+      });
+      bodyInput.addEventListener("keydown", handleEditorHotkeys);
+
+      const copy = createActionButton("Copy", { "data-note-preview-copy": "true" });
+      copy.disabled = notePreviewState.saving;
+      copy.addEventListener("click", () => {
+        void copyNotePreview(note, {
+          title: notePreviewState.draftTitle,
+          note_body: notePreviewState.draftBody,
+        });
+      });
+
+      const save = createActionButton("Save", { "data-note-preview-save": "true" });
+      save.disabled = notePreviewState.saving;
+      save.addEventListener("click", () => {
+        void saveNotePreviewEdits();
+      });
+
+      const cancel = createActionButton("Cancel", { "data-note-preview-cancel": "true" });
+      cancel.disabled = notePreviewState.saving;
+      cancel.addEventListener("click", () => {
+        cancelNotePreviewEdits();
+      });
+
+      controls.append(copy, save, cancel);
+      container.append(title, meta, message, titleInput, bodyInput, controls);
+    } else {
+      title.textContent = summary.title || "Untitled note";
+
+      const body = documentRef.createElement("div");
+      body.style.fontSize = "12px";
+      body.style.lineHeight = "1.5";
+      body.style.color = "#cbd5e1";
+      body.style.whiteSpace = "pre-wrap";
+      body.style.wordBreak = "break-word";
+      body.style.overflowWrap = "anywhere";
+      body.textContent = note.note_body || note.highlight_text || "Note preview unavailable.";
+
+      const copy = createActionButton("Copy", { "data-note-preview-copy": "true" });
+      copy.addEventListener("click", () => {
+        void copyNotePreview(note);
+      });
+
+      const edit = createActionButton("Edit", { "data-note-preview-edit": "true" });
+      edit.addEventListener("click", () => {
+        notePreviewState.mode = "edit";
+        notePreviewState.locked = true;
+        notePreviewState.saving = false;
+        notePreviewState.error = "";
+        notePreviewState.draftTitle = note.title || "";
+        notePreviewState.draftBody = note.note_body || "";
+        notePreviewState.pendingFocusAttr = "data-note-preview-title-input";
+        renderNotePreview();
+      });
+
+      controls.append(copy, edit);
+      container.append(title, meta, body, controls);
+    }
+
+    listPane.preview.mount(container, {
+      top: notePreviewState.top,
+      pinned: inEditMode || notePreviewState.saving || notePreviewState.locked,
+      tone: inEditMode ? "edit" : "default",
+    });
+    if (notePreviewState.pendingFocusAttr) {
+      const focusTarget = findByAttribute(container, notePreviewState.pendingFocusAttr, "true");
+      notePreviewState.pendingFocusAttr = "";
+      focusTarget?.focus?.();
+    }
+  }
+
+  function showNotePreview(note, index, options: any = {}) {
+    if (!note?.id) {
+      return;
+    }
+    if ((notePreviewState.mode === "edit" || notePreviewState.saving) && notePreviewState.noteId !== note.id && !options.force) {
+      return;
+    }
+    notePreviewState.noteId = note.id;
+    notePreviewState.top = 12 + (index * 56);
+    notePreviewState.locked = Boolean(options.locked);
+    if (notePreviewState.mode !== "edit") {
+      notePreviewState.mode = "read";
+      notePreviewState.error = "";
+      notePreviewState.saving = false;
+      notePreviewState.draftTitle = note.title || "";
+      notePreviewState.draftBody = note.note_body || "";
+    }
+    renderNotePreview();
+  }
+
   function buildCitationRows(items = []) {
     return items.map((citation, index) => {
       const entry = createCitationListRow({ documentRef, citation });
@@ -438,16 +768,18 @@ export function createSidepanelShell(options: any = {}) {
   function buildNoteRows(items = []) {
     return items.map((note, index) => {
       const entry = createNoteListRow({ documentRef, note });
-      bindPreview(entry.root, entry.summary, index);
-      entry.root.addEventListener("click", async (event: any) => {
-        event.preventDefault?.();
-        try {
-          await navigatorRef?.clipboard?.writeText?.(entry.summary.body || "");
-          stateStore.setNotice({ tone: "info", message: "Note copied." });
-        } catch (error) {
-          stateStore.setNotice({ tone: "error", message: error?.message || "Copy failed." });
+      const show = () => showNotePreview(note, index);
+      entry.root.addEventListener("mouseenter", show);
+      entry.root.addEventListener("focusin", show);
+      entry.root.addEventListener("mouseleave", () => hideNotePreview());
+      entry.root.addEventListener("focusout", () => hideNotePreview());
+      entry.root.addEventListener("keydown", (event: any) => {
+        if (event.key !== "Enter" && event.key !== " ") {
+          return;
         }
-        render();
+        event.preventDefault?.();
+        notePreviewState.pendingFocusAttr = "data-note-preview-copy";
+        showNotePreview(note, index, { force: true, locked: true });
       });
       return entry.root;
     });
@@ -474,6 +806,9 @@ export function createSidepanelShell(options: any = {}) {
   }
 
   function renderListTab(tabKey) {
+    if (tabKey !== SIDEPANEL_TABS.NOTES) {
+      hideNotePreview(true);
+    }
     const state = stateStore.getState();
     const tabState = state.tabs?.[tabKey] || { status: TAB_LOAD_STATUS.IDLE, items: [], message: "" };
     if (tabState.status === TAB_LOAD_STATUS.LOADING) {

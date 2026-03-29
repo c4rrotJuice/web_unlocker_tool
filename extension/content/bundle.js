@@ -14,6 +14,7 @@ exports.MESSAGE_NAMES = Object.freeze({
     BOOTSTRAP_FETCH: "bootstrap.fetch",
     SIDEPANEL_LIST_RECENT_CITATIONS: "sidepanel.list_recent_citations",
     SIDEPANEL_LIST_RECENT_NOTES: "sidepanel.list_recent_notes",
+    SIDEPANEL_UPDATE_NOTE: "sidepanel.update_note",
     SIDEPANEL_OPEN_EDITOR: "sidepanel.open_editor",
     SIDEPANEL_OPEN_DASHBOARD: "sidepanel.open_dashboard",
     CAPTURE_CREATE_CITATION: "capture.create_citation",
@@ -87,6 +88,11 @@ exports.MESSAGE_CONTRACTS = Object.freeze({
         payloadShape: "surface:string, limit?:number, offset?:number, query?:string",
         resultShape: "items:Note[]",
     }),
+    [message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_UPDATE_NOTE]: Object.freeze({
+        topic: exports.MESSAGE_TOPICS.SIDEPANEL,
+        payloadShape: "surface:string, noteId:string, title:string, note_body:string",
+        resultShape: "note:Note",
+    }),
     [message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR]: Object.freeze({
         topic: exports.MESSAGE_TOPICS.SIDEPANEL,
         payloadShape: "surface:string",
@@ -147,6 +153,7 @@ exports.createAuthLogoutRequest = createAuthLogoutRequest;
 exports.createBootstrapFetchRequest = createBootstrapFetchRequest;
 exports.createSidepanelListRecentCitationsRequest = createSidepanelListRecentCitationsRequest;
 exports.createSidepanelListRecentNotesRequest = createSidepanelListRecentNotesRequest;
+exports.createSidepanelUpdateNoteRequest = createSidepanelUpdateNoteRequest;
 exports.createSidepanelOpenEditorRequest = createSidepanelOpenEditorRequest;
 exports.createSidepanelOpenDashboardRequest = createSidepanelOpenDashboardRequest;
 exports.createCaptureCreateCitationRequest = createCaptureCreateCitationRequest;
@@ -192,6 +199,9 @@ function createSidepanelListRecentCitationsRequest(requestId, payload) {
 }
 function createSidepanelListRecentNotesRequest(requestId, payload) {
     return createRequest(message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_NOTES, requestId, payload);
+}
+function createSidepanelUpdateNoteRequest(requestId, payload) {
+    return createRequest(message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_UPDATE_NOTE, requestId, payload);
 }
 function createSidepanelOpenEditorRequest(requestId, surface) {
     return createRequest(message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR, requestId, { surface });
@@ -710,6 +720,22 @@ function validateListPayload(payload) {
     }
     return null;
 }
+function validateSidepanelUpdateNotePayload(payload) {
+    const surfaceError = validateSurface(payload);
+    if (surfaceError) {
+        return surfaceError;
+    }
+    if (!isNonEmptyString(payload.noteId)) {
+        return "payload.noteId must be a non-empty string.";
+    }
+    if (!isNonEmptyString(payload.title)) {
+        return "payload.title must be a non-empty string.";
+    }
+    if (!isNonEmptyString(payload.note_body)) {
+        return "payload.note_body must be a non-empty string.";
+    }
+    return null;
+}
 function validateCaptureEntityPayload(payload, contentField) {
     const surfaceError = validateSurface(payload);
     if (surfaceError) {
@@ -818,6 +844,7 @@ exports.REQUEST_PAYLOAD_VALIDATORS = Object.freeze({
     [message_names_ts_1.MESSAGE_NAMES.BOOTSTRAP_FETCH]: validateStatusPayload,
     [message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_CITATIONS]: validateListPayload,
     [message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_LIST_RECENT_NOTES]: validateListPayload,
+    [message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_UPDATE_NOTE]: validateSidepanelUpdateNotePayload,
     [message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_OPEN_EDITOR]: validateStatusPayload,
     [message_names_ts_1.MESSAGE_NAMES.SIDEPANEL_OPEN_DASHBOARD]: validateStatusPayload,
     [message_names_ts_1.MESSAGE_NAMES.CAPTURE_CREATE_CITATION]: (payload) => validateCaptureEntityPayload(payload, "selectionText"),
@@ -1119,6 +1146,13 @@ function createRuntimeClient(chromeApi, surface) {
                 offset,
                 query,
             })));
+        },
+        updateNote(payload) {
+            const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-update-note`);
+            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createSidepanelUpdateNoteRequest)(requestId, {
+                surface,
+                ...payload,
+            }));
         },
         openEditor() {
             const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-open-editor`);

@@ -6,6 +6,7 @@ import {
   createBootstrapFetchRequest,
   createSidepanelListRecentCitationsRequest,
   createSidepanelListRecentNotesRequest,
+  createSidepanelUpdateNoteRequest,
   createSidepanelOpenDashboardRequest,
   createSidepanelOpenEditorRequest,
   createCaptureCreateCitationRequest,
@@ -79,6 +80,13 @@ export function createRuntimeClient(chromeApi, surface) {
         offset,
         query,
       })));
+    },
+    updateNote(payload) {
+      const requestId = createRequestId(`${surface}-update-note`);
+      return sendRuntimeMessage(chromeApi, createSidepanelUpdateNoteRequest(requestId, {
+        surface,
+        ...payload,
+      }));
     },
     openEditor() {
       const requestId = createRequestId(`${surface}-open-editor`);

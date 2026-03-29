@@ -187,7 +187,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     eventBus,
     stores,
   });
-  createLinkActions();
+  const linkActions = createLinkActions({ workspaceState, attachActions, feedback });
   createConvertActions();
   const documentController = createDocumentController({
     workspaceState,
@@ -369,6 +369,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       renderContextRail(refs.contextRail, context, state, null, {
         selectionText: () => selectionState.getState().text,
         citationViewState,
+        linkActions,
       });
       return;
     }
@@ -382,11 +383,13 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       renderContextRail(refs.contextRail, context, state, detail, {
         selectionText: () => selectionState.getState().text,
         citationViewState,
+        linkActions,
       });
     }).catch(() => {
       renderContextRail(refs.contextRail, context, workspaceState.getState(), null, {
         selectionText: () => selectionState.getState().text,
         citationViewState,
+        linkActions,
       });
     });
   }
@@ -473,6 +476,30 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
         return;
       }
       const action = event.target.closest("[data-context-action]");
+      const relatedEntity = event.target.closest("[data-related-entity-id]");
+      if (relatedEntity) {
+        workspaceState.setPendingExplorerAction(null);
+        workspaceState.setFocusedEntity({
+          type: relatedEntity.dataset.relatedEntityType,
+          id: relatedEntity.dataset.relatedEntityId,
+        });
+        eventBus.emit("focus:changed", {
+          type: relatedEntity.dataset.relatedEntityType,
+          id: relatedEntity.dataset.relatedEntityId,
+        });
+        return;
+      }
+      const relatedDocument = event.target.closest("[data-related-document-id]");
+      if (relatedDocument) {
+        const documentId = relatedDocument.dataset.relatedDocumentId || "";
+        if (documentId && documentId !== workspaceState.getState().active_document_id) {
+          await documentController.openDocument(documentId, { seed: null }).then(() => {
+            void checkpointController.refresh();
+            outlineController.compute();
+          });
+        }
+        return;
+      }
       if (!action) return;
       const state = workspaceState.getState();
       if (action.dataset.contextAction === "insert-seed-quote" && state.seed_state?.quote_id) {
@@ -509,6 +536,9 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       if (action.dataset.contextAction === "create-note-from-seed" && state.seed_state?.quote_id) {
         const quote = await stores.quotes.get(state.seed_state.quote_id);
         await noteActions.createNoteFromQuote(quote, state.seed_state);
+      }
+      if (action.dataset.contextAction === "attach-note-to-document" && action.dataset.noteId) {
+        await linkActions.attachNoteToCurrentDocument(action.dataset.noteId);
       }
       if (action.dataset.contextAction === "start-outline") {
         quillAdapter.focus();

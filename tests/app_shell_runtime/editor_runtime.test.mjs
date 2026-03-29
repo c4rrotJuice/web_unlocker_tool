@@ -15,12 +15,14 @@ import { createDocumentController } from "../../app/static/js/editor_v2/document
 import { createAutosaveController } from "../../app/static/js/editor_v2/document/autosave_controller.js";
 import { composeEditorDelta, normalizeEditorDelta, sanitizeEditorHtml } from "../../app/static/js/editor_v2/ui/quill_adapter.js";
 import { createAttachActions } from "../../app/static/js/editor_v2/actions/attach_actions.js";
+import { createLinkActions } from "../../app/static/js/editor_v2/actions/link_actions.js";
 import { renderContextRail } from "../../app/static/js/editor_v2/ui/context_rail_renderer.js";
 import { createExplorerController } from "../../app/static/js/editor_v2/research/explorer_controller.js";
 import { createCheckpointController } from "../../app/static/js/editor_v2/document/checkpoint_controller.js";
 import { createNoteActions } from "../../app/static/js/editor_v2/actions/note_actions.js";
 import { renderExplorerList } from "../../app/static/js/editor_v2/ui/explorer_renderer.js";
 import { createAuthSessionError, createAuthSessionErrorFromPayload, isAuthSessionError } from "../../app/static/js/shared/auth/session.js";
+import { FEEDBACK_EVENTS } from "../../app/static/js/shared/feedback/feedback_tokens.js";
 import { initSidebarShell } from "../../app/static/js/app_shell/core/sidebar.js";
 import { citationDisplayTitle, citationPrimaryText, citationRenderEntries } from "../../app/static/js/shared/citation_contract.js";
 
@@ -1587,6 +1589,161 @@ test("session loss renders a recoverable editor state instead of a generic timeo
   assert.match(target.innerHTML, /Session lost/);
   assert.match(target.innerHTML, /Sign in again/);
   assert.match(target.innerHTML, /Unsaved work stays in the editor/i);
+});
+
+test("note context rail exposes explicit document attach controls for canonical note-document links", () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft chapter",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft chapter\n" }] },
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  const linkActions = createLinkActions({
+    workspaceState,
+    attachActions: { async attachNote() {} },
+  });
+  const target = makeElement();
+
+  renderContextRail(target, { mode: "note_focus" }, workspaceState.getState(), {
+    id: "note-1",
+    title: "Claim note",
+    note_body: "Evidence summary",
+    linked_note_ids: ["note-2"],
+    tags: [],
+    sources: [],
+  }, { linkActions });
+
+  assert.match(target.innerHTML, /Document attachment/);
+  assert.match(target.innerHTML, /Attach to current document/);
+  assert.match(target.innerHTML, /Linked documents/);
+  assert.match(target.innerHTML, /Draft chapter/);
+  assert.match(target.innerHTML, /Linked note ids/);
+});
+
+test("note context rail reflects attached document links immediately after save", async () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft chapter",
+    revision: "rev-1",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft chapter\n" }] },
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  const linkActions = createLinkActions({
+    workspaceState,
+    attachActions: {
+      async attachNote() {
+        workspaceState.markSavedFromServer({
+          id: "doc-1",
+          title: "Draft chapter",
+          revision: "rev-2",
+          project_id: null,
+          content_delta: { ops: [{ insert: "Draft chapter\n" }] },
+          attached_citation_ids: [],
+          attached_note_ids: ["note-1"],
+          tag_ids: [],
+        });
+      },
+    },
+  });
+
+  await linkActions.attachNoteToCurrentDocument("note-1");
+
+  const target = makeElement();
+  renderContextRail(target, { mode: "note_focus" }, workspaceState.getState(), {
+    id: "note-1",
+    title: "Claim note",
+    note_body: "Evidence summary",
+    linked_note_ids: [],
+    tags: [],
+    sources: [],
+  }, { linkActions });
+
+  assert.match(target.innerHTML, /Attached to current document/);
+  assert.match(target.innerHTML, /data-related-document-id="doc-1"/);
+});
+
+test("unsupported link types are not exposed from citation detail panels", () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft chapter",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft chapter\n" }] },
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  const target = makeElement();
+
+  renderContextRail(target, { mode: "citation_focus" }, workspaceState.getState(), {
+    id: "citation-1",
+    source: { id: "source-1", title: "Source title", hostname: "example.test" },
+    renders: { mla: { bibliography: "Source title" } },
+    primary_render: { style: "mla", kind: "bibliography", text: "Source title" },
+  }, {
+    linkActions: createLinkActions({
+      workspaceState,
+      attachActions: { async attachNote() {} },
+    }),
+    citationViewState: new Map(),
+  });
+
+  assert.doesNotMatch(target.innerHTML, /attach-note-to-document/);
+  assert.doesNotMatch(target.innerHTML, /Document attachment/);
+});
+
+test("cross-user note attach rejections are surfaced as permission errors without mutating document links", async () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft chapter",
+    revision: "rev-1",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft chapter\n" }] },
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  const feedbackEvents = [];
+  const linkActions = createLinkActions({
+    workspaceState,
+    attachActions: {
+      async attachNote() {
+        const error = new Error("You cannot attach that note to this document.");
+        error.status = 403;
+        throw error;
+      },
+    },
+    feedback: {
+      emitDomainEvent(name, payload) {
+        feedbackEvents.push({ name, payload });
+      },
+    },
+  });
+
+  const result = await linkActions.attachNoteToCurrentDocument("note-9");
+
+  assert.equal(result, null);
+  assert.deepEqual(workspaceState.getState().attached_relation_ids.notes, []);
+  assert.deepEqual(feedbackEvents, [{
+    name: FEEDBACK_EVENTS.PERMISSION_DENIED,
+    payload: {
+      message: "You cannot attach that note to this document.",
+      dedupeKey: "note-attach-permission-denied",
+    },
+  }]);
 });
 
 test("structured auth error payloads preserve a readable message instead of object stringification", () => {

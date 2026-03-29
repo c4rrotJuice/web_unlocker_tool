@@ -117,7 +117,7 @@ export function renderContextRail(target, context, state, detail, handlers = {})
     return;
   }
   if (context.mode === "note_focus" && detail) {
-    target.innerHTML = renderNoteDetail(detail);
+    target.innerHTML = renderNoteDetail(detail, handlers.linkActions?.getNoteDetailOptions?.(detail) || {});
     return;
   }
   if (context.mode === "source_focus" && detail) {

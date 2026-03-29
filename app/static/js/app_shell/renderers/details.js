@@ -108,7 +108,12 @@ export function renderQuoteDetail(quote) {
   `;
 }
 
-export function renderNoteDetail(note) {
+export function renderNoteDetail(note, options = {}) {
+  const linkedDocuments = dedupeRows(options.documents || []);
+  const attachAction = options.attachAction || null;
+  const linkedCitationIds = note?.citation_id ? [escapeHtml(String(note.citation_id))] : [];
+  const linkedQuoteIds = note?.quote_id ? [escapeHtml(String(note.quote_id))] : [];
+  const linkedNoteIds = (note?.linked_note_ids || []).map((id) => escapeHtml(String(id)));
   return `
     <section class="detail-section">
       <h3>${escapeHtml(note.title || "Untitled note")}</h3>
@@ -118,6 +123,26 @@ export function renderNoteDetail(note) {
         <span class="meta-pill">${escapeHtml(formatDateTime(note.updated_at || note.created_at))}</span>
       </div>
     </section>
+    ${attachAction ? `
+      <section class="detail-section">
+        <p class="section-kicker">Document attachment</p>
+        <p class="surface-note">Insert places note markers in the draft. Attach keeps this note linked to the current document.</p>
+        <div class="detail-chip-row">
+          <span class="meta-pill">${escapeHtml(attachAction.documentTitle || "Current document")}</span>
+        </div>
+        <button
+          type="button"
+          class="app-button-secondary"
+          data-context-action="attach-note-to-document"
+          data-note-id="${escapeHtml(note.id || "")}"
+          ${attachAction.attached ? "disabled" : ""}
+        >${escapeHtml(attachAction.label || "Attach to current document")}</button>
+      </section>
+    ` : ""}
+    ${renderEntitySection("Linked documents", "document", linkedDocuments, "This note is not attached to the current document.")}
+    ${detailList("Linked citation ids", linkedCitationIds, "No linked citation.")}
+    ${detailList("Linked quote ids", linkedQuoteIds, "No linked quote.")}
+    ${detailList("Linked note ids", linkedNoteIds, "No linked notes yet.")}
     ${detailList("Evidence", (note.sources || []).map((source) => escapeHtml(source.title || source.url || source.hostname || "Source")), "No attached evidence yet.")}
     ${detailList("Tags", (note.tags || []).map((tag) => escapeHtml(tag.name || "")), "No tags on this note.")}
   `;

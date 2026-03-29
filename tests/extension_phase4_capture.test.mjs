@@ -1000,3 +1000,65 @@ test("quick note save failures preserve entered text and surface an error state"
   assert.equal(selectionRuntime.quickNotePanel.getState().noteText, "Keep this note text");
   assert.match(selectionRuntime.quickNotePanel.getState().errorMessage, /Save failed upstream/);
 });
+
+test("quick note panel stays open while interacting with its textarea", async () => {
+  const { documentRef, windowRef } = installEnvironment();
+  const timers = createTimerHarness();
+  const chromeApi = createChromeStub(async (message) => {
+    if (message?.type === MESSAGE_NAMES.AUTH_STATUS_GET) {
+      return {
+        ok: true,
+        status: "ok",
+        data: {
+          auth: {
+            authenticated: true,
+            bootstrap: {
+              capabilities: {
+                citation_styles: ["apa"],
+              },
+            },
+          },
+        },
+      };
+    }
+    if (message?.type === MESSAGE_NAMES.CAPTURE_CREATE_NOTE) {
+      return {
+        ok: true,
+        status: "ok",
+        data: {
+          note: {
+            id: "note-1",
+          },
+        },
+      };
+    }
+    return { ok: false, status: "error", error: { code: "unsupported" } };
+  });
+  const selectionRuntime = createSelectionRuntime({
+    documentRef,
+    windowRef,
+    MutationObserverRef: FakeMutationObserver,
+    setTimeoutRef: timers.setTimeoutRef,
+    clearTimeoutRef: timers.clearTimeoutRef,
+    chromeApi,
+  });
+
+  setSelection(documentRef, "Capture this citation text");
+  selectionRuntime.bootstrap();
+  timers.flush();
+
+  const menuRoot = selectionRuntime.pill.panel.children[0];
+  const noteButton = findChildByText(menuRoot, "Note");
+  await noteButton.dispatchEvent(new FakeEvent("click", noteButton));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const noteInput = selectionRuntime.quickNotePanel.textarea;
+  documentRef.activeElement = noteInput;
+  documentRef.dispatchEvent(new FakeEvent("pointerdown", noteInput));
+  documentRef.dispatchEvent(new FakeEvent("keydown", noteInput, { key: "A" }));
+  timers.flush();
+
+  assert.equal(selectionRuntime.quickNotePanel.getState().visible, true);
+  assert.equal(selectionRuntime.quickNotePanel.getState().status, "editing");
+  assert.equal(selectionRuntime.getState().lastDismissReason, "note_open");
+});

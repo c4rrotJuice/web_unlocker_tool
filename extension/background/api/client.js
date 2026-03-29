@@ -45,6 +45,7 @@ export function createApiClient({ baseUrl = API_ORIGIN, fetchImpl = globalThis.f
         const headers = typedOptions.headers || {};
         const fallbackCode = typedOptions.fallbackCode || ERROR_CODES.NETWORK_ERROR;
         const label = typedOptions.label || "Backend response";
+        const allowBareObjectSuccess = typedOptions.allowBareObjectSuccess === true;
         async function performRequest(accessTokenOverride = null) {
             const requestHeaders = new Headers(headers);
             requestHeaders.set("Accept", "application/json");
@@ -93,6 +94,14 @@ export function createApiClient({ baseUrl = API_ORIGIN, fetchImpl = globalThis.f
             }
         }
         const normalized = validateResultEnvelope(parsed, { fallbackCode, label });
+        if (allowBareObjectSuccess && response.ok && normalized?.ok === false && typeof parsed === "object" && parsed && !Array.isArray(parsed)) {
+            return {
+                ok: true,
+                status: "ok",
+                data: parsed,
+                meta: null,
+            };
+        }
         if (response.ok) {
             return normalized;
         }
@@ -176,6 +185,7 @@ export function createApiClient({ baseUrl = API_ORIGIN, fetchImpl = globalThis.f
                 method: "PATCH",
                 body: payload,
                 auth: true,
+                allowBareObjectSuccess: true,
                 fallbackCode: ERROR_CODES.NETWORK_ERROR,
                 label: "Note update response",
             });

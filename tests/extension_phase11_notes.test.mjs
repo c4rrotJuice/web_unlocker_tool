@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { createApiClient } from "../extension/background/api/client.js";
 import { renderSidepanel } from "../extension/sidepanel/main.js";
 
 class FakeEvent {
@@ -331,4 +332,27 @@ test("copy works from preview in read and edit contexts", async () => {
     "Draft note\n\nOriginal body",
     "Copied title\n\nCopied body",
   ]);
+});
+
+test("background note update client accepts raw canonical patch responses", async () => {
+  const updatedNote = createNote("note-1", "Patched title", "Patched body");
+  const apiClient = createApiClient({
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify(updatedNote);
+      },
+    }),
+    getAccessToken: async () => "token",
+  });
+
+  const result = await apiClient.updateNote({
+    noteId: "note-1",
+    title: "Patched title",
+    note_body: "Patched body",
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, updatedNote);
 });

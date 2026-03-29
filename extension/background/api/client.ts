@@ -71,6 +71,7 @@ export function createApiClient({
     const headers = typedOptions.headers || {};
     const fallbackCode = typedOptions.fallbackCode || ERROR_CODES.NETWORK_ERROR;
     const label = typedOptions.label || "Backend response";
+    const allowBareObjectSuccess = typedOptions.allowBareObjectSuccess === true;
 
     async function performRequest(accessTokenOverride: string | null = null) {
       const requestHeaders = new Headers(headers);
@@ -132,6 +133,14 @@ export function createApiClient({
     }
 
     const normalized: any = validateResultEnvelope(parsed, { fallbackCode, label });
+    if (allowBareObjectSuccess && response.ok && normalized?.ok === false && typeof parsed === "object" && parsed && !Array.isArray(parsed)) {
+      return {
+        ok: true,
+        status: "ok",
+        data: parsed,
+        meta: null,
+      };
+    }
     if (response.ok) {
       return normalized;
     }
@@ -227,6 +236,7 @@ export function createApiClient({
         method: "PATCH",
         body: payload,
         auth: true,
+        allowBareObjectSuccess: true,
         fallbackCode: ERROR_CODES.NETWORK_ERROR,
         label: "Note update response",
       });

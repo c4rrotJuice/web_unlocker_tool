@@ -133,6 +133,9 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
     let observer = null;
     let inspectTimer = null;
     let noteSuccessTimer = null;
+    function isInsideExtensionUi(target) {
+        return pill.isInsidePill(target) || quickNotePanel.isInsidePanel(target) || citationModal.isInside(target);
+    }
     function addListener(target, type, handler, options = true) {
         if (!target?.addEventListener) {
             return;
@@ -280,7 +283,8 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         if (state.isPointerSelecting) {
             return;
         }
-        if (isWithinEditableContext(documentRef?.activeElement || null)) {
+        const activeElement = documentRef?.activeElement || null;
+        if (!isInsideExtensionUi(activeElement) && isWithinEditableContext(activeElement)) {
             hide("editable_context");
             return;
         }
@@ -516,7 +520,8 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         }
     }
     function onKeydown(event) {
-        if (isWithinEditableContext(event?.target || documentRef?.activeElement || null)) {
+        const target = event?.target || documentRef?.activeElement || null;
+        if (!isInsideExtensionUi(target) && isWithinEditableContext(target)) {
             hide("editable_context");
             return;
         }
@@ -550,21 +555,25 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         void runAction("copy");
     }
     function onPointerDown(event) {
-        if (isWithinEditableContext(event?.target || null)) {
+        const target = event?.target || null;
+        if (isInsideExtensionUi(target)) {
+            return;
+        }
+        if (isWithinEditableContext(target)) {
             hide("editable_context");
             state.isPointerSelecting = true;
             return;
         }
         state.isPointerSelecting = true;
         if (citationModal.isVisible()) {
-            if (citationModal.isInside(event?.target)) {
+            if (citationModal.isInside(target)) {
                 return;
             }
             closeCitationModal("outside_click");
             return;
         }
         if (quickNotePanel.isVisible()) {
-            if (quickNotePanel.isInsidePanel(event?.target)) {
+            if (quickNotePanel.isInsidePanel(target)) {
                 return;
             }
             closeQuickNotePanel("outside_click");
@@ -573,14 +582,15 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         if (!state.visible) {
             return;
         }
-        if (pill.isInsidePill(event?.target)) {
+        if (pill.isInsidePill(target)) {
             return;
         }
         hide("outside_click");
     }
     function onPointerUp() {
         state.isPointerSelecting = false;
-        if (isWithinEditableContext(documentRef?.activeElement || null)) {
+        const activeElement = documentRef?.activeElement || null;
+        if (!isInsideExtensionUi(activeElement) && isWithinEditableContext(activeElement)) {
             hide("editable_context");
             return;
         }

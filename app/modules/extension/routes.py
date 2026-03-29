@@ -91,6 +91,7 @@ quotes_service = QuotesService(
 workspace_service = WorkspaceService(
     repository=WorkspaceRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key),
     taxonomy_service=taxonomy_service,
+    sources_service=sources_service,
     citations_service=citations_service,
     quotes_service=quotes_service,
     notes_service=notes_service,

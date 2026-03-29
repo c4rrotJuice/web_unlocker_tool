@@ -84,7 +84,7 @@ test("note detail keeps unsupported grouped relationship sections hidden and sho
   assert.match(emptyHtml, /This note is not attached to any documents yet\./);
 });
 
-test("source and citation details expose note-hub handoff while quote detail keeps unsupported entry points hidden", () => {
+test("source and citation details expose note-hub handoff while quote detail exposes quote-to-note conversion", () => {
   const sourceHtml = renderSourceDetail({
     id: "source-1",
     title: "Source A",
@@ -116,11 +116,55 @@ test("source and citation details expose note-hub handoff while quote detail kee
     id: "quote-1",
     excerpt: "Quoted line",
     citation: { source: { title: "Source A", hostname: "example.test" } },
-    note_ids: [],
+    note_ids: ["note-1"],
+    neighborhood: {
+      notes: [{ id: "note-1", title: "Converted note", note_body: "Body", status: "active", tags: [] }],
+    },
+  }, {
+    convertAction: {
+      supported: true,
+      label: "Convert to note",
+    },
   });
   assert.match(sourceHtml, /Link to note…/);
   assert.match(citationHtml, /Link to note…/);
+  assert.match(quoteHtml, /Convert to note/);
+  assert.match(quoteHtml, /Derived notes/);
+  assert.match(quoteHtml, /Converted note/);
   assert.doesNotMatch(quoteHtml, /Link to note…/);
+});
+
+test("note detail surfaces lineage and editor insert follow-up actions when available", () => {
+  const html = renderNoteDetail({
+    id: "note-1",
+    title: "Converted note",
+    note_body: "Body",
+    status: "active",
+    tags: [],
+    attached_documents: [{ id: "doc-1", title: "Draft chapter", status: "active" }],
+    lineage: {
+      citation: {
+        id: "citation-1",
+        source: { id: "source-1", title: "Source A", hostname: "example.test", canonical_url: "https://example.test/source" },
+        renders: { mla: { bibliography: "Source A" } },
+        primary_render: { style: "mla", kind: "bibliography", text: "Source A" },
+      },
+      quote: {
+        id: "quote-1",
+        excerpt: "Quoted line",
+        citation: { source: { title: "Source A", hostname: "example.test" } },
+        note_ids: ["note-1"],
+      },
+    },
+  }, {
+    insertAction: { supported: true, label: "Insert note" },
+    authoring: { supported: true, panel: null },
+  });
+
+  assert.match(html, /Lineage/);
+  assert.match(html, /From citation/);
+  assert.match(html, /From quote/);
+  assert.match(html, /Insert note/);
 });
 
 test("document relationship detail distinguishes attached and derived research sections", () => {

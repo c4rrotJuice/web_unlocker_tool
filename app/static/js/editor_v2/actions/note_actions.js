@@ -4,7 +4,7 @@ function buildNoteTitle(text, fallback = "Working note") {
   return normalized.slice(0, 72);
 }
 
-export function createNoteActions({ researchApi, attachActions, workspaceState, eventBus, stores }) {
+export function createNoteActions({ researchApi, attachActions, workspaceState, eventBus, stores, convertActions = null }) {
   return {
     async createNoteFromSelection(selectionText) {
       const state = workspaceState.getState();
@@ -23,19 +23,7 @@ export function createNoteActions({ researchApi, attachActions, workspaceState, 
       return note;
     },
     async createNoteFromQuote(quote) {
-      if (!quote?.id) return null;
-      const state = workspaceState.getState();
-      const noteBody = String(quote.excerpt || "").trim() || "Quote note";
-      const note = await researchApi.createNoteFromQuote(quote.id, {
-        title: buildNoteTitle(noteBody, "Quote note"),
-        note_body: noteBody,
-        project_id: state.active_project_id || null,
-      });
-      stores?.notes?.prime?.([note]);
-      await attachActions.attachNote(note.id);
-      workspaceState.setFocusedEntity({ type: "note", id: note.id });
-      eventBus?.emit("note.created", { noteId: note.id, quoteId: quote.id, source: "quote" });
-      return note;
+      return convertActions?.convertQuoteToNote?.(quote) || null;
     },
   };
 }

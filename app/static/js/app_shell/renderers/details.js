@@ -324,18 +324,42 @@ export function renderCitationDetail(citation, options = {}) {
   `;
 }
 
-export function renderQuoteDetail(quote) {
+function renderQuoteConversionSection(quote, options = {}) {
+  const convertAction = options.convertAction || null;
+  if (!convertAction?.supported || !quote?.id) return "";
+  return `
+    <section class="detail-section">
+      <p class="section-kicker">Conversion</p>
+      <p class="surface-note">Convert creates a real note and preserves quote and citation lineage.</p>
+      <div class="detail-chip-row">
+        <button
+          type="button"
+          class="app-button-secondary"
+          data-context-action="convert-quote-to-note"
+          data-quote-id="${escapeHtml(quote.id)}"
+        >${escapeHtml(convertAction.label || "Convert to note")}</button>
+      </div>
+    </section>
+  `;
+}
+
+export function renderQuoteDetail(quote, options = {}) {
   const source = quote.citation?.source || {};
+  const derivedNotes = dedupeRows(options.derivedNotes || quote?.neighborhood?.notes || []);
+  const derivedNoteIds = Array.isArray(quote?.note_ids) ? quote.note_ids : [];
   return `
     <section class="detail-section">
       <h3>${escapeHtml(source.title || "Quote")}</h3>
       <p class="detail-copy">${escapeHtml(quote.excerpt || "")}</p>
       <div class="detail-chip-row">
         <span class="meta-pill">${escapeHtml(source.hostname || source.publisher || "Citation")}</span>
-        <span class="meta-pill">${(quote.note_ids || []).length} linked notes</span>
+        <span class="meta-pill">${derivedNoteIds.length} derived notes</span>
       </div>
     </section>
-    ${detailList("Linked note ids", (quote.note_ids || []).map((id) => escapeHtml(id)), "No linked notes yet.")}
+    ${renderQuoteConversionSection(quote, options)}
+    ${derivedNotes.length
+      ? renderEntitySection("Derived notes", "note", derivedNotes, "No derived notes yet.")
+      : detailList("Derived note ids", derivedNoteIds.map((id) => escapeHtml(id)), "No derived notes yet.")}
   `;
 }
 
@@ -382,6 +406,38 @@ function renderRelatedNoteItem(entry, _groupKey, noteId) {
   `;
 }
 
+function renderLineageSection(note) {
+  const lineage = note?.lineage || {};
+  if (!lineage.citation && !lineage.quote) return "";
+  return `
+    <section class="detail-section">
+      <p class="section-kicker">Lineage</p>
+      <p class="surface-note">This note keeps canonical quote and citation lineage from the research graph.</p>
+    </section>
+    ${lineage.citation ? renderEntitySection("From citation", "citation", [lineage.citation], "No lineage citation.") : ""}
+    ${lineage.quote ? renderEntitySection("From quote", "quote", [lineage.quote], "No lineage quote.") : ""}
+  `;
+}
+
+function renderNoteInsertSection(note, options = {}) {
+  const insertAction = options.insertAction || null;
+  if (!insertAction?.supported || !note?.id) return "";
+  return `
+    <section class="detail-section">
+      <p class="section-kicker">Writing actions</p>
+      <p class="surface-note">Insert places this note into the current draft while preserving its note context.</p>
+      <div class="detail-chip-row">
+        <button
+          type="button"
+          class="app-button-secondary"
+          data-context-action="insert-note-into-document"
+          data-note-id="${escapeHtml(note.id)}"
+        >${escapeHtml(insertAction.label || "Insert note")}</button>
+      </div>
+    </section>
+  `;
+}
+
 export function renderNoteDetail(note, options = {}) {
   const linkedDocuments = dedupeRows(options.documents || []);
   const attachAction = options.attachAction || null;
@@ -404,11 +460,11 @@ export function renderNoteDetail(note, options = {}) {
       attachAction,
       "Insert places note markers in the draft. Attach keeps this note linked to the current document.",
     )}
+    ${renderNoteInsertSection(note, options)}
     ${Array.isArray(note?.attached_documents) || linkedDocuments.length
       ? renderEntitySection("Attached documents", "document", attachedDocuments, "This note is not attached to any documents yet.")
       : ""}
-    ${note?.lineage?.citation ? renderEntitySection("Lineage citation", "citation", [note.lineage.citation], "No lineage citation.") : ""}
-    ${note?.lineage?.quote ? renderEntitySection("Lineage quote", "quote", [note.lineage.quote], "No lineage quote.") : ""}
+    ${renderLineageSection(note)}
     ${renderNoteAuthoringPanel(note, options)}
     ${renderEditableRelationshipGroup({
       title: "Evidence",
@@ -616,7 +672,10 @@ export function renderGraphDetail(graph, options = {}) {
     primarySections.push(renderEntitySection("Note neighborhood", "note", notes, "No notes linked to this citation yet."));
     primarySections.push(renderEntitySection("Document attachments", "document", documents, "No documents use this citation yet."));
   } else if (node.type === "quote") {
-    primarySections.push(renderQuoteDetail(current));
+    primarySections.push(renderQuoteDetail(current, {
+      ...(options?.detailOptions?.quote || {}),
+      derivedNotes: notes,
+    }));
     primarySections.push(renderRelationshipSummary([
       { label: "source", count: current.citation?.source ? 1 : 0 },
       { label: "citation", count: current.citation ? 1 : 0 },
@@ -625,7 +684,6 @@ export function renderGraphDetail(graph, options = {}) {
     ]));
     primarySections.push(renderEntitySection("Source neighborhood", "source", current.citation?.source ? [current.citation.source] : [], "No parent source available."));
     primarySections.push(renderEntitySection("Citation neighborhood", "citation", current.citation ? [current.citation] : [], "No citation available."));
-    primarySections.push(renderEntitySection("Note neighborhood", "note", notes, "No notes derived from this quote yet."));
     primarySections.push(renderEntitySection("Document attachments", "document", documents, "No documents connected to this quote yet."));
   } else if (node.type === "note") {
     primarySections.push(renderNoteDetail(current, options?.detailOptions?.note || {}));

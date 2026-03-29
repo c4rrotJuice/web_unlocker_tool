@@ -180,15 +180,24 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
   });
   const attachActions = createAttachActions({ workspaceState, workspaceApi, eventBus, hydrator });
   const insertActions = createInsertActions({ quillAdapter, attachActions, workspaceState, eventBus });
+  const linkActions = createLinkActions({ workspaceState, attachActions, feedback, researchApi, stores });
+  const convertActions = createConvertActions({
+    researchApi,
+    attachActions,
+    insertActions,
+    workspaceState,
+    eventBus,
+    stores,
+    feedback,
+  });
   const noteActions = createNoteActions({
     researchApi,
     attachActions,
     workspaceState,
     eventBus,
     stores,
+    convertActions,
   });
-  const linkActions = createLinkActions({ workspaceState, attachActions, feedback, researchApi, stores });
-  createConvertActions();
   const documentController = createDocumentController({
     workspaceState,
     workspaceApi,
@@ -370,6 +379,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
         selectionText: () => selectionState.getState().text,
         citationViewState,
         linkActions,
+        convertActions,
       });
       return;
     }
@@ -384,12 +394,14 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
         selectionText: () => selectionState.getState().text,
         citationViewState,
         linkActions,
+        convertActions,
       });
     }).catch(() => {
       renderContextRail(refs.contextRail, context, workspaceState.getState(), null, {
         selectionText: () => selectionState.getState().text,
         citationViewState,
         linkActions,
+        convertActions,
       });
     });
   }
@@ -538,9 +550,18 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       if (action.dataset.contextAction === "create-note" && selectionState.getState().text) {
         await noteActions.createNoteFromSelection(selectionState.getState().text);
       }
+      if (action.dataset.contextAction === "convert-quote-to-note" && (action.dataset.quoteId || state.seed_state?.quote_id)) {
+        const quoteId = action.dataset.quoteId || state.seed_state?.quote_id;
+        const quote = await stores.quotes.get(quoteId);
+        await convertActions.convertQuoteToNote(quote);
+      }
       if (action.dataset.contextAction === "create-note-from-seed" && state.seed_state?.quote_id) {
         const quote = await stores.quotes.get(state.seed_state.quote_id);
-        await noteActions.createNoteFromQuote(quote, state.seed_state);
+        await convertActions.convertQuoteToNote(quote);
+      }
+      if (action.dataset.contextAction === "insert-note-into-document" && action.dataset.noteId) {
+        const note = await stores.notes.get(action.dataset.noteId);
+        await convertActions.insertNote(note);
       }
       if (action.dataset.contextAction === "attach-note-to-document" && action.dataset.noteId) {
         await linkActions.attachNoteToCurrentDocument(action.dataset.noteId);

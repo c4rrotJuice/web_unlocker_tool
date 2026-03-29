@@ -246,3 +246,51 @@ test("empty states keep the context panel open and render honest relationship-fr
   assert.match(elements.contextBody.innerHTML, /No active source/);
   assert.match(elements.contextBody.innerHTML, /No sources match the current view yet/);
 });
+
+test("quote conversion from research opens the resulting note with preserved lineage", async () => {
+  const harness = createResearchHarness({ initialSearch: "?tab=quotes" });
+  const { elements, requests } = harness;
+  const fixture = buildFixture();
+  const convertedNote = {
+    ...fixture.noteA,
+    title: "Converted note",
+    note_body: "Quote A",
+    lineage: {
+      citation: fixture.citationA,
+      quote: fixture.quoteA,
+    },
+  };
+
+  harness.route("/api/quotes?limit=20", async () => okEnvelope([fixture.quoteA], { has_more: false, next_cursor: null }));
+  harness.route("/api/research/quote/quote-a/graph", async () => graphEnvelope("quote", fixture.quoteA, {
+    sources: [fixture.sourceA],
+    citations: [fixture.citationA],
+    quotes: [fixture.quoteA],
+    notes: [],
+    documents: [fixture.documentA],
+  }));
+  harness.route("/api/quotes/quote-a/notes", async () => okEnvelope(convertedNote));
+  harness.route("/api/notes?limit=20", async () => okEnvelope([convertedNote], { has_more: false, next_cursor: null }));
+  harness.route("/api/research/note/note-a/graph", async () => graphEnvelope("note", convertedNote, {
+    sources: [fixture.sourceA],
+    citations: [fixture.citationA],
+    quotes: [fixture.quoteA],
+    notes: [convertedNote],
+    documents: [fixture.documentA],
+  }));
+
+  const module = await import(`../../app/static/js/app_shell/pages/research.js?runtime=${Date.now()}`);
+  await module.initResearch();
+  await flush();
+
+  const convertButton = elements.contextBody.querySelector("[data-context-action=\"convert-quote-to-note\"]");
+  convertButton.click();
+  await flush();
+
+  assert.ok(requests.includes("/api/quotes/quote-a/notes"));
+  assert.equal(harness.window.location.search.includes("tab=notes"), true);
+  assert.equal(harness.window.location.search.includes("selected=note-a"), true);
+  assert.match(elements.contextBody.innerHTML, /Lineage/);
+  assert.match(elements.contextBody.innerHTML, /From quote/);
+  assert.match(elements.contextBody.innerHTML, /From citation/);
+});

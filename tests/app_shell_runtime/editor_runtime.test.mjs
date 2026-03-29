@@ -16,6 +16,7 @@ import { createAutosaveController } from "../../app/static/js/editor_v2/document
 import { composeEditorDelta, normalizeEditorDelta, sanitizeEditorHtml } from "../../app/static/js/editor_v2/ui/quill_adapter.js";
 import { createAttachActions } from "../../app/static/js/editor_v2/actions/attach_actions.js";
 import { createLinkActions } from "../../app/static/js/editor_v2/actions/link_actions.js";
+import { createConvertActions } from "../../app/static/js/editor_v2/actions/convert_actions.js";
 import { renderContextRail } from "../../app/static/js/editor_v2/ui/context_rail_renderer.js";
 import { createExplorerController } from "../../app/static/js/editor_v2/research/explorer_controller.js";
 import { createCheckpointController } from "../../app/static/js/editor_v2/document/checkpoint_controller.js";
@@ -2634,15 +2635,29 @@ test("context rail note actions use canonical note creation routes", async () =>
   });
 
   const requests = [];
+  const convertActions = createConvertActions({
+    researchApi: {
+      async createNoteFromQuote(quoteId, payload) {
+        requests.push({ type: "quote", quoteId, payload });
+        return { id: "note-2", title: payload.title, note_body: payload.note_body };
+      },
+    },
+    attachActions: {
+      async attachNote(noteId) {
+        requests.push({ type: "convert-attach", noteId });
+      },
+    },
+    insertActions: { async insertNote() {} },
+    workspaceState,
+    eventBus: { emit() {} },
+    stores: { notes: { prime() {} }, quotes: { prime() {} } },
+    feedback: { emitDomainEvent() {}, toast: { success() {} } },
+  });
   const noteActions = createNoteActions({
     researchApi: {
       async createNote(payload) {
         requests.push({ type: "selection", payload });
         return { id: "note-1", title: payload.title, note_body: payload.note_body };
-      },
-      async createNoteFromQuote(quoteId, payload) {
-        requests.push({ type: "quote", quoteId, payload });
-        return { id: "note-2", title: payload.title, note_body: payload.note_body };
       },
     },
     attachActions: {
@@ -2653,6 +2668,7 @@ test("context rail note actions use canonical note creation routes", async () =>
     workspaceState,
     eventBus: { emit() {} },
     stores: { notes: { prime() {} } },
+    convertActions,
   });
 
   await noteActions.createNoteFromSelection("Selected evidence for chapter");
@@ -2663,7 +2679,56 @@ test("context rail note actions use canonical note creation routes", async () =>
   assert.equal(requests[1].type, "attach");
   assert.equal(requests[2].type, "quote");
   assert.equal(requests[2].quoteId, "quote-1");
-  assert.equal(requests[3].type, "attach");
+  assert.equal(requests[3].type, "convert-attach");
+});
+
+test("quote conversion surfaces permission failures cleanly without mutating focus", async () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft\n" }] },
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  const feedbackEvents = [];
+  const convertActions = createConvertActions({
+    researchApi: {
+      async createNoteFromQuote() {
+        const error = new Error("You cannot convert that quote to a note.");
+        error.status = 403;
+        throw error;
+      },
+    },
+    attachActions: {
+      async attachNote() {},
+    },
+    insertActions: { async insertNote() {} },
+    workspaceState,
+    eventBus: { emit() {} },
+    stores: { notes: { prime() {} }, quotes: { prime() {} } },
+    feedback: {
+      emitDomainEvent(name, payload) {
+        feedbackEvents.push({ name, payload });
+      },
+      toast: { success() {} },
+    },
+  });
+
+  const result = await convertActions.convertQuoteToNote({ id: "quote-1", excerpt: "Quoted evidence" });
+
+  assert.equal(result, null);
+  assert.equal(workspaceState.getState().focused_entity, null);
+  assert.deepEqual(feedbackEvents, [{
+    name: FEEDBACK_EVENTS.PERMISSION_DENIED,
+    payload: {
+      message: "You cannot convert that quote to a note.",
+      dedupeKey: "quote-to-note-permission-denied:quote-1",
+    },
+  }]);
 });
 
 test("open document settles transition even when hydrate never resolves", async () => {

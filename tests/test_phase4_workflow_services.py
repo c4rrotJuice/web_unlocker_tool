@@ -746,6 +746,18 @@ async def test_quote_to_note_preserves_quote_and_citation(quotes_service):
 
 
 @pytest.mark.anyio
+async def test_quote_to_note_requires_owned_quote(quotes_service):
+    with pytest.raises(HTTPException) as exc:
+        await quotes_service.create_note_from_quote(
+            user_id="user-1",
+            access_token=None,
+            quote_id=QUOTE_ID_2,
+            payload={"title": "From quote", "note_body": "Body", "project_id": None, "tag_ids": []},
+        )
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.anyio
 async def test_note_replace_tags_uses_atomic_rpc_and_returns_hydrated_entity(notes_service):
     result = await notes_service.replace_note_tags(user_id="user-1", access_token=None, note_id=NOTE_ID_1, tag_ids=["tag-2", "tag-2"])
     assert result["tags"] == [{"id": "tag-2", "name": "draft", "normalized_name": "draft"}]

@@ -7,6 +7,7 @@ import { mergeCitationRenderPayload, resolveCitationView } from "../../shared/ci
 import { ensureFeedbackRuntime } from "../../shared/feedback/feedback_bus_singleton.js";
 import { FEEDBACK_EVENTS } from "../../shared/feedback/feedback_tokens.js";
 import { createNoteRelationshipAuthoringController } from "../../shared/note_relationship_authoring.js";
+import { convertQuoteToNote, mergeConvertedNoteIntoQuote } from "../../shared/quote_note_conversion.js";
 
 const TAB_CONFIG = {
   sources: {
@@ -382,7 +383,18 @@ export async function initResearch() {
       return;
     }
     if (baseItem) {
-      contextBody.innerHTML = TAB_CONFIG[state.tab].detailRenderer(baseItem);
+      contextBody.innerHTML = TAB_CONFIG[state.tab].detailRenderer(
+        baseItem,
+        state.tab === "quotes"
+          ? {
+            convertAction: {
+              supported: !!baseItem?.id,
+              label: "Convert to note",
+            },
+            derivedNotes: baseItem?.neighborhood?.notes || [],
+          }
+          : {},
+      );
     }
   }
 
@@ -392,8 +404,80 @@ export async function initResearch() {
     return {
       source: node.type === "source" ? relationshipAuthoring.getSourceDetailOptions(current) : {},
       citation: node.type === "citation" ? relationshipAuthoring.getCitationDetailOptions(current) : {},
+      quote: node.type === "quote" ? {
+        convertAction: {
+          supported: !!current?.id,
+          label: "Convert to note",
+        },
+        derivedNotes: graph?.collections?.notes || current?.neighborhood?.notes || [],
+      } : {},
       note: node.type === "note" ? relationshipAuthoring.getNoteDetailOptions(current) : {},
     };
+  }
+
+  function getCurrentQuoteDetail(quoteId) {
+    const state = getState();
+    const graph = graphCache.get(`${state.tab}:${quoteId}`);
+    if (graph?.node?.type === "quote") return graph.node.data;
+    return latestListItems.find((item) => item?.id === quoteId) || null;
+  }
+
+  function openConvertedNote(note) {
+    if (!note?.id) return;
+    latestListItems = [note];
+    currentMeta = { has_more: false, next_cursor: null };
+    updateResearchUrl({
+      tab: "notes",
+      selected: note.id,
+      q: "",
+      project: "",
+      tag: "",
+    });
+    syncControls(getState());
+    renderList(latestListItems, getState(), currentMeta);
+    contextBody.innerHTML = renderNoteDetail(note, relationshipAuthoring.getNoteDetailOptions(note));
+    setContextOpen(true);
+    void loadDetail(note.id);
+    void loadList();
+  }
+
+  async function handleContextAction(dataset) {
+    if (dataset.contextAction !== "convert-quote-to-note" || !dataset.quoteId) return false;
+    const quote = getCurrentQuoteDetail(dataset.quoteId);
+    const result = await convertQuoteToNote({
+      quote,
+      researchApi: {
+        createNoteFromQuote(quoteId, payload) {
+          return window.webUnlockerAuth.authJson(`/api/quotes/${encodeURIComponent(quoteId)}/notes`, {
+            method: "POST",
+            body: payload,
+          });
+        },
+      },
+      feedback,
+    });
+    if (!result?.note) return true;
+
+    latestListItems = latestListItems.map((item) => (
+      item?.id === result.quote?.id ? mergeConvertedNoteIntoQuote(item, result.note) : item
+    ));
+    const quoteCacheKey = `quotes:${result.quote?.id || dataset.quoteId}`;
+    const cachedQuoteGraph = graphCache.get(quoteCacheKey);
+    if (cachedQuoteGraph?.node?.type === "quote") {
+      graphCache.set(quoteCacheKey, {
+        ...cachedQuoteGraph,
+        node: {
+          ...cachedQuoteGraph.node,
+          data: result.quote,
+        },
+        collections: {
+          ...(cachedQuoteGraph.collections || {}),
+          notes: [...(cachedQuoteGraph.collections?.notes || []), result.note],
+        },
+      });
+    }
+    openConvertedNote(result.note);
+    return true;
   }
 
   async function loadDetail(id) {
@@ -404,7 +488,18 @@ export async function initResearch() {
       ? config.detailRenderer(baseItem || { id, title: id }, {
         citationView: citationViewState.get(id) || {},
       })
-      : config.detailRenderer(baseItem || { id, title: id });
+      : config.detailRenderer(
+        baseItem || { id, title: id },
+        state.tab === "quotes"
+          ? {
+            convertAction: {
+              supported: !!id,
+              label: "Convert to note",
+            },
+            derivedNotes: baseItem?.neighborhood?.notes || [],
+          }
+          : {},
+      );
     renderContextLoading(id, baseMarkup);
     lastDetailId = id;
     lastDetailType = tabEntityType(state.tab);
@@ -522,6 +617,11 @@ export async function initResearch() {
   });
 
   contextBody.addEventListener("click", (event) => {
+    const contextAction = event.target.closest("[data-context-action]");
+    if (contextAction) {
+      void handleContextAction(contextAction.dataset);
+      return;
+    }
     const action = event.target.closest("[data-note-hub-link-open],[data-note-hub-search],[data-note-hub-cancel],[data-note-hub-note-pick],[data-note-authoring-open],[data-note-authoring-search],[data-note-authoring-target],[data-note-authoring-save],[data-note-authoring-cancel],[data-note-relation-edit],[data-note-relation-remove]");
     if (action) {
       void relationshipAuthoring.handleClick(action.dataset);

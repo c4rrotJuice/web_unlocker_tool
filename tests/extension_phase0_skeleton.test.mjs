@@ -20,10 +20,29 @@ test("phase 0 extension skeleton keeps manifest MV3 and uses only justified perm
 
 test("phase 0 manifest maps action and extension icons to Writior logo assets", () => {
   const manifest = JSON.parse(read("manifest.json"));
+  const assetPaths = [
+    manifest.action.default_icon["16"],
+    manifest.action.default_icon["32"],
+    manifest.action.default_icon["48"],
+    manifest.action.default_icon["128"],
+    manifest.icons["16"],
+    manifest.icons["32"],
+    manifest.icons["48"],
+    manifest.icons["128"],
+  ];
+  const uniqueAssetPaths = [...new Set(assetPaths)];
+  assert.deepEqual(uniqueAssetPaths.sort(), [
+    "assets/icons/writior_logo_128.jpg",
+    "assets/icons/writior_logo_32.jpg",
+    "assets/icons/writior_logo_48.jpg",
+  ]);
   assert.equal(manifest.action.default_icon["32"], "assets/icons/writior_logo_32.jpg");
   assert.equal(manifest.action.default_icon["48"], "assets/icons/writior_logo_48.jpg");
   assert.equal(manifest.icons["32"], "assets/icons/writior_logo_32.jpg");
   assert.equal(manifest.icons["128"], "assets/icons/writior_logo_128.jpg");
+  for (const assetPath of uniqueAssetPaths) {
+    assert.equal(fs.existsSync(path.join(extensionRoot, assetPath)), true, `${assetPath} must exist`);
+  }
 });
 
 test("phase 0 skeleton centralizes message names, endpoints, and storage keys", () => {

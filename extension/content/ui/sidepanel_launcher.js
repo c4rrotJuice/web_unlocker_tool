@@ -1,11 +1,6 @@
 // GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { createRuntimeClient, SURFACE_NAMES } from "../../shared/utils/runtime_client.js";
-function resolveAssetUrl(chromeApi, path) {
-    if (typeof chromeApi?.runtime?.getURL === "function") {
-        return chromeApi.runtime.getURL(path);
-    }
-    return path;
-}
+import { getWritiorLogoAssetUrl } from "../../shared/constants/assets.js";
 export function createSidepanelLauncher({ windowRef = globalThis.window, documentRef = globalThis.document, chromeApi = globalThis.chrome, runtimeClient = createRuntimeClient(chromeApi, SURFACE_NAMES.CONTENT), } = {}) {
     const host = documentRef.createElement("div");
     host.setAttribute("data-writior-launcher-host", "true");
@@ -49,7 +44,8 @@ export function createSidepanelLauncher({ windowRef = globalThis.window, documen
     button.setAttribute("aria-pressed", "false");
     const icon = documentRef.createElement("img");
     icon.alt = "Writior";
-    icon.src = resolveAssetUrl(chromeApi, "assets/icons/writior_logo_32.jpg");
+    icon.setAttribute("data-writior-launcher-icon", "true");
+    icon.src = getWritiorLogoAssetUrl({ chromeApi, size: 32 });
     button.appendChild(icon);
     if (typeof mount.append === "function") {
         mount.append(style, button);

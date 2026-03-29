@@ -1,16 +1,20 @@
-function resolveSrc(size = 32) {
-  const normalized = Number(size) >= 128 ? 128 : Number(size) >= 48 ? 48 : 32;
-  return `../assets/icons/writior_logo_${normalized}.jpg`;
-}
+import { getWritiorLogoAssetUrl, normalizeWritiorLogoSize } from "../../shared/constants/assets.ts";
 
 export function createWritiorLogo({
   documentRef = globalThis.document,
+  chromeApi = globalThis.chrome,
   size = 32,
   alt = "Writior",
 } = {}) {
+  const assetSize = normalizeWritiorLogoSize(size);
   const image = documentRef.createElement("img");
   image.setAttribute("data-writior-logo", "true");
-  image.src = resolveSrc(size);
+  image.setAttribute("data-logo-size", String(assetSize));
+  image.src = getWritiorLogoAssetUrl({
+    chromeApi,
+    size,
+    fallbackPrefix: "../",
+  });
   image.alt = alt;
   image.width = size;
   image.height = size;

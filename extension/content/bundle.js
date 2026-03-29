@@ -5690,17 +5690,46 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
 }
 
 },
+"shared/constants/assets.ts": function(module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.WRITIOR_LOGO_ASSET_PATHS = void 0;
+exports.normalizeWritiorLogoSize = normalizeWritiorLogoSize;
+exports.getWritiorLogoAssetPath = getWritiorLogoAssetPath;
+exports.getWritiorLogoAssetUrl = getWritiorLogoAssetUrl;
+exports.WRITIOR_LOGO_ASSET_PATHS = Object.freeze({
+    32: "assets/icons/writior_logo_32.jpg",
+    48: "assets/icons/writior_logo_48.jpg",
+    128: "assets/icons/writior_logo_128.jpg",
+});
+function normalizeWritiorLogoSize(size = 32) {
+    const numericSize = Number(size);
+    if (numericSize >= 128) {
+        return 128;
+    }
+    if (numericSize >= 48) {
+        return 48;
+    }
+    return 32;
+}
+function getWritiorLogoAssetPath(size = 32) {
+    return exports.WRITIOR_LOGO_ASSET_PATHS[normalizeWritiorLogoSize(size)];
+}
+function getWritiorLogoAssetUrl({ chromeApi = globalThis.chrome, size = 32, fallbackPrefix = "", } = {}) {
+    const path = getWritiorLogoAssetPath(size);
+    if (typeof chromeApi?.runtime?.getURL === "function") {
+        return chromeApi.runtime.getURL(path);
+    }
+    return `${fallbackPrefix}${path}`;
+}
+
+},
 "content/ui/sidepanel_launcher.ts": function(module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createSidepanelLauncher = createSidepanelLauncher;
 const runtime_client_ts_1 = require("../../shared/utils/runtime_client.ts");
-function resolveAssetUrl(chromeApi, path) {
-    if (typeof chromeApi?.runtime?.getURL === "function") {
-        return chromeApi.runtime.getURL(path);
-    }
-    return path;
-}
+const assets_ts_1 = require("../../shared/constants/assets.ts");
 function createSidepanelLauncher({ windowRef = globalThis.window, documentRef = globalThis.document, chromeApi = globalThis.chrome, runtimeClient = (0, runtime_client_ts_1.createRuntimeClient)(chromeApi, runtime_client_ts_1.SURFACE_NAMES.CONTENT), } = {}) {
     const host = documentRef.createElement("div");
     host.setAttribute("data-writior-launcher-host", "true");
@@ -5744,7 +5773,8 @@ function createSidepanelLauncher({ windowRef = globalThis.window, documentRef = 
     button.setAttribute("aria-pressed", "false");
     const icon = documentRef.createElement("img");
     icon.alt = "Writior";
-    icon.src = resolveAssetUrl(chromeApi, "assets/icons/writior_logo_32.jpg");
+    icon.setAttribute("data-writior-launcher-icon", "true");
+    icon.src = (0, assets_ts_1.getWritiorLogoAssetUrl)({ chromeApi, size: 32 });
     button.appendChild(icon);
     if (typeof mount.append === "function") {
         mount.append(style, button);

@@ -355,6 +355,9 @@ test("content runtime injects a fixed launcher that toggles the sidepanel throug
   assert.equal(launcherHost.style.right, "16px");
   const launcherButton = findByAttr(launcherHost, "aria-label", "Toggle Writior sidepanel");
   assert.ok(launcherButton);
+  const launcherIcon = findByAttr(launcherHost, "data-writior-launcher-icon", "true");
+  assert.ok(launcherIcon);
+  assert.equal(launcherIcon.src, "chrome-extension://test/assets/icons/writior_logo_32.jpg");
   launcherButton.dispatchEvent(new FakeEvent("click", launcherButton));
   await new Promise((resolve) => setTimeout(resolve, 0));
 

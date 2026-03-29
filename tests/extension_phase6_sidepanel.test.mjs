@@ -489,8 +489,12 @@ test("signed-out sidepanel stays background-only and does not fetch lists", asyn
     const actionRow = findByAttr(mountedRoot, "data-action-row", "true");
     const signIn = actionRow.children.find((child) => child.textContent === "Sign In");
     const signOut = actionRow.children.find((child) => child.textContent === "Sign Out");
+    const sidepanelLogo = findByAttr(mountedRoot, "data-writior-logo", "true");
     assert.equal(shell.getState().status, "signed_out");
     assert.equal(collectText(mountedRoot).includes("Not signed in"), true);
+    assert.ok(sidepanelLogo);
+    assert.equal(sidepanelLogo.getAttribute("data-logo-size"), "32");
+    assert.equal(sidepanelLogo.src, "../assets/icons/writior_logo_32.jpg");
     assert.ok(signIn);
     assert.equal(Boolean(signOut), false);
     assert.equal(requests.some((entry) => entry.url.includes("/api/citations?")), false);
@@ -593,6 +597,10 @@ test("signed-in sidepanel loads compact workspace lists, tabs, hover preview, an
     assert.equal(collectText(mountedRoot).includes("1 note"), true);
     assert.equal(collectText(mountedRoot).includes("Researcher"), true);
     assert.equal(collectText(mountedRoot).includes("Pro"), true);
+    const sidepanelLogo = findByAttr(mountedRoot, "data-writior-logo", "true");
+    assert.ok(sidepanelLogo);
+    assert.equal(sidepanelLogo.getAttribute("data-logo-size"), "32");
+    assert.equal(sidepanelLogo.src, "../assets/icons/writior_logo_32.jpg");
     assert.equal(findByAttr(mountedRoot, "data-usage-gauge-row", "true").style.display, "grid");
     assert.equal(findByAttr(mountedRoot, "data-list-scroll", "true").style.overflow, "auto");
 
@@ -818,6 +826,9 @@ test("popup launcher button sends the canonical sidepanel toggle request and sta
   globalThis.chrome = {
     runtime: {
       lastError: null,
+      getURL(path) {
+        return `chrome-extension://test/${path}`;
+      },
       sendMessage(message, callback) {
         sentMessages.push(message);
         if (message.type === MESSAGE_NAMES.AUTH_STATUS_GET) {
@@ -850,6 +861,10 @@ test("popup launcher button sends the canonical sidepanel toggle request and sta
 
     const button = findByText(root, "Toggle Workspace");
     assert.ok(button);
+    const popupLogo = findByAttr(root, "data-writior-logo", "true");
+    assert.ok(popupLogo);
+    assert.equal(popupLogo.getAttribute("data-logo-size"), "48");
+    assert.equal(popupLogo.src, "chrome-extension://test/assets/icons/writior_logo_48.jpg");
     button.dispatchEvent(new FakeEvent("click", button));
     await new Promise((resolve) => setTimeout(resolve, 0));
 

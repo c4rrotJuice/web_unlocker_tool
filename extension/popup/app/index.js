@@ -1,6 +1,7 @@
 // GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { AUTH_STATUS } from "../../shared/types/auth.js";
 import { normalizeCapabilitySurface } from "../../shared/types/capability_surface.js";
+import { getWritiorLogoAssetUrl } from "../../shared/constants/assets.js";
 function summarizeStatus(snapshot) {
     const status = snapshot?.status || AUTH_STATUS.SIGNED_OUT;
     if (status === AUTH_STATUS.LOADING) {
@@ -27,6 +28,30 @@ export function renderPopupAuthSnapshot(root, snapshot) {
     section.setAttribute("data-surface", "popup");
     section.style.display = "grid";
     section.style.gap = "6px";
+    const header = document.createElement("div");
+    header.style.display = "grid";
+    header.style.gridTemplateColumns = "48px 1fr";
+    header.style.gap = "10px";
+    header.style.alignItems = "center";
+    const logo = document.createElement("img");
+    logo.setAttribute("data-writior-logo", "true");
+    logo.setAttribute("data-logo-size", "48");
+    logo.src = getWritiorLogoAssetUrl({
+        chromeApi: globalThis.chrome,
+        size: 48,
+        fallbackPrefix: "../",
+    });
+    logo.alt = "Writior";
+    logo.width = 48;
+    logo.height = 48;
+    logo.style.width = "48px";
+    logo.style.height = "48px";
+    logo.style.display = "block";
+    logo.style.borderRadius = "14px";
+    logo.style.objectFit = "cover";
+    const copy = document.createElement("div");
+    copy.style.display = "grid";
+    copy.style.gap = "2px";
     const title = document.createElement("div");
     title.textContent = "Writior";
     title.style.fontSize = "16px";
@@ -40,7 +65,9 @@ export function renderPopupAuthSnapshot(root, snapshot) {
     tier.textContent = `Tier ${surface.tierLabel || "Guest"}`;
     tier.style.fontSize = "11px";
     tier.style.color = "#94a3b8";
-    section.append(title, identity, tier);
+    copy.append(title, identity, tier);
+    header.append(logo, copy);
+    section.append(header);
     root.appendChild(section);
     return { mounted: true };
 }

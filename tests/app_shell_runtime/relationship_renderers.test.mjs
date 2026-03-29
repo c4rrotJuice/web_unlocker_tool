@@ -211,6 +211,10 @@ test("project detail renders derived metrics without implying direct ownership o
 
   assert.match(html, /derived citations/i);
   assert.match(html, /derived sources/i);
+  assert.match(html, /Contained work/);
+  assert.match(html, /Derived research visibility/);
   assert.match(html, /Recent activity/);
   assert.match(html, /document · Outline draft/);
+  assert.doesNotMatch(html, /Link to note…/);
+  assert.doesNotMatch(html, /Link source as evidence/);
 });

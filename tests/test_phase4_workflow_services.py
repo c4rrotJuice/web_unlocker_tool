@@ -520,6 +520,7 @@ class FakeWorkspaceRepository:
         row = deepcopy(self.documents[DOC_ID])
         row["id"] = "doc-new"
         row["title"] = payload.get("title") or "Untitled"
+        row["project_id"] = payload.get("project_id")
         self.documents["doc-new"] = row
         self.document_citations["doc-new"] = []
         self.document_notes["doc-new"] = []
@@ -835,6 +836,18 @@ async def test_document_hydration_preserves_relation_order(workspace_service):
 
 
 @pytest.mark.anyio
+async def test_document_create_accepts_project_assignment(workspace_service):
+    capability_state = DummyCapabilityState()
+    payload = await workspace_service.create_document(
+        user_id="user-1",
+        access_token=None,
+        capability_state=capability_state,
+        payload={"title": "Project draft", "project_id": "project-1"},
+    )
+    assert payload["data"]["project_id"] == "project-1"
+
+
+@pytest.mark.anyio
 async def test_note_create_preserves_quote_citation_lineage(notes_service):
     note = await notes_service.create_note(
         user_id="user-1",
@@ -851,6 +864,23 @@ async def test_note_create_preserves_quote_citation_lineage(notes_service):
     )
     assert note["quote_id"] == QUOTE_ID_1
     assert note["citation_id"] == "citation-a"
+
+
+@pytest.mark.anyio
+async def test_note_create_accepts_project_assignment(notes_service):
+    note = await notes_service.create_note(
+        user_id="user-1",
+        access_token=None,
+        payload={
+            "title": "Project note",
+            "note_body": "Body",
+            "project_id": "project-1",
+            "tag_ids": [],
+            "evidence_links": [],
+            "note_links": [],
+        },
+    )
+    assert note["project_id"] == "project-1"
 
 
 @pytest.mark.anyio
@@ -885,6 +915,17 @@ async def test_note_detail_returns_grouped_relationships(notes_service, workspac
     assert note["relationship_groups"]["evidence_links_by_role"]["supporting"][0]["source_id"] == "source-a"
     assert note["relationship_groups"]["note_links_by_type"]["related"][0]["note"]["id"] == NOTE_ID_2
     assert note["attached_documents"][0]["id"] == DOC_ID
+
+
+@pytest.mark.anyio
+async def test_note_update_moves_to_project(notes_service):
+    note = await notes_service.update_note(
+        user_id="user-1",
+        access_token=None,
+        note_id=NOTE_ID_1,
+        payload={"project_id": "project-1"},
+    )
+    assert note["project_id"] == "project-1"
 
 
 @pytest.mark.anyio
@@ -1150,3 +1191,20 @@ async def test_document_mutation_advances_revision(workspace_service):
     )
     assert result["data"]["revision"] != before
     assert workspace_service.repository.documents[DOC_ID]["updated_at"] == result["data"]["revision"]
+
+
+@pytest.mark.anyio
+async def test_document_update_moves_to_project(workspace_service):
+    capability_state = DummyCapabilityState()
+    before = workspace_service.repository.documents[DOC_ID]["updated_at"]
+    result = await workspace_service.update_document(
+        user_id="user-1",
+        access_token=None,
+        capability_state=capability_state,
+        document_id=DOC_ID,
+        payload={
+            "revision": before,
+            "project_id": "project-1",
+        },
+    )
+    assert result["data"]["project_id"] == "project-1"

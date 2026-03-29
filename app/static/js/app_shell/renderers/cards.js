@@ -97,11 +97,12 @@ export function renderProjectCard(project, options = {}) {
       <div class="research-card-header">
         <h3 class="research-card-title">${escapeHtml(project.name || "Untitled project")}</h3>
       </div>
-      <p class="research-card-body">${escapeHtml(limitText(project.description || "A project for connected sources, notes, and documents.", 140))}</p>
+      <p class="research-card-body">${escapeHtml(limitText(project.description || "Organize related notes and documents without changing canonical research ownership.", 140))}</p>
       <div class="research-card-meta">
         <span class="project-chip">${escapeHtml(project.color || "No color")}</span>
         ${relationshipCount(counts.note_count, 0) ? renderMetaCount("notes", counts.note_count) : ""}
         ${relationshipCount(counts.document_count, 0) ? renderMetaCount("documents", counts.document_count) : ""}
+        ${relationshipCount(counts.derived_citation_count, 0) ? renderMetaCount("derived citations", counts.derived_citation_count) : ""}
         <span class="meta-pill">${escapeHtml(formatDateTime(project.updated_at || project.created_at))}</span>
       </div>
     </article>

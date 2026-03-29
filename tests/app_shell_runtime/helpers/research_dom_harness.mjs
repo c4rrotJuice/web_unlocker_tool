@@ -295,15 +295,15 @@ function createResponse({ status = 200, body = {} }) {
   };
 }
 
-export function createResearchHarness({ initialSearch = "" } = {}) {
+function createRouteRuntime({ pathname, initialSearch = "", includeHistory = true, includeRequestOptions = false }) {
   const document = new FakeDocument();
   const windowListeners = new Map();
   const requests = [];
   const routeHandlers = [];
   const location = {
-    pathname: "/research",
+    pathname,
     search: initialSearch,
-    href: `/research${initialSearch}`,
+    href: `${pathname}${initialSearch}`,
   };
 
   const window = {
@@ -328,28 +328,14 @@ export function createResearchHarness({ initialSearch = "" } = {}) {
       const listeners = windowListeners.get(event.type) || [];
       listeners.forEach((listener) => listener(event));
     },
-    history: {
-      pushState(_state, _title, url) {
-        const parsed = new URL(url, "https://example.com");
-        location.pathname = parsed.pathname;
-        location.search = parsed.search;
-        location.href = `${parsed.pathname}${parsed.search}`;
-      },
-      replaceState(_state, _title, url) {
-        const parsed = new URL(url, "https://example.com");
-        location.pathname = parsed.pathname;
-        location.search = parsed.search;
-        location.href = `${parsed.pathname}${parsed.search}`;
-      },
-    },
     webUnlockerAuth: {
-      async authFetch(path) {
-        requests.push(path);
-        const handler = routeHandlers.find((entry) => entry.match(path));
+      async authFetch(path, options = {}) {
+        requests.push(includeRequestOptions ? { path, options } : path);
+        const handler = routeHandlers.find((entry) => entry.match(path, options));
         if (!handler) {
           throw new Error(`No mock handler for ${path}`);
         }
-        return handler.handle(path);
+        return handler.handle(path, options);
       },
       async authJson(path, options = {}, { unwrapEnvelope = true } = {}) {
         const response = await window.webUnlockerAuth.authFetch(path, options);
@@ -373,6 +359,23 @@ export function createResearchHarness({ initialSearch = "" } = {}) {
     },
   };
 
+  if (includeHistory) {
+    window.history = {
+      pushState(_state, _title, url) {
+        const parsed = new URL(url, "https://example.com");
+        location.pathname = parsed.pathname;
+        location.search = parsed.search;
+        location.href = `${parsed.pathname}${parsed.search}`;
+      },
+      replaceState(_state, _title, url) {
+        const parsed = new URL(url, "https://example.com");
+        location.pathname = parsed.pathname;
+        location.search = parsed.search;
+        location.href = `${parsed.pathname}${parsed.search}`;
+      },
+    };
+  }
+
   globalThis.window = window;
   globalThis.document = document;
   globalThis.requestAnimationFrame = window.requestAnimationFrame;
@@ -382,6 +385,28 @@ export function createResearchHarness({ initialSearch = "" } = {}) {
       configurable: true,
     });
   }
+
+  function route(match, handle) {
+    routeHandlers.push({
+      match: typeof match === "function" ? match : (path) => path === match,
+      async handle(path, options) {
+        const result = await handle(path, options);
+        return createResponse(result);
+      },
+    });
+  }
+
+  return {
+    document,
+    window,
+    requests,
+    route,
+  };
+}
+
+export function createResearchHarness({ initialSearch = "" } = {}) {
+  const runtime = createRouteRuntime({ pathname: "/research", initialSearch });
+  const { document, window, requests, route } = runtime;
 
   const frame = document.createElement("div");
   frame.className = "app-content-frame";
@@ -433,16 +458,6 @@ export function createResearchHarness({ initialSearch = "" } = {}) {
   contextBody.id = "research-context-body";
   contextPanel.appendChild(contextBody);
 
-  function route(match, handle) {
-    routeHandlers.push({
-      match: typeof match === "function" ? match : (path) => path === match,
-      async handle(path) {
-        const result = await handle(path);
-        return createResponse(result);
-      },
-    });
-  }
-
   function getTabButton(tab) {
     return tablist.querySelectorAll("[data-tab]").find((button) => button.dataset.tab === tab) || null;
   }
@@ -466,5 +481,58 @@ export function createResearchHarness({ initialSearch = "" } = {}) {
       contextBody,
     },
     getTabButton,
+  };
+}
+
+export function createProjectsHarness({ pathname = "/projects/project-1" } = {}) {
+  const runtime = createRouteRuntime({ pathname, initialSearch: "", includeHistory: false, includeRequestOptions: true });
+  const { document, window, requests, route } = runtime;
+
+  const pageStack = document.createElement("section");
+  pageStack.className = "page-stack";
+  document.body.appendChild(pageStack);
+
+  const heroTitle = document.createElement("h2");
+  heroTitle.id = "projects-hero-title";
+  pageStack.appendChild(heroTitle);
+
+  const heroCopy = document.createElement("p");
+  heroCopy.id = "projects-hero-copy";
+  pageStack.appendChild(heroCopy);
+
+  const heroMeta = document.createElement("div");
+  heroMeta.id = "projects-hero-meta";
+  pageStack.appendChild(heroMeta);
+
+  const projectsList = document.createElement("div");
+  projectsList.id = "projects-list";
+  pageStack.appendChild(projectsList);
+
+  const notesNode = document.createElement("div");
+  notesNode.id = "project-notes";
+  pageStack.appendChild(notesNode);
+
+  const documentsNode = document.createElement("div");
+  documentsNode.id = "project-documents";
+  pageStack.appendChild(documentsNode);
+
+  const sourcesNode = document.createElement("div");
+  sourcesNode.id = "project-sources";
+  pageStack.appendChild(sourcesNode);
+
+  return {
+    document,
+    window,
+    requests,
+    route,
+    elements: {
+      heroTitle,
+      heroCopy,
+      heroMeta,
+      projectsList,
+      notesNode,
+      documentsNode,
+      sourcesNode,
+    },
   };
 }

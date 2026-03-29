@@ -6,6 +6,7 @@ import {
   resolveCitationView,
 } from "../../shared/citation_contract.js";
 import { renderCitationCard, renderDocumentCard, renderNoteCard, renderQuoteCard, renderSourceCard } from "./cards.js";
+import { renderProjectAssignmentControl } from "./project_organization.js";
 import {
   EVIDENCE_ROLE_LABELS,
   EVIDENCE_ROLE_ORDER,
@@ -460,6 +461,7 @@ export function renderNoteDetail(note, options = {}) {
       attachAction,
       "Insert places note markers in the draft. Attach keeps this note linked to the current document.",
     )}
+    ${options?.projectAssignment?.supported ? renderProjectAssignmentControl({ entityType: "note", entity: note, projects: options.projectAssignment.projects || [] }) : ""}
     ${renderNoteInsertSection(note, options)}
     ${Array.isArray(note?.attached_documents) || linkedDocuments.length
       ? renderEntitySection("Attached documents", "document", attachedDocuments, "This note is not attached to any documents yet.")
@@ -543,7 +545,7 @@ function renderEntitySection(title, type, rows, emptyLabel) {
   `;
 }
 
-export function renderDocumentRelationshipDetail(document, attached = {}) {
+export function renderDocumentRelationshipDetail(document, attached = {}, options = {}) {
   const attachedCitations = Array.isArray(attached.citations) ? attached.citations : [];
   const attachedNotes = Array.isArray(attached.notes) ? attached.notes : [];
   const attachedQuotes = Array.isArray(attached.quotes) ? attached.quotes : [];
@@ -558,6 +560,7 @@ export function renderDocumentRelationshipDetail(document, attached = {}) {
         <span class="meta-pill">${escapeHtml(formatDateTime(document?.updated_at || document?.created_at))}</span>
       </div>
     </section>
+    ${options?.projectAssignment?.supported ? renderProjectAssignmentControl({ entityType: "document", entity: document, projects: options.projectAssignment.projects || [] }) : ""}
     ${renderRelationshipSummary([
       { label: "attached citations", count: attachedCitations.length },
       { label: "attached notes", count: attachedNotes.length },
@@ -574,6 +577,10 @@ export function renderDocumentRelationshipDetail(document, attached = {}) {
 export function renderProjectDetail(project) {
   const counts = project?.relationship_counts || {};
   const recentActivity = Array.isArray(project?.recent_activity) ? project.recent_activity : [];
+  const derivedVisibility = [
+    `Citations referenced through contained notes and documents: ${counts.derived_citation_count || 0}`,
+    `Sources referenced through contained notes and documents: ${counts.derived_source_count || 0}`,
+  ];
   return `
     <section class="detail-section">
       <p class="section-kicker">Project overview</p>
@@ -584,12 +591,23 @@ export function renderProjectDetail(project) {
         <span class="meta-pill">${escapeHtml(formatDateTime(project?.updated_at || project?.created_at))}</span>
       </div>
     </section>
+    <section class="detail-section">
+      <p class="section-kicker">Contained work</p>
+      <p class="surface-note">Projects directly contain notes and documents only.</p>
+    </section>
     ${renderRelationshipSummary([
       { label: "notes", count: counts.note_count },
       { label: "documents", count: counts.document_count },
+    ])}
+    <section class="detail-section">
+      <p class="section-kicker">Derived research visibility</p>
+      <p class="surface-note">Research visibility is read through contained work. Projects do not directly own sources, citations, or quotes.</p>
+    </section>
+    ${renderRelationshipSummary([
       { label: "derived citations", count: counts.derived_citation_count },
       { label: "derived sources", count: counts.derived_source_count },
     ])}
+    ${detailList("Derived visibility summary", derivedVisibility.map((item) => escapeHtml(item)), "No derived research visibility yet.")}
     ${detailList(
       "Recent activity",
       recentActivity.map((item) => escapeHtml(`${item?.entity_type || "item"} · ${item?.label || item?.title || "Updated"}`)),

@@ -76,6 +76,15 @@ as $$
         and n.project_id = sp.id
         and n.citation_id is not null
       union
+      select ns.citation_id
+      from public.notes n
+      join public.note_sources ns
+        on ns.note_id = n.id
+       and ns.user_id = p_user_id
+      where n.user_id = p_user_id
+        and n.project_id = sp.id
+        and ns.citation_id is not null
+      union
       select dc.citation_id
       from public.documents d
       join public.document_citations dc
@@ -87,14 +96,38 @@ as $$
     ) derived_citations
   ) citation_counts on true
   left join lateral (
-    select count(distinct ns.source_id)::integer as derived_source_count
-    from public.notes n
-    join public.note_sources ns
-      on ns.note_id = n.id
-     and ns.user_id = p_user_id
-    where n.user_id = p_user_id
-      and n.project_id = sp.id
-      and ns.source_id is not null
+    select count(distinct derived_sources.source_id)::integer as derived_source_count
+    from (
+      select ci.source_id
+      from public.notes n
+      join public.citation_instances ci
+        on ci.id = n.citation_id
+       and ci.user_id = p_user_id
+      where n.user_id = p_user_id
+        and n.project_id = sp.id
+        and ci.source_id is not null
+      union
+      select ns.source_id
+      from public.notes n
+      join public.note_sources ns
+        on ns.note_id = n.id
+       and ns.user_id = p_user_id
+      where n.user_id = p_user_id
+        and n.project_id = sp.id
+        and ns.source_id is not null
+      union
+      select ci.source_id
+      from public.documents d
+      join public.document_citations dc
+        on dc.document_id = d.id
+       and dc.user_id = p_user_id
+      join public.citation_instances ci
+        on ci.id = dc.citation_id
+       and ci.user_id = p_user_id
+      where d.user_id = p_user_id
+        and d.project_id = sp.id
+        and ci.source_id is not null
+    ) derived_sources
   ) source_counts on true
   left join lateral (
     with recent_entities as (

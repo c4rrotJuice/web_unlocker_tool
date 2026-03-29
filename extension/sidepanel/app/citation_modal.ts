@@ -291,7 +291,8 @@ export function renderCitationModal(root, snapshot: any = {}, options: any = {})
     });
     if (result?.ok) {
       state.citation = result.data || state.citation;
-      state.renderBundle = result?.data?.renders ? { renders: result.data.renders } : state.renderBundle;
+      state.renderBundle = result?.data?.render_bundle
+        || (result?.data?.renders ? { renders: result.data.renders } : state.renderBundle);
       state.saveStatus = "saved";
       state.error = null;
       render();

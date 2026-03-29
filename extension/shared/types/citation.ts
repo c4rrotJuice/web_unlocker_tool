@@ -26,7 +26,11 @@ export function getLockedCitationStyles(allowedStyles: any) {
 export function getCitationPreviewText(record: any, style = "apa", format = "bibliography") {
   const normalizedStyle = normalizeCitationStyle(style);
   const normalizedFormat = normalizeCitationFormat(format);
-  const styleBundle = record?.render_bundle?.renders?.[normalizedStyle] || record?.renders?.[normalizedStyle] || null;
+  const styleBundle = record?.render_bundle?.renders?.[normalizedStyle]
+    || record?.citation?.render_bundle?.renders?.[normalizedStyle]
+    || record?.renders?.[normalizedStyle]
+    || record?.citation?.renders?.[normalizedStyle]
+    || null;
   if (styleBundle && typeof styleBundle[normalizedFormat] === "string" && styleBundle[normalizedFormat].trim()) {
     return styleBundle[normalizedFormat].trim();
   }

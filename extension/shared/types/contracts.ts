@@ -96,7 +96,7 @@ export const MESSAGE_CONTRACTS = Object.freeze({
   [MESSAGE_NAMES.CITATION_RENDER]: Object.freeze({
     topic: MESSAGE_TOPICS.CITATION,
     payloadShape: "surface:string, citationId:string, style:string",
-    resultShape: "renders:{apa|mla|chicago|harvard:{inline|footnote|bibliography:string}}",
+    resultShape: "citation-like:{renders:{apa|mla|chicago|harvard:{inline|footnote|bibliography|quote_attribution:string}}, render_bundle:{renders,styles,primary}, primary_render:{style,kind,text}, available_renders:{styles,primary}}",
   }),
   [MESSAGE_NAMES.CITATION_SAVE]: Object.freeze({
     topic: MESSAGE_TOPICS.CITATION,

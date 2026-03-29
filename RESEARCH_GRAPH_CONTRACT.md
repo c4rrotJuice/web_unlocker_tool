@@ -172,6 +172,15 @@
       "quote_attribution": "..."
     }
   },
+  "render_bundle": {
+    "renders": {},
+    "styles": [],
+    "primary": {
+      "style": "mla",
+      "kind": "bibliography",
+      "text": "Doe. Title."
+    }
+  },
   "created_at": "timestamp",
   "updated_at": "timestamp",
   "relationship_counts": {

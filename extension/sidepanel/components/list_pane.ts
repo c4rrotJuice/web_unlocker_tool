@@ -6,7 +6,7 @@ export function createListPane({ documentRef = globalThis.document } = {}) {
   root.style.position = "relative";
   root.style.minHeight = "0";
   root.style.height = "100%";
-  root.style.overflow = "hidden";
+  root.style.overflow = "visible";
 
   const preview = createHoverPreviewPane({ documentRef });
   const scroll = documentRef.createElement("div");
@@ -14,10 +14,10 @@ export function createListPane({ documentRef = globalThis.document } = {}) {
   scroll.style.position = "relative";
   scroll.style.height = "100%";
   scroll.style.overflow = "auto";
-  scroll.style.padding = "8px";
+  scroll.style.padding = "10px 10px 12px";
   scroll.style.display = "grid";
   scroll.style.alignContent = "start";
-  scroll.style.gap = "8px";
+  scroll.style.gap = "10px";
 
   root.append(preview.root, scroll);
 

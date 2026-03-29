@@ -2264,7 +2264,7 @@ components:
           type: array
           items:
             type: string
-            enum: [inline, full, bibliography]
+            enum: [inline, bibliography, footnote, quote_attribution]
 
     CitationRenderResponse:
       allOf:

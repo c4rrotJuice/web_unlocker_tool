@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 SUPPORTED_STYLES = {"mla", "apa", "chicago", "harvard"}
-SUPPORTED_RENDER_KINDS = {"inline", "bibliography", "footnote", "quote_attribution"}
+CANONICAL_RENDER_KINDS = ("inline", "bibliography", "footnote", "quote_attribution")
+SUPPORTED_RENDER_KINDS = set(CANONICAL_RENDER_KINDS)
 NORMALIZATION_VERSION = 2
 RENDER_VERSION = 1
 METADATA_SCHEMA_VERSION = 4
@@ -1310,7 +1311,7 @@ def render_citation(source: dict[str, Any], context: dict[str, Any], *, style: s
     if normalized_style not in SUPPORTED_STYLES:
         normalized_style = "mla"
     if normalized_kind not in SUPPORTED_RENDER_KINDS:
-        normalized_kind = "bibliography"
+        raise ValueError(f"Unsupported citation render kind: {render_kind}.")
 
     if normalized_kind == "inline":
         return _render_inline(source, context, style=normalized_style)
@@ -1336,15 +1337,17 @@ def generate_render_bundle(
     render_kinds: list[str] | None = None,
 ) -> dict[str, Any]:
     selected_styles = styles or sorted(SUPPORTED_STYLES)
-    selected_kinds = render_kinds or ["inline", "bibliography", "footnote", "quote_attribution"]
+    selected_kinds = render_kinds or list(CANONICAL_RENDER_KINDS)
+    unsupported_kinds = sorted({kind for kind in selected_kinds if kind not in SUPPORTED_RENDER_KINDS})
+    if unsupported_kinds:
+        invalid = ", ".join(unsupported_kinds)
+        raise ValueError(f"Unsupported citation render kind(s): {invalid}.")
     renders: dict[str, dict[str, str]] = {}
     for style in selected_styles:
         if style not in SUPPORTED_STYLES:
             continue
         renders[style] = {}
         for render_kind in selected_kinds:
-            if render_kind not in SUPPORTED_RENDER_KINDS:
-                continue
             renders[style][render_kind] = render_citation(source, context, style=style, render_kind=render_kind)
     return {
         "source_fingerprint": source.get("fingerprint"),

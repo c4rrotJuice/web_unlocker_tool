@@ -1,7 +1,11 @@
+import pytest
+
 from app.services.citation_domain import (
+    CANONICAL_RENDER_KINDS,
     ExtractionCandidate,
     ExtractionPayload,
     METADATA_SCHEMA_VERSION,
+    SUPPORTED_STYLES,
     build_source_fingerprint,
     compute_source_version,
     generate_render_bundle,
@@ -129,6 +133,26 @@ def test_generate_render_bundle_contains_multi_style_cache_ready_payload():
     assert set(bundle["renders"].keys()) == {"apa", "chicago", "harvard", "mla"}
     assert bundle["source"]["source_version"] == bundle["source_version"]
     assert bundle["citation_version"]
+
+
+def test_render_support_matrix_covers_all_supported_style_and_kind_combinations():
+    source, context = _canonical_payload()
+
+    for style in sorted(SUPPORTED_STYLES):
+        for render_kind in CANONICAL_RENDER_KINDS:
+            rendered = render_citation(source, context, style=style, render_kind=render_kind)
+            assert isinstance(rendered, str)
+            assert rendered.strip()
+
+
+def test_unsupported_render_kind_errors_are_explicit():
+    source, context = _canonical_payload()
+
+    with pytest.raises(ValueError, match="Unsupported citation render kind"):
+        render_citation(source, context, style="mla", render_kind="endnote")
+
+    with pytest.raises(ValueError, match="Unsupported citation render kind"):
+        generate_render_bundle(source, context, render_kinds=["inline", "endnote"])
 
 
 def test_normalization_prefers_doi_and_citation_meta_over_generic_tags():

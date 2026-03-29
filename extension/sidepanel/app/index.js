@@ -78,7 +78,7 @@ function createShellStyles(documentRef) {
       border: 1px solid rgba(148, 163, 184, 0.14);
       border-radius: 16px;
       background: rgba(15, 23, 42, 0.72);
-      overflow: hidden;
+      overflow: visible;
     }
     .writior-sidepanel-workspace-top {
       padding: 10px;
@@ -86,7 +86,7 @@ function createShellStyles(documentRef) {
     }
     .writior-sidepanel-workspace-body {
       min-height: 0;
-      overflow: hidden;
+      overflow: visible;
     }
   `;
     return style;
@@ -384,12 +384,18 @@ export function createSidepanelShell(options = {}) {
         }
         render();
     }
-    function bindPreview(row, summary, index) {
+    function getPreviewTop(row) {
+        const rowOffset = Number(row?.offsetTop) || 0;
+        const rowHeight = Number(row?.offsetHeight) || 0;
+        const scrollTop = Number(listPane.scroll?.scrollTop) || 0;
+        return Math.max(10, 10 + rowOffset - scrollTop + Math.max(0, (rowHeight - 58) / 2));
+    }
+    function bindPreview(row, summary) {
         const show = () => listPane.preview.render({
             title: summary.title,
             meta: summary.meta,
             body: summary.body,
-            top: 12 + (index * 56),
+            top: getPreviewTop(row),
         });
         row.addEventListener("mouseenter", show);
         row.addEventListener("focusin", show);
@@ -659,7 +665,7 @@ export function createSidepanelShell(options = {}) {
             focusTarget?.focus?.();
         }
     }
-    function showNotePreview(note, index, options = {}) {
+    function showNotePreview(note, row, options = {}) {
         if (!note?.id) {
             return;
         }
@@ -667,7 +673,7 @@ export function createSidepanelShell(options = {}) {
             return;
         }
         notePreviewState.noteId = note.id;
-        notePreviewState.top = 12 + (index * 56);
+        notePreviewState.top = getPreviewTop(row);
         notePreviewState.locked = Boolean(options.locked);
         if (notePreviewState.mode !== "edit") {
             notePreviewState.mode = "read";
@@ -679,9 +685,9 @@ export function createSidepanelShell(options = {}) {
         renderNotePreview();
     }
     function buildCitationRows(items = []) {
-        return items.map((citation, index) => {
+        return items.map((citation) => {
             const entry = createCitationListRow({ documentRef, citation });
-            bindPreview(entry.root, entry.summary, index);
+            bindPreview(entry.root, entry.summary);
             entry.root.addEventListener("click", async (event) => {
                 event.preventDefault?.();
                 try {
@@ -703,11 +709,15 @@ export function createSidepanelShell(options = {}) {
         });
     }
     function buildNoteRows(items = []) {
-        return items.map((note, index) => {
+        return items.map((note) => {
             const entry = createNoteListRow({ documentRef, note });
-            const show = () => showNotePreview(note, index);
+            const show = () => showNotePreview(note, entry.root);
             entry.root.addEventListener("mouseenter", show);
             entry.root.addEventListener("focusin", show);
+            entry.root.addEventListener("click", () => {
+                show();
+                void copyNotePreview(note);
+            });
             entry.root.addEventListener("mouseleave", () => hideNotePreview());
             entry.root.addEventListener("focusout", () => hideNotePreview());
             entry.root.addEventListener("keydown", (event) => {
@@ -716,15 +726,15 @@ export function createSidepanelShell(options = {}) {
                 }
                 event.preventDefault?.();
                 notePreviewState.pendingFocusAttr = "data-note-preview-copy";
-                showNotePreview(note, index, { force: true, locked: true });
+                showNotePreview(note, entry.root, { force: true, locked: true });
             });
             return entry.root;
         });
     }
     function buildDocumentRows(items = []) {
-        return items.map((documentItem, index) => {
+        return items.map((documentItem) => {
             const entry = createDocumentListRow({ documentRef, documentItem });
-            bindPreview(entry.root, entry.summary, index);
+            bindPreview(entry.root, entry.summary);
             entry.root.addEventListener("click", (event) => {
                 event.preventDefault?.();
                 void client.openEditor?.();
@@ -733,9 +743,9 @@ export function createSidepanelShell(options = {}) {
         });
     }
     function buildQuoteRows(items = []) {
-        return items.map((quote, index) => {
+        return items.map((quote) => {
             const entry = createQuoteListRow({ documentRef, quote });
-            bindPreview(entry.root, entry.summary, index);
+            bindPreview(entry.root, entry.summary);
             return entry.root;
         });
     }

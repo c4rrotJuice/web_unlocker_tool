@@ -23,15 +23,16 @@ function createBaseRow(documentRef, attrs = {}) {
   root.type = "button";
   Object.entries(attrs).forEach(([name, value]) => root.setAttribute(name, String(value)));
   root.style.display = "grid";
-  root.style.gap = "4px";
+  root.style.gap = "6px";
   root.style.width = "100%";
-  root.style.padding = "10px 12px";
-  root.style.borderRadius = "12px";
-  root.style.border = "1px solid rgba(148, 163, 184, 0.1)";
-  root.style.background = "rgba(15, 23, 42, 0.58)";
+  root.style.padding = "12px 14px";
+  root.style.borderRadius = "14px";
+  root.style.border = "1px solid rgba(148, 163, 184, 0.14)";
+  root.style.background = "rgba(15, 23, 42, 0.62)";
   root.style.textAlign = "left";
   root.style.cursor = "pointer";
-  root.style.minHeight = "48px";
+  root.style.minHeight = "58px";
+  root.style.alignContent = "start";
   return root;
 }
 
@@ -85,8 +86,8 @@ export function createCitationListRow({ documentRef = globalThis.document, citat
   const summary = summarizeCitation(citation);
   const root = createBaseRow(documentRef, { "data-citation-id": citation?.id || "" });
   root.append(
-    addLine(documentRef, summary.title, { fontSize: "13px", fontWeight: "600", lineHeight: "1.35", color: "#f8fafc" }),
-    addLine(documentRef, summary.meta, { fontSize: "11px", lineHeight: "1.35", color: "#94a3b8" }),
+    addLine(documentRef, summary.title, { fontSize: "13px", fontWeight: "600", lineHeight: "1.45", color: "#f8fafc" }),
+    addLine(documentRef, summary.meta, { fontSize: "11px", lineHeight: "1.5", color: "#94a3b8" }),
   );
   return { root, summary };
 }
@@ -95,8 +96,8 @@ export function createNoteListRow({ documentRef = globalThis.document, note }: a
   const summary = summarizeNote(note);
   const root = createBaseRow(documentRef, { "data-note-id": note?.id || "" });
   root.append(
-    addLine(documentRef, summary.title, { fontSize: "13px", fontWeight: "600", lineHeight: "1.35", color: "#f8fafc" }),
-    addLine(documentRef, summary.meta, { fontSize: "11px", lineHeight: "1.35", color: "#94a3b8" }),
+    addLine(documentRef, summary.title, { fontSize: "13px", fontWeight: "600", lineHeight: "1.45", color: "#f8fafc" }),
+    addLine(documentRef, summary.meta, { fontSize: "11px", lineHeight: "1.5", color: "#94a3b8" }),
   );
   return { root, summary };
 }
@@ -105,8 +106,8 @@ export function createDocumentListRow({ documentRef = globalThis.document, docum
   const summary = summarizeDocument(documentItem);
   const root = createBaseRow(documentRef, { "data-document-id": documentItem?.id || "" });
   root.append(
-    addLine(documentRef, summary.title, { fontSize: "13px", fontWeight: "600", lineHeight: "1.35", color: "#f8fafc" }),
-    addLine(documentRef, summary.meta, { fontSize: "11px", lineHeight: "1.35", color: "#94a3b8" }),
+    addLine(documentRef, summary.title, { fontSize: "13px", fontWeight: "600", lineHeight: "1.45", color: "#f8fafc" }),
+    addLine(documentRef, summary.meta, { fontSize: "11px", lineHeight: "1.5", color: "#94a3b8" }),
   );
   return { root, summary };
 }
@@ -115,8 +116,8 @@ export function createQuoteListRow({ documentRef = globalThis.document, quote }:
   const summary = summarizeQuote(quote);
   const root = createBaseRow(documentRef, { "data-quote-id": quote?.id || "" });
   root.append(
-    addLine(documentRef, summary.title, { fontSize: "13px", fontWeight: "600", lineHeight: "1.35", color: "#f8fafc" }),
-    addLine(documentRef, summary.meta, { fontSize: "11px", lineHeight: "1.35", color: "#94a3b8" }),
+    addLine(documentRef, summary.title, { fontSize: "13px", fontWeight: "600", lineHeight: "1.45", color: "#f8fafc" }),
+    addLine(documentRef, summary.meta, { fontSize: "11px", lineHeight: "1.5", color: "#94a3b8" }),
   );
   return { root, summary };
 }

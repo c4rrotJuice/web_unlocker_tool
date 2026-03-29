@@ -22,7 +22,7 @@ import { createNoteActions } from "../../app/static/js/editor_v2/actions/note_ac
 import { renderExplorerList } from "../../app/static/js/editor_v2/ui/explorer_renderer.js";
 import { createAuthSessionError, createAuthSessionErrorFromPayload, isAuthSessionError } from "../../app/static/js/shared/auth/session.js";
 import { initSidebarShell } from "../../app/static/js/app_shell/core/sidebar.js";
-import { citationDisplayTitle } from "../../app/static/js/shared/citation_contract.js";
+import { citationDisplayTitle, citationPrimaryText, citationRenderEntries } from "../../app/static/js/shared/citation_contract.js";
 
 function okResponse(data) {
   return {
@@ -225,6 +225,45 @@ function loadThemeRuntime({
     },
   };
 }
+
+test("citation contract helpers prefer canonical render bundle shape", () => {
+  const citation = {
+    source: { title: "Ignored title" },
+    render_bundle: {
+      renders: {
+        chicago: {
+          inline: "(Doe 2024)",
+          bibliography: "Doe, Jane. Example Source.",
+          footnote: "Jane Doe, Example Source.",
+          quote_attribution: "\"Quoted sentence\" (Doe 2024)",
+        },
+      },
+      styles: [
+        {
+          style: "chicago",
+          kinds: ["bibliography", "footnote", "quote_attribution", "inline"],
+          texts: {
+            inline: "(Doe 2024)",
+            bibliography: "Doe, Jane. Example Source.",
+            footnote: "Jane Doe, Example Source.",
+            quote_attribution: "\"Quoted sentence\" (Doe 2024)",
+          },
+        },
+      ],
+      primary: {
+        style: "chicago",
+        kind: "bibliography",
+        text: "Doe, Jane. Example Source.",
+      },
+    },
+  };
+
+  assert.equal(citationPrimaryText(citation), "Doe, Jane. Example Source.");
+  assert.equal(citationDisplayTitle(citation), "Ignored title");
+  assert.deepEqual(citationRenderEntries(citation), [
+    { style: "chicago", text: "Doe, Jane. Example Source." },
+  ]);
+});
 
 function createSidebarDom() {
   const shell = makeElement();

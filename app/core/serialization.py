@@ -298,6 +298,11 @@ def serialize_citation(
         "excerpt": row.get("excerpt"),
         "quote_text": row.get("quote_text"),
         "renders": normalized_renders,
+        "render_bundle": {
+            "renders": normalized_renders,
+            "styles": style_entries,
+            "primary": primary_render,
+        },
         "primary_render": primary_render,
         "available_renders": {
             "styles": style_entries,

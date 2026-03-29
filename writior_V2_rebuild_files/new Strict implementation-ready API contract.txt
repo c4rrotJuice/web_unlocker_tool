@@ -2646,7 +2646,7 @@ components:
           type: array
           items:
             type: string
-            enum: [inline, full, bibliography]
+            enum: [inline, bibliography, footnote, quote_attribution]
 
     CitationRenderResponse:
       allOf:
@@ -3394,5 +3394,4 @@ x-implementation-notes:
     - "Document hydration must stay compact and fast for first editor paint."
     - "Do not reintroduce legacy cookie-trust auth or legacy noncanonical payload fields."
 '''
-
 

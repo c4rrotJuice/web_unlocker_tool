@@ -414,6 +414,33 @@ test("citation modal switches style and format using backend-derived previews on
               quote_attribution: "\"Selected sentence\" (World Health Organization 6)",
             },
           },
+          render_bundle: {
+            renders: {
+              mla: {
+                inline: "(World Health Organization 6)",
+                bibliography: "World Health Organization. \"Public Health Update.\" WHO.",
+                footnote: "World Health Organization. \"Public Health Update.\" WHO.",
+                quote_attribution: "\"Selected sentence\" (World Health Organization 6)",
+              },
+            },
+            styles: [
+              {
+                style: "mla",
+                kinds: ["bibliography", "footnote", "quote_attribution", "inline"],
+                texts: {
+                  inline: "(World Health Organization 6)",
+                  bibliography: "World Health Organization. \"Public Health Update.\" WHO.",
+                  footnote: "World Health Organization. \"Public Health Update.\" WHO.",
+                  quote_attribution: "\"Selected sentence\" (World Health Organization 6)",
+                },
+              },
+            ],
+            primary: {
+              style: "mla",
+              kind: "bibliography",
+              text: "World Health Organization. \"Public Health Update.\" WHO.",
+            },
+          },
           relationship_counts: {},
         },
       };
@@ -452,6 +479,7 @@ test("citation modal switches style and format using backend-derived previews on
   assert.equal(saveCalls.at(-1)?.capture?.selectionText, "Selected sentence");
   assert.equal(saveCalls.at(-1)?.format, "inline");
   assert.equal(modal.getState().citation?.id, "citation-1");
+  assert.match(modal.getState().text, /\(World Health Organization 6\)/);
 });
 
 test("background citation preview and render return backend bundles and save returns hydrated citation", async () => {

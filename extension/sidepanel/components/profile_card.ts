@@ -73,8 +73,8 @@ export function createProfileCard(options: any = {}) {
   actions.style.display = "flex";
   actions.style.gap = "8px";
   actions.style.flexWrap = "wrap";
-  const openEditorButton = createActionButton(documentRef, "Open editor", onOpenEditor, "primary");
-  const openDashboardButton = createActionButton(documentRef, "Open dashboard", onOpenDashboard);
+  const openEditorButton = createActionButton(documentRef, "Open Editor", onOpenEditor, "primary");
+  const openDashboardButton = createActionButton(documentRef, "Open Dashboard", onOpenDashboard);
   const authButton = createActionButton(documentRef, "Sign in", onSignIn);
   actions.appendChild(openEditorButton);
   actions.appendChild(openDashboardButton);

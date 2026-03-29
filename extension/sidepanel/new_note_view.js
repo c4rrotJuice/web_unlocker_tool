@@ -8,12 +8,30 @@ function setDisabled(element, disabled) {
         element.removeAttribute("aria-disabled");
     }
 }
-export function createNewNoteView({ documentRef = globalThis.document, onOpen, onCancel, onInput, onSubmit, } = {}) {
+function clearChildren(node) {
+    if (typeof node?.replaceChildren === "function") {
+        node.replaceChildren();
+        return;
+    }
+    if ("innerHTML" in node) {
+        node.innerHTML = "";
+        return;
+    }
+    if (Array.isArray(node?.children)) {
+        node.children.length = 0;
+    }
+}
+export function createNewNoteView({ documentRef = globalThis.document, onOpen, onCancel, onInput, onProjectChange, onTagsChange, onSubmit, } = {}) {
     const root = documentRef.createElement("section");
     const heading = documentRef.createElement("div");
     const toggle = documentRef.createElement("button");
     const composer = documentRef.createElement("div");
     const context = documentRef.createElement("p");
+    const linkingHint = documentRef.createElement("p");
+    const projectLabel = documentRef.createElement("label");
+    const projectSelect = documentRef.createElement("select");
+    const tagsLabel = documentRef.createElement("div");
+    const tagsWrap = documentRef.createElement("div");
     const textarea = documentRef.createElement("textarea");
     const feedback = documentRef.createElement("p");
     const actions = documentRef.createElement("div");
@@ -41,6 +59,27 @@ export function createNewNoteView({ documentRef = globalThis.document, onOpen, o
     context.style.fontSize = "12px";
     context.style.lineHeight = "1.4";
     context.style.color = "#64748b";
+    linkingHint.style.margin = "0";
+    linkingHint.style.fontSize = "12px";
+    linkingHint.style.lineHeight = "1.4";
+    linkingHint.style.color = "#475569";
+    projectLabel.textContent = "Project";
+    projectLabel.style.display = "grid";
+    projectLabel.style.gap = "6px";
+    projectLabel.style.fontSize = "12px";
+    projectLabel.style.color = "#475569";
+    projectSelect.setAttribute("data-note-project-select", "true");
+    projectSelect.style.padding = "10px 12px";
+    projectSelect.style.borderRadius = "12px";
+    projectSelect.style.border = "1px solid rgba(148, 163, 184, 0.22)";
+    projectSelect.style.background = "#ffffff";
+    projectSelect.style.color = "#0f172a";
+    tagsLabel.textContent = "Tags";
+    tagsLabel.style.fontSize = "12px";
+    tagsLabel.style.color = "#475569";
+    tagsWrap.style.display = "flex";
+    tagsWrap.style.flexWrap = "wrap";
+    tagsWrap.style.gap = "8px";
     textarea.rows = 8;
     textarea.placeholder = "Write a plain note";
     textarea.setAttribute("data-note-text", "true");
@@ -75,6 +114,11 @@ export function createNewNoteView({ documentRef = globalThis.document, onOpen, o
     actions.appendChild(cancelButton);
     actions.appendChild(saveButton);
     composer.appendChild(context);
+    composer.appendChild(linkingHint);
+    projectLabel.appendChild(projectSelect);
+    composer.appendChild(projectLabel);
+    composer.appendChild(tagsLabel);
+    composer.appendChild(tagsWrap);
     composer.appendChild(textarea);
     composer.appendChild(feedback);
     composer.appendChild(actions);
@@ -86,7 +130,67 @@ export function createNewNoteView({ documentRef = globalThis.document, onOpen, o
         noteText: "",
         errorMessage: "",
         pageContextText: "",
+        linkingText: "",
+        projectOptions: [],
+        selectedProjectId: "",
+        tagOptions: [],
+        selectedTagIds: [],
     };
+    function renderProjectOptions() {
+        clearChildren(projectSelect);
+        const emptyOption = documentRef.createElement("option");
+        emptyOption.value = "";
+        emptyOption.textContent = "No project";
+        projectSelect.appendChild(emptyOption);
+        for (const option of Array.isArray(state.projectOptions) ? state.projectOptions : []) {
+            const node = documentRef.createElement("option");
+            node.value = String(option?.id || "");
+            node.textContent = String(option?.name || option?.label || option?.id || "");
+            node.selected = node.value === state.selectedProjectId;
+            projectSelect.appendChild(node);
+        }
+        projectSelect.value = state.selectedProjectId || "";
+    }
+    function renderTagOptions() {
+        clearChildren(tagsWrap);
+        const selected = new Set(Array.isArray(state.selectedTagIds) ? state.selectedTagIds : []);
+        const options = Array.isArray(state.tagOptions) ? state.tagOptions : [];
+        if (!options.length) {
+            const empty = documentRef.createElement("div");
+            empty.textContent = "No recent tags";
+            empty.style.fontSize = "12px";
+            empty.style.color = "#94a3b8";
+            tagsWrap.appendChild(empty);
+            return;
+        }
+        for (const option of options) {
+            const button = documentRef.createElement("button");
+            button.type = "button";
+            button.setAttribute("data-note-tag", String(option?.id || ""));
+            const isSelected = selected.has(String(option?.id || ""));
+            button.textContent = String(option?.name || option?.label || option?.id || "");
+            button.style.padding = "7px 10px";
+            button.style.borderRadius = "999px";
+            button.style.border = isSelected
+                ? "1px solid rgba(15, 23, 42, 0.56)"
+                : "1px solid rgba(148, 163, 184, 0.24)";
+            button.style.background = isSelected ? "#0f172a" : "#ffffff";
+            button.style.color = isSelected ? "#f8fafc" : "#0f172a";
+            button.addEventListener("click", (event) => {
+                event.preventDefault?.();
+                const next = new Set(Array.isArray(state.selectedTagIds) ? state.selectedTagIds : []);
+                const optionId = String(option?.id || "");
+                if (next.has(optionId)) {
+                    next.delete(optionId);
+                }
+                else if (optionId) {
+                    next.add(optionId);
+                }
+                onTagsChange?.(Array.from(next));
+            });
+            tagsWrap.appendChild(button);
+        }
+    }
     function render(nextState = {}) {
         state = {
             ...state,
@@ -97,17 +201,23 @@ export function createNewNoteView({ documentRef = globalThis.document, onOpen, o
         composer.style.display = isOpen ? "grid" : "none";
         textarea.value = state.noteText || "";
         context.textContent = state.pageContextText || "Page context will be attached when available.";
+        linkingHint.textContent = state.linkingText || "Current page attaches when available. Open in Editor to Link related notes or Convert quotes.";
+        state.selectedProjectId = String(state.selectedProjectId || "");
+        state.selectedTagIds = Array.isArray(state.selectedTagIds) ? state.selectedTagIds.map((value) => String(value || "")).filter(Boolean) : [];
+        renderProjectOptions();
+        renderTagOptions();
         const saving = state.status === "saving";
         setDisabled(textarea, saving);
+        setDisabled(projectSelect, saving);
         setDisabled(cancelButton, saving);
         setDisabled(saveButton, saving || !String(state.noteText || "").trim());
         saveButton.textContent = saving ? "Saving" : "Save note";
         if (state.status === "error") {
-            feedback.textContent = state.errorMessage || "Save failed.";
+            feedback.textContent = state.errorMessage || "Note save failed.";
             feedback.style.color = "#b91c1c";
         }
         else if (state.status === "success") {
-            feedback.textContent = "Note saved.";
+            feedback.textContent = "Note saved with attached evidence.";
             feedback.style.color = "#15803d";
         }
         else if (saving) {
@@ -125,6 +235,9 @@ export function createNewNoteView({ documentRef = globalThis.document, onOpen, o
     });
     textarea.addEventListener("input", () => {
         onInput?.(textarea.value);
+    });
+    projectSelect.addEventListener("change", () => {
+        onProjectChange?.(projectSelect.value);
     });
     textarea.addEventListener("keydown", (event) => {
         if ((event?.ctrlKey || event?.metaKey) && String(event?.key || "").toLowerCase() === "enter") {

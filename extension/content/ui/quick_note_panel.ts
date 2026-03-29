@@ -27,23 +27,44 @@ function setDisabled(element: any, disabled: boolean) {
   }
 }
 
+function clearChildren(node: any) {
+  if (typeof node?.replaceChildren === "function") {
+    node.replaceChildren();
+    return;
+  }
+  if ("innerHTML" in node) {
+    node.innerHTML = "";
+    return;
+  }
+  if (Array.isArray(node?.children)) {
+    node.children.length = 0;
+  }
+}
+
 export function createQuickNotePanel({
   documentRef = globalThis.document,
   windowRef = globalThis.window,
   onSave,
   onCancel,
   onInput,
+  onProjectChange,
+  onTagsChange,
 }: {
   documentRef?: Document;
   windowRef?: Window & typeof globalThis;
   onSave?: () => void | Promise<void>;
   onCancel?: () => void;
   onInput?: (value: string) => void;
+  onProjectChange?: (value: string) => void;
+  onTagsChange?: (value: string[]) => void;
 } = {}) {
   const host = createContainer(documentRef);
   const panel = documentRef.createElement("section");
   const heading = documentRef.createElement("p");
   const preview = createHighlightPreview({ documentRef });
+  const linkingHint = documentRef.createElement("p");
+  const projectSelect = documentRef.createElement("select");
+  const tagsWrap = documentRef.createElement("div");
   const textarea = documentRef.createElement("textarea");
   const feedback = documentRef.createElement("p");
   const actions = documentRef.createElement("div");
@@ -70,6 +91,23 @@ export function createQuickNotePanel({
   heading.style.color = "#f8fafc";
   heading.style.fontSize = "14px";
   heading.style.fontWeight = "600";
+
+  linkingHint.style.margin = "0";
+  linkingHint.style.fontSize = "12px";
+  linkingHint.style.lineHeight = "1.35";
+  linkingHint.style.color = "#cbd5e1";
+
+  projectSelect.setAttribute("data-quick-note-project-select", "true");
+  projectSelect.style.width = "100%";
+  projectSelect.style.padding = "10px 12px";
+  projectSelect.style.borderRadius = "12px";
+  projectSelect.style.border = "1px solid rgba(148, 163, 184, 0.22)";
+  projectSelect.style.background = "rgba(15, 23, 42, 0.72)";
+  projectSelect.style.color = "#f8fafc";
+
+  tagsWrap.style.display = "flex";
+  tagsWrap.style.flexWrap = "wrap";
+  tagsWrap.style.gap = "8px";
 
   textarea.value = "";
   textarea.rows = 5;
@@ -119,10 +157,13 @@ export function createQuickNotePanel({
     actions.appendChild(saveButton);
   }
   if (typeof panel.append === "function") {
-    panel.append(heading, preview.root, textarea, feedback, actions);
+    panel.append(heading, preview.root, linkingHint, projectSelect, tagsWrap, textarea, feedback, actions);
   } else {
     panel.appendChild(heading);
     panel.appendChild(preview.root);
+    panel.appendChild(linkingHint);
+    panel.appendChild(projectSelect);
+    panel.appendChild(tagsWrap);
     panel.appendChild(textarea);
     panel.appendChild(feedback);
     panel.appendChild(actions);
@@ -135,7 +176,68 @@ export function createQuickNotePanel({
     noteText: "",
     errorMessage: "",
     selectionRect: null as any,
+    linkingText: "",
+    projectOptions: [],
+    selectedProjectId: "",
+    tagOptions: [],
+    selectedTagIds: [],
   };
+
+  function renderProjectOptions() {
+    clearChildren(projectSelect);
+    const emptyOption = documentRef.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = "No project";
+    projectSelect.appendChild(emptyOption);
+    for (const option of Array.isArray(state.projectOptions) ? state.projectOptions : []) {
+      const node = documentRef.createElement("option");
+      node.value = String(option?.id || "");
+      node.textContent = String(option?.name || option?.label || option?.id || "");
+      node.selected = node.value === state.selectedProjectId;
+      projectSelect.appendChild(node);
+    }
+    projectSelect.value = state.selectedProjectId || "";
+  }
+
+  function renderTagOptions() {
+    clearChildren(tagsWrap);
+    const selected = new Set(Array.isArray(state.selectedTagIds) ? state.selectedTagIds : []);
+    const options = Array.isArray(state.tagOptions) ? state.tagOptions : [];
+    if (!options.length) {
+      const empty = documentRef.createElement("div");
+      empty.textContent = "No recent tags";
+      empty.style.fontSize = "12px";
+      empty.style.color = "#94a3b8";
+      tagsWrap.appendChild(empty);
+      return;
+    }
+    for (const option of options) {
+      const button = documentRef.createElement("button");
+      button.type = "button";
+      button.setAttribute("data-quick-note-tag", String(option?.id || ""));
+      const isSelected = selected.has(String(option?.id || ""));
+      button.textContent = String(option?.name || option?.label || option?.id || "");
+      button.style.padding = "7px 10px";
+      button.style.borderRadius = "999px";
+      button.style.border = isSelected
+        ? "1px solid rgba(125, 211, 252, 0.4)"
+        : "1px solid rgba(148, 163, 184, 0.24)";
+      button.style.background = isSelected ? "rgba(14, 165, 233, 0.22)" : "rgba(15, 23, 42, 0.72)";
+      button.style.color = "#f8fafc";
+      button.addEventListener("click", (event: any) => {
+        event.preventDefault?.();
+        const next = new Set(Array.isArray(state.selectedTagIds) ? state.selectedTagIds : []);
+        const optionId = String(option?.id || "");
+        if (next.has(optionId)) {
+          next.delete(optionId);
+        } else if (optionId) {
+          next.add(optionId);
+        }
+        onTagsChange?.(Array.from(next));
+      });
+      tagsWrap.appendChild(button);
+    }
+  }
 
   function ensureMounted() {
     if (host.parentNode || host.parentElement) {
@@ -166,6 +268,11 @@ export function createQuickNotePanel({
       noteText: typeof viewModel.noteText === "string" ? viewModel.noteText : state.noteText,
       errorMessage: viewModel.errorMessage || "",
       selectionRect: viewModel.selectionRect || state.selectionRect,
+      linkingText: viewModel.linkingText || state.linkingText,
+      projectOptions: Array.isArray(viewModel.projectOptions) ? viewModel.projectOptions : state.projectOptions,
+      selectedProjectId: typeof viewModel.selectedProjectId === "string" ? viewModel.selectedProjectId : state.selectedProjectId,
+      tagOptions: Array.isArray(viewModel.tagOptions) ? viewModel.tagOptions : state.tagOptions,
+      selectedTagIds: Array.isArray(viewModel.selectedTagIds) ? viewModel.selectedTagIds : state.selectedTagIds,
     };
     ensureMounted();
     host.style.display = visible ? "block" : "none";
@@ -176,19 +283,25 @@ export function createQuickNotePanel({
       pageTitle: viewModel.pageTitle,
       pageUrl: viewModel.pageUrl,
     });
+    linkingHint.textContent = state.linkingText || "This highlight attaches as primary evidence. Open in Editor to Link related notes or Convert quotes.";
+    state.selectedProjectId = String(state.selectedProjectId || "");
+    state.selectedTagIds = Array.isArray(state.selectedTagIds) ? state.selectedTagIds.map((value) => String(value || "")).filter(Boolean) : [];
+    renderProjectOptions();
+    renderTagOptions();
     if (state.selectionRect) {
       updatePosition(state.selectionRect);
     }
     const saving = state.status === "saving";
     setDisabled(textarea, saving);
+    setDisabled(projectSelect, saving);
     setDisabled(cancelButton, saving);
     setDisabled(saveButton, saving || !String(state.noteText || "").trim());
     saveButton.textContent = saving ? "Saving" : "Save note";
     if (state.status === "error") {
-      feedback.textContent = state.errorMessage || "Save failed.";
+      feedback.textContent = state.errorMessage || "Note save failed.";
       feedback.style.color = "#fca5a5";
     } else if (state.status === "success") {
-      feedback.textContent = "Note saved.";
+      feedback.textContent = "Note saved with attached evidence.";
       feedback.style.color = "#86efac";
     } else if (saving) {
       feedback.textContent = "Saving note...";
@@ -201,6 +314,9 @@ export function createQuickNotePanel({
 
   textarea.addEventListener("input", () => {
     onInput?.(textarea.value);
+  });
+  projectSelect.addEventListener("change", () => {
+    onProjectChange?.(projectSelect.value);
   });
   textarea.addEventListener("keydown", (event: any) => {
     if ((event?.ctrlKey || event?.metaKey) && String(event?.key || "").toLowerCase() === "enter") {
@@ -238,6 +354,7 @@ export function createQuickNotePanel({
     hide() {
       visible = false;
       state = {
+        ...state,
         status: "closed",
         noteText: state.noteText,
         errorMessage: "",

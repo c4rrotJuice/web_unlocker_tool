@@ -220,7 +220,10 @@ function createFetchStub({ signedIn = true, citationsBody, notesBody, renderBody
             handoff: { preferred_destination: "/editor/from-bootstrap" },
             routes: { dashboard_path: "/dashboard/from-bootstrap" },
           },
-          taxonomy: { recent_projects: [{ id: "project-1" }], recent_tags: [{ id: "tag-1" }] },
+          taxonomy: {
+            recent_projects: [{ id: "project-1", name: "Project Atlas" }],
+            recent_tags: [{ id: "tag-1", name: "evidence" }],
+          },
         },
       } : {
         ok: true,
@@ -498,6 +501,8 @@ test("signed-in sidepanel loads compact workspace lists, tabs, hover preview, an
           {
             id: "citation-1",
             source_id: "source-1",
+            project: { id: "project-1", name: "Project Atlas" },
+            note_ids: ["note-1"],
             source: { title: "Source Title", hostname: "example.com" },
             excerpt: "Selected excerpt",
             quote_text: "Selected excerpt",
@@ -522,6 +527,11 @@ test("signed-in sidepanel loads compact workspace lists, tabs, hover preview, an
             title: "Field note",
             note_body: "Note body text",
             highlight_text: "Highlight text",
+            project: { id: "project-1", name: "Project Atlas" },
+            tags: [{ id: "tag-1", name: "evidence" }, { id: "tag-2", name: "draft" }],
+            evidence_links: [{ id: "link-1", evidence_role: "primary" }],
+            relationship_groups: { evidence_links_by_role: { primary: [{ id: "link-1" }] } },
+            lineage: { citation_id: "citation-1", quote_id: null },
             created_at: "2026-01-01T00:00:00Z",
           },
         ],
@@ -544,6 +554,7 @@ test("signed-in sidepanel loads compact workspace lists, tabs, hover preview, an
     assert.equal(requests.some((entry) => entry.url.includes("/api/citations?limit=8")), true);
     assert.equal(requests.some((entry) => entry.url.includes("/api/notes?limit=8")), false);
     assert.equal(collectText(mountedRoot).includes("Source Title"), true);
+    assert.equal(collectText(mountedRoot).includes("1 note"), true);
     assert.equal(collectText(mountedRoot).includes("Researcher"), true);
     assert.equal(collectText(mountedRoot).includes("Pro"), true);
     assert.equal(findByAttr(mountedRoot, "data-usage-gauge-row", "true").style.display, "grid");
@@ -569,7 +580,9 @@ test("signed-in sidepanel loads compact workspace lists, tabs, hover preview, an
     assert.equal(shell.getState().active_tab, "notes");
     assert.equal(requests.some((entry) => entry.url.includes("/api/notes?limit=8")), true);
     assert.equal(collectText(mountedRoot).includes("Field note"), true);
-    assert.equal(collectText(mountedRoot).includes("Highlight note"), true);
+    assert.equal(collectText(mountedRoot).includes("From citation"), true);
+    assert.equal(collectText(mountedRoot).includes("Project Project Atlas"), true);
+    assert.equal(collectText(mountedRoot).includes("2 tags"), true);
 
     const noteRow = findByAttr(mountedRoot, "data-note-id", "note-1");
     noteRow.dispatchEvent(new FakeEvent("mouseenter", noteRow));
@@ -592,6 +605,73 @@ test("signed-in sidepanel loads compact workspace lists, tabs, hover preview, an
     signOut.dispatchEvent(new FakeEvent("click", signOut));
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(shell.getState().status, "signed_out");
+  } finally {
+    shell?.destroy?.();
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+  }
+});
+
+test("new note composer exposes project and tag capture context without graph authoring controls", async () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const documentRef = new FakeDocument();
+  globalThis.document = documentRef;
+  globalThis.window = new FakeEventTarget();
+  let shell;
+  try {
+    const { chromeApi, runtime } = createRuntime({ signedIn: true });
+    const createCalls = [];
+    const root = documentRef.createElement("div");
+    shell = createSidepanelShell({
+      root,
+      client: {
+        ...createClient(runtime, chromeApi),
+        createNote: async (payload) => {
+          createCalls.push(payload);
+          return { ok: true, data: { id: "note-created" } };
+        },
+      },
+      chromeApi,
+      documentRef,
+      navigatorRef: { clipboard: { async writeText() {} } },
+    });
+    await shell.refresh();
+
+    const mountedRoot = root.shadowRoot || root;
+    const newNoteTab = findByAttr(mountedRoot, "data-tab", "new-note");
+    newNoteTab.dispatchEvent(new FakeEvent("click", newNoteTab));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const openButton = findByAttr(mountedRoot, "data-note-open", "true");
+    openButton.dispatchEvent(new FakeEvent("click", openButton));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const projectSelect = findByAttr(mountedRoot, "data-note-project-select", "true");
+    assert.ok(projectSelect);
+    projectSelect.value = "project-1";
+    projectSelect.dispatchEvent(new FakeEvent("change", projectSelect));
+
+    const tagButton = findByAttr(mountedRoot, "data-note-tag", "tag-1");
+    assert.ok(tagButton);
+    tagButton.dispatchEvent(new FakeEvent("click", tagButton));
+
+    assert.equal(findByAttr(mountedRoot, "data-note-evidence-role", "true"), null);
+    assert.equal(findByAttr(mountedRoot, "data-note-link-authoring", "true"), null);
+
+    const textarea = findByAttr(mountedRoot, "data-note-text", "true");
+    textarea.value = "Contextual note";
+    textarea.dispatchEvent(new FakeEvent("input", textarea));
+
+    const saveButton = findByAttr(mountedRoot, "data-note-save", "true");
+    saveButton.dispatchEvent(new FakeEvent("click", saveButton));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(createCalls.length, 1);
+    assert.equal(createCalls[0].projectId, "project-1");
+    assert.deepEqual(createCalls[0].tagIds, ["tag-1"]);
+    assert.equal(createCalls[0].evidenceRole, "primary");
+    assert.equal(collectText(mountedRoot).includes("Open in Editor to Link related notes or Convert quotes."), true);
   } finally {
     shell?.destroy?.();
     globalThis.document = previousDocument;

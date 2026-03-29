@@ -26,6 +26,17 @@ function toastPriority(type) {
   return TOAST_PRIORITY[type] || TOAST_PRIORITY[TOAST_TYPES.INFO];
 }
 
+function attachmentToastTitle(kind, source) {
+  const subject = kind === "note" ? "Note" : "Citation";
+  return source === "insert"
+    ? `${subject} inserted and attached`
+    : `${subject} attached`;
+}
+
+function detachmentToastTitle(kind) {
+  return `${kind === "note" ? "Note" : "Citation"} removed from document`;
+}
+
 function toToastPayload(type, title, options = {}) {
   const defaults = getToastDefaults(type);
   return {
@@ -260,25 +271,25 @@ export function createEventAdapter({ bus, statusStore }) {
         emitToast(TOAST_TYPES.ERROR, "Export failed", { description: payload.message || "" });
         break;
       case FEEDBACK_EVENTS.CITATION_ATTACHED:
-        emitToast(TOAST_TYPES.SUCCESS, payload?.source === "insert" ? "Inserted into document and attached" : "Attached to document");
+        emitToast(TOAST_TYPES.SUCCESS, attachmentToastTitle("citation", payload?.source));
         break;
       case FEEDBACK_EVENTS.CITATION_ATTACH_SKIPPED:
         emitToast(TOAST_TYPES.INFO, "Citation already attached", { dedupeKey: "citation-already-attached" });
         break;
       case FEEDBACK_EVENTS.CITATION_DETACHED:
-        emitToast(TOAST_TYPES.INFO, "Removed from document");
+        emitToast(TOAST_TYPES.INFO, detachmentToastTitle("citation"));
         break;
       case FEEDBACK_EVENTS.NOTE_ATTACHED:
-        emitToast(TOAST_TYPES.SUCCESS, payload?.source === "insert" ? "Inserted into document and attached" : "Attached to document");
+        emitToast(TOAST_TYPES.SUCCESS, attachmentToastTitle("note", payload?.source));
         break;
       case FEEDBACK_EVENTS.NOTE_ATTACH_SKIPPED:
         emitToast(TOAST_TYPES.INFO, "Note already attached", { dedupeKey: "note-already-attached" });
         break;
       case FEEDBACK_EVENTS.NOTE_DETACHED:
-        emitToast(TOAST_TYPES.INFO, "Removed from document");
+        emitToast(TOAST_TYPES.INFO, detachmentToastTitle("note"));
         break;
       case FEEDBACK_EVENTS.QUOTE_INSERTED:
-        emitToast(TOAST_TYPES.SUCCESS, payload?.citationId ? "Inserted into document and attached" : "Quote inserted");
+        emitToast(TOAST_TYPES.SUCCESS, payload?.citationId ? "Quote inserted and citation attached" : "Quote inserted");
         break;
       case FEEDBACK_EVENTS.BIBLIOGRAPHY_INSERTED:
         emitToast(TOAST_TYPES.INFO, "Bibliography inserted");
@@ -305,7 +316,7 @@ export function createEventAdapter({ bus, statusStore }) {
         });
         break;
       case FEEDBACK_EVENTS.PERMISSION_DENIED:
-        emitToast(TOAST_TYPES.ERROR, "Permission denied", {
+        emitToast(TOAST_TYPES.ERROR, payload.title || "Action not allowed", {
           description: payload.message || "You do not have access to that action.",
           dedupeKey: payload.dedupeKey || "permission-denied",
         });
@@ -350,7 +361,7 @@ export function createEventAdapter({ bus, statusStore }) {
         break;
       case FEEDBACK_EVENTS.RESEARCH_PANEL_FAILED:
         statusStore.set(STATUS_SCOPES.RESEARCH_PANEL, STATUS_STATES.ERROR, { label: payload.label || "Research load failed" });
-        emitToast(TOAST_TYPES.ERROR, payload.title || "Research view failed", {
+        emitToast(TOAST_TYPES.ERROR, payload.title || "Research action failed", {
           description: payload.message || "",
         });
         break;

@@ -99,7 +99,7 @@ export function renderContextRail(target, context, state, detail, handlers = {})
         <p>${escapeHtml(detail?.excerpt || detail?.citation?.source?.title || "Captured context is ready for writing.")}</p>
         <div class="editor-v2-context-actions">
           <button class="editor-v2-action" data-context-action="insert-seed-quote">Insert quote now</button>
-          ${seed?.quote_id ? `<button class="editor-v2-action" data-context-action="convert-quote-to-note" data-quote-id="${escapeHtml(seed.quote_id)}">Convert to note</button>` : ""}
+          ${seed?.quote_id ? `<button class="editor-v2-action" data-context-action="convert-quote-to-note" data-quote-id="${escapeHtml(seed.quote_id)}">Convert Quote to Note</button>` : ""}
           <button class="editor-v2-action" data-context-action="start-outline">Start outline</button>
         </div>
         <p class="editor-v2-meta">Citation: ${escapeHtml(seed?.citation_id || "none")}</p>

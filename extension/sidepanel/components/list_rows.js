@@ -17,6 +17,34 @@ function getDomain(urlLike) {
         return "";
     }
 }
+function getProjectName(entity = {}) {
+    return normalizeText(entity?.project?.name || entity?.project_name || "");
+}
+function getTagLabel(entity = {}) {
+    if (Array.isArray(entity?.tags) && entity.tags.length) {
+        const names = entity.tags.map((tag) => normalizeText(tag?.name || tag?.label || "")).filter(Boolean);
+        if (names.length === 1) {
+            return `#${names[0]}`;
+        }
+        if (names.length > 1) {
+            return `${names.length} tags`;
+        }
+    }
+    if (Array.isArray(entity?.tag_ids) && entity.tag_ids.length) {
+        return entity.tag_ids.length === 1 ? "1 tag" : `${entity.tag_ids.length} tags`;
+    }
+    return "";
+}
+function getPrimaryEvidenceCount(note = {}) {
+    const grouped = note?.relationship_groups?.evidence_links_by_role?.primary;
+    if (Array.isArray(grouped) && grouped.length) {
+        return grouped.length;
+    }
+    const direct = Array.isArray(note?.evidence_links)
+        ? note.evidence_links.filter((entry) => normalizeText(entry?.evidence_role).toLowerCase() === "primary")
+        : [];
+    return direct.length;
+}
 function createBaseRow(documentRef, attrs = {}) {
     const root = documentRef.createElement("button");
     root.type = "button";
@@ -47,17 +75,50 @@ export function summarizeCitation(citation = {}) {
         : "";
     const issued = normalizeText(source?.issued_date?.raw || source?.issued_date?.year || "");
     const preview = citation.quote_text || citation.excerpt || citation.renders?.apa?.bibliography || "";
+    const projectName = getProjectName(citation);
+    const attachedNotes = Array.isArray(citation?.note_ids)
+        ? citation.note_ids.length
+        : Array.isArray(citation?.attached_note_ids)
+            ? citation.attached_note_ids.length
+            : Number(citation?.attached_note_count || 0);
     return {
         title: truncate(source.title || preview || "Citation", 82),
-        meta: [authors, issued, getDomain(source.url || citation.page_url || ""), normalizeText(source.source_type).replace(/_/g, " ")].filter(Boolean).join(" • "),
+        meta: [
+            authors,
+            issued,
+            projectName ? `Project ${projectName}` : "",
+            attachedNotes ? `${attachedNotes} note${attachedNotes === 1 ? "" : "s"}` : "",
+            getDomain(source.url || citation.page_url || ""),
+            normalizeText(source.source_type).replace(/_/g, " "),
+        ].filter(Boolean).join(" • "),
         body: preview || "Citation preview unavailable.",
     };
 }
 export function summarizeNote(note = {}) {
     const preview = normalizeText(note.note_body || note.highlight_text || "");
+    const projectName = getProjectName(note);
+    const tagLabel = getTagLabel(note);
+    const lineage = note?.lineage || {};
+    const primaryEvidenceCount = getPrimaryEvidenceCount(note);
+    const relationshipLabel = lineage?.quote_id
+        ? "From quote"
+        : lineage?.citation_id
+            ? "From citation"
+            : primaryEvidenceCount
+                ? "Evidence note"
+                : note.highlight_text
+                    ? "Highlight note"
+                    : "Plain note";
     return {
         title: truncate(note.title || preview || "Untitled note", 82),
-        meta: [note.highlight_text ? "Highlight note" : "Plain note", getDomain(note.page_url || note.source?.url || ""), normalizeText(note.created_at).slice(0, 10)].filter(Boolean).join(" • "),
+        meta: [
+            relationshipLabel,
+            primaryEvidenceCount ? `${primaryEvidenceCount} primary evidence` : "",
+            projectName ? `Project ${projectName}` : "",
+            tagLabel,
+            getDomain(note.page_url || note.source?.url || ""),
+            normalizeText(note.created_at).slice(0, 10),
+        ].filter(Boolean).join(" • "),
         body: preview || "Note preview unavailable.",
     };
 }

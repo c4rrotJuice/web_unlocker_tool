@@ -99,10 +99,11 @@ export function createLinkActions({ workspaceState, attachActions, feedback = nu
       onNotify(event) {
         if (event?.kind === "success") {
           feedback?.emitDomainEvent?.(FEEDBACK_EVENTS.RESEARCH_PANEL_READY, { label: event.message || "Relationship saved" });
+          feedback?.toast?.success?.(event.title || event.message || "Relationship saved");
           return;
         }
         feedback?.emitDomainEvent?.(FEEDBACK_EVENTS.RESEARCH_PANEL_FAILED, {
-          title: "Relationship update failed",
+          title: event?.title || "Relationship update failed",
           message: event?.message || "The relationship update failed.",
         });
       },
@@ -142,7 +143,7 @@ export function createLinkActions({ workspaceState, attachActions, feedback = nu
       return runAttachAction(
         () => attachActions.attachNote(noteId, { source: "attach" }),
         "You cannot attach that note to this document.",
-        "Note attach failed",
+        "Note attachment failed",
         "The note could not be attached to this document.",
         "note-attach-permission-denied",
       );
@@ -160,7 +161,7 @@ export function createLinkActions({ workspaceState, attachActions, feedback = nu
       return runAttachAction(
         () => attachActions.attachCitation(citationId, { source: "attach" }),
         "You cannot attach that citation to this document.",
-        "Citation attach failed",
+        "Citation attachment failed",
         "The citation could not be attached to this document.",
         "citation-attach-permission-denied",
       );

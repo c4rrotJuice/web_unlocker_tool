@@ -148,6 +148,7 @@ test("project create and move flows use canonical note and document project assi
   await flush();
 
   const noteSelect = elements.notesNode.querySelector('[data-project-assignment-select="note:note-1"]');
+  assert.match(elements.notesNode.innerHTML, /Move to project/);
   noteSelect.value = "project-2";
   elements.notesNode.querySelector('[data-project-assignment-save="note:note-1"]').click();
   await flush();

@@ -123,15 +123,15 @@ test("source and citation details expose note-hub handoff while quote detail exp
   }, {
     convertAction: {
       supported: true,
-      label: "Convert to note",
+      label: "Convert Quote to Note",
     },
   });
-  assert.match(sourceHtml, /Link to note…/);
-  assert.match(citationHtml, /Link to note…/);
-  assert.match(quoteHtml, /Convert to note/);
+  assert.match(sourceHtml, /Link to note/);
+  assert.match(citationHtml, /Link to note/);
+  assert.match(quoteHtml, /Convert Quote to Note/);
   assert.match(quoteHtml, /Derived notes/);
   assert.match(quoteHtml, /Converted note/);
-  assert.doesNotMatch(quoteHtml, /Link to note…/);
+  assert.doesNotMatch(quoteHtml, /Link to note/);
 });
 
 test("note detail surfaces lineage and editor insert follow-up actions when available", () => {
@@ -215,6 +215,27 @@ test("project detail renders derived metrics without implying direct ownership o
   assert.match(html, /Derived research visibility/);
   assert.match(html, /Recent activity/);
   assert.match(html, /document · Outline draft/);
-  assert.doesNotMatch(html, /Link to note…/);
+  assert.doesNotMatch(html, /Link to note/);
   assert.doesNotMatch(html, /Link source as evidence/);
+});
+
+test("project organization controls stay organizational and use move-to-project copy", () => {
+  const html = renderNoteDetail({
+    id: "note-1",
+    title: "Claim note",
+    note_body: "Body",
+    status: "active",
+    project_id: "project-1",
+    project: { id: "project-1", name: "Policy memo" },
+    tags: [],
+  }, {
+    projectAssignment: {
+      supported: true,
+      projects: [{ id: "project-1", name: "Policy memo" }, { id: "project-2", name: "Secondary" }],
+    },
+    authoring: { supported: true, panel: null },
+  });
+
+  assert.match(html, /Projects organize notes and documents only/);
+  assert.match(html, /Move to project/);
 });

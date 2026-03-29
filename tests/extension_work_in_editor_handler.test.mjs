@@ -108,6 +108,9 @@ test("sidepanel open actions resolve canonical bootstrap destinations through th
       async listNotes() {
         return { ok: true, data: [] };
       },
+      async updateNote() {
+        return { ok: true, data: {} };
+      },
     },
     stateStore,
     tabOpener: createTabOpener({ chromeApi, stateStore }),

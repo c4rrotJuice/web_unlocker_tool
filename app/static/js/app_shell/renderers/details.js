@@ -35,7 +35,7 @@ function renderNoteHubChooser(options = {}) {
   const targetLabel = noteHubLink.targetLabel || "research item";
   return `
     <section class="detail-section">
-      <p class="section-kicker">Link into note hub</p>
+      <p class="section-kicker">Link to note</p>
       <p class="surface-note">Choose the owning note first. Relationship typing stays note-scoped.</p>
       <div class="detail-chip-row">
         <button
@@ -331,14 +331,14 @@ function renderQuoteConversionSection(quote, options = {}) {
   return `
     <section class="detail-section">
       <p class="section-kicker">Conversion</p>
-      <p class="surface-note">Convert creates a real note and preserves quote and citation lineage.</p>
+      <p class="surface-note">Convert Quote to Note creates a real note and preserves quote and citation lineage.</p>
       <div class="detail-chip-row">
         <button
           type="button"
           class="app-button-secondary"
           data-context-action="convert-quote-to-note"
           data-quote-id="${escapeHtml(quote.id)}"
-        >${escapeHtml(convertAction.label || "Convert to note")}</button>
+        >${escapeHtml(convertAction.label || "Convert Quote to Note")}</button>
       </div>
     </section>
   `;

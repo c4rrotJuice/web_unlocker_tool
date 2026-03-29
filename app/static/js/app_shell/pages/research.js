@@ -138,10 +138,11 @@ export async function initResearch() {
     onNotify(event) {
       if (event?.kind === "success") {
         feedback.emitDomainEvent(FEEDBACK_EVENTS.RESEARCH_PANEL_READY, { label: event.message || "Relationship saved" });
+        feedback.toast?.success?.(event.title || event.message || "Relationship saved");
         return;
       }
       feedback.emitDomainEvent(FEEDBACK_EVENTS.RESEARCH_PANEL_FAILED, {
-        title: "Relationship update failed",
+        title: event?.title || "Relationship update failed",
         message: event?.message || "The note relationship update failed.",
       });
     },
@@ -389,7 +390,7 @@ export async function initResearch() {
           ? {
             convertAction: {
               supported: !!baseItem?.id,
-              label: "Convert to note",
+              label: "Convert Quote to Note",
             },
             derivedNotes: baseItem?.neighborhood?.notes || [],
           }
@@ -407,7 +408,7 @@ export async function initResearch() {
       quote: node.type === "quote" ? {
         convertAction: {
           supported: !!current?.id,
-          label: "Convert to note",
+          label: "Convert Quote to Note",
         },
         derivedNotes: graph?.collections?.notes || current?.neighborhood?.notes || [],
       } : {},
@@ -494,7 +495,7 @@ export async function initResearch() {
           ? {
             convertAction: {
               supported: !!id,
-              label: "Convert to note",
+              label: "Convert Quote to Note",
             },
             derivedNotes: baseItem?.neighborhood?.notes || [],
           }

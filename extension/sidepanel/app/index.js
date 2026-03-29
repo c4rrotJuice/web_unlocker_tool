@@ -31,7 +31,7 @@ async function resolveActiveTabContext(chromeApi) {
 }
 function describePageContext(pageContext) {
     if (!pageContext?.pageUrl) {
-        return "Current page context attaches automatically when available.";
+        return "Current page attaches automatically when available.";
     }
     return [pageContext.pageTitle || "Current page", pageContext.pageDomain || pageContext.pageUrl].filter(Boolean).join(" • ");
 }
@@ -40,6 +40,31 @@ function normalizeText(value) {
 }
 function trimText(value) {
     return String(value || "").trim();
+}
+function readRecentCaptureOptions(auth = null) {
+    const taxonomy = auth?.bootstrap?.taxonomy && typeof auth.bootstrap.taxonomy === "object"
+        ? auth.bootstrap.taxonomy
+        : {};
+    return {
+        projectOptions: Array.isArray(taxonomy.recent_projects)
+            ? taxonomy.recent_projects.map((project) => ({
+                id: String(project?.id || ""),
+                name: String(project?.name || project?.title || project?.id || "").trim(),
+            })).filter((project) => project.id && project.name)
+            : [],
+        tagOptions: Array.isArray(taxonomy.recent_tags)
+            ? taxonomy.recent_tags.map((tag) => ({
+                id: String(tag?.id || ""),
+                name: String(tag?.name || tag?.label || tag?.normalized_name || tag?.id || "").trim(),
+            })).filter((tag) => tag.id && tag.name)
+            : [],
+    };
+}
+function describeNoteLinkingContext(pageContext = null) {
+    if (pageContext?.pageUrl) {
+        return "Current page attaches as primary evidence. Open in Editor to Link related notes or Convert quotes.";
+    }
+    return "Notes stay capture-first here. Open in Editor to Link related notes or Convert quotes.";
 }
 function getNoteCopyText(note = {}, draft = undefined) {
     const title = trimText(draft?.title ?? note?.title ?? "");
@@ -265,6 +290,8 @@ export function createSidepanelShell(options = {}) {
                 active_tab: SIDEPANEL_TABS.NEW_NOTE,
                 noteStatus: "editing",
                 noteError: "",
+                noteProjectId: "",
+                noteTagIds: [],
                 pageContext,
             });
             render();
@@ -275,11 +302,21 @@ export function createSidepanelShell(options = {}) {
                 noteStatus: "closed",
                 noteText: "",
                 noteError: "",
+                noteProjectId: "",
+                noteTagIds: [],
             });
             render();
         },
         onInput: (value) => {
             stateStore.setState({ noteText: value, noteStatus: "editing", noteError: "" });
+            render();
+        },
+        onProjectChange: (value) => {
+            stateStore.setState({ noteProjectId: value || "" });
+            render();
+        },
+        onTagsChange: (value) => {
+            stateStore.setState({ noteTagIds: Array.isArray(value) ? value : [] });
             render();
         },
         onSubmit: async () => {
@@ -297,6 +334,9 @@ export function createSidepanelShell(options = {}) {
             render();
             const result = await client.createNote?.({
                 noteText: state.noteText,
+                projectId: state.noteProjectId || undefined,
+                tagIds: state.noteTagIds || [],
+                evidenceRole: "primary",
                 capture: pageContext?.pageUrl
                     ? { pageTitle: pageContext.pageTitle, pageUrl: pageContext.pageUrl, selectionText: "" }
                     : undefined,
@@ -306,9 +346,11 @@ export function createSidepanelShell(options = {}) {
                     noteStatus: "success",
                     noteText: "",
                     noteError: "",
+                    noteProjectId: "",
+                    noteTagIds: [],
                 });
                 stateStore.updateTab(SIDEPANEL_TABS.NOTES, { status: TAB_LOAD_STATUS.IDLE, items: [], message: "" });
-                stateStore.setNotice({ tone: "info", message: "Note saved." });
+                stateStore.setNotice({ tone: "info", message: "Note saved with attached evidence. Open in Editor to Link related notes." });
             }
             else {
                 stateStore.setState({
@@ -1043,6 +1085,10 @@ export function createSidepanelShell(options = {}) {
                 noteText: state.noteText,
                 errorMessage: state.noteError,
                 pageContextText: describePageContext(state.pageContext),
+                linkingText: describeNoteLinkingContext(state.pageContext),
+                selectedProjectId: state.noteProjectId || "",
+                selectedTagIds: state.noteTagIds || [],
+                ...readRecentCaptureOptions(state.auth),
             });
             workspaceBody.replaceChildren(newNoteView.root);
             return;

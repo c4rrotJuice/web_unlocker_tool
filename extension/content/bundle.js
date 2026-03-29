@@ -115,7 +115,7 @@ exports.MESSAGE_CONTRACTS = Object.freeze({
     }),
     [message_names_ts_1.MESSAGE_NAMES.CAPTURE_CREATE_NOTE]: Object.freeze({
         topic: exports.MESSAGE_TOPICS.CAPTURE,
-        payloadShape: "surface:string, noteText?:string, capture?:{selectionText?:string, pageTitle?:string, pageUrl?:string, pageDomain?:string}",
+        payloadShape: "surface:string, noteText?:string, projectId?:string, tagIds?:string[], citationId?:string, quoteId?:string, sourceId?:string, evidenceRole?:primary|supporting|background, capture?:{selectionText?:string, pageTitle?:string, pageUrl?:string, pageDomain?:string}",
         resultShape: "note:canonical backend response",
     }),
     [message_names_ts_1.MESSAGE_NAMES.CITATION_PREVIEW]: Object.freeze({
@@ -456,22 +456,64 @@ function normalizeIdentifiers(input) {
     }
     return normalized;
 }
+function normalizeStringList(input) {
+    const seen = new Set();
+    const normalized = [];
+    for (const entry of Array.isArray(input) ? input : []) {
+        const value = normalizeText(entry);
+        if (!value || seen.has(value)) {
+            continue;
+        }
+        seen.add(value);
+        normalized.push(value);
+    }
+    return normalized;
+}
 function normalizeLocator(input) {
     return isPlainObject(input) ? { ...input } : {};
 }
-function buildExternalEvidenceLink({ pageUrl, pageDomain, pageTitle, } = {}) {
+function normalizeEvidenceRole(value, fallback = "supporting") {
+    const normalized = normalizeText(value).toLowerCase();
+    if (normalized === "primary" || normalized === "supporting" || normalized === "background") {
+        return normalized;
+    }
+    return fallback;
+}
+function buildExternalEvidenceLink({ pageUrl, pageDomain, pageTitle, evidenceRole = "supporting", position = 0, } = {}) {
     const url = normalizeText(pageUrl);
     if (!url) {
         return [];
     }
     return [{
             target_kind: "external",
-            evidence_role: "supporting",
+            evidence_role: normalizeEvidenceRole(evidenceRole, "supporting"),
             url,
             hostname: deriveDomain(url, pageDomain) || null,
             title: normalizeText(pageTitle) || null,
-            position: 0,
+            position,
         }];
+}
+function buildDefaultNoteEvidenceLinks({ pageUrl, pageDomain, pageTitle, citationId, sourceId, evidenceRole = "primary", } = {}) {
+    const normalizedCitationId = normalizeText(citationId);
+    const normalizedSourceId = normalizeText(sourceId);
+    const links = [];
+    if (normalizedCitationId) {
+        links.push({
+            target_kind: "citation",
+            evidence_role: normalizeEvidenceRole(evidenceRole, "primary"),
+            citation_id: normalizedCitationId,
+            source_id: normalizedSourceId || null,
+            position: 0,
+        });
+    }
+    links.push(...buildExternalEvidenceLink({
+        pageUrl,
+        pageDomain,
+        pageTitle,
+        evidenceRole: normalizedCitationId ? "background" : evidenceRole,
+        position: links.length,
+    }));
+    return links;
 }
 exports.CAPTURE_TYPES = Object.freeze({
     CITATION: "citation",
@@ -504,6 +546,12 @@ function normalizeCaptureContext(input = {}) {
     const excerpt = normalizeText(input.excerpt);
     const annotation = normalizeText(input.annotation);
     const quote = normalizeText(input.quote);
+    const projectId = normalizeText(input.projectId ?? input.project_id);
+    const tagIds = normalizeStringList(input.tagIds ?? input.tag_ids);
+    const citationId = normalizeText(input.citationId ?? input.citation_id);
+    const quoteId = normalizeText(input.quoteId ?? input.quote_id);
+    const sourceId = normalizeText(input.sourceId ?? input.source_id);
+    const evidenceRole = normalizeEvidenceRole(input.evidenceRole ?? input.evidence_role, "primary");
     return {
         selectionText,
         pageTitle,
@@ -526,6 +574,12 @@ function normalizeCaptureContext(input = {}) {
         excerpt,
         annotation,
         quote,
+        projectId,
+        tagIds,
+        citationId,
+        quoteId,
+        sourceId,
+        evidenceRole,
     };
 }
 function buildContentCapturePayload({ selectionText, pageTitle, pageUrl, pageDomain, canonicalUrl, description, language, siteName, titleCandidates, authorCandidates, dateCandidates, publisherCandidates, containerCandidates, sourceTypeCandidates, identifiers, locator, extractionEvidence, rawMetadata, excerpt, annotation, quote, } = {}) {
@@ -626,7 +680,7 @@ function buildQuoteCaptureRequest({ citationId, selectionText, locator, annotati
         annotation: normalizeText(annotation) || null,
     };
 }
-function buildNoteCaptureRequest({ selectionText, noteText, pageTitle, pageUrl, pageDomain, citationId = null, quoteId = null, } = {}) {
+function buildNoteCaptureRequest({ selectionText, noteText, pageTitle, pageUrl, pageDomain, citationId = null, quoteId = null, projectId = null, tagIds = [], sourceId = null, evidenceRole = "primary", } = {}) {
     const normalizedSelection = normalizeText(selectionText);
     const normalizedBody = normalizeText(noteText) || normalizedSelection;
     const titleSeed = normalizedBody || normalizeText(pageTitle) || "Captured note";
@@ -634,10 +688,18 @@ function buildNoteCaptureRequest({ selectionText, noteText, pageTitle, pageUrl, 
         title: truncateText(titleSeed, 72) || "Captured note",
         note_body: normalizedBody,
         highlight_text: normalizedSelection || null,
+        project_id: normalizeText(projectId) || null,
         citation_id: normalizeText(citationId) || null,
         quote_id: normalizeText(quoteId) || null,
-        tag_ids: [],
-        evidence_links: buildExternalEvidenceLink({ pageUrl, pageDomain, pageTitle }),
+        tag_ids: normalizeStringList(tagIds),
+        evidence_links: buildDefaultNoteEvidenceLinks({
+            pageUrl,
+            pageDomain,
+            pageTitle,
+            citationId,
+            sourceId,
+            evidenceRole,
+        }),
         note_links: [],
     };
 }
@@ -771,6 +833,24 @@ function validateCaptureNotePayload(payload) {
     }
     if (payload.capture != null && !isPlainObject(payload.capture)) {
         return "payload.capture must be an object when provided.";
+    }
+    if (payload.projectId != null && !isNonEmptyString(payload.projectId)) {
+        return "payload.projectId must be a non-empty string when provided.";
+    }
+    if (payload.citationId != null && !isNonEmptyString(payload.citationId)) {
+        return "payload.citationId must be a non-empty string when provided.";
+    }
+    if (payload.quoteId != null && !isNonEmptyString(payload.quoteId)) {
+        return "payload.quoteId must be a non-empty string when provided.";
+    }
+    if (payload.sourceId != null && !isNonEmptyString(payload.sourceId)) {
+        return "payload.sourceId must be a non-empty string when provided.";
+    }
+    if (payload.evidenceRole != null && !["primary", "supporting", "background"].includes(String(payload.evidenceRole).trim().toLowerCase())) {
+        return "payload.evidenceRole must be one of the supported evidence roles when provided.";
+    }
+    if (payload.tagIds != null && (!Array.isArray(payload.tagIds) || payload.tagIds.some((value) => !isNonEmptyString(value)))) {
+        return "payload.tagIds must be an array of non-empty strings when provided.";
     }
     const capture = payload.capture ? (0, capture_ts_1.normalizeCaptureContext)(payload.capture) : null;
     const hasSelection = isNonEmptyString(capture?.selectionText);
@@ -4304,11 +4384,27 @@ function setDisabled(element, disabled) {
         element.removeAttribute("aria-disabled");
     }
 }
-function createQuickNotePanel({ documentRef = globalThis.document, windowRef = globalThis.window, onSave, onCancel, onInput, } = {}) {
+function clearChildren(node) {
+    if (typeof node?.replaceChildren === "function") {
+        node.replaceChildren();
+        return;
+    }
+    if ("innerHTML" in node) {
+        node.innerHTML = "";
+        return;
+    }
+    if (Array.isArray(node?.children)) {
+        node.children.length = 0;
+    }
+}
+function createQuickNotePanel({ documentRef = globalThis.document, windowRef = globalThis.window, onSave, onCancel, onInput, onProjectChange, onTagsChange, } = {}) {
     const host = createContainer(documentRef);
     const panel = documentRef.createElement("section");
     const heading = documentRef.createElement("p");
     const preview = (0, highlight_preview_ts_1.createHighlightPreview)({ documentRef });
+    const linkingHint = documentRef.createElement("p");
+    const projectSelect = documentRef.createElement("select");
+    const tagsWrap = documentRef.createElement("div");
     const textarea = documentRef.createElement("textarea");
     const feedback = documentRef.createElement("p");
     const actions = documentRef.createElement("div");
@@ -4333,6 +4429,20 @@ function createQuickNotePanel({ documentRef = globalThis.document, windowRef = g
     heading.style.color = "#f8fafc";
     heading.style.fontSize = "14px";
     heading.style.fontWeight = "600";
+    linkingHint.style.margin = "0";
+    linkingHint.style.fontSize = "12px";
+    linkingHint.style.lineHeight = "1.35";
+    linkingHint.style.color = "#cbd5e1";
+    projectSelect.setAttribute("data-quick-note-project-select", "true");
+    projectSelect.style.width = "100%";
+    projectSelect.style.padding = "10px 12px";
+    projectSelect.style.borderRadius = "12px";
+    projectSelect.style.border = "1px solid rgba(148, 163, 184, 0.22)";
+    projectSelect.style.background = "rgba(15, 23, 42, 0.72)";
+    projectSelect.style.color = "#f8fafc";
+    tagsWrap.style.display = "flex";
+    tagsWrap.style.flexWrap = "wrap";
+    tagsWrap.style.gap = "8px";
     textarea.value = "";
     textarea.rows = 5;
     textarea.placeholder = "Add a note about this highlight";
@@ -4376,11 +4486,14 @@ function createQuickNotePanel({ documentRef = globalThis.document, windowRef = g
         actions.appendChild(saveButton);
     }
     if (typeof panel.append === "function") {
-        panel.append(heading, preview.root, textarea, feedback, actions);
+        panel.append(heading, preview.root, linkingHint, projectSelect, tagsWrap, textarea, feedback, actions);
     }
     else {
         panel.appendChild(heading);
         panel.appendChild(preview.root);
+        panel.appendChild(linkingHint);
+        panel.appendChild(projectSelect);
+        panel.appendChild(tagsWrap);
         panel.appendChild(textarea);
         panel.appendChild(feedback);
         panel.appendChild(actions);
@@ -4392,7 +4505,67 @@ function createQuickNotePanel({ documentRef = globalThis.document, windowRef = g
         noteText: "",
         errorMessage: "",
         selectionRect: null,
+        linkingText: "",
+        projectOptions: [],
+        selectedProjectId: "",
+        tagOptions: [],
+        selectedTagIds: [],
     };
+    function renderProjectOptions() {
+        clearChildren(projectSelect);
+        const emptyOption = documentRef.createElement("option");
+        emptyOption.value = "";
+        emptyOption.textContent = "No project";
+        projectSelect.appendChild(emptyOption);
+        for (const option of Array.isArray(state.projectOptions) ? state.projectOptions : []) {
+            const node = documentRef.createElement("option");
+            node.value = String(option?.id || "");
+            node.textContent = String(option?.name || option?.label || option?.id || "");
+            node.selected = node.value === state.selectedProjectId;
+            projectSelect.appendChild(node);
+        }
+        projectSelect.value = state.selectedProjectId || "";
+    }
+    function renderTagOptions() {
+        clearChildren(tagsWrap);
+        const selected = new Set(Array.isArray(state.selectedTagIds) ? state.selectedTagIds : []);
+        const options = Array.isArray(state.tagOptions) ? state.tagOptions : [];
+        if (!options.length) {
+            const empty = documentRef.createElement("div");
+            empty.textContent = "No recent tags";
+            empty.style.fontSize = "12px";
+            empty.style.color = "#94a3b8";
+            tagsWrap.appendChild(empty);
+            return;
+        }
+        for (const option of options) {
+            const button = documentRef.createElement("button");
+            button.type = "button";
+            button.setAttribute("data-quick-note-tag", String(option?.id || ""));
+            const isSelected = selected.has(String(option?.id || ""));
+            button.textContent = String(option?.name || option?.label || option?.id || "");
+            button.style.padding = "7px 10px";
+            button.style.borderRadius = "999px";
+            button.style.border = isSelected
+                ? "1px solid rgba(125, 211, 252, 0.4)"
+                : "1px solid rgba(148, 163, 184, 0.24)";
+            button.style.background = isSelected ? "rgba(14, 165, 233, 0.22)" : "rgba(15, 23, 42, 0.72)";
+            button.style.color = "#f8fafc";
+            button.addEventListener("click", (event) => {
+                event.preventDefault?.();
+                const next = new Set(Array.isArray(state.selectedTagIds) ? state.selectedTagIds : []);
+                const optionId = String(option?.id || "");
+                if (next.has(optionId)) {
+                    next.delete(optionId);
+                }
+                else if (optionId) {
+                    next.add(optionId);
+                }
+                onTagsChange?.(Array.from(next));
+            });
+            tagsWrap.appendChild(button);
+        }
+    }
     function ensureMounted() {
         if (host.parentNode || host.parentElement) {
             return;
@@ -4420,6 +4593,11 @@ function createQuickNotePanel({ documentRef = globalThis.document, windowRef = g
             noteText: typeof viewModel.noteText === "string" ? viewModel.noteText : state.noteText,
             errorMessage: viewModel.errorMessage || "",
             selectionRect: viewModel.selectionRect || state.selectionRect,
+            linkingText: viewModel.linkingText || state.linkingText,
+            projectOptions: Array.isArray(viewModel.projectOptions) ? viewModel.projectOptions : state.projectOptions,
+            selectedProjectId: typeof viewModel.selectedProjectId === "string" ? viewModel.selectedProjectId : state.selectedProjectId,
+            tagOptions: Array.isArray(viewModel.tagOptions) ? viewModel.tagOptions : state.tagOptions,
+            selectedTagIds: Array.isArray(viewModel.selectedTagIds) ? viewModel.selectedTagIds : state.selectedTagIds,
         };
         ensureMounted();
         host.style.display = visible ? "block" : "none";
@@ -4430,20 +4608,26 @@ function createQuickNotePanel({ documentRef = globalThis.document, windowRef = g
             pageTitle: viewModel.pageTitle,
             pageUrl: viewModel.pageUrl,
         });
+        linkingHint.textContent = state.linkingText || "This highlight attaches as primary evidence. Open in Editor to Link related notes or Convert quotes.";
+        state.selectedProjectId = String(state.selectedProjectId || "");
+        state.selectedTagIds = Array.isArray(state.selectedTagIds) ? state.selectedTagIds.map((value) => String(value || "")).filter(Boolean) : [];
+        renderProjectOptions();
+        renderTagOptions();
         if (state.selectionRect) {
             updatePosition(state.selectionRect);
         }
         const saving = state.status === "saving";
         setDisabled(textarea, saving);
+        setDisabled(projectSelect, saving);
         setDisabled(cancelButton, saving);
         setDisabled(saveButton, saving || !String(state.noteText || "").trim());
         saveButton.textContent = saving ? "Saving" : "Save note";
         if (state.status === "error") {
-            feedback.textContent = state.errorMessage || "Save failed.";
+            feedback.textContent = state.errorMessage || "Note save failed.";
             feedback.style.color = "#fca5a5";
         }
         else if (state.status === "success") {
-            feedback.textContent = "Note saved.";
+            feedback.textContent = "Note saved with attached evidence.";
             feedback.style.color = "#86efac";
         }
         else if (saving) {
@@ -4457,6 +4641,9 @@ function createQuickNotePanel({ documentRef = globalThis.document, windowRef = g
     }
     textarea.addEventListener("input", () => {
         onInput?.(textarea.value);
+    });
+    projectSelect.addEventListener("change", () => {
+        onProjectChange?.(projectSelect.value);
     });
     textarea.addEventListener("keydown", (event) => {
         if ((event?.ctrlKey || event?.metaKey) && String(event?.key || "").toLowerCase() === "enter") {
@@ -4493,6 +4680,7 @@ function createQuickNotePanel({ documentRef = globalThis.document, windowRef = g
         hide() {
             visible = false;
             state = {
+                ...state,
                 status: "closed",
                 noteText: state.noteText,
                 errorMessage: "",
@@ -4785,6 +4973,25 @@ function describeCaptureFailure(result) {
     }
     return result?.error?.message || "Save failed";
 }
+function readRecentCaptureOptions(auth = null) {
+    const taxonomy = auth?.bootstrap?.taxonomy && typeof auth.bootstrap.taxonomy === "object"
+        ? auth.bootstrap.taxonomy
+        : {};
+    return {
+        projectOptions: Array.isArray(taxonomy.recent_projects)
+            ? taxonomy.recent_projects.map((project) => ({
+                id: String(project?.id || ""),
+                name: String(project?.name || project?.title || project?.id || "").trim(),
+            })).filter((project) => project.id && project.name)
+            : [],
+        tagOptions: Array.isArray(taxonomy.recent_tags)
+            ? taxonomy.recent_tags.map((tag) => ({
+                id: String(tag?.id || ""),
+                name: String(tag?.name || tag?.label || tag?.normalized_name || tag?.id || "").trim(),
+            })).filter((tag) => tag.id && tag.name)
+            : [],
+    };
+}
 async function copyTextToClipboard(text, { navigatorRef, documentRef }) {
     const value = String(text || "");
     try {
@@ -4850,6 +5057,8 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         noteStatus: "closed",
         noteText: "",
         noteError: "",
+        noteProjectId: "",
+        noteTagIds: [],
         citationModalSnapshot: null,
         authSnapshot: null,
     };
@@ -4871,6 +5080,14 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
             state.noteText = value;
             state.noteStatus = "editing";
             state.noteError = "";
+            renderQuickNotePanel();
+        },
+        onProjectChange: (value) => {
+            state.noteProjectId = String(value || "");
+            renderQuickNotePanel();
+        },
+        onTagsChange: (value) => {
+            state.noteTagIds = Array.isArray(value) ? value.map((entry) => String(entry || "")).filter(Boolean) : [];
             renderQuickNotePanel();
         },
         onCancel: () => {
@@ -4948,6 +5165,8 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         state.noteStatus = "closed";
         state.noteText = "";
         state.noteError = "";
+        state.noteProjectId = "";
+        state.noteTagIds = [];
         state.citationModalSnapshot = null;
         quickNotePanel.hide();
         citationModal.hide();
@@ -5069,6 +5288,10 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
             noteText: state.noteText,
             status: state.noteStatus,
             errorMessage: state.noteError,
+            linkingText: "This highlight attaches as primary evidence. Open in Editor to Link related notes or Convert quotes.",
+            selectedProjectId: state.noteProjectId,
+            selectedTagIds: state.noteTagIds,
+            ...readRecentCaptureOptions(state.authSnapshot),
         });
     }
     function openQuickNotePanel() {
@@ -5084,6 +5307,8 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         state.noteStatus = "editing";
         state.noteText = "";
         state.noteError = "";
+        state.noteProjectId = "";
+        state.noteTagIds = [];
         pill.hide("note_open");
         quickNotePanel.show({
             selectionText: state.currentSnapshot.payload.capture.selectionText,
@@ -5093,6 +5318,10 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
             noteText: state.noteText,
             status: state.noteStatus,
             errorMessage: state.noteError,
+            linkingText: "This highlight attaches as primary evidence. Open in Editor to Link related notes or Convert quotes.",
+            selectedProjectId: state.noteProjectId,
+            selectedTagIds: state.noteTagIds,
+            ...readRecentCaptureOptions(state.authSnapshot),
         });
         quickNotePanel.focusInput();
         return { ok: true };
@@ -5105,6 +5334,8 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
         state.noteStatus = "closed";
         state.noteText = "";
         state.noteError = "";
+        state.noteProjectId = "";
+        state.noteTagIds = [];
         quickNotePanel.hide();
         if (state.currentSnapshot) {
             pill.render({
@@ -5142,12 +5373,15 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
             const result = await runtimeClient.createNote({
                 ...state.currentSnapshot.payload,
                 noteText,
+                projectId: state.noteProjectId || undefined,
+                tagIds: state.noteTagIds,
+                evidenceRole: "primary",
             });
             if (result?.ok) {
                 state.noteStatus = "success";
                 state.noteError = "";
                 renderQuickNotePanel();
-                toast.show("Note saved");
+                toast.show("Note saved with attached evidence. Open in Editor to Link related notes.");
                 noteSuccessTimer = setTimeoutRef?.(() => {
                     noteSuccessTimer = null;
                     closeQuickNotePanel("note_saved");
@@ -5268,7 +5502,9 @@ function createSelectionRuntime({ documentRef = globalThis.document, windowRef =
                     : { ok: false, error: { message: "Unsupported action." } };
             if (result?.ok) {
                 pill.flash("Saved");
-                toast.show(action === "cite" ? "Citation saved" : "Quote saved");
+                toast.show(action === "cite"
+                    ? "Citation saved. Open in Editor to Insert."
+                    : "Quote saved. Open in Editor to Insert or Convert.");
                 return result;
             }
             pill.flash("Failed");

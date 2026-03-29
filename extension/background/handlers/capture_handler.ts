@@ -160,6 +160,12 @@ export function createCaptureHandler({ captureApi }: any = {}) {
         pageTitle: capture?.pageTitle,
         pageUrl: capture?.pageUrl,
         pageDomain: capture?.pageDomain,
+        projectId: request?.payload?.projectId,
+        tagIds: request?.payload?.tagIds,
+        citationId: request?.payload?.citationId,
+        quoteId: request?.payload?.quoteId,
+        sourceId: request?.payload?.sourceId,
+        evidenceRole: request?.payload?.evidenceRole,
       }));
       return normalizeResult(result, request.requestId);
     },

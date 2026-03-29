@@ -2725,6 +2725,7 @@ test("quote conversion surfaces permission failures cleanly without mutating foc
   assert.deepEqual(feedbackEvents, [{
     name: FEEDBACK_EVENTS.PERMISSION_DENIED,
     payload: {
+      title: "Quote conversion not allowed",
       message: "You cannot convert that quote to a note.",
       dedupeKey: "quote-to-note-permission-denied:quote-1",
     },

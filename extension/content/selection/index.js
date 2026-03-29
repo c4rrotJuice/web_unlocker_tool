@@ -25,6 +25,25 @@ function describeCaptureFailure(result) {
     }
     return result?.error?.message || "Save failed";
 }
+function readRecentCaptureOptions(auth = null) {
+    const taxonomy = auth?.bootstrap?.taxonomy && typeof auth.bootstrap.taxonomy === "object"
+        ? auth.bootstrap.taxonomy
+        : {};
+    return {
+        projectOptions: Array.isArray(taxonomy.recent_projects)
+            ? taxonomy.recent_projects.map((project) => ({
+                id: String(project?.id || ""),
+                name: String(project?.name || project?.title || project?.id || "").trim(),
+            })).filter((project) => project.id && project.name)
+            : [],
+        tagOptions: Array.isArray(taxonomy.recent_tags)
+            ? taxonomy.recent_tags.map((tag) => ({
+                id: String(tag?.id || ""),
+                name: String(tag?.name || tag?.label || tag?.normalized_name || tag?.id || "").trim(),
+            })).filter((tag) => tag.id && tag.name)
+            : [],
+    };
+}
 async function copyTextToClipboard(text, { navigatorRef, documentRef }) {
     const value = String(text || "");
     try {
@@ -90,6 +109,8 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         noteStatus: "closed",
         noteText: "",
         noteError: "",
+        noteProjectId: "",
+        noteTagIds: [],
         citationModalSnapshot: null,
         authSnapshot: null,
     };
@@ -111,6 +132,14 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
             state.noteText = value;
             state.noteStatus = "editing";
             state.noteError = "";
+            renderQuickNotePanel();
+        },
+        onProjectChange: (value) => {
+            state.noteProjectId = String(value || "");
+            renderQuickNotePanel();
+        },
+        onTagsChange: (value) => {
+            state.noteTagIds = Array.isArray(value) ? value.map((entry) => String(entry || "")).filter(Boolean) : [];
             renderQuickNotePanel();
         },
         onCancel: () => {
@@ -188,6 +217,8 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         state.noteStatus = "closed";
         state.noteText = "";
         state.noteError = "";
+        state.noteProjectId = "";
+        state.noteTagIds = [];
         state.citationModalSnapshot = null;
         quickNotePanel.hide();
         citationModal.hide();
@@ -309,6 +340,10 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
             noteText: state.noteText,
             status: state.noteStatus,
             errorMessage: state.noteError,
+            linkingText: "This highlight attaches as primary evidence. Open in Editor to Link related notes or Convert quotes.",
+            selectedProjectId: state.noteProjectId,
+            selectedTagIds: state.noteTagIds,
+            ...readRecentCaptureOptions(state.authSnapshot),
         });
     }
     function openQuickNotePanel() {
@@ -324,6 +359,8 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         state.noteStatus = "editing";
         state.noteText = "";
         state.noteError = "";
+        state.noteProjectId = "";
+        state.noteTagIds = [];
         pill.hide("note_open");
         quickNotePanel.show({
             selectionText: state.currentSnapshot.payload.capture.selectionText,
@@ -333,6 +370,10 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
             noteText: state.noteText,
             status: state.noteStatus,
             errorMessage: state.noteError,
+            linkingText: "This highlight attaches as primary evidence. Open in Editor to Link related notes or Convert quotes.",
+            selectedProjectId: state.noteProjectId,
+            selectedTagIds: state.noteTagIds,
+            ...readRecentCaptureOptions(state.authSnapshot),
         });
         quickNotePanel.focusInput();
         return { ok: true };
@@ -345,6 +386,8 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
         state.noteStatus = "closed";
         state.noteText = "";
         state.noteError = "";
+        state.noteProjectId = "";
+        state.noteTagIds = [];
         quickNotePanel.hide();
         if (state.currentSnapshot) {
             pill.render({
@@ -382,12 +425,15 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
             const result = await runtimeClient.createNote({
                 ...state.currentSnapshot.payload,
                 noteText,
+                projectId: state.noteProjectId || undefined,
+                tagIds: state.noteTagIds,
+                evidenceRole: "primary",
             });
             if (result?.ok) {
                 state.noteStatus = "success";
                 state.noteError = "";
                 renderQuickNotePanel();
-                toast.show("Note saved");
+                toast.show("Note saved with attached evidence. Open in Editor to Link related notes.");
                 noteSuccessTimer = setTimeoutRef?.(() => {
                     noteSuccessTimer = null;
                     closeQuickNotePanel("note_saved");
@@ -508,7 +554,9 @@ export function createSelectionRuntime({ documentRef = globalThis.document, wind
                     : { ok: false, error: { message: "Unsupported action." } };
             if (result?.ok) {
                 pill.flash("Saved");
-                toast.show(action === "cite" ? "Citation saved" : "Quote saved");
+                toast.show(action === "cite"
+                    ? "Citation saved. Open in Editor to Insert."
+                    : "Quote saved. Open in Editor to Insert or Convert.");
                 return result;
             }
             pill.flash("Failed");

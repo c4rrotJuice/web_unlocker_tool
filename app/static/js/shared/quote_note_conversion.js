@@ -58,14 +58,15 @@ export async function convertQuoteToNote({
     const nextQuote = mergeConvertedNoteIntoQuote(quote, note);
     stores?.notes?.prime?.([note]);
     stores?.quotes?.prime?.([nextQuote]);
-    feedback?.emitDomainEvent?.(FEEDBACK_EVENTS.RESEARCH_PANEL_READY, { label: "Converted to note" });
-    feedback?.toast?.success?.("Converted to note", {
+    feedback?.emitDomainEvent?.(FEEDBACK_EVENTS.RESEARCH_PANEL_READY, { label: "Quote converted to note" });
+    feedback?.toast?.success?.("Quote converted to note", {
       dedupeKey: `quote-to-note:${quote.id}:${note.id}`,
     });
     return { note, quote: nextQuote };
   } catch (error) {
     if (error?.status === 403) {
       feedback?.emitDomainEvent?.(FEEDBACK_EVENTS.PERMISSION_DENIED, {
+        title: "Quote conversion not allowed",
         message: error?.message || "You cannot convert that quote to a note.",
         dedupeKey: `quote-to-note-permission-denied:${quote.id}`,
       });

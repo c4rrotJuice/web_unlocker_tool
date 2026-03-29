@@ -15,7 +15,7 @@ export function createConvertActions({
       return {
         convertAction: {
           supported: !!quote?.id,
-          label: "Convert to note",
+          label: "Convert Quote to Note",
         },
         derivedNotes: quote?.neighborhood?.notes || [],
       };
@@ -52,6 +52,7 @@ export function createConvertActions({
       } catch (error) {
         if (error?.status === 403) {
           feedback?.emitDomainEvent?.(FEEDBACK_EVENTS.PERMISSION_DENIED, {
+            title: "Note attachment not allowed",
             message: error?.message || "You cannot attach that note to this document.",
             dedupeKey: "note-attach-permission-denied",
           });

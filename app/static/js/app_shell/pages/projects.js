@@ -3,6 +3,7 @@ import { renderEmpty, renderError, renderLoading, bindRetry } from "../core/dom.
 import { renderDocumentCard, renderNoteCard, renderProjectCard } from "../renderers/cards.js";
 import { renderProjectDetail } from "../renderers/details.js";
 import { renderProjectAssignmentControl } from "../renderers/project_organization.js";
+import { ensureFeedbackRuntime } from "../../shared/feedback/feedback_bus_singleton.js";
 
 let booted = false;
 
@@ -18,10 +19,23 @@ export async function initProjects(boot) {
   const copyNode = document.getElementById("projects-hero-copy");
   const heroMetaNode = document.getElementById("projects-hero-meta");
   const projectId = boot.page_state?.project_id || null;
+  const feedback = ensureFeedbackRuntime({ mountTarget: document.body });
   let projectRows = [];
   let noteRows = [];
   let documentRows = [];
   let currentProject = null;
+
+  function projectAssignmentLabel(entityType, nextProjectId) {
+    const entityLabel = entityType === "document" ? "Document" : "Note";
+    if (!nextProjectId) return `${entityLabel} removed from project`;
+    return `${entityLabel} moved to project`;
+  }
+
+  function projectAssignmentDescription(nextProjectId) {
+    if (!nextProjectId) return "This item is no longer assigned to a project.";
+    const project = projectRows.find((row) => row?.id === nextProjectId);
+    return project?.name ? `Now organized in ${project.name}.` : "Project assignment updated.";
+  }
 
   renderLoading(listNode, "Loading projects…");
   if (projectId) {
@@ -91,8 +105,14 @@ export async function initProjects(boot) {
               },
             });
           }
+          feedback.toast.success(projectAssignmentLabel(entityType, select.value || ""), {
+            description: projectAssignmentDescription(select.value || ""),
+          });
           await load();
         } catch (error) {
+          feedback.toast.error("Move to project failed", {
+            description: error.message || `Unable to move this ${entityType} to the selected project.`,
+          });
           root.innerHTML = `<div class="surface-note">${error.message || `Unable to move ${entityType}.`}</div>` + root.innerHTML;
         } finally {
           button.disabled = false;

@@ -85,7 +85,7 @@ export const MESSAGE_CONTRACTS = Object.freeze({
   }),
   [MESSAGE_NAMES.CAPTURE_CREATE_NOTE]: Object.freeze({
     topic: MESSAGE_TOPICS.CAPTURE,
-    payloadShape: "surface:string, noteText?:string, capture?:{selectionText?:string, pageTitle?:string, pageUrl?:string, pageDomain?:string}",
+    payloadShape: "surface:string, noteText?:string, projectId?:string, tagIds?:string[], citationId?:string, quoteId?:string, sourceId?:string, evidenceRole?:primary|supporting|background, capture?:{selectionText?:string, pageTitle?:string, pageUrl?:string, pageDomain?:string}",
     resultShape: "note:canonical backend response",
   }),
   [MESSAGE_NAMES.CITATION_PREVIEW]: Object.freeze({

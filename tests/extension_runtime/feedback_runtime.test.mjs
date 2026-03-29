@@ -138,7 +138,7 @@ test("document attach feedback distinguishes direct attach from insert-and-attac
   adapter.emitDomainEvent(FEEDBACK_EVENTS.NOTE_ATTACHED, { source: "insert" });
 
   assert.deepEqual(harness.getVisible().map((toast) => toast.title), [
-    "Inserted into document and attached",
-    "Attached to document",
+    "Note inserted and attached",
+    "Citation attached",
   ]);
 });

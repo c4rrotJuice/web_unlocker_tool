@@ -84,14 +84,38 @@ function normalizeIdentifiers(input: any) {
   return normalized;
 }
 
+function normalizeStringList(input: any) {
+  const seen = new Set();
+  const normalized = [];
+  for (const entry of Array.isArray(input) ? input : []) {
+    const value = normalizeText(entry);
+    if (!value || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    normalized.push(value);
+  }
+  return normalized;
+}
+
 function normalizeLocator(input: any) {
   return isPlainObject(input) ? { ...input } : {};
+}
+
+function normalizeEvidenceRole(value: any, fallback = "supporting") {
+  const normalized = normalizeText(value).toLowerCase();
+  if (normalized === "primary" || normalized === "supporting" || normalized === "background") {
+    return normalized;
+  }
+  return fallback;
 }
 
 function buildExternalEvidenceLink({
   pageUrl,
   pageDomain,
   pageTitle,
+  evidenceRole = "supporting",
+  position = 0,
 }: any = {}) {
   const url = normalizeText(pageUrl);
   if (!url) {
@@ -99,12 +123,42 @@ function buildExternalEvidenceLink({
   }
   return [{
     target_kind: "external",
-    evidence_role: "supporting",
+    evidence_role: normalizeEvidenceRole(evidenceRole, "supporting"),
     url,
     hostname: deriveDomain(url, pageDomain) || null,
     title: normalizeText(pageTitle) || null,
-    position: 0,
+    position,
   }];
+}
+
+function buildDefaultNoteEvidenceLinks({
+  pageUrl,
+  pageDomain,
+  pageTitle,
+  citationId,
+  sourceId,
+  evidenceRole = "primary",
+}: any = {}) {
+  const normalizedCitationId = normalizeText(citationId);
+  const normalizedSourceId = normalizeText(sourceId);
+  const links = [];
+  if (normalizedCitationId) {
+    links.push({
+      target_kind: "citation",
+      evidence_role: normalizeEvidenceRole(evidenceRole, "primary"),
+      citation_id: normalizedCitationId,
+      source_id: normalizedSourceId || null,
+      position: 0,
+    });
+  }
+  links.push(...buildExternalEvidenceLink({
+    pageUrl,
+    pageDomain,
+    pageTitle,
+    evidenceRole: normalizedCitationId ? "background" : evidenceRole,
+    position: links.length,
+  }));
+  return links;
 }
 
 export const CAPTURE_TYPES = Object.freeze({
@@ -139,6 +193,12 @@ export function normalizeCaptureContext(input: any = {}) {
   const excerpt = normalizeText(input.excerpt);
   const annotation = normalizeText(input.annotation);
   const quote = normalizeText(input.quote);
+  const projectId = normalizeText(input.projectId ?? input.project_id);
+  const tagIds = normalizeStringList(input.tagIds ?? input.tag_ids);
+  const citationId = normalizeText(input.citationId ?? input.citation_id);
+  const quoteId = normalizeText(input.quoteId ?? input.quote_id);
+  const sourceId = normalizeText(input.sourceId ?? input.source_id);
+  const evidenceRole = normalizeEvidenceRole(input.evidenceRole ?? input.evidence_role, "primary");
 
   return {
     selectionText,
@@ -162,6 +222,12 @@ export function normalizeCaptureContext(input: any = {}) {
     excerpt,
     annotation,
     quote,
+    projectId,
+    tagIds,
+    citationId,
+    quoteId,
+    sourceId,
+    evidenceRole,
   };
 }
 
@@ -304,6 +370,10 @@ export function buildNoteCaptureRequest({
   pageDomain,
   citationId = null,
   quoteId = null,
+  projectId = null,
+  tagIds = [],
+  sourceId = null,
+  evidenceRole = "primary",
 }: any = {}) {
   const normalizedSelection = normalizeText(selectionText);
   const normalizedBody = normalizeText(noteText) || normalizedSelection;
@@ -313,10 +383,18 @@ export function buildNoteCaptureRequest({
     title: truncateText(titleSeed, 72) || "Captured note",
     note_body: normalizedBody,
     highlight_text: normalizedSelection || null,
+    project_id: normalizeText(projectId) || null,
     citation_id: normalizeText(citationId) || null,
     quote_id: normalizeText(quoteId) || null,
-    tag_ids: [],
-    evidence_links: buildExternalEvidenceLink({ pageUrl, pageDomain, pageTitle }),
+    tag_ids: normalizeStringList(tagIds),
+    evidence_links: buildDefaultNoteEvidenceLinks({
+      pageUrl,
+      pageDomain,
+      pageTitle,
+      citationId,
+      sourceId,
+      evidenceRole,
+    }),
     note_links: [],
   };
 }

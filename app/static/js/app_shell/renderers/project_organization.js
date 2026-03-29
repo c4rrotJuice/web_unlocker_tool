@@ -36,7 +36,7 @@ export function renderProjectAssignmentControl({ entityType, entity, projects = 
           data-project-assignment-save="${escapeHtml(controlId)}"
           data-entity-type="${escapeHtml(entityType)}"
           data-entity-id="${escapeHtml(entityId)}"
-        >Move ${escapeHtml(entityType)}</button>
+        >Move to project</button>
       </div>
     </section>
   `;

@@ -128,6 +128,24 @@ function validateCaptureNotePayload(payload) {
   if (payload.capture != null && !isPlainObject(payload.capture)) {
     return "payload.capture must be an object when provided.";
   }
+  if (payload.projectId != null && !isNonEmptyString(payload.projectId)) {
+    return "payload.projectId must be a non-empty string when provided.";
+  }
+  if (payload.citationId != null && !isNonEmptyString(payload.citationId)) {
+    return "payload.citationId must be a non-empty string when provided.";
+  }
+  if (payload.quoteId != null && !isNonEmptyString(payload.quoteId)) {
+    return "payload.quoteId must be a non-empty string when provided.";
+  }
+  if (payload.sourceId != null && !isNonEmptyString(payload.sourceId)) {
+    return "payload.sourceId must be a non-empty string when provided.";
+  }
+  if (payload.evidenceRole != null && !["primary", "supporting", "background"].includes(String(payload.evidenceRole).trim().toLowerCase())) {
+    return "payload.evidenceRole must be one of the supported evidence roles when provided.";
+  }
+  if (payload.tagIds != null && (!Array.isArray(payload.tagIds) || payload.tagIds.some((value) => !isNonEmptyString(value)))) {
+    return "payload.tagIds must be an array of non-empty strings when provided.";
+  }
   const capture = payload.capture ? normalizeCaptureContext(payload.capture) : null;
   const hasSelection = isNonEmptyString(capture?.selectionText);
   const hasNoteText = isNonEmptyString(payload.noteText);

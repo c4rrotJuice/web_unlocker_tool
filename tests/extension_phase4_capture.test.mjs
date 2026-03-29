@@ -265,6 +265,23 @@ function installEnvironment() {
   return { documentRef, windowRef };
 }
 
+function collectText(node) {
+  if (!node) return "";
+  const parts = [];
+  if (typeof node.textContent === "string" && node.textContent.trim()) {
+    parts.push(node.textContent.trim());
+  }
+  for (const child of node.children || []) {
+    const text = collectText(child);
+    if (text) parts.push(text);
+  }
+  if (node.shadowRoot) {
+    const text = collectText(node.shadowRoot);
+    if (text) parts.push(text);
+  }
+  return parts.join(" ");
+}
+
 function setSelection(documentRef, text = "Capture this text") {
   const anchor = documentRef.createElement("div");
   documentRef.body.appendChild(anchor);
@@ -949,9 +966,149 @@ test("plain note capture accepts note text without a highlight and attaches page
   assert.equal(calls[0].note_body, "Plain note body");
   assert.equal(calls[0].highlight_text, null);
   assert.equal(calls[0].evidence_links[0].target_kind, "external");
-  assert.equal(calls[0].evidence_links[0].evidence_role, "supporting");
+  assert.equal(calls[0].evidence_links[0].evidence_role, "primary");
   assert.equal(calls[0].evidence_links[0].title, "Current tab");
   assert.equal(calls[0].evidence_links[0].url, "https://example.com/current");
+});
+
+test("note capture preserves project, tags, and canonical lineage through the extension contract", async () => {
+  const captureApi = createCaptureFetchStub();
+  const runtime = createBackgroundRuntime({
+    chromeApi: {
+      runtime: {
+        lastError: null,
+        sendMessage() {},
+      },
+      storage: {
+        local: {
+          async get(defaults) {
+            return { ...defaults };
+          },
+          async set() {},
+          async remove() {},
+        },
+      },
+    },
+    captureApi,
+    baseUrl: "https://app.writior.com",
+  });
+
+  const result = await runtime.dispatch({
+    type: MESSAGE_NAMES.CAPTURE_CREATE_NOTE,
+    requestId: "req-note-lineage",
+    payload: {
+      surface: "content",
+      noteText: "Evidence note",
+      projectId: "project-1",
+      tagIds: ["tag-1", "tag-2", "tag-1"],
+      citationId: "citation-1",
+      quoteId: "quote-1",
+      sourceId: "source-1",
+      evidenceRole: "primary",
+      capture: {
+        selectionText: "Highlighted evidence",
+        pageTitle: "Evidence page",
+        pageUrl: "https://example.com/evidence",
+        pageDomain: "example.com",
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(captureApi.calls.length, 1);
+  assert.equal(captureApi.calls[0].payload.project_id, "project-1");
+  assert.deepEqual(captureApi.calls[0].payload.tag_ids, ["tag-1", "tag-2"]);
+  assert.equal(captureApi.calls[0].payload.citation_id, "citation-1");
+  assert.equal(captureApi.calls[0].payload.quote_id, "quote-1");
+  assert.equal(captureApi.calls[0].payload.evidence_links[0].target_kind, "citation");
+  assert.equal(captureApi.calls[0].payload.evidence_links[0].evidence_role, "primary");
+  assert.equal(captureApi.calls[0].payload.evidence_links[0].citation_id, "citation-1");
+  assert.equal(captureApi.calls[0].payload.evidence_links[0].source_id, "source-1");
+  assert.equal(captureApi.calls[0].payload.evidence_links[1].target_kind, "external");
+  assert.equal(captureApi.calls[0].payload.evidence_links[1].evidence_role, "background");
+});
+
+test("quick note capture surfaces optional project and tag context without relationship authoring controls", async () => {
+  const { documentRef, windowRef } = installEnvironment();
+  const timers = createTimerHarness();
+  const noteRequests = [];
+  const chromeApi = createChromeStub(async (message) => {
+    if (message?.type === MESSAGE_NAMES.AUTH_STATUS_GET) {
+      return {
+        ok: true,
+        status: "ok",
+        data: {
+          auth: {
+            status: "signed_in",
+            bootstrap: {
+              capabilities: {
+                citation_styles: ["apa"],
+              },
+              taxonomy: {
+                recent_projects: [{ id: "project-1", name: "Project One" }],
+                recent_tags: [{ id: "tag-1", name: "evidence" }],
+              },
+            },
+          },
+        },
+      };
+    }
+    if (message?.type === MESSAGE_NAMES.CAPTURE_CREATE_NOTE) {
+      noteRequests.push(message.payload);
+      return {
+        ok: true,
+        status: "ok",
+        data: {
+          note: {
+            id: "note-1",
+          },
+        },
+      };
+    }
+    return { ok: false, status: "error", error: { code: "unsupported" } };
+  });
+  const selectionRuntime = createSelectionRuntime({
+    documentRef,
+    windowRef,
+    MutationObserverRef: FakeMutationObserver,
+    setTimeoutRef: timers.setTimeoutRef,
+    clearTimeoutRef: timers.clearTimeoutRef,
+    chromeApi,
+  });
+
+  setSelection(documentRef, "Capture with project tags");
+  selectionRuntime.bootstrap();
+  timers.flush();
+
+  const menuRoot = selectionRuntime.pill.panel.children[0];
+  const noteButton = findChildByText(menuRoot, "Note");
+  await noteButton.dispatchEvent(new FakeEvent("click", noteButton));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const projectSelect = findByAttr(selectionRuntime.quickNotePanel.panel, "data-quick-note-project-select", "true");
+  assert.ok(projectSelect);
+  projectSelect.value = "project-1";
+  projectSelect.dispatchEvent(new FakeEvent("change", projectSelect));
+  assert.equal(collectText(selectionRuntime.quickNotePanel.panel).includes("Open in Editor to Link related notes or Convert quotes."), true);
+
+  const tagButton = findByAttr(selectionRuntime.quickNotePanel.panel, "data-quick-note-tag", "tag-1");
+  assert.ok(tagButton);
+  tagButton.dispatchEvent(new FakeEvent("click", tagButton));
+
+  assert.equal(findByAttr(selectionRuntime.quickNotePanel.panel, "data-quick-note-evidence-role", "true"), null);
+  assert.equal(findByAttr(selectionRuntime.quickNotePanel.panel, "data-quick-note-link-authoring", "true"), null);
+
+  const noteInput = selectionRuntime.quickNotePanel.textarea;
+  noteInput.value = "Tagged note";
+  noteInput.dispatchEvent(new FakeEvent("input", noteInput));
+  const noteSaveButton = findByAttr(selectionRuntime.quickNotePanel.panel, "data-quick-note-save", "true");
+  await noteSaveButton.dispatchEvent(new FakeEvent("click", noteSaveButton));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(noteRequests.length, 1);
+  assert.equal(noteRequests[0].projectId, "project-1");
+  assert.deepEqual(noteRequests[0].tagIds, ["tag-1"]);
+  assert.equal(noteRequests[0].evidenceRole, "primary");
 });
 
 test("quick note save failures preserve entered text and surface an error state", async () => {

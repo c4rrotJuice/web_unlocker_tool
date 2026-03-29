@@ -50,13 +50,6 @@ function citationTargetRow(citation) {
   };
 }
 
-function linkTargetKind(panelKind) {
-  if (panelKind === "note_link") return "note";
-  if (panelKind === "source_evidence") return "source";
-  if (panelKind === "citation_evidence") return "citation";
-  return "external";
-}
-
 function buildPreview(panel) {
   if (!panel) return null;
   if (panel.kind === "note_link") {
@@ -283,10 +276,10 @@ export function createNoteRelationshipAuthoringController({
     try {
       const updated = await api.replaceNoteLinks(ownerNoteId, nextLinks);
       await onNoteUpdated(updated);
-      onNotify?.({ kind: "success", message: "Note link removed." });
+      onNotify?.({ kind: "success", message: "Linked note removed.", title: "Linked note removed" });
     } catch (error) {
       updatePanel({ error: error?.message || "The note link could not be removed." });
-      onNotify?.({ kind: "error", message: error?.message || "The note link could not be removed." });
+      onNotify?.({ kind: "error", title: "Linked note removal failed", message: error?.message || "The linked note could not be removed." });
     }
   }
 
@@ -296,10 +289,10 @@ export function createNoteRelationshipAuthoringController({
     try {
       const updated = await api.replaceNoteSources(ownerNoteId, nextEvidence);
       await onNoteUpdated(updated);
-      onNotify?.({ kind: "success", message: "Evidence removed." });
+      onNotify?.({ kind: "success", message: "Attached evidence removed.", title: "Attached evidence removed" });
     } catch (error) {
       updatePanel({ error: error?.message || "The evidence link could not be removed." });
-      onNotify?.({ kind: "error", message: error?.message || "The evidence link could not be removed." });
+      onNotify?.({ kind: "error", title: "Evidence removal failed", message: error?.message || "The attached evidence could not be removed." });
     }
   }
 
@@ -331,7 +324,7 @@ export function createNoteRelationshipAuthoringController({
         nextLinks.push({ linked_note_id: panel.selectedTarget.id, link_type: panel.linkType });
         const updated = await api.replaceNoteLinks(panel.ownerNoteId, nextLinks);
         await onNoteUpdated(updated);
-        onNotify?.({ kind: "success", message: "Note link saved." });
+        onNotify?.({ kind: "success", message: "Note linked.", title: "Note linked" });
       } else {
         const nextEvidence = cloneRows(note?.evidence_links).filter((row) => evidenceKey(row) !== panel.editingKey);
         if (panel.kind === "external_evidence") {
@@ -354,12 +347,16 @@ export function createNoteRelationshipAuthoringController({
         }
         const updated = await api.replaceNoteSources(panel.ownerNoteId, nextEvidence);
         await onNoteUpdated(updated);
-        onNotify?.({ kind: "success", message: "Evidence link saved." });
+        onNotify?.({ kind: "success", message: "Evidence attached to note.", title: "Evidence attached" });
       }
       closePanel();
     } catch (error) {
       updatePanel({ saving: false, error: error?.message || "Relationship save failed." });
-      onNotify?.({ kind: "error", message: error?.message || "Relationship save failed." });
+      onNotify?.({
+        kind: "error",
+        title: panel.kind === "note_link" ? "Note linking failed" : "Evidence attachment failed",
+        message: error?.message || (panel.kind === "note_link" ? "The note could not be linked." : "The evidence could not be attached to the note."),
+      });
     }
   }
 

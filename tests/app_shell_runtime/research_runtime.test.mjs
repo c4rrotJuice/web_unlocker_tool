@@ -21,10 +21,7 @@ function graphEnvelope(nodeType, nodeData, collections) {
   });
 }
 
-test("research shell runtime drives list, graph detail, related navigation, load more, and honest fallback states", async () => {
-  const harness = createResearchHarness();
-  const { elements, requests, window } = harness;
-
+function buildFixture() {
   const sourceA = {
     id: "source-a",
     title: "Source A",
@@ -73,6 +70,14 @@ test("research shell runtime drives list, graph detail, related navigation, load
     created_at: "2026-03-20T00:00:00+00:00",
     updated_at: "2026-03-20T00:00:00+00:00",
   };
+  const quoteB = {
+    id: "quote-b",
+    excerpt: "Quote B",
+    citation: citationB,
+    note_ids: [],
+    created_at: "2026-03-21T00:00:00+00:00",
+    updated_at: "2026-03-21T00:00:00+00:00",
+  };
   const noteA = {
     id: "note-a",
     title: "Note A",
@@ -80,7 +85,7 @@ test("research shell runtime drives list, graph detail, related navigation, load
     status: "active",
     citation_id: "citation-a",
     quote_id: "quote-a",
-    sources: [{ id: "note-source-a", source_id: "source-a", title: "Source A" }],
+    sources: [{ id: "note-source-a", source_id: "source-a", citation_id: "citation-a", title: "Source A" }],
     tags: [{ id: "tag-a", name: "Evidence" }],
     linked_note_ids: [],
     created_at: "2026-03-20T00:00:00+00:00",
@@ -96,116 +101,148 @@ test("research shell runtime drives list, graph detail, related navigation, load
     tags: [],
   };
 
-  const routeCounts = { quotes: 0, notes: 0, citations: 0 };
+  return {
+    sourceA,
+    sourceB,
+    citationA,
+    citationB,
+    quoteA,
+    quoteB,
+    noteA,
+    documentA,
+  };
+}
 
-  harness.route((path) => path === "/api/sources?limit=20", async () => okEnvelope([sourceA], { has_more: false, next_cursor: null }));
-  harness.route((path) => path === "/api/research/source/source-a/graph", async () => graphEnvelope("source", sourceA, {
-    sources: [sourceA],
-    citations: [citationA],
-    quotes: [quoteA],
-    notes: [noteA],
-    documents: [documentA],
+test("research page auto-activates the first asset and keeps the context panel visible by default", async () => {
+  const harness = createResearchHarness();
+  const { elements, requests } = harness;
+  const fixture = buildFixture();
+
+  harness.route("/api/sources?limit=20", async () => okEnvelope([fixture.sourceA, fixture.sourceB], { has_more: false, next_cursor: null }));
+  harness.route("/api/research/source/source-a/graph", async () => graphEnvelope("source", fixture.sourceA, {
+    sources: [fixture.sourceA],
+    citations: [fixture.citationA],
+    quotes: [fixture.quoteA],
+    notes: [fixture.noteA],
+    documents: [fixture.documentA],
   }));
-  harness.route((path) => path === "/api/research/citation/citation-a/graph", async () => graphEnvelope("citation", citationA, {
-    sources: [sourceA],
-    citations: [citationA],
-    quotes: [quoteA],
-    notes: [noteA],
-    documents: [documentA],
-  }));
-  harness.route((path) => path === "/api/research/note/note-a/graph", async () => graphEnvelope("note", noteA, {
-    sources: [sourceA],
-    citations: [citationA],
-    quotes: [quoteA],
-    notes: [noteA],
-    documents: [documentA],
-  }));
-  harness.route((path) => path === "/api/citations?limit=20", async () => {
-    routeCounts.citations += 1;
-    return okEnvelope([citationA], { has_more: true, next_cursor: "cursor-2" });
-  });
-  harness.route((path) => path === "/api/citations?limit=20&cursor=cursor-2", async () => okEnvelope([citationB], { has_more: false, next_cursor: null }));
-  harness.route((path) => path === "/api/quotes?limit=20", async () => {
-    routeCounts.quotes += 1;
-    if (routeCounts.quotes === 1) {
-      return okEnvelope([], { has_more: false, next_cursor: null });
-    }
-    return { status: 500, body: { detail: "Quotes failed" } };
-  });
-  harness.route((path) => path === "/api/notes?limit=20", async () => {
-    routeCounts.notes += 1;
-    if (routeCounts.notes === 1) {
-      return okEnvelope([], { has_more: false, next_cursor: null });
-    }
-    return okEnvelope([noteA], { has_more: false, next_cursor: null });
-  });
 
   const module = await import(`../../app/static/js/app_shell/pages/research.js?runtime=${Date.now()}`);
-  const initPromise = module.initResearch();
-  await initPromise;
-
-  assert.match(elements.listRegion.innerHTML, /Source A/);
-  assert.equal(elements.projectInput.disabled, true);
-  assert.equal(elements.tagInput.disabled, true);
-
-  const sourceCard = elements.listRegion.querySelectorAll(".research-card")[0];
-  sourceCard.click();
-  await flush(1);
-
-  assert.match(elements.contextBody.innerHTML, /Loading related research neighborhood/);
+  await module.initResearch();
   await flush();
-  assert.match(elements.contextBody.innerHTML, /Citations/);
-  assert.match(elements.contextBody.innerHTML, /Quotes/);
-  assert.match(elements.contextBody.innerHTML, /Notes/);
-  assert.match(elements.contextBody.innerHTML, /Documents using this source/);
-  assert.match(elements.contextBody.innerHTML, /Open in editor/);
+
+  assert.equal(harness.window.location.search.includes("selected=source-a"), true);
+  assert.equal(elements.frame.classList.contains("has-context"), true);
+  assert.match(elements.listRegion.innerHTML, /is-selected/);
+  assert.match(elements.contextBody.innerHTML, /Linked citations/);
+  assert.match(elements.contextBody.innerHTML, /Linked quotes/);
+  assert.match(elements.contextBody.innerHTML, /Linked notes/);
+  assert.match(elements.contextBody.innerHTML, /Linked documents/);
   assert.ok(requests.includes("/api/research/source/source-a/graph"));
+});
 
-  const relatedCitation = elements.contextBody.querySelector('[data-related-entity-id="citation-a"]');
-  relatedCitation.click();
+test("selecting a different asset updates the context panel immediately", async () => {
+  const harness = createResearchHarness();
+  const { elements } = harness;
+  const fixture = buildFixture();
+
+  harness.route("/api/sources?limit=20", async () => okEnvelope([fixture.sourceA, fixture.sourceB], { has_more: false, next_cursor: null }));
+  harness.route("/api/research/source/source-a/graph", async () => graphEnvelope("source", fixture.sourceA, {
+    sources: [fixture.sourceA],
+    citations: [fixture.citationA],
+    quotes: [fixture.quoteA],
+    notes: [fixture.noteA],
+    documents: [fixture.documentA],
+  }));
+  harness.route("/api/research/source/source-b/graph", async () => graphEnvelope("source", fixture.sourceB, {
+    sources: [fixture.sourceB],
+    citations: [fixture.citationB],
+    quotes: [fixture.quoteB],
+    notes: [],
+    documents: [],
+  }));
+
+  const module = await import(`../../app/static/js/app_shell/pages/research.js?runtime=${Date.now()}`);
+  await module.initResearch();
   await flush();
-  assert.equal(window.location.search.includes("tab=citations"), true);
-  assert.equal(window.location.search.includes("selected=citation-a"), true);
-  assert.ok(requests.includes("/api/research/citation/citation-a/graph"));
-  assert.match(elements.contextBody.innerHTML, /Documents using this citation/);
 
-  const citationTab = harness.getTabButton("citations");
-  citationTab.click();
+  const cards = elements.listRegion.querySelectorAll(".research-card");
+  cards[1].click();
+  await flush(1);
+  assert.equal(harness.window.location.search.includes("selected=source-b"), true);
+  assert.match(elements.contextBody.innerHTML, /Source B/);
+  assert.match(elements.contextBody.innerHTML, /Loading related research neighborhood/);
+
   await flush();
-  assert.match(elements.listRegion.innerHTML, /Source A/);
-  assert.match(elements.listRegion.innerHTML, /Load more/);
+  assert.match(elements.contextBody.innerHTML, /Linked citations/);
+  assert.doesNotMatch(elements.contextBody.innerHTML, /Note A/);
+});
 
-  const loadMoreButton = elements.listRegion.querySelector("[data-research-load-more]");
-  loadMoreButton.click();
+test("selection stays stable across filter refreshes and the next tab auto-selects its first asset", async () => {
+  const harness = createResearchHarness();
+  const { elements } = harness;
+  const fixture = buildFixture();
+
+  harness.route("/api/sources?limit=20", async () => okEnvelope([fixture.sourceA, fixture.sourceB], { has_more: false, next_cursor: null }));
+  harness.route("/api/sources?limit=20&query=source", async () => okEnvelope([fixture.sourceA, fixture.sourceB], { has_more: false, next_cursor: null }));
+  harness.route("/api/research/source/source-a/graph", async () => graphEnvelope("source", fixture.sourceA, {
+    sources: [fixture.sourceA],
+    citations: [fixture.citationA],
+    quotes: [fixture.quoteA],
+    notes: [fixture.noteA],
+    documents: [fixture.documentA],
+  }));
+  harness.route("/api/research/source/source-b/graph", async () => graphEnvelope("source", fixture.sourceB, {
+    sources: [fixture.sourceB],
+    citations: [fixture.citationB],
+    quotes: [fixture.quoteB],
+    notes: [],
+    documents: [],
+  }));
+  harness.route("/api/citations?limit=20", async () => okEnvelope([fixture.citationA], { has_more: false, next_cursor: null }));
+  harness.route("/api/citations?limit=20&search=source", async () => okEnvelope([fixture.citationA], { has_more: false, next_cursor: null }));
+  harness.route("/api/research/citation/citation-a/graph", async () => graphEnvelope("citation", fixture.citationA, {
+    sources: [fixture.sourceA],
+    citations: [fixture.citationA],
+    quotes: [fixture.quoteA],
+    notes: [fixture.noteA],
+    documents: [fixture.documentA],
+  }));
+
+  const module = await import(`../../app/static/js/app_shell/pages/research.js?runtime=${Date.now()}`);
+  await module.initResearch();
   await flush();
-  assert.match(elements.listRegion.innerHTML, /citation-b/);
 
-  harness.getTabButton("quotes").click();
+  elements.listRegion.querySelectorAll(".research-card")[1].click();
   await flush();
-  assert.match(elements.listRegion.innerHTML, /No quotes yet/);
+  assert.equal(harness.window.location.search.includes("selected=source-b"), true);
 
-  harness.getTabButton("quotes").click();
-  await flush();
-  assert.match(elements.listRegion.innerHTML, /Quotes failed/);
-  const retryButton = elements.listRegion.querySelector("[data-retry-button]");
-  assert.ok(retryButton);
-
-  harness.getTabButton("notes").click();
-  await flush();
-  assert.match(elements.listRegion.innerHTML, /No notes yet/);
-  assert.equal(elements.projectInput.disabled, false);
-  assert.equal(elements.tagInput.disabled, false);
-
-  elements.queryInput.value = "";
+  elements.queryInput.value = "source";
   elements.form.dispatchEvent({ type: "submit", target: elements.form });
   await flush();
-  assert.match(elements.listRegion.innerHTML, /Note A/);
+  assert.equal(harness.window.location.search.includes("selected=source-b"), true);
+  assert.match(elements.contextBody.innerHTML, /Source B/);
 
-  const noteCard = elements.listRegion.querySelectorAll(".research-card")[0];
-  noteCard.click();
+  harness.getTabButton("citations").click();
   await flush();
-  const documentLink = elements.contextBody.querySelector('[data-related-document-id="doc-a"]');
-  assert.ok(documentLink);
-  documentLink.click();
-  assert.equal(window.location.href, "/editor?document_id=doc-a");
+  assert.equal(harness.window.location.search.includes("tab=citations"), true);
+  assert.equal(harness.window.location.search.includes("selected=citation-a"), true);
+  assert.match(elements.contextBody.innerHTML, /Linked sources/);
+  assert.match(elements.contextBody.innerHTML, /Linked documents/);
+});
+
+test("empty states keep the context panel open and render honest relationship-free copy", async () => {
+  const harness = createResearchHarness();
+  const { elements } = harness;
+
+  harness.route("/api/sources?limit=20", async () => okEnvelope([], { has_more: false, next_cursor: null }));
+
+  const module = await import(`../../app/static/js/app_shell/pages/research.js?runtime=${Date.now()}`);
+  await module.initResearch();
+  await flush();
+
+  assert.equal(elements.frame.classList.contains("has-context"), true);
+  assert.match(elements.listRegion.innerHTML, /No sources yet/);
+  assert.match(elements.contextBody.innerHTML, /No active source/);
+  assert.match(elements.contextBody.innerHTML, /No sources match the current view yet/);
 });

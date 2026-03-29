@@ -189,12 +189,19 @@ export async function initResearch() {
       currentMeta = payload?.meta || { has_more: false, next_cursor: null };
       const nextItems = payload?.data || [];
       latestListItems = append ? [...latestListItems, ...nextItems] : nextItems;
+      const selectedId = latestListItems.some((item) => item.id === state.selected)
+        ? state.selected
+        : (latestListItems[0]?.id || "");
+      if (selectedId !== state.selected) {
+        updateResearchUrl({ selected: selectedId }, { replace: true });
+      }
+      const nextState = getState();
       feedback.emitDomainEvent(FEEDBACK_EVENTS.RESEARCH_PANEL_READY, { label: `${state.tab} ready` });
-      renderList(latestListItems, state, currentMeta);
-      if (state.selected) {
-        await loadDetail(state.selected);
+      renderList(latestListItems, nextState, currentMeta);
+      if (selectedId) {
+        await loadDetail(selectedId);
       } else {
-        clearContext();
+        clearContext(nextState);
       }
     } catch (error) {
       if (error.name === "AbortError") return;
@@ -205,7 +212,7 @@ export async function initResearch() {
       });
       renderError(listNode, error.message || `Failed to load ${state.tab}.`);
       bindRetry(listNode, loadList);
-      clearContext();
+      clearContext(state);
     }
   }
 
@@ -218,14 +225,25 @@ export async function initResearch() {
     return latestListItems.find((item) => item.id === id) || null;
   }
 
-  function clearContext() {
-    contextTitle.textContent = "Select an item";
-    contextBody.innerHTML = `<div class="surface-note">The context panel uses list payloads immediately, then enriches with canonical detail only when needed.</div>`;
-    setContextOpen(false);
+  function clearContext(state = getState()) {
+    const singularLabel = tabEntityType(state.tab);
+    contextTitle.textContent = `Active ${singularLabel}`;
+    contextBody.innerHTML = `
+      <section class="detail-section">
+        <p class="section-kicker">Context panel</p>
+        <h3>No active ${singularLabel}</h3>
+        <p class="detail-copy">Select a ${singularLabel} to inspect its connected citations, quotes, notes, documents, and sources where available.</p>
+      </section>
+      <section class="detail-section">
+        <p class="section-kicker">Current state</p>
+        <div class="surface-note">No ${state.tab} match the current view yet.</div>
+      </section>
+    `;
+    setContextOpen(true);
   }
 
   function renderContextLoading(id, fallbackDetail) {
-    contextTitle.textContent = id;
+    contextTitle.textContent = `Active ${tabEntityType(getState().tab)}`;
     contextBody.innerHTML = `${fallbackDetail}<div class="surface-note">Loading related research neighborhood…</div>`;
     setContextOpen(true);
   }
@@ -265,9 +283,10 @@ export async function initResearch() {
     const state = getState();
     const selectedId = state.selected;
     if (!selectedId) {
-      clearContext();
+      clearContext(state);
       return;
     }
+    contextTitle.textContent = `Active ${tabEntityType(state.tab)}`;
     const cacheKey = `${state.tab}:${selectedId}`;
     if (graphCache.has(cacheKey)) {
       contextBody.innerHTML = renderGraphDetail(graphCache.get(cacheKey), {
@@ -327,9 +346,14 @@ export async function initResearch() {
   }
 
   function clearSelection() {
-    updateResearchUrl({ selected: "" });
-    clearContext();
+    const fallbackId = latestListItems[0]?.id || "";
+    updateResearchUrl({ selected: fallbackId }, { replace: true });
     refreshListSelection();
+    if (fallbackId) {
+      void loadDetail(fallbackId);
+      return;
+    }
+    clearContext();
   }
 
   function selectItem(id) {
@@ -400,7 +424,7 @@ export async function initResearch() {
       q: queryInput.value.trim(),
       project: config.supportsProject ? projectInput.value.trim() : "",
       tag: config.supportsTag ? tagInput.value.trim() : "",
-      selected: "",
+      selected: getState().selected,
     });
     loadList();
   });
@@ -494,5 +518,6 @@ export async function initResearch() {
     }
   });
 
+  clearContext(getState());
   await loadList();
 }

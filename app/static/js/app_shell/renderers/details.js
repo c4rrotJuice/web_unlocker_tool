@@ -18,6 +18,22 @@ function detailList(title, items, emptyLabel) {
   `;
 }
 
+function renderRelationshipSummary(items) {
+  return `
+    <section class="detail-section">
+      <p class="section-kicker">Relationship context</p>
+      <div class="detail-summary-grid">
+        ${items.map((item) => `
+          <article class="detail-summary-card">
+            <span class="detail-summary-count">${escapeHtml(String(item.count || 0))}</span>
+            <span class="detail-summary-label">${escapeHtml(item.label)}</span>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
 export function renderSourceDetail(source) {
   const counts = source.relationship_counts || {};
   return `
@@ -111,6 +127,30 @@ function singular(type) {
   return type.endsWith("s") ? type.slice(0, -1) : type;
 }
 
+function dedupeRows(rows = []) {
+  const seen = new Set();
+  return rows.filter((row) => {
+    const id = row?.id;
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+function noteLinkedCitations(note, citations) {
+  const byId = new Map((citations || []).map((citation) => [citation.id, citation]));
+  const linked = [];
+  if (note?.citation_id && byId.has(note.citation_id)) {
+    linked.push(byId.get(note.citation_id));
+  }
+  for (const source of note?.sources || []) {
+    if (source?.citation_id && byId.has(source.citation_id)) {
+      linked.push(byId.get(source.citation_id));
+    }
+  }
+  return dedupeRows(linked);
+}
+
 function renderEntitySection(title, type, rows, emptyLabel) {
   if (!rows.length) {
     return detailList(title, [], emptyLabel);
@@ -181,34 +221,61 @@ export function renderGraphDetail(graph, options = {}) {
   const quotes = (collections.quotes || []).filter((item) => !(node.type === "quote" && item.id === current.id));
   const notes = (collections.notes || []).filter((item) => !(node.type === "note" && item.id === current.id));
   const documents = collections.documents || [];
+  const noteCitations = node.type === "note" ? noteLinkedCitations(current, collections.citations || []) : [];
 
   const primarySections = [];
   if (node.type === "source") {
     primarySections.push(renderSourceDetail(current));
-    primarySections.push(renderEntitySection("Citations", "citation", citations, "No citations connected to this source yet."));
-    primarySections.push(renderEntitySection("Quotes", "quote", quotes, "No quotes connected to this source yet."));
-    primarySections.push(renderEntitySection("Notes", "note", notes, "No notes connected to this source yet."));
-    primarySections.push(renderEntitySection("Documents using this source", "document", documents, "No documents use this source yet."));
+    primarySections.push(renderRelationshipSummary([
+      { label: "linked citations", count: citations.length },
+      { label: "linked quotes", count: quotes.length },
+      { label: "linked notes", count: notes.length },
+      { label: "linked documents", count: documents.length },
+    ]));
+    primarySections.push(renderEntitySection("Linked citations", "citation", citations, "No citations connected to this source yet."));
+    primarySections.push(renderEntitySection("Linked quotes", "quote", quotes, "No quotes connected to this source yet."));
+    primarySections.push(renderEntitySection("Linked notes", "note", notes, "No notes connected to this source yet."));
+    primarySections.push(renderEntitySection("Linked documents", "document", documents, "No documents use this source yet."));
   } else if (node.type === "citation") {
     primarySections.push(renderCitationDetail(current, {
       citationView: options?.citationViewState?.get?.(current.id) || {},
     }));
-    primarySections.push(renderEntitySection("Source", "source", current.source ? [current.source] : [], "No source linked to this citation."));
-    primarySections.push(renderEntitySection("Quotes", "quote", quotes, "No quotes linked to this citation yet."));
-    primarySections.push(renderEntitySection("Notes", "note", notes, "No notes linked to this citation yet."));
-    primarySections.push(renderEntitySection("Documents using this citation", "document", documents, "No documents use this citation yet."));
+    primarySections.push(renderRelationshipSummary([
+      { label: "linked sources", count: current.source ? 1 : 0 },
+      { label: "linked quotes", count: quotes.length },
+      { label: "linked notes", count: notes.length },
+      { label: "linked documents", count: documents.length },
+    ]));
+    primarySections.push(renderEntitySection("Linked sources", "source", current.source ? [current.source] : [], "No source linked to this citation."));
+    primarySections.push(renderEntitySection("Linked quotes", "quote", quotes, "No quotes linked to this citation yet."));
+    primarySections.push(renderEntitySection("Linked notes", "note", notes, "No notes linked to this citation yet."));
+    primarySections.push(renderEntitySection("Linked documents", "document", documents, "No documents use this citation yet."));
   } else if (node.type === "quote") {
     primarySections.push(renderQuoteDetail(current));
-    primarySections.push(renderEntitySection("Parent source", "source", current.citation?.source ? [current.citation.source] : [], "No parent source available."));
-    primarySections.push(renderEntitySection("Citation", "citation", current.citation ? [current.citation] : [], "No citation available."));
-    primarySections.push(renderEntitySection("Derived notes", "note", notes, "No notes derived from this quote yet."));
-    primarySections.push(renderEntitySection("Documents in this quote neighborhood", "document", documents, "No documents connected to this quote yet."));
+    primarySections.push(renderRelationshipSummary([
+      { label: "linked sources", count: current.citation?.source ? 1 : 0 },
+      { label: "linked citations", count: current.citation ? 1 : 0 },
+      { label: "linked notes", count: notes.length },
+      { label: "linked documents", count: documents.length },
+    ]));
+    primarySections.push(renderEntitySection("Linked sources", "source", current.citation?.source ? [current.citation.source] : [], "No parent source available."));
+    primarySections.push(renderEntitySection("Linked citations", "citation", current.citation ? [current.citation] : [], "No citation available."));
+    primarySections.push(renderEntitySection("Linked notes", "note", notes, "No notes derived from this quote yet."));
+    primarySections.push(renderEntitySection("Linked documents", "document", documents, "No documents connected to this quote yet."));
   } else if (node.type === "note") {
     primarySections.push(renderNoteDetail(current));
+    primarySections.push(renderRelationshipSummary([
+      { label: "linked sources", count: sources.length },
+      { label: "linked citations", count: noteCitations.length },
+      { label: "linked quotes", count: quotes.length },
+      { label: "linked notes", count: notes.length },
+      { label: "linked documents", count: documents.length },
+    ]));
     primarySections.push(renderEntitySection("Linked sources", "source", sources, "No linked sources on this note."));
-    primarySections.push(renderEntitySection("Linked quote", "quote", quotes, "No linked quote on this note."));
-    primarySections.push(renderEntitySection("Related notes", "note", notes, "No related notes yet."));
-    primarySections.push(renderEntitySection("Documents using this note", "document", documents, "No documents use this note yet."));
+    primarySections.push(renderEntitySection("Linked citations", "citation", noteCitations, "No linked citations on this note."));
+    primarySections.push(renderEntitySection("Linked quotes", "quote", quotes, "No linked quote on this note."));
+    primarySections.push(renderEntitySection("Linked notes", "note", notes, "No related notes yet."));
+    primarySections.push(renderEntitySection("Linked documents", "document", documents, "No documents use this note yet."));
   } else {
     primarySections.push(`<section class="detail-section"><h3>${escapeHtml(singular(node.type || "item"))}</h3></section>`);
   }

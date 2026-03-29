@@ -633,10 +633,48 @@ body.app-shell-body.has-open-sidebar-drawer {
   margin-bottom: 18px;
 }
 
+.context-panel-header .section-kicker {
+  color: var(--wu-accent);
+}
+
 .detail-section + .detail-section {
   margin-top: 18px;
   padding-top: 18px;
   border-top: 1px solid var(--wu-border);
+}
+
+.detail-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.detail-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--wu-accent) 6%, var(--wu-bg-elevated));
+}
+
+.detail-summary-count {
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.detail-summary-label {
+  color: var(--wu-text-muted);
+  text-transform: capitalize;
+}
+
+.detail-nav-card {
+  cursor: pointer;
+}
+
+.detail-nav-card .research-card {
+  border-style: solid;
 }
 
 .detail-list {

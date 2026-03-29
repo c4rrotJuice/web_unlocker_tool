@@ -173,13 +173,14 @@ class FakeNotesService:
                 "citation_id": CITATION_ID,
                 "quote_id": QUOTE_ID,
                 "tags": [{"id": "tag-1", "name": "evidence", "normalized_name": "evidence"}],
-                "linked_note_ids": [LINKED_NOTE_ID],
-                "sources": [
+                "note_links": [{"linked_note_id": LINKED_NOTE_ID, "link_type": "supports", "created_at": "2026-01-05T00:00:00+00:00"}],
+                "evidence_links": [
                     {
                         "id": "rel-1",
+                        "target_kind": "citation",
+                        "evidence_role": "primary",
                         "source_id": SOURCE_ID,
                         "citation_id": CITATION_ID,
-                        "relation_type": "citation",
                         "url": "https://example.com/source",
                         "hostname": "example.com",
                         "title": "Source A",
@@ -191,8 +192,8 @@ class FakeNotesService:
                 "lineage": {
                     "citation_id": CITATION_ID,
                     "quote_id": QUOTE_ID,
-                    "supporting_source_ids": [SOURCE_ID],
-                    "supporting_citation_ids": [CITATION_ID],
+                    "evidence_source_ids": [SOURCE_ID],
+                    "evidence_citation_ids": [CITATION_ID],
                 },
                 "status": "active",
                 "created_at": "2026-01-04T00:00:00+00:00",
@@ -207,13 +208,13 @@ class FakeNotesService:
                 "citation_id": None,
                 "quote_id": None,
                 "tags": [],
-                "linked_note_ids": [],
-                "sources": [],
+                "note_links": [],
+                "evidence_links": [],
                 "lineage": {
                     "citation_id": None,
                     "quote_id": None,
-                    "supporting_source_ids": [],
-                    "supporting_citation_ids": [],
+                    "evidence_source_ids": [],
+                    "evidence_citation_ids": [],
                 },
                 "status": "active",
                 "created_at": "2026-01-05T00:00:00+00:00",
@@ -247,12 +248,13 @@ class FakeNotesService:
         row["note_body"] = payload["note_body"]
         row["citation_id"] = payload["citation_id"]
         row["quote_id"] = payload["quote_id"]
-        row["sources"] = deepcopy(payload["sources"])
+        row["evidence_links"] = deepcopy(payload["evidence_links"])
+        row["note_links"] = deepcopy(payload["note_links"])
         row["lineage"] = {
             "citation_id": payload["citation_id"],
             "quote_id": payload["quote_id"],
-            "supporting_source_ids": [source.get("source_id") for source in payload["sources"] if source.get("source_id")],
-            "supporting_citation_ids": [source.get("citation_id") for source in payload["sources"] if source.get("citation_id")],
+            "evidence_source_ids": [source.get("source_id") for source in payload["evidence_links"] if source.get("source_id")],
+            "evidence_citation_ids": [source.get("citation_id") for source in payload["evidence_links"] if source.get("citation_id")],
         }
         self.rows[row["id"]] = row
         return row
@@ -268,6 +270,7 @@ class FakeNotesService:
                 "source_id": SOURCE_ID,
                 "citation_id": CITATION_ID,
                 "relation_type": "citation",
+                "evidence_role": "primary",
                 "url": "https://example.com/source",
                 "position": 0,
             }
@@ -289,6 +292,7 @@ class FakeNotesRepository:
                 "source_id": SOURCE_ID,
                 "citation_id": CITATION_ID,
                 "relation_type": "citation",
+                "evidence_role": "primary",
                 "url": "https://example.com/source",
                 "position": 0,
             }
@@ -344,7 +348,7 @@ class FakeWorkspaceService:
                 "attached_citations": [deepcopy(FakeCitationsService().rows[CITATION_ID])],
                 "attached_quotes": [deepcopy(FakeQuotesService().rows[QUOTE_ID])],
                 "attached_notes": [deepcopy(FakeNotesService().rows[NOTE_ID])],
-                "attached_sources": [deepcopy(FakeSourcesService().rows[SOURCE_ID])],
+                "derived_sources": [deepcopy(FakeSourcesService().rows[SOURCE_ID])],
                 "seed": None,
             }
         }
@@ -427,7 +431,7 @@ async def test_citation_graph_returns_normalized_adjacency(graph_service):
     assert any(edge["relation_type"] == "citation_source" for edge in payload["edges"])
     assert any(edge["relation_type"] == "quote_citation" for edge in payload["edges"])
     assert any(edge["relation_type"] == "document_citation" for edge in payload["edges"])
-    assert any(edge["relation_type"] == "note_source_citation" and edge["metadata"]["position"] == 0 for edge in payload["edges"])
+    assert any(edge["relation_type"] == "note_evidence_citation" and edge["metadata"]["position"] == 0 and edge["metadata"]["evidence_role"] == "primary" for edge in payload["edges"])
 
 
 @pytest.mark.anyio
@@ -471,7 +475,7 @@ async def test_work_in_editor_orchestration_centralizes_lineage_and_document_att
             "note": {
                 "title": "Captured note",
                 "note_body": "Synthesis",
-                "sources": [{"source_id": SOURCE_ID, "citation_id": CITATION_ID, "relation_type": "citation", "position": 0}],
+                "evidence_links": [{"source_id": SOURCE_ID, "citation_id": CITATION_ID, "target_kind": "citation", "evidence_role": "primary", "position": 0}],
             },
         }
     )
@@ -495,7 +499,7 @@ async def test_work_in_editor_orchestration_centralizes_lineage_and_document_att
     assert quotes_service.create_calls[0]["citation_id"] == CITATION_ID
     assert notes_service.create_calls[0]["citation_id"] == CITATION_ID
     assert notes_service.create_calls[0]["quote_id"] == QUOTE_ID
-    assert notes_service.create_calls[0]["sources"][0]["source_id"] == SOURCE_ID
+    assert notes_service.create_calls[0]["evidence_links"][0]["source_id"] == SOURCE_ID
     assert workspace_service.create_calls == [{"title": "Seeded Draft", "project_id": None}]
     assert workspace_service.update_calls == [{"revision": "2026-01-06T00:00:00+00:00", "content_delta": {"ops": [{"insert": "Source A\nQuoted context\n\nSynthesis\n"}]}}]
     assert workspace_service.replace_citation_calls == [[CITATION_ID]]

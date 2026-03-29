@@ -178,7 +178,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
         : rows, workspaceState.getState().focused_entity?.id || null);
     },
   });
-  const attachActions = createAttachActions({ workspaceState, workspaceApi, eventBus });
+  const attachActions = createAttachActions({ workspaceState, workspaceApi, eventBus, hydrator });
   const insertActions = createInsertActions({ quillAdapter, attachActions, workspaceState, eventBus });
   const noteActions = createNoteActions({
     researchApi,
@@ -187,7 +187,7 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     eventBus,
     stores,
   });
-  const linkActions = createLinkActions({ workspaceState, attachActions, feedback });
+  const linkActions = createLinkActions({ workspaceState, attachActions, feedback, researchApi, stores });
   createConvertActions();
   const documentController = createDocumentController({
     workspaceState,
@@ -394,6 +394,8 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
     });
   }
 
+  linkActions.setOnChange(renderShell);
+
   const unsubWorkspace = workspaceState.subscribe(renderShell);
   const unsubSelection = selectionState.subscribe(renderShell);
   const unsubFeedback = feedback.status.subscribe((_statuses, { scope }) => {
@@ -438,7 +440,10 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
   eventBus.on("document.export.failed", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.DOCUMENT_EXPORT_FAILED, payload));
   eventBus.on("citation.attached", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.CITATION_ATTACHED, payload));
   eventBus.on("citation.attach_skipped", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.CITATION_ATTACH_SKIPPED, payload));
+  eventBus.on("citation.detached", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.CITATION_DETACHED, payload));
   eventBus.on("note.attached", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.NOTE_ATTACHED, payload));
+  eventBus.on("note.attach_skipped", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.NOTE_ATTACH_SKIPPED, payload));
+  eventBus.on("note.detached", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.NOTE_DETACHED, payload));
   eventBus.on("quote.inserted", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.QUOTE_INSERTED, payload));
   eventBus.on("bibliography.inserted", (payload) => feedback.emitDomainEvent(FEEDBACK_EVENTS.BIBLIOGRAPHY_INSERTED, payload));
 
@@ -540,12 +545,30 @@ export async function createEditorApp({ boot = readBootPayload() } = {}) {
       if (action.dataset.contextAction === "attach-note-to-document" && action.dataset.noteId) {
         await linkActions.attachNoteToCurrentDocument(action.dataset.noteId);
       }
+      if (action.dataset.contextAction === "detach-note-from-document" && action.dataset.noteId) {
+        await linkActions.detachNoteFromCurrentDocument(action.dataset.noteId);
+      }
+      if (action.dataset.contextAction === "attach-citation-to-document" && action.dataset.citationId) {
+        await linkActions.attachCitationToCurrentDocument(action.dataset.citationId);
+      }
+      if (action.dataset.contextAction === "detach-citation-from-document" && action.dataset.citationId) {
+        await linkActions.detachCitationFromCurrentDocument(action.dataset.citationId);
+      }
       if (action.dataset.contextAction === "start-outline") {
         quillAdapter.focus();
         quillAdapter.insertText(quillAdapter.getSelection()?.index || 0, "\n## Outline\n");
       }
+      if (await linkActions.handleRelationshipAction(action.dataset)) {
+        renderShell();
+      }
     };
     const contextRailChange = async (event) => {
+      const authoringField = event.target.closest("[data-note-hub-query],[data-note-authoring-query],[data-note-authoring-link-type],[data-note-authoring-evidence-role],[data-note-authoring-url],[data-note-authoring-title]");
+      if (authoringField) {
+        linkActions.handleRelationshipChange(authoringField.dataset, authoringField.value);
+        renderShell();
+        return;
+      }
       const styleSelect = event.target.closest("[data-citation-style-select]");
       const kindSelect = event.target.closest("[data-citation-kind-select]");
       const citationId = styleSelect?.dataset?.citationStyleSelect || kindSelect?.dataset?.citationKindSelect || "";

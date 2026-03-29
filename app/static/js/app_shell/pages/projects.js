@@ -1,6 +1,7 @@
 import { apiFetchJson } from "../core/fetch.js";
 import { renderEmpty, renderError, renderLoading, bindRetry } from "../core/dom.js";
 import { renderDocumentCard, renderNoteCard, renderProjectCard } from "../renderers/cards.js";
+import { renderProjectDetail } from "../renderers/details.js";
 
 let booted = false;
 
@@ -36,7 +37,7 @@ export async function initProjects(boot) {
         copyNode.textContent = "Open a project to see notes and documents already linked through canonical project relations.";
         renderEmpty(notesNode, "Select a project", "Choose a project to load its notes.");
         renderEmpty(docsNode, "Select a project", "Choose a project to load its documents.");
-        sourcesNode.innerHTML = `<div class="surface-note">Project-scoped source listing remains limited until canonical source project filtering is exposed.</div>`;
+        sourcesNode.innerHTML = `<div class="surface-note">Derived research visibility appears here once a project is selected. Projects do not directly own sources, citations, or quotes.</div>`;
         return;
       }
 
@@ -48,6 +49,13 @@ export async function initProjects(boot) {
 
       titleNode.textContent = project.name || "Project";
       copyNode.textContent = project.description || "Connected notes and documents for this project.";
+      sourcesNode.innerHTML = `
+        ${renderProjectDetail(project)}
+        <section class="detail-section">
+          <p class="section-kicker">Derived research</p>
+          <div class="surface-note">Projects surface derived citations and sources through linked notes and documents only. Direct project editing for research relationships remains intentionally unavailable.</div>
+        </section>
+      `;
 
       const noteRows = notes.data || [];
       const docRows = documents.data || [];
@@ -63,8 +71,6 @@ export async function initProjects(boot) {
       } else {
         renderEmpty(docsNode, "No documents in this project", "Project documents will appear here once they are linked canonically.");
       }
-
-      sourcesNode.innerHTML = `<div class="surface-note">Project-scoped source listing is intentionally limited in Phase 7. The shell will not overfetch broad source collections to simulate missing canonical filters.</div>`;
     } catch (error) {
       [listNode, notesNode, docsNode].forEach((node) => {
         if (node) {

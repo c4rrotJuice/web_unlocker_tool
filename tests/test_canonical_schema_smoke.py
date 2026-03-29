@@ -24,15 +24,33 @@ def test_expected_tables_and_rpcs_are_present():
 def test_note_sources_canonical_schema_and_rpc_match_runtime_contract():
     notes_migration = Path("writior_migration_pack/006_notes.sql").read_text(encoding="utf-8")
     rpc_migration = Path("writior_migration_pack/008_rpc_functions.sql").read_text(encoding="utf-8")
+    live_migration = Path("sql/20260329_upgrade_note_link_semantics.sql").read_text(encoding="utf-8")
 
     assert "create table if not exists public.note_sources" in notes_migration
     assert "source_id uuid references public.sources(id) on delete cascade" in notes_migration
     assert "citation_id uuid references public.citation_instances(id) on delete cascade" in notes_migration
     assert "relation_type text not null default 'external'" in notes_migration
+    assert "evidence_role text not null default 'supporting'" in notes_migration
     assert "position integer not null default 0" in notes_migration
     assert "replace_note_sources_atomic" in rpc_migration
-    assert "source_id, citation_id, relation_type" in rpc_migration
+    assert "target_kind" in rpc_migration
+    assert "evidence_role" in rpc_migration
     assert "'position', ns.position" in rpc_migration
+    assert "add column if not exists evidence_role text not null default 'supporting'" in live_migration
+    assert "add column if not exists link_type text not null default 'related'" in live_migration
+
+
+def test_project_summary_rpc_is_canonical_and_sql_backed():
+    rpc_migration = Path("writior_migration_pack/008_rpc_functions.sql").read_text(encoding="utf-8")
+    rls_migration = Path("writior_migration_pack/009_triggers_rls.sql").read_text(encoding="utf-8")
+    live_migration = Path("sql/20260329_add_project_relationship_summary_rpc.sql").read_text(encoding="utf-8")
+
+    assert "create or replace function public.get_project_relationship_summaries" in rpc_migration
+    assert "public.projects p" in rpc_migration
+    assert "public.document_citations dc" in rpc_migration
+    assert "public.note_sources ns" in rpc_migration
+    assert "grant execute on function public.get_project_relationship_summaries(uuid, uuid[], boolean, integer) to authenticated;" in rls_migration
+    assert "create or replace function public.get_project_relationship_summaries" in live_migration
 
 
 def test_canonical_pack_allows_multiple_citations_per_source():

@@ -208,7 +208,8 @@ grant execute on function public.replace_document_tags_atomic(uuid, uuid, timest
 grant execute on function public.replace_document_notes_atomic(uuid, uuid, timestamptz, uuid[]) to authenticated;
 grant execute on function public.replace_note_tag_links_atomic(uuid, uuid, uuid[]) to authenticated;
 grant execute on function public.replace_note_sources_atomic(uuid, uuid, jsonb) to authenticated;
-grant execute on function public.replace_note_links_atomic(uuid, uuid, uuid[]) to authenticated;
+grant execute on function public.replace_note_links_atomic(uuid, uuid, jsonb) to authenticated;
+grant execute on function public.get_project_relationship_summaries(uuid, uuid[], boolean, integer) to authenticated;
 grant execute on function public.get_unlock_days(uuid, date, date) to authenticated;
 grant execute on function public.get_monthly_domain_counts(uuid, date, date) to authenticated;
 grant execute on function public.get_monthly_citation_breakdown(uuid, date, date) to authenticated;

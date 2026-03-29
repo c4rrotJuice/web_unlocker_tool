@@ -14,15 +14,38 @@ class TaxonomyService:
         self.repository = repository
 
     async def list_projects(self, *, user_id: str, access_token: str | None, include_archived: bool = True, limit: int = 24) -> list[dict]:
-        rows = await self.repository.list_projects(user_id=user_id, access_token=access_token, include_archived=include_archived, limit=limit)
-        return [serialize_project(row) for row in rows]
+        rows = await self.repository.list_project_relationship_summaries(
+            user_id=user_id,
+            access_token=access_token,
+            include_archived=include_archived,
+            limit=limit,
+        )
+        return [
+            serialize_project(
+                row,
+                relationship_counts=row.get("relationship_counts"),
+                recent_activity=row.get("recent_activity"),
+            )
+            for row in rows
+        ]
 
     async def get_project(self, *, user_id: str, access_token: str | None, project_id: str) -> dict:
         normalized_id = normalize_uuid(project_id, field_name="project_id")
-        row = await self.repository.get_project(user_id=user_id, access_token=access_token, project_id=normalized_id)
+        rows = await self.repository.list_project_relationship_summaries(
+            user_id=user_id,
+            access_token=access_token,
+            project_ids=[normalized_id],
+            include_archived=True,
+            limit=1,
+        )
+        row = rows[0] if rows else None
         if row is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        return serialize_project(row)
+        return serialize_project(
+            row,
+            relationship_counts=row.get("relationship_counts"),
+            recent_activity=row.get("recent_activity"),
+        )
 
     async def create_project(self, *, user_id: str, access_token: str | None, payload: dict) -> dict:
         row = await self.repository.create_project(user_id=user_id, access_token=access_token, payload=payload)

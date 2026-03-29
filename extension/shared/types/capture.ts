@@ -88,7 +88,7 @@ function normalizeLocator(input: any) {
   return isPlainObject(input) ? { ...input } : {};
 }
 
-function buildExternalNoteSource({
+function buildExternalEvidenceLink({
   pageUrl,
   pageDomain,
   pageTitle,
@@ -98,7 +98,8 @@ function buildExternalNoteSource({
     return [];
   }
   return [{
-    relation_type: "external",
+    target_kind: "external",
+    evidence_role: "supporting",
     url,
     hostname: deriveDomain(url, pageDomain) || null,
     title: normalizeText(pageTitle) || null,
@@ -315,7 +316,7 @@ export function buildNoteCaptureRequest({
     citation_id: normalizeText(citationId) || null,
     quote_id: normalizeText(quoteId) || null,
     tag_ids: [],
-    sources: buildExternalNoteSource({ pageUrl, pageDomain, pageTitle }),
-    linked_note_ids: [],
+    evidence_links: buildExternalEvidenceLink({ pageUrl, pageDomain, pageTitle }),
+    note_links: [],
   };
 }

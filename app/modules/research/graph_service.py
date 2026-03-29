@@ -134,7 +134,7 @@ class ResearchGraphService:
                 seen_source_ids.add(source_id)
                 source_ids.append(source_id)
         for note in notes:
-            for source in note.get("sources") or []:
+            for source in note.get("evidence_links") or []:
                 source_id = source.get("source_id")
                 if source_id and source_id not in seen_source_ids:
                     seen_source_ids.add(source_id)
@@ -198,21 +198,29 @@ class ResearchGraphService:
                         relation_type="note_quote",
                     )
                 )
-            for linked_note_id in note.get("linked_note_ids") or []:
+            for note_link in note.get("note_links") or []:
+                linked_note_id = note_link.get("linked_note_id")
+                if not linked_note_id:
+                    continue
                 edges.append(
                     self._edge(
                         from_type="note",
                         from_id=note_id,
                         to_type="note",
                         to_id=linked_note_id,
-                        relation_type="note_link",
+                        relation_type=f"note_link_{note_link.get('link_type') or 'related'}",
+                        metadata={"link_type": note_link.get("link_type") or "related"},
                     )
                 )
-            for source in note.get("sources") or []:
+            for source in note.get("evidence_links") or []:
+                target_kind = source.get("target_kind") or "external"
+                evidence_role = source.get("evidence_role") or "supporting"
                 metadata = {
                     "position": source.get("position"),
                     "citation_id": source.get("citation_id"),
                     "url": source.get("url"),
+                    "target_kind": target_kind,
+                    "evidence_role": evidence_role,
                 }
                 if source.get("source_id"):
                     edges.append(
@@ -221,7 +229,7 @@ class ResearchGraphService:
                             from_id=note_id,
                             to_type="source",
                             to_id=source["source_id"],
-                            relation_type=f"note_source_{source.get('relation_type') or 'source'}",
+                            relation_type=f"note_evidence_{target_kind}",
                             metadata=metadata,
                         )
                     )
@@ -232,8 +240,8 @@ class ResearchGraphService:
                             from_id=note_id,
                             to_type="citation",
                             to_id=source["citation_id"],
-                            relation_type=f"note_source_{source.get('relation_type') or 'citation'}",
-                            metadata={"position": source.get("position"), "source_id": source.get("source_id"), "url": source.get("url")},
+                            relation_type=f"note_evidence_{target_kind}",
+                            metadata={"position": source.get("position"), "source_id": source.get("source_id"), "url": source.get("url"), "target_kind": target_kind, "evidence_role": evidence_role},
                         )
                     )
         for document in documents:
@@ -273,8 +281,8 @@ class ResearchGraphService:
                             from_id=note_id,
                             to_type="source",
                             to_id=source_id,
-                            relation_type=f"note_source_{row.get('relation_type') or 'source'}",
-                            metadata={"position": row.get("position"), "citation_id": citation_id, "url": row.get("url")},
+                            relation_type=f"note_evidence_{row.get('relation_type') or 'source'}",
+                            metadata={"position": row.get("position"), "citation_id": citation_id, "url": row.get("url"), "target_kind": row.get("relation_type") or "source", "evidence_role": row.get("evidence_role") or "supporting"},
                         )
                     )
                 if note_id and citation_id:
@@ -284,8 +292,8 @@ class ResearchGraphService:
                             from_id=note_id,
                             to_type="citation",
                             to_id=citation_id,
-                            relation_type=f"note_source_{row.get('relation_type') or 'citation'}",
-                            metadata={"position": row.get("position"), "source_id": source_id, "url": row.get("url")},
+                            relation_type=f"note_evidence_{row.get('relation_type') or 'citation'}",
+                            metadata={"position": row.get("position"), "source_id": source_id, "url": row.get("url"), "target_kind": row.get("relation_type") or "citation", "evidence_role": row.get("evidence_role") or "supporting"},
                         )
                     )
 
@@ -330,7 +338,7 @@ class ResearchGraphService:
             note_id = normalize_uuid(entity_id, field_name="note_id")
             note = await self.notes_service.get_note(user_id=user_id, access_token=access_token, note_id=note_id)
             citation_ids = [note.get("citation_id")] if note.get("citation_id") else []
-            citation_ids.extend([source.get("citation_id") for source in note.get("sources") or [] if source.get("citation_id")])
+            citation_ids.extend([source.get("citation_id") for source in note.get("evidence_links") or [] if source.get("citation_id")])
             citations = await self.citations_service.list_citations(
                 user_id=user_id,
                 access_token=access_token,
@@ -345,8 +353,8 @@ class ResearchGraphService:
             linked_notes = await self.notes_service.list_notes_by_ids(
                 user_id=user_id,
                 access_token=access_token,
-                note_ids=note.get("linked_note_ids") or [],
-            ) if note.get("linked_note_ids") else []
+                note_ids=[link.get("linked_note_id") for link in note.get("note_links") or [] if link.get("linked_note_id")],
+            ) if note.get("note_links") else []
             documents = await self._documents_from_relations(
                 user_id=user_id,
                 access_token=access_token,
@@ -555,8 +563,8 @@ class ResearchGraphService:
                     "citation_id": citation["id"],
                     "quote_id": quote["id"] if quote else None,
                     "tag_ids": payload.note.tag_ids,
-                    "sources": [source.model_dump(exclude_none=True) for source in payload.note.sources],
-                    "linked_note_ids": [],
+                    "evidence_links": [source.model_dump(exclude_none=True) for source in payload.note.evidence_links],
+                    "note_links": [],
                 },
             )
         document = await self.workspace_service.create_document(

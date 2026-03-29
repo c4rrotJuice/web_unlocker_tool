@@ -16,7 +16,7 @@ export function createInsertActions({ quillAdapter, attachActions, workspaceStat
         label: citationPrimaryText(citation, "Citation"),
         index,
       });
-      await attachActions.attachCitation(citation.id);
+      await attachActions.attachCitation(citation.id, { source: "insert" });
       workspaceState.setFocusedEntity({ type: "citation", id: citation.id });
     },
     async insertNote(note) {
@@ -26,7 +26,7 @@ export function createInsertActions({ quillAdapter, attachActions, workspaceStat
         label: note.title || "Note",
         index,
       });
-      await attachActions.attachNote(note.id);
+      await attachActions.attachNote(note.id, { source: "insert" });
       workspaceState.setFocusedEntity({ type: "note", id: note.id });
     },
     async insertQuote(quote) {
@@ -39,10 +39,10 @@ export function createInsertActions({ quillAdapter, attachActions, workspaceStat
       });
       const citationId = quote.citation?.id || quote.citation_id;
       if (citationId) {
-        await attachActions.attachCitation(citationId);
+        await attachActions.attachCitation(citationId, { source: "insert" });
       }
       workspaceState.setFocusedEntity({ type: "quote", id: quote.id });
-      eventBus?.emit("quote.inserted", { quoteId: quote.id, citationId });
+      eventBus?.emit("quote.inserted", { quoteId: quote.id, citationId, source: "insert" });
     },
     insertBibliography(citations) {
       if (!citations.length) return;

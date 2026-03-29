@@ -1613,16 +1613,50 @@ test("note context rail exposes explicit document attach controls for canonical 
     id: "note-1",
     title: "Claim note",
     note_body: "Evidence summary",
-    linked_note_ids: ["note-2"],
+    note_links: [{ linked_note_id: "note-2", link_type: "supports" }],
     tags: [],
-    sources: [],
+    evidence_links: [],
   }, { linkActions });
 
   assert.match(target.innerHTML, /Document attachment/);
   assert.match(target.innerHTML, /Attach to current document/);
-  assert.match(target.innerHTML, /Linked documents/);
+  assert.match(target.innerHTML, /Not attached/);
   assert.match(target.innerHTML, /Draft chapter/);
-  assert.match(target.innerHTML, /Linked note ids/);
+  assert.doesNotMatch(target.innerHTML, /Related notes/);
+});
+
+test("citation context rail exposes explicit document attach controls for canonical citation-document links", () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft chapter",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft chapter\n" }] },
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  const linkActions = createLinkActions({
+    workspaceState,
+    attachActions: { async attachCitation() {} },
+  });
+  const target = makeElement();
+
+  renderContextRail(target, { mode: "citation_focus" }, workspaceState.getState(), {
+    id: "citation-1",
+    source: { id: "source-1", title: "Source title", hostname: "example.test" },
+    renders: { mla: { bibliography: "Source title" } },
+    primary_render: { style: "mla", kind: "bibliography", text: "Source title" },
+  }, {
+    linkActions,
+    citationViewState: new Map(),
+  });
+
+  assert.match(target.innerHTML, /Document attachment/);
+  assert.match(target.innerHTML, /Attach to current document/);
+  assert.match(target.innerHTML, /Not attached/);
+  assert.match(target.innerHTML, /Draft chapter/);
 });
 
 test("note context rail reflects attached document links immediately after save", async () => {
@@ -1663,16 +1697,56 @@ test("note context rail reflects attached document links immediately after save"
     id: "note-1",
     title: "Claim note",
     note_body: "Evidence summary",
-    linked_note_ids: [],
+    relationship_groups: {
+      evidence_links_by_role: { primary: [], supporting: [], background: [] },
+      note_links_by_type: { supports: [], contradicts: [], extends: [], related: [] },
+    },
     tags: [],
-    sources: [],
+    evidence_links: [],
+    attached_documents: [{ id: "doc-1", title: "Draft chapter", status: "active" }],
   }, { linkActions });
 
-  assert.match(target.innerHTML, /Attached to current document/);
+  assert.match(target.innerHTML, /Attached/);
+  assert.match(target.innerHTML, /Remove attachment/);
   assert.match(target.innerHTML, /data-related-document-id="doc-1"/);
 });
 
-test("unsupported link types are not exposed from citation detail panels", () => {
+test("citation context rail reflects attached state and removal affordance immediately after save", () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft chapter",
+    revision: "rev-2",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft chapter\n" }] },
+    attached_citation_ids: ["citation-1"],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  const linkActions = createLinkActions({
+    workspaceState,
+    attachActions: { async attachCitation() {}, async detachCitation() {} },
+  });
+  const target = makeElement();
+
+  renderContextRail(target, { mode: "citation_focus" }, workspaceState.getState(), {
+    id: "citation-1",
+    source: { id: "source-1", title: "Source title", hostname: "example.test" },
+    renders: { mla: { bibliography: "Source title" } },
+    primary_render: { style: "mla", kind: "bibliography", text: "Source title" },
+    attached_documents: [{ id: "doc-1", title: "Draft chapter", status: "active" }],
+  }, {
+    linkActions,
+    citationViewState: new Map(),
+  });
+
+  assert.match(target.innerHTML, /Attached/);
+  assert.match(target.innerHTML, /Remove attachment/);
+  assert.doesNotMatch(target.innerHTML, />Attach to current document</);
+});
+
+test("unsupported attach types stay hidden from citation detail panels while citation attach remains available", () => {
   installWindow();
   const workspaceState = createWorkspaceState();
   workspaceState.setDocument({
@@ -1694,13 +1768,14 @@ test("unsupported link types are not exposed from citation detail panels", () =>
   }, {
     linkActions: createLinkActions({
       workspaceState,
-      attachActions: { async attachNote() {} },
+      attachActions: { async attachCitation() {} },
     }),
     citationViewState: new Map(),
   });
 
   assert.doesNotMatch(target.innerHTML, /attach-note-to-document/);
-  assert.doesNotMatch(target.innerHTML, /Document attachment/);
+  assert.doesNotMatch(target.innerHTML, /attach-quote-to-document/);
+  assert.match(target.innerHTML, /Document attachment/);
 });
 
 test("cross-user note attach rejections are surfaced as permission errors without mutating document links", async () => {
@@ -1744,6 +1819,47 @@ test("cross-user note attach rejections are surfaced as permission errors withou
       dedupeKey: "note-attach-permission-denied",
     },
   }]);
+});
+
+test("failed attachment state is rendered for note detail after backend rejection", async () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft chapter",
+    revision: "rev-1",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft chapter\n" }] },
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  const linkActions = createLinkActions({
+    workspaceState,
+    attachActions: {
+      async attachNote() {
+        workspaceState.setAttachmentFailure("note", "note-1", { message: "Invalid note references", mode: "attach" });
+        const error = new Error("Invalid note references");
+        error.status = 422;
+        throw error;
+      },
+    },
+    feedback: { emitDomainEvent() {} },
+  });
+
+  await assert.rejects(() => linkActions.attachNoteToCurrentDocument("note-1"), /Invalid note references/);
+
+  const target = makeElement();
+  renderContextRail(target, { mode: "note_focus" }, workspaceState.getState(), {
+    id: "note-1",
+    title: "Claim note",
+    note_body: "Evidence summary",
+    tags: [],
+    evidence_links: [],
+  }, { linkActions });
+
+  assert.match(target.innerHTML, /Failed/);
+  assert.match(target.innerHTML, /Invalid note references/);
 });
 
 test("structured auth error payloads preserve a readable message instead of object stringification", () => {
@@ -1803,7 +1919,7 @@ test("attached hydrate payloads are consumed into runtime state and primed store
     attached_citations: [citation],
     attached_notes: [note],
     attached_quotes: [quote],
-    attached_sources: [source],
+    derived_sources: [source],
   });
 
   assert.equal(workspaceState.getState().attached_research.citations[0].id, "citation-1");
@@ -2079,6 +2195,65 @@ test("attachment conflict preserves local snapshot instead of overwriting newer 
   assert.deepEqual(events, ["doc.save.conflict"]);
 });
 
+test("successful citation attach refreshes attached research from canonical hydrate payload", async () => {
+  installWindow();
+  const workspaceState = createWorkspaceState();
+  workspaceState.setDocument({
+    id: "doc-1",
+    title: "Draft 1",
+    revision: "rev-1",
+    project_id: null,
+    content_delta: { ops: [{ insert: "Draft 1\n" }] },
+    attached_citation_ids: [],
+    attached_note_ids: [],
+    tag_ids: [],
+  });
+  const attachActions = createAttachActions({
+    workspaceState,
+    workspaceApi: {
+      async replaceDocumentCitations() {
+        return {
+          id: "doc-1",
+          title: "Draft 1",
+          revision: "rev-2",
+          project_id: null,
+          content_delta: { ops: [{ insert: "Draft 1\n" }] },
+          attached_citation_ids: ["citation-1"],
+          attached_note_ids: [],
+          tag_ids: [],
+        };
+      },
+      async hydrateDocument() {
+        return {
+          document: {
+            id: "doc-1",
+            title: "Draft 1",
+            revision: "rev-2",
+            project_id: null,
+            attached_citation_ids: ["citation-1"],
+            attached_note_ids: [],
+            tag_ids: [],
+          },
+          attached_citations: [{ id: "citation-1", source: { id: "source-1", title: "Source title" } }],
+          attached_notes: [],
+          attached_quotes: [],
+          derived_sources: [{ id: "source-1", title: "Source title" }],
+        };
+      },
+      async replaceDocumentNotes() {
+        throw new Error("should not be called");
+      },
+    },
+    eventBus: { emit() {} },
+  });
+
+  await attachActions.attachCitation("citation-1");
+
+  assert.deepEqual(workspaceState.getState().attached_relation_ids.citations, ["citation-1"]);
+  assert.deepEqual(workspaceState.getState().attached_research.citations.map((item) => item.id), ["citation-1"]);
+  assert.equal(workspaceState.getState().hydration.attached_ready, true);
+});
+
 test("attached hydrate does not overwrite a newer local edit", async () => {
   installWindow();
   const workspaceState = createWorkspaceState();
@@ -2114,7 +2289,7 @@ test("attached hydrate does not overwrite a newer local edit", async () => {
           attached_citations: [],
           attached_notes: [],
           attached_quotes: [],
-          attached_sources: [],
+          derived_sources: [],
         };
       },
     },
@@ -2185,7 +2360,7 @@ test("refreshing after conflict resolves the editor to backend truth", async () 
           attached_citations: [],
           attached_notes: [],
           attached_quotes: [],
-          attached_sources: [],
+          derived_sources: [],
         };
       },
     },
@@ -2559,7 +2734,7 @@ test("booted document open waits for hydration before revealing the writing surf
     attached_citations: [],
     attached_notes: [],
     attached_quotes: [],
-    attached_sources: [],
+    derived_sources: [],
   };
   const refs = createDocumentRefs();
   const controller = createDocumentController({

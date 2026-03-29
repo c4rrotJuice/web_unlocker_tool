@@ -41,6 +41,8 @@ create table if not exists public.note_sources (
   citation_id uuid references public.citation_instances(id) on delete cascade,
   relation_type text not null default 'external'
     check (relation_type in ('external', 'source', 'citation')),
+  evidence_role text not null default 'supporting'
+    check (evidence_role in ('primary', 'supporting', 'background')),
   url text,
   hostname text,
   title text,
@@ -74,6 +76,8 @@ create table if not exists public.note_links (
   note_id uuid not null references public.notes(id) on delete cascade,
   linked_note_id uuid not null references public.notes(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
+  link_type text not null default 'related'
+    check (link_type in ('supports', 'contradicts', 'extends', 'related')),
   created_at timestamptz not null default now(),
   primary key (note_id, linked_note_id),
   constraint note_links_not_self check (note_id <> linked_note_id)

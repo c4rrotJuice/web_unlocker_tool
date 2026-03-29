@@ -25,6 +25,7 @@ const initialState = () => ({
     session: null,
     explorer_by_type: {},
     checkpoints: null,
+    attachments: {},
   },
   runtime_activity: {
     save: { phase: "idle", sequence: 0, message: null },
@@ -33,6 +34,7 @@ const initialState = () => ({
     hydrate: { phase: "idle", sequence: 0, message: null },
     explorer_by_type: {},
     checkpoints: { phase: "idle", sequence: 0, message: null },
+    attachments: {},
   },
   pending_explorer_action: null,
   focused_entity: null,
@@ -125,6 +127,7 @@ export function createWorkspaceState() {
           document_conflict: null,
           session: null,
           checkpoints: null,
+          attachments: {},
         },
       });
     },
@@ -293,6 +296,21 @@ export function createWorkspaceState() {
         },
       });
     },
+    setAttachmentActivity(kind, id, activity) {
+      const key = `${kind}:${id}`;
+      set({
+        runtime_activity: {
+          ...state.runtime_activity,
+          attachments: {
+            ...state.runtime_activity.attachments,
+            [key]: {
+              ...(state.runtime_activity.attachments[key] || { phase: "idle", sequence: 0, message: null }),
+              ...activity,
+            },
+          },
+        },
+      });
+    },
     setDocumentTransitionFailure(failure) {
       set({
         runtime_failures: {
@@ -334,6 +352,18 @@ export function createWorkspaceState() {
         runtime_failures: {
           ...state.runtime_failures,
           checkpoints: failure ? { ...failure } : null,
+        },
+      });
+    },
+    setAttachmentFailure(kind, id, failure) {
+      const key = `${kind}:${id}`;
+      set({
+        runtime_failures: {
+          ...state.runtime_failures,
+          attachments: {
+            ...state.runtime_failures.attachments,
+            [key]: failure ? { ...failure } : null,
+          },
         },
       });
     },

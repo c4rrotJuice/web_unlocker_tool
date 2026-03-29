@@ -82,11 +82,21 @@ class FakeCitationsService:
     async def list_citations_repo_passthrough(self, *, user_id, access_token, source_id=None, citation_ids=None, limit=500):
         return await self.list_citations_repo(user_id=user_id, access_token=access_token, source_id=source_id, citation_ids=citation_ids, limit=limit)
 
+    async def get_citation(self, *, user_id, access_token, citation_id, account_type=None, selected_style=None):
+        del user_id, access_token, account_type, selected_style
+        row = deepcopy(self.rows[citation_id])
+        row.setdefault("relationship_counts", {})
+        return row
+
 
 class FakeSourcesService:
     async def get_source_rows_by_ids(self, *, source_ids, access_token=None):
         del access_token
         return [{"id": source_id} for source_id in source_ids if source_id == "source-a"]
+
+    async def list_sources_by_ids(self, *, user_id, access_token, source_ids):
+        del user_id, access_token
+        return [{"id": source_id, "title": f"Source {source_id[-1].upper()}", "created_at": "", "updated_at": "", "relationship_counts": {}} for source_id in source_ids if source_id in {"source-a", "source-b"}]
 
 
 class FakeTaxonomyService:
@@ -110,6 +120,14 @@ class FakeTaxonomyService:
     async def resolve_tags(self, *, user_id, access_token, tag_ids, names):
         del user_id, access_token, names
         return [deepcopy(self.tags[tag_id]) for tag_id in tag_ids if tag_id in self.tags]
+
+    async def list_projects(self, *, user_id, access_token, include_archived=True, limit=24):
+        del user_id, access_token, include_archived, limit
+        return [{"id": "project-1", "name": "Project 1", "archived": False, "created_at": "", "updated_at": ""}]
+
+    async def get_project(self, *, user_id, access_token, project_id):
+        del user_id, access_token
+        return {"id": project_id, "name": f"Project {project_id}", "archived": False, "created_at": "", "updated_at": ""}
 
 
 class FakeRelationValidation:
@@ -150,18 +168,34 @@ class FakeRelationValidation:
             raise HTTPException(status_code=422, detail="Invalid note references")
         return normalized
 
-    def validate_linked_note_ids(self, *, note_id, linked_note_ids):
-        normalized = self.normalize_relation_ids(linked_note_ids, field_name="linked_note_id")
-        if note_id in normalized:
+    def validate_note_links(self, *, note_id, note_links):
+        normalized = []
+        seen = set()
+        for link in note_links:
+            linked_note_id = link.get("linked_note_id")
+            link_type = link.get("link_type") or "related"
+            key = (linked_note_id, link_type)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append({"linked_note_id": linked_note_id, "link_type": link_type})
+        if note_id and any(link["linked_note_id"] == note_id for link in normalized):
             raise HTTPException(status_code=422, detail="A note cannot link to itself")
+        if any(link["link_type"] not in {"supports", "contradicts", "extends", "related"} for link in normalized):
+            raise HTTPException(status_code=422, detail="Invalid note link type")
         return normalized
 
     def normalize_note_sources(self, *, sources):
         normalized = []
         seen = set()
         for index, source in enumerate(sources):
-            relation_type = source.get("relation_type") or "external"
-            key = (relation_type, source.get("url"), source.get("source_id"), source.get("citation_id"))
+            target_kind = source.get("target_kind") or "external"
+            evidence_role = source.get("evidence_role") or "supporting"
+            if target_kind not in {"external", "source", "citation"}:
+                raise HTTPException(status_code=422, detail="Invalid note evidence target kind")
+            if evidence_role not in {"primary", "supporting", "background"}:
+                raise HTTPException(status_code=422, detail="Invalid note evidence role")
+            key = (target_kind, evidence_role, source.get("url"), source.get("source_id"), source.get("citation_id"))
             if key in seen:
                 continue
             seen.add(key)
@@ -170,7 +204,8 @@ class FakeRelationValidation:
                     "id": source.get("id"),
                     "source_id": source.get("source_id"),
                     "citation_id": source.get("citation_id"),
-                    "relation_type": relation_type,
+                    "target_kind": target_kind,
+                    "evidence_role": evidence_role,
                     "url": source.get("url"),
                     "hostname": source.get("hostname"),
                     "title": source.get("title"),
@@ -220,6 +255,7 @@ class FakeNotesRepository:
                     "source_id": "source-a",
                     "citation_id": "citation-a",
                     "relation_type": "citation",
+                    "evidence_role": "supporting",
                     "url": "https://example.com/a",
                     "hostname": "example.com",
                     "title": "A",
@@ -231,7 +267,10 @@ class FakeNotesRepository:
             ],
             NOTE_ID_2: [],
         }
-        self.note_links = {NOTE_ID_1: [NOTE_ID_2], NOTE_ID_2: []}
+        self.note_links = {
+            NOTE_ID_1: [{"linked_note_id": NOTE_ID_2, "link_type": "related"}],
+            NOTE_ID_2: [],
+        }
         self.rpc_calls = []
 
     async def create_note(self, *, user_id, access_token, payload):
@@ -305,8 +344,8 @@ class FakeNotesRepository:
         del user_id, access_token
         rows = []
         for note_id in note_ids:
-            for linked_note_id in self.note_links.get(note_id, []):
-                rows.append({"note_id": note_id, "linked_note_id": linked_note_id, "created_at": "2026-01-01T00:00:00+00:00"})
+            for link in self.note_links.get(note_id, []):
+                rows.append({"note_id": note_id, "linked_note_id": link["linked_note_id"], "link_type": link["link_type"], "created_at": "2026-01-01T00:00:00+00:00"})
         return rows
 
     async def call_replace_rpc(self, *, function_name, payload):
@@ -316,7 +355,7 @@ class FakeNotesRepository:
             return type("Resp", (), {"status_code": 200})(), payload["p_tag_ids"]
         if function_name == "replace_note_sources_atomic":
             stored_rows = [
-                {"id": f"rel-{index}", "note_id": payload["p_note_id"], "attached_at": f"2026-01-0{index+1}T00:00:00+00:00", **source}
+                {"id": f"rel-{index}", "note_id": payload["p_note_id"], "relation_type": source.get("target_kind"), "attached_at": f"2026-01-0{index+1}T00:00:00+00:00", **source}
                 for index, source in enumerate(payload["p_sources"])
             ]
             self.note_sources[payload["p_note_id"]] = sorted(
@@ -325,8 +364,8 @@ class FakeNotesRepository:
             )
             return type("Resp", (), {"status_code": 200})(), payload["p_sources"]
         if function_name == "replace_note_links_atomic":
-            self.note_links[payload["p_note_id"]] = list(payload["p_linked_note_ids"])
-            return type("Resp", (), {"status_code": 200})(), payload["p_linked_note_ids"]
+            self.note_links[payload["p_note_id"]] = list(payload["p_note_links"])
+            return type("Resp", (), {"status_code": 200})(), payload["p_note_links"]
         return type("Resp", (), {"status_code": 422, "json": lambda self: {"message": "invalid"}})(), None
 
 
@@ -408,7 +447,26 @@ class FakeNotesServiceForQuotes:
 
     async def create_note(self, *, user_id, access_token, payload):
         self.calls.append((user_id, deepcopy(payload)))
-        return {"id": "note-from-quote", **payload, "tags": [], "linked_note_ids": [], "sources": [], "status": "active", "created_at": "2026-02-01T00:00:00+00:00", "updated_at": "2026-02-01T00:00:00+00:00"}
+        return {"id": "note-from-quote", **payload, "tags": [], "note_links": [], "evidence_links": [], "status": "active", "created_at": "2026-02-01T00:00:00+00:00", "updated_at": "2026-02-01T00:00:00+00:00"}
+
+    async def list_notes_by_ids(self, *, user_id, access_token, note_ids):
+        del user_id, access_token
+        return [
+            {
+                "id": NOTE_ID_1,
+                "title": "Quote note",
+                "note_body": "Body",
+                "highlight_text": None,
+                "project_id": None,
+                "citation_id": "citation-a",
+                "quote_id": QUOTE_ID_1,
+                "status": "active",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            }
+            for note_id in note_ids
+            if note_id == NOTE_ID_1
+        ]
 
 
 class FakeWorkspaceRepository:
@@ -453,6 +511,10 @@ class FakeWorkspaceRepository:
             rows = [row for row in rows if row["status"] == status]
         return [deepcopy(row) for row in rows]
 
+    async def list_documents_by_ids(self, *, user_id, access_token, document_ids, summary_only=False):
+        del user_id, access_token, summary_only
+        return [deepcopy(self.documents[document_id]) for document_id in document_ids if document_id in self.documents]
+
     async def create_document(self, *, user_id, access_token, payload):
         del user_id, access_token
         row = deepcopy(self.documents[DOC_ID])
@@ -495,6 +557,24 @@ class FakeWorkspaceRepository:
             else:
                 for index, tag_id in enumerate(self.document_tags.get(document_id, [])):
                     rows.append({"document_id": document_id, "tag_id": tag_id, "created_at": f"2026-01-0{index+1}T00:00:00+00:00"})
+        return rows
+
+    async def list_documents_for_citation_ids(self, *, user_id, access_token, citation_ids):
+        del user_id, access_token
+        rows = []
+        for document_id, doc_citation_ids in self.document_citations.items():
+            for citation_id in doc_citation_ids:
+                if citation_id in citation_ids:
+                    rows.append({"document_id": document_id, "citation_id": citation_id, "attached_at": "2026-01-01T00:00:00+00:00"})
+        return rows
+
+    async def list_documents_for_note_ids(self, *, user_id, access_token, note_ids):
+        del user_id, access_token
+        rows = []
+        for document_id, doc_note_ids in self.document_notes.items():
+            for note_id in doc_note_ids:
+                if note_id in note_ids:
+                    rows.append({"document_id": document_id, "note_id": note_id, "attached_at": "2026-01-01T00:00:00+00:00"})
         return rows
 
     async def create_checkpoint(self, *, user_id, access_token, document_id, label, content_delta, content_html):
@@ -555,13 +635,19 @@ class FakeNotesServiceForWorkspace:
                         {"id": tag_id, "name": "evidence" if tag_id == "tag-1" else "draft", "normalized_name": "evidence" if tag_id == "tag-1" else "draft"}
                         for tag_id in tag_ids
                     ],
-                    "linked_note_ids": list(self.notes_repository.note_links.get(note_id, [])),
-                    "sources": deepcopy(self.notes_repository.note_sources.get(note_id, [])),
+                    "note_links": deepcopy(self.notes_repository.note_links.get(note_id, [])),
+                    "evidence_links": [
+                        {
+                            **source,
+                            "target_kind": source.get("relation_type"),
+                        }
+                        for source in deepcopy(self.notes_repository.note_sources.get(note_id, []))
+                    ],
                     "lineage": {
                         "citation_id": note["citation_id"],
                         "quote_id": note["quote_id"],
-                        "supporting_source_ids": [source.get("source_id") for source in self.notes_repository.note_sources.get(note_id, []) if source.get("source_id")],
-                        "supporting_citation_ids": [source.get("citation_id") for source in self.notes_repository.note_sources.get(note_id, []) if source.get("citation_id")],
+                        "evidence_source_ids": [source.get("source_id") for source in self.notes_repository.note_sources.get(note_id, []) if source.get("source_id")],
+                        "evidence_citation_ids": [source.get("citation_id") for source in self.notes_repository.note_sources.get(note_id, []) if source.get("citation_id")],
                     },
                     "status": note["status"],
                     "created_at": note["created_at"],
@@ -582,6 +668,7 @@ def notes_service():
         sources_service=FakeSourcesService(),
         taxonomy_service=FakeTaxonomyService(),
         citations_service=citations_service,
+        workspace_service=None,
         ownership=ownership,
         relation_validation=FakeRelationValidation(valid_notes=repository.notes.keys()),
     )
@@ -595,6 +682,7 @@ def quotes_service():
         repository=FakeQuotesRepository(),
         citations_service=FakeCitationsService(),
         notes_service=notes_service,
+        workspace_repository=FakeWorkspaceRepository(),
         ownership=ownership,
         relation_validation=FakeRelationValidation(),
     )
@@ -609,6 +697,7 @@ def workspace_service():
     return WorkspaceService(
         repository=repository,
         taxonomy_service=FakeTaxonomyService(),
+        sources_service=FakeSourcesService(),
         citations_service=citations_service,
         quotes_service=FakeQuotesServiceForWorkspace(),
         notes_service=FakeNotesServiceForWorkspace(notes_repository),
@@ -723,11 +812,12 @@ async def test_document_hydration_preserves_relation_order(workspace_service):
     assert [item["id"] for item in payload["data"]["attached_citations"]] == ["citation-b", "citation-a"]
     assert [item["id"] for item in payload["data"]["attached_notes"]] == [NOTE_ID_2, NOTE_ID_1]
     assert [item["id"] for item in payload["data"]["attached_quotes"]] == [QUOTE_ID_3, QUOTE_ID_1]
-    assert [item["id"] for item in payload["data"]["attached_sources"]] == ["source-b", "source-a"]
-    assert payload["data"]["attached_notes"][1]["sources"][0]["source_id"] == "source-a"
-    assert payload["data"]["attached_notes"][1]["sources"][0]["citation_id"] == "citation-a"
+    assert [item["id"] for item in payload["data"]["derived_sources"]] == ["source-b", "source-a"]
+    assert payload["data"]["attached_notes"][1]["evidence_links"][0]["source_id"] == "source-a"
+    assert payload["data"]["attached_notes"][1]["evidence_links"][0]["citation_id"] == "citation-a"
     assert payload["data"]["attached_notes"][1]["tags"][0]["id"] == "tag-1"
-    assert payload["data"]["attached_notes"][1]["lineage"]["supporting_source_ids"] == ["source-a"]
+    assert payload["data"]["attached_notes"][1]["lineage"]["evidence_source_ids"] == ["source-a"]
+    assert payload["data"]["document"]["project"] is None
     assert payload["data"]["seed"]["citation_id"] == "citation-a"
     assert payload["data"]["seed"]["quote_id"] == QUOTE_ID_1
 
@@ -743,8 +833,8 @@ async def test_note_create_preserves_quote_citation_lineage(notes_service):
             "quote_id": QUOTE_ID_1,
             "citation_id": None,
             "tag_ids": [],
-            "sources": [],
-            "linked_note_ids": [],
+            "evidence_links": [],
+            "note_links": [],
         },
     )
     assert note["quote_id"] == QUOTE_ID_1
@@ -763,11 +853,26 @@ async def test_note_create_rejects_mismatched_quote_and_citation(notes_service):
                 "quote_id": QUOTE_ID_1,
                 "citation_id": "citation-b",
                 "tag_ids": [],
-                "sources": [],
-                "linked_note_ids": [],
+                "evidence_links": [],
+                "note_links": [],
             },
         )
     assert exc.value.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_note_detail_returns_grouped_relationships(notes_service, workspace_service):
+    notes_service.workspace_service = workspace_service
+    note = await notes_service.get_note(
+        user_id="user-1",
+        access_token=None,
+        note_id=NOTE_ID_1,
+    )
+    assert note["project"] is None
+    assert note["lineage"]["citation"]["id"] == "citation-a"
+    assert note["relationship_groups"]["evidence_links_by_role"]["supporting"][0]["source_id"] == "source-a"
+    assert note["relationship_groups"]["note_links_by_type"]["related"][0]["note"]["id"] == NOTE_ID_2
+    assert note["attached_documents"][0]["id"] == DOC_ID
 
 
 @pytest.mark.anyio
@@ -783,7 +888,7 @@ async def test_replace_note_sources_rejects_unowned_source_id_before_rpc(notes_s
             user_id="user-1",
             access_token=None,
             note_id=NOTE_ID_1,
-            sources=[{"relation_type": "source", "source_id": "source-foreign"}],
+            evidence_links=[{"target_kind": "source", "evidence_role": "supporting", "source_id": "source-foreign"}],
         )
     assert exc.value.status_code == 422
     assert notes_service.repository.rpc_calls == []
@@ -795,16 +900,18 @@ async def test_replace_note_sources_roundtrips_canonical_provenance(notes_servic
         user_id="user-1",
         access_token=None,
         note_id=NOTE_ID_1,
-        sources=[
+        evidence_links=[
             {
-                "relation_type": "source",
+                "target_kind": "source",
+                "evidence_role": "background",
                 "source_id": "source-a",
                 "url": "https://example.com/source",
                 "title": "Source provenance",
                 "position": 3,
             },
             {
-                "relation_type": "citation",
+                "target_kind": "citation",
+                "evidence_role": "primary",
                 "citation_id": "citation-a",
                 "source_id": "source-a",
                 "url": "https://example.com/citation",
@@ -813,23 +920,25 @@ async def test_replace_note_sources_roundtrips_canonical_provenance(notes_servic
         ],
     )
 
-    stored = result["sources"]
-    assert [item["relation_type"] for item in stored] == ["citation", "source"]
+    stored = result["evidence_links"]
+    assert [item["target_kind"] for item in stored] == ["citation", "source"]
+    assert [item["evidence_role"] for item in stored] == ["primary", "background"]
     assert stored[0]["citation_id"] == "citation-a"
     assert stored[0]["source_id"] == "source-a"
     assert stored[0]["position"] == 1
     assert stored[1]["source_id"] == "source-a"
     assert stored[1]["citation_id"] is None
     assert stored[1]["position"] == 3
-    assert result["lineage"] == {
-        "citation_id": "citation-a",
-        "quote_id": None,
-        "supporting_source_ids": ["source-a", "source-a"],
-        "supporting_citation_ids": ["citation-a"],
-    }
+    assert result["lineage"]["citation_id"] == "citation-a"
+    assert result["lineage"]["quote_id"] is None
+    assert result["lineage"]["citation"]["id"] == "citation-a"
+    assert result["lineage"]["quote"] is None
+    assert result["lineage"]["evidence_source_ids"] == ["source-a", "source-a"]
+    assert result["lineage"]["evidence_citation_ids"] == ["citation-a"]
     assert notes_service.repository.rpc_calls[-1][0] == "replace_note_sources_atomic"
     assert notes_service.repository.rpc_calls[-1][1]["p_sources"][0]["position"] == 3
     assert notes_service.repository.rpc_calls[-1][1]["p_sources"][1]["position"] == 1
+    assert notes_service.repository.rpc_calls[-1][1]["p_sources"][0]["evidence_role"] == "background"
 
 
 @pytest.mark.anyio
@@ -839,7 +948,7 @@ async def test_replace_note_sources_rejects_unowned_citation_id_before_rpc(notes
             user_id="user-1",
             access_token=None,
             note_id=NOTE_ID_1,
-            sources=[{"relation_type": "citation", "citation_id": "citation-foreign"}],
+            evidence_links=[{"target_kind": "citation", "evidence_role": "supporting", "citation_id": "citation-foreign"}],
         )
     assert exc.value.status_code == 422
     assert notes_service.repository.rpc_calls == []
@@ -852,7 +961,62 @@ async def test_replace_note_sources_rejects_malformed_provenance_rows(notes_serv
             user_id="user-1",
             access_token=None,
             note_id=NOTE_ID_1,
-            sources=[{"relation_type": "citation"}],
+            evidence_links=[{"target_kind": "citation", "evidence_role": "supporting"}],
+        )
+    assert exc.value.status_code == 422
+    assert notes_service.repository.rpc_calls == []
+
+
+@pytest.mark.anyio
+async def test_replace_note_sources_rejects_invalid_evidence_role(notes_service):
+    with pytest.raises(HTTPException) as exc:
+        await notes_service.replace_note_sources(
+            user_id="user-1",
+            access_token=None,
+            note_id=NOTE_ID_1,
+            evidence_links=[{"target_kind": "source", "evidence_role": "invalid", "source_id": "source-a"}],
+        )
+    assert exc.value.status_code == 422
+    assert notes_service.repository.rpc_calls == []
+
+
+@pytest.mark.anyio
+async def test_replace_note_links_roundtrips_structured_types(notes_service):
+    result = await notes_service.replace_note_links(
+        user_id="user-1",
+        access_token=None,
+        note_id=NOTE_ID_1,
+        note_links=[
+            {"linked_note_id": NOTE_ID_2, "link_type": "supports"},
+            {"linked_note_id": NOTE_ID_2, "link_type": "supports"},
+        ],
+    )
+    assert result["note_links"] == [{"linked_note_id": NOTE_ID_2, "link_type": "supports", "created_at": "2026-01-01T00:00:00+00:00"}]
+    assert notes_service.repository.rpc_calls[-1][0] == "replace_note_links_atomic"
+    assert notes_service.repository.rpc_calls[-1][1]["p_note_links"] == [{"linked_note_id": NOTE_ID_2, "link_type": "supports"}]
+
+
+@pytest.mark.anyio
+async def test_replace_note_links_rejects_invalid_link_type(notes_service):
+    with pytest.raises(HTTPException) as exc:
+        await notes_service.replace_note_links(
+            user_id="user-1",
+            access_token=None,
+            note_id=NOTE_ID_1,
+            note_links=[{"linked_note_id": NOTE_ID_2, "link_type": "invalid"}],
+        )
+    assert exc.value.status_code == 422
+    assert notes_service.repository.rpc_calls == []
+
+
+@pytest.mark.anyio
+async def test_replace_note_links_rejects_unowned_note_before_rpc(notes_service):
+    with pytest.raises(HTTPException) as exc:
+        await notes_service.replace_note_links(
+            user_id="user-1",
+            access_token=None,
+            note_id=NOTE_ID_1,
+            note_links=[{"linked_note_id": "note-foreign", "link_type": "supports"}],
         )
     assert exc.value.status_code == 422
     assert notes_service.repository.rpc_calls == []
@@ -870,6 +1034,14 @@ async def test_note_delete_preloads_parent_before_delete(notes_service):
     result = await notes_service.delete_note(user_id="user-1", access_token=None, note_id=NOTE_ID_1)
     assert result["id"] == NOTE_ID_1
     assert ("note", NOTE_ID_1) in notes_service.ownership.calls
+
+
+@pytest.mark.anyio
+async def test_quote_detail_exposes_canonical_neighborhood(quotes_service):
+    payload = await quotes_service.get_quote(user_id="user-1", access_token=None, quote_id=QUOTE_ID_1)
+    assert payload["neighborhood"]["citation"]["id"] == "citation-a"
+    assert payload["neighborhood"]["notes"][0]["id"] == NOTE_ID_1
+    assert payload["neighborhood"]["documents"][0]["id"] == DOC_ID
 
 
 @pytest.mark.anyio

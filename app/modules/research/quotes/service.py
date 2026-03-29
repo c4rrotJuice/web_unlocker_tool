@@ -4,7 +4,7 @@ from fastapi import HTTPException
 
 from app.core.serialization import serialize_ok_envelope
 from app.core.serialization import serialize_paging_meta
-from app.core.serialization import serialize_quote
+from app.core.serialization import serialize_document_reference, serialize_note_reference, serialize_quote
 from app.modules.common.ownership import OwnershipValidator
 from app.modules.common.relation_validation import RelationValidator
 from app.modules.research.common import normalize_uuid
@@ -18,12 +18,14 @@ class QuotesService:
         repository: QuotesRepository,
         citations_service,
         notes_service,
+        workspace_repository=None,
         ownership: OwnershipValidator,
         relation_validation: RelationValidator,
     ):
         self.repository = repository
         self.citations_service = citations_service
         self.notes_service = notes_service
+        self.workspace_repository = workspace_repository
         self.ownership = ownership
         self.relation_validation = relation_validation
 
@@ -179,7 +181,39 @@ class QuotesService:
             select="id,citation_id,excerpt,locator,annotation,created_at,updated_at",
         )
         serialized = await self._serialize_rows(user_id=user_id, access_token=access_token, rows=[row])
-        return serialized[0]
+        payload = serialized[0]
+        note_rows = await self.notes_service.list_notes_by_ids(
+            user_id=user_id,
+            access_token=access_token,
+            note_ids=payload.get("note_ids") or [],
+        ) if payload.get("note_ids") else []
+        document_rows = []
+        if self.workspace_repository is not None and payload.get("citation") and (payload.get("citation") or {}).get("id"):
+            document_links = await self.workspace_repository.list_documents_for_citation_ids(
+                user_id=user_id,
+                access_token=access_token,
+                citation_ids=[payload["citation"]["id"]],
+            )
+            document_ids = []
+            seen_document_ids: set[str] = set()
+            for link in document_links:
+                document_id = link.get("document_id")
+                if document_id and document_id not in seen_document_ids:
+                    seen_document_ids.add(document_id)
+                    document_ids.append(document_id)
+            if document_ids:
+                document_rows = await self.workspace_repository.list_documents_by_ids(
+                    user_id=user_id,
+                    access_token=access_token,
+                    document_ids=document_ids,
+                    summary_only=True,
+                )
+        payload["neighborhood"] = {
+            "citation": payload.get("citation"),
+            "notes": [serialize_note_reference(item) for item in note_rows],
+            "documents": [serialize_document_reference(item) for item in document_rows],
+        }
+        return payload
 
     async def list_quotes_by_ids(self, *, user_id: str, access_token: str | None, quote_ids: list[str]) -> list[dict]:
         normalized_quote_ids = [normalize_uuid(quote_id, field_name="quote_id") for quote_id in quote_ids]
@@ -255,7 +289,7 @@ class QuotesService:
             "citation_id": quote_row.get("citation_id"),
             "quote_id": quote_row.get("id"),
             "tag_ids": payload.get("tag_ids") or [],
-            "sources": [],
-            "linked_note_ids": [],
+            "evidence_links": [],
+            "note_links": [],
         }
         return await self.notes_service.create_note(user_id=user_id, access_token=access_token, payload=note_payload)

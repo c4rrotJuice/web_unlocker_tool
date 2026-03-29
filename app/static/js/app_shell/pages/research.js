@@ -6,6 +6,7 @@ import { renderCitationDetail, renderGraphDetail, renderNoteDetail, renderQuoteD
 import { mergeCitationRenderPayload, resolveCitationView } from "../../shared/citation_contract.js";
 import { ensureFeedbackRuntime } from "../../shared/feedback/feedback_bus_singleton.js";
 import { FEEDBACK_EVENTS } from "../../shared/feedback/feedback_tokens.js";
+import { createNoteRelationshipAuthoringController } from "../../shared/note_relationship_authoring.js";
 
 const TAB_CONFIG = {
   sources: {
@@ -75,6 +76,75 @@ export async function initResearch() {
   const citationViewState = new Map();
   let lastDetailId = "";
   let lastDetailType = "";
+  const relationshipAuthoring = createNoteRelationshipAuthoringController({
+    api: {
+      listNotes({ query = "", projectId = "", limit = 12 } = {}) {
+        const params = new URLSearchParams({ limit: String(limit) });
+        if (query) params.set("query", query);
+        if (projectId) params.set("project_id", projectId);
+        return window.webUnlockerAuth.authJson(`/api/notes?${params.toString()}`, { method: "GET" });
+      },
+      getNote(noteId) {
+        return window.webUnlockerAuth.authJson(`/api/notes/${encodeURIComponent(noteId)}`, { method: "GET" });
+      },
+      listSources({ query = "", limit = 12 } = {}) {
+        const params = new URLSearchParams({ limit: String(limit) });
+        if (query) params.set("query", query);
+        return window.webUnlockerAuth.authJson(`/api/sources?${params.toString()}`, { method: "GET" });
+      },
+      listCitations({ search = "", limit = 12 } = {}) {
+        const params = new URLSearchParams({ limit: String(limit) });
+        if (search) params.set("search", search);
+        return window.webUnlockerAuth.authJson(`/api/citations?${params.toString()}`, { method: "GET" });
+      },
+      replaceNoteLinks(noteId, noteLinks) {
+        return window.webUnlockerAuth.authJson(`/api/notes/${encodeURIComponent(noteId)}/links`, {
+          method: "PUT",
+          body: { note_links: noteLinks },
+        });
+      },
+      replaceNoteSources(noteId, evidenceLinks) {
+        return window.webUnlockerAuth.authJson(`/api/notes/${encodeURIComponent(noteId)}/sources`, {
+          method: "PUT",
+          body: { evidence_links: evidenceLinks },
+        });
+      },
+    },
+    getNoteDetail(noteId) {
+      return window.webUnlockerAuth.authJson(`/api/notes/${encodeURIComponent(noteId)}`, { method: "GET" });
+    },
+    onStateChange() {
+      renderCurrentContext();
+    },
+    async onNavigateToNote(noteId) {
+      navigateToEntity("note", noteId);
+    },
+    async onNoteUpdated(note) {
+      latestListItems = latestListItems.map((item) => (item?.id === note?.id ? note : item));
+      for (const [cacheKey, graph] of graphCache.entries()) {
+        if (graph?.node?.type === "note" && graph?.node?.data?.id === note?.id) {
+          graph.node.data = note;
+          graphCache.set(cacheKey, graph);
+        }
+        if (Array.isArray(graph?.collections?.notes)) {
+          graph.collections.notes = graph.collections.notes.map((row) => (row?.id === note?.id ? note : row));
+          graphCache.set(cacheKey, graph);
+        }
+      }
+      renderCurrentContext();
+      refreshListSelection();
+    },
+    onNotify(event) {
+      if (event?.kind === "success") {
+        feedback.emitDomainEvent(FEEDBACK_EVENTS.RESEARCH_PANEL_READY, { label: event.message || "Relationship saved" });
+        return;
+      }
+      feedback.emitDomainEvent(FEEDBACK_EVENTS.RESEARCH_PANEL_FAILED, {
+        title: "Relationship update failed",
+        message: event?.message || "The note relationship update failed.",
+      });
+    },
+  });
 
   function setContextOpen(isOpen) {
     frame.classList.toggle("has-context", isOpen);
@@ -291,6 +361,7 @@ export async function initResearch() {
     if (graphCache.has(cacheKey)) {
       contextBody.innerHTML = renderGraphDetail(graphCache.get(cacheKey), {
         citationViewState,
+        detailOptions: buildDetailOptions(graphCache.get(cacheKey)),
       });
       return;
     }
@@ -298,12 +369,31 @@ export async function initResearch() {
     if (state.tab === "citations" && baseItem) {
       contextBody.innerHTML = renderCitationDetail(baseItem, {
         citationView: citationViewState.get(baseItem.id) || {},
+        ...relationshipAuthoring.getCitationDetailOptions(baseItem),
       });
+      return;
+    }
+    if (state.tab === "sources" && baseItem) {
+      contextBody.innerHTML = renderSourceDetail(baseItem, relationshipAuthoring.getSourceDetailOptions(baseItem));
+      return;
+    }
+    if (state.tab === "notes" && baseItem) {
+      contextBody.innerHTML = renderNoteDetail(baseItem, relationshipAuthoring.getNoteDetailOptions(baseItem));
       return;
     }
     if (baseItem) {
       contextBody.innerHTML = TAB_CONFIG[state.tab].detailRenderer(baseItem);
     }
+  }
+
+  function buildDetailOptions(graph) {
+    const node = graph?.node || {};
+    const current = node.data || {};
+    return {
+      source: node.type === "source" ? relationshipAuthoring.getSourceDetailOptions(current) : {},
+      citation: node.type === "citation" ? relationshipAuthoring.getCitationDetailOptions(current) : {},
+      note: node.type === "note" ? relationshipAuthoring.getNoteDetailOptions(current) : {},
+    };
   }
 
   async function loadDetail(id) {
@@ -322,6 +412,7 @@ export async function initResearch() {
     if (graphCache.has(`${state.tab}:${id}`)) {
       contextBody.innerHTML = renderGraphDetail(graphCache.get(`${state.tab}:${id}`), {
         citationViewState,
+        detailOptions: buildDetailOptions(graphCache.get(`${state.tab}:${id}`)),
       });
       return;
     }
@@ -337,6 +428,7 @@ export async function initResearch() {
       if (getState().selected !== id || getState().tab !== state.tab) return;
       contextBody.innerHTML = renderGraphDetail(graph, {
         citationViewState,
+        detailOptions: buildDetailOptions(graph),
       });
     } catch (error) {
       if (error.name === "AbortError") return;
@@ -430,6 +522,11 @@ export async function initResearch() {
   });
 
   contextBody.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-note-hub-link-open],[data-note-hub-search],[data-note-hub-cancel],[data-note-hub-note-pick],[data-note-authoring-open],[data-note-authoring-search],[data-note-authoring-target],[data-note-authoring-save],[data-note-authoring-cancel],[data-note-relation-edit],[data-note-relation-remove]");
+    if (action) {
+      void relationshipAuthoring.handleClick(action.dataset);
+      return;
+    }
     const copyButton = event.target.closest("[data-citation-copy]");
     if (copyButton) {
       const citationId = copyButton.dataset.citationCopy || "";
@@ -460,6 +557,11 @@ export async function initResearch() {
     }
   });
   contextBody.addEventListener("change", async (event) => {
+    const authoringField = event.target.closest("[data-note-hub-query],[data-note-authoring-query],[data-note-authoring-link-type],[data-note-authoring-evidence-role],[data-note-authoring-url],[data-note-authoring-title]");
+    if (authoringField) {
+      relationshipAuthoring.handleChange(authoringField.dataset, authoringField.value);
+      return;
+    }
     const styleSelect = event.target.closest("[data-citation-style-select]");
     const kindSelect = event.target.closest("[data-citation-kind-select]");
     const citationId = styleSelect?.dataset?.citationStyleSelect || kindSelect?.dataset?.citationKindSelect || "";

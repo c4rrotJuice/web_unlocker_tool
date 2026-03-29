@@ -27,12 +27,49 @@ class FakeTaxonomyRepository:
             "tag-2": {"id": "tag-2", "user_id": "user-2", "name": "Foreign", "created_at": "", "updated_at": ""},
         }
 
-    async def list_projects(self, *, user_id, access_token, include_archived):
+    async def list_projects(self, *, user_id, access_token, include_archived, limit=24):
+        del limit
         return [row for row in self.projects.values() if row["user_id"] == user_id and (include_archived or row["status"] == "active")]
 
     async def get_project(self, *, user_id, access_token, project_id):
         row = self.projects.get(project_id)
         return row if row and row["user_id"] == user_id else None
+
+    async def list_project_relationship_summaries(self, *, user_id, access_token, project_ids=None, include_archived=True, limit=24):
+        del access_token
+        rows = [row for row in self.projects.values() if row["user_id"] == user_id and (include_archived or row["status"] == "active")]
+        if project_ids:
+            rows = [row for row in rows if row["id"] in project_ids]
+        rows = rows[:limit]
+        payload = []
+        for row in rows:
+            if row["id"] == "11111111-1111-1111-1111-111111111111":
+                payload.append({
+                    **row,
+                    "relationship_counts": {
+                        "note_count": 2,
+                        "document_count": 1,
+                        "derived_citation_count": 2,
+                        "derived_source_count": 1,
+                    },
+                    "recent_activity": [
+                        {"entity_type": "document", "id": "doc-1", "title": "Doc 1", "status": "active", "updated_at": "2026-01-04T00:00:00+00:00"},
+                        {"entity_type": "note", "id": "note-1", "title": "Note 1", "status": "active", "updated_at": "2026-01-03T00:00:00+00:00"},
+                        {"entity_type": "note", "id": "note-2", "title": "Note 2", "status": "active", "updated_at": "2026-01-02T00:00:00+00:00"},
+                    ],
+                })
+            else:
+                payload.append({
+                    **row,
+                    "relationship_counts": {
+                        "note_count": 0,
+                        "document_count": 0,
+                        "derived_citation_count": 0,
+                        "derived_source_count": 0,
+                    },
+                    "recent_activity": [],
+                })
+        return payload
 
     async def create_project(self, *, user_id, access_token, payload):
         row = {
@@ -302,6 +339,22 @@ async def test_project_ownership_enforced_across_users(taxonomy_service):
     with pytest.raises(HTTPException) as exc:
         await taxonomy_service.get_project(user_id="user-2", access_token=None, project_id="11111111-1111-1111-1111-111111111111")
     assert exc.value.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_project_detail_exposes_derived_research_visibility(taxonomy_service):
+    project = await taxonomy_service.get_project(
+        user_id="user-1",
+        access_token=None,
+        project_id="11111111-1111-1111-1111-111111111111",
+    )
+    assert project["relationship_counts"] == {
+        "note_count": 2,
+        "document_count": 1,
+        "derived_citation_count": 2,
+        "derived_source_count": 1,
+    }
+    assert [item["entity_type"] for item in project["recent_activity"]] == ["document", "note", "note"]
 
 
 @pytest.mark.anyio
@@ -690,6 +743,175 @@ async def test_render_cache_populates_and_reuses(citations_service):
     render_rows = list(citations_service.repository.renders[created["id"]])
     await citations_service.get_citation(user_id="user-1", access_token=None, citation_id=created["id"], account_type="pro")
     assert citations_service.repository.renders[created["id"]] == render_rows
+
+
+@pytest.mark.anyio
+async def test_source_and_citation_detail_expose_canonical_neighborhoods():
+    sources_repo = FakeSourcesRepository()
+    source_row = await sources_repo.create_source(
+        {
+            "fingerprint": "url:https://example.com/paper",
+            "source_type": "webpage",
+            "title": "Paper title",
+            "authors": [],
+            "container_title": None,
+            "publisher": None,
+            "issued_date": {},
+            "identifiers": {},
+            "canonical_url": "https://example.com/paper",
+            "page_url": "https://example.com/paper",
+            "hostname": "example.com",
+            "language_code": "en",
+            "metadata": {},
+            "raw_extraction": {},
+            "normalization_version": 1,
+            "source_version": "v1",
+        }
+    )
+    source_id = source_row["id"]
+    sources_repo.citation_counts[source_id] = 1
+
+    citations_repo = FakeCitationsRepository()
+    citation_row = await citations_repo.create_citation_instance(
+        user_id="user-1",
+        access_token=None,
+        payload={
+            "source_id": source_id,
+            "locator": {"page": 1},
+            "quote_text": "Quoted",
+            "excerpt": "Quoted",
+            "annotation": None,
+            "citation_version": "cv1",
+        },
+    )
+    citations_repo.quote_counts[citation_row["id"]] = 1
+    citations_repo.note_counts[citation_row["id"]] = 1
+    citations_repo.document_counts[citation_row["id"]] = 1
+
+    class MiniQuotesRepository:
+        async def list_quotes(self, *, user_id, access_token, citation_id=None, citation_ids=None, limit=50, offset=0, order="created_at.desc,id.desc", query=None):
+            del user_id, access_token, limit, offset, order, query
+            ids = citation_ids or ([citation_id] if citation_id else [])
+            if citation_row["id"] not in ids:
+                return []
+            return [{
+                "id": "quote-1",
+                "citation_id": citation_row["id"],
+                "excerpt": "Quoted",
+                "locator": {"page": 1},
+                "annotation": None,
+                "created_at": "2026-01-02T00:00:00+00:00",
+                "updated_at": "2026-01-02T00:00:00+00:00",
+            }]
+
+    class MiniNotesRepository:
+        def __init__(self):
+            self.list_notes_calls = 0
+            self.list_notes_by_ids_calls = 0
+            self.list_note_summaries_by_citation_ids_calls = 0
+            self.list_note_summaries_by_source_ids_calls = 0
+
+        async def list_notes(self, *, user_id, access_token, project_id=None, citation_id=None, quote_id=None, status=None, query=None, limit=50, offset=0):
+            self.list_notes_calls += 1
+            del user_id, access_token, project_id, quote_id, status, query, limit, offset
+            if citation_id != citation_row["id"]:
+                return []
+            return [{
+                "id": "note-1",
+                "title": "Note 1",
+                "note_body": "Body",
+                "highlight_text": None,
+                "project_id": None,
+                "citation_id": citation_row["id"],
+                "quote_id": None,
+                "status": "active",
+                "created_at": "2026-01-03T00:00:00+00:00",
+                "updated_at": "2026-01-03T00:00:00+00:00",
+            }]
+
+        async def list_note_sources_by_citation_ids(self, *, user_id, access_token, citation_ids):
+            del user_id, access_token
+            if citation_row["id"] not in citation_ids:
+                return []
+            return [{"note_id": "note-1", "citation_id": citation_row["id"]}]
+
+        async def list_note_sources_by_source_ids(self, *, user_id, access_token, source_ids):
+            del user_id, access_token
+            if source_id not in source_ids:
+                return []
+            return [{"note_id": "note-1", "source_id": source_id}]
+
+        async def list_note_summaries_by_citation_ids(self, *, user_id, access_token, citation_ids):
+            self.list_note_summaries_by_citation_ids_calls += 1
+            return await self.list_notes(user_id=user_id, access_token=access_token, citation_id=citation_ids[0], limit=50, offset=0)
+
+        async def list_note_summaries_by_source_ids(self, *, user_id, access_token, source_ids):
+            self.list_note_summaries_by_source_ids_calls += 1
+            if source_id not in source_ids:
+                return []
+            return await self.list_notes_by_ids(user_id=user_id, access_token=access_token, note_ids=["note-1"])
+
+        async def list_notes_by_ids(self, *, user_id, access_token, note_ids):
+            self.list_notes_by_ids_calls += 1
+            del user_id, access_token
+            return [{
+                "id": "note-1",
+                "title": "Note 1",
+                "note_body": "Body",
+                "highlight_text": None,
+                "project_id": None,
+                "citation_id": citation_row["id"],
+                "quote_id": None,
+                "status": "active",
+                "created_at": "2026-01-03T00:00:00+00:00",
+                "updated_at": "2026-01-03T00:00:00+00:00",
+            }] if "note-1" in note_ids else []
+
+    class MiniWorkspaceRepository:
+        async def list_documents_for_citation_ids(self, *, user_id, access_token, citation_ids):
+            del user_id, access_token
+            if citation_row["id"] not in citation_ids:
+                return []
+            return [{"document_id": "doc-1", "citation_id": citation_row["id"], "attached_at": "2026-01-04T00:00:00+00:00"}]
+
+        async def list_documents_by_ids(self, *, user_id, access_token, document_ids, summary_only=False):
+            del user_id, access_token, summary_only
+            return [{
+                "id": "doc-1",
+                "title": "Doc 1",
+                "project_id": None,
+                "status": "active",
+                "created_at": "2026-01-04T00:00:00+00:00",
+                "updated_at": "2026-01-04T00:00:00+00:00",
+            }] if "doc-1" in document_ids else []
+
+    mini_notes_repo = MiniNotesRepository()
+    sources_service = SourcesService(
+        repository=sources_repo,
+        citations_repository=citations_repo,
+        quotes_repository=MiniQuotesRepository(),
+        notes_repository=mini_notes_repo,
+        workspace_repository=MiniWorkspaceRepository(),
+    )
+    citations_service = CitationsService(
+        repository=citations_repo,
+        sources_service=sources_service,
+        quotes_repository=MiniQuotesRepository(),
+        notes_repository=mini_notes_repo,
+        workspace_repository=MiniWorkspaceRepository(),
+    )
+
+    source = await sources_service.get_source(user_id="user-1", access_token=None, source_id=source_id)
+    citation = await citations_service.get_citation(user_id="user-1", access_token=None, citation_id=citation_row["id"], account_type="pro")
+
+    assert source["neighborhood"]["citations"][0]["id"] == citation_row["id"]
+    assert source["neighborhood"]["notes"][0]["id"] == "note-1"
+    assert source["neighborhood"]["documents"][0]["id"] == "doc-1"
+    assert citation["neighborhood"]["quotes"][0]["id"] == "quote-1"
+    assert citation["neighborhood"]["notes"][0]["id"] == "note-1"
+    assert citation["neighborhood"]["documents"][0]["id"] == "doc-1"
+    assert mini_notes_repo.list_note_summaries_by_source_ids_calls == 1
+    assert mini_notes_repo.list_note_summaries_by_citation_ids_calls >= 1
 
 
 @pytest.mark.anyio

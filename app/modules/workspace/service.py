@@ -27,6 +27,7 @@ class WorkspaceService:
         *,
         repository: WorkspaceRepository,
         taxonomy_service,
+        sources_service,
         citations_service,
         quotes_service,
         notes_service,
@@ -35,6 +36,7 @@ class WorkspaceService:
     ):
         self.repository = repository
         self.taxonomy_service = taxonomy_service
+        self.sources_service = sources_service
         self.citations_service = citations_service
         self.quotes_service = quotes_service
         self.notes_service = notes_service
@@ -111,6 +113,13 @@ class WorkspaceService:
         citation_rows = await self.repository.list_relation_rows(table="document_citations", user_id=user_id, access_token=access_token, document_ids=document_ids)
         note_rows = await self.repository.list_relation_rows(table="document_notes", user_id=user_id, access_token=access_token, document_ids=document_ids)
         tag_rows = await self.repository.list_relation_rows(table="document_tags", user_id=user_id, access_token=access_token, document_ids=document_ids)
+        project_ids: list[str] = []
+        seen_project_ids: set[str] = set()
+        for row in rows:
+            project_id = row.get("project_id")
+            if project_id and project_id not in seen_project_ids:
+                seen_project_ids.add(project_id)
+                project_ids.append(project_id)
 
         citation_ids: list[str] = []
         seen_citation_ids: set[str] = set()
@@ -135,7 +144,9 @@ class WorkspaceService:
                 tag_ids.append(tag_id)
 
         tags = await self.taxonomy_service.resolve_tags(user_id=user_id, access_token=access_token, tag_ids=tag_ids, names=[]) if tag_ids else []
+        projects = await self.taxonomy_service.list_projects(user_id=user_id, access_token=access_token, include_archived=True, limit=max(len(project_ids), 1)) if project_ids else []
         tags_by_id = {tag.get("id"): tag for tag in tags if tag.get("id")}
+        projects_by_id = {project.get("id"): project for project in projects if project.get("id")}
         citations_by_doc: dict[str, list[str]] = {document_id: [] for document_id in document_ids if document_id}
         notes_by_doc: dict[str, list[str]] = {document_id: [] for document_id in document_ids if document_id}
         tag_ids_by_doc: dict[str, list[str]] = {document_id: [] for document_id in document_ids if document_id}
@@ -167,6 +178,7 @@ class WorkspaceService:
                     attached_note_ids=notes_by_doc.get(document_id, []),
                     tag_ids=tag_ids_by_doc.get(document_id, []),
                     tags=tags_by_doc.get(document_id, []),
+                    project=projects_by_id.get(row.get("project_id")),
                     can_edit=can_edit,
                     allowed_export_formats=allowed_export_formats,
                     edit_lock_reason=edit_lock_reason,
@@ -607,14 +619,25 @@ class WorkspaceService:
         )
         notes_by_id = {note.get("id"): note for note in attached_notes if note.get("id")}
         ordered_notes = [notes_by_id[note_id] for note_id in document.get("attached_note_ids") or [] if note_id in notes_by_id]
-        attached_sources: list[dict] = []
+        source_ids: list[str] = []
         seen_source_ids: set[str] = set()
         for citation in attached_citations:
             source = citation.get("source") or {}
             source_id = source.get("id")
             if source_id and source_id not in seen_source_ids:
                 seen_source_ids.add(source_id)
-                attached_sources.append(source)
+                source_ids.append(source_id)
+        for note in ordered_notes:
+            for evidence_link in note.get("evidence_links") or []:
+                source_id = evidence_link.get("source_id")
+                if source_id and source_id not in seen_source_ids:
+                    seen_source_ids.add(source_id)
+                    source_ids.append(source_id)
+        derived_sources = await self.sources_service.list_sources_by_ids(
+            user_id=user_id,
+            access_token=access_token,
+            source_ids=source_ids,
+        ) if source_ids else []
         compact_seed = self.summarize_seed(seed)
         return serialize_ok_envelope(
             serialize_document_hydration(
@@ -622,7 +645,7 @@ class WorkspaceService:
                 attached_citations=attached_citations,
                 attached_notes=ordered_notes,
                 attached_quotes=attached_quotes,
-                attached_sources=attached_sources,
+                derived_sources=derived_sources,
                 seed=compact_seed,
             )
         )
@@ -640,6 +663,7 @@ class WorkspaceService:
             attached_note_ids=[],
             tag_ids=[],
             tags=[],
+            project=None,
             can_edit=True,
             allowed_export_formats=[],
         )

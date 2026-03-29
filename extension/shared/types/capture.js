@@ -82,13 +82,14 @@ function normalizeIdentifiers(input) {
 function normalizeLocator(input) {
     return isPlainObject(input) ? { ...input } : {};
 }
-function buildExternalNoteSource({ pageUrl, pageDomain, pageTitle, } = {}) {
+function buildExternalEvidenceLink({ pageUrl, pageDomain, pageTitle, } = {}) {
     const url = normalizeText(pageUrl);
     if (!url) {
         return [];
     }
     return [{
-            relation_type: "external",
+            target_kind: "external",
+            evidence_role: "supporting",
             url,
             hostname: deriveDomain(url, pageDomain) || null,
             title: normalizeText(pageTitle) || null,
@@ -259,7 +260,7 @@ export function buildNoteCaptureRequest({ selectionText, noteText, pageTitle, pa
         citation_id: normalizeText(citationId) || null,
         quote_id: normalizeText(quoteId) || null,
         tag_ids: [],
-        sources: buildExternalNoteSource({ pageUrl, pageDomain, pageTitle }),
-        linked_note_ids: [],
+        evidence_links: buildExternalEvidenceLink({ pageUrl, pageDomain, pageTitle }),
+        note_links: [],
     };
 }

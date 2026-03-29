@@ -569,7 +569,8 @@ test("capture actions are typed content messages and the background is the sole 
   assert.equal(captureApi.calls[0].payload.note_body, "Highlight note body");
   assert.equal(captureApi.calls[0].payload.highlight_text, "Capture this citation text");
   assert.equal(captureApi.calls[0].payload.citation_id, null);
-  assert.equal(captureApi.calls[0].payload.sources[0].url, "https://example.com/articles/demo");
+  assert.equal(captureApi.calls[0].payload.evidence_links[0].url, "https://example.com/articles/demo");
+  assert.equal(captureApi.calls[0].payload.evidence_links[0].target_kind, "external");
   assert.equal(read("extension/content/selection/index.ts").includes("fetch("), false);
 });
 
@@ -947,9 +948,10 @@ test("plain note capture accepts note text without a highlight and attaches page
   assert.equal(calls.length, 1);
   assert.equal(calls[0].note_body, "Plain note body");
   assert.equal(calls[0].highlight_text, null);
-  assert.equal(calls[0].sources[0].relation_type, "external");
-  assert.equal(calls[0].sources[0].title, "Current tab");
-  assert.equal(calls[0].sources[0].url, "https://example.com/current");
+  assert.equal(calls[0].evidence_links[0].target_kind, "external");
+  assert.equal(calls[0].evidence_links[0].evidence_role, "supporting");
+  assert.equal(calls[0].evidence_links[0].title, "Current tab");
+  assert.equal(calls[0].evidence_links[0].url, "https://example.com/current");
 });
 
 test("quick note save failures preserve entered text and surface an error state", async () => {

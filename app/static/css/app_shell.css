@@ -683,10 +683,38 @@ body.app-shell-body.has-open-sidebar-drawer {
   gap: 8px;
 }
 
+.relationship-group-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.relationship-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.relationship-group-title {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
 .detail-list-item {
   padding: 10px 12px;
   border-radius: 12px;
   background: var(--wu-surface-inset);
+}
+
+.relationship-item-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.relationship-item-meta {
+  color: var(--wu-text-muted);
+  font-size: 0.82rem;
 }
 
 .empty-state,

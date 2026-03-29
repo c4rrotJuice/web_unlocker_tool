@@ -2036,15 +2036,52 @@ components:
         normalized_name:
           type: [string, "null"]
 
-    NoteSource:
+    NoteEvidenceLink:
       type: object
-      required: [url]
+      required: [target_kind, evidence_role]
       properties:
-        url: { type: string }
+        id:
+          type: [string, "null"]
+          format: uuid
+        target_kind:
+          type: string
+          enum: [external, source, citation]
+        evidence_role:
+          type: string
+          enum: [primary, supporting, background]
+        source_id:
+          type: [string, "null"]
+          format: uuid
+        citation_id:
+          type: [string, "null"]
+          format: uuid
+        url: { type: [string, "null"] }
         hostname: { type: [string, "null"] }
         title: { type: [string, "null"] }
         source_author: { type: [string, "null"] }
         source_published_at:
+          type: [string, "null"]
+          format: date-time
+        display:
+          type: [object, "null"]
+          additionalProperties: true
+        attached_at:
+          type: [string, "null"]
+          format: date-time
+        position:
+          type: [integer, "null"]
+
+    NoteLink:
+      type: object
+      required: [linked_note_id, link_type]
+      properties:
+        linked_note_id:
+          type: string
+          format: uuid
+        link_type:
+          type: string
+          enum: [supports, contradicts, extends, related]
+        created_at:
           type: [string, "null"]
           format: date-time
 
@@ -2074,15 +2111,14 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Tag"
-        linked_note_ids:
+        note_links:
           type: array
           items:
-            type: string
-            format: uuid
-        sources:
+            $ref: "#/components/schemas/NoteLink"
+        evidence_links:
           type: array
           items:
-            $ref: "#/components/schemas/NoteSource"
+            $ref: "#/components/schemas/NoteEvidenceLink"
         status:
           $ref: "#/components/schemas/NoteStatus"
         created_at:
@@ -2775,15 +2811,14 @@ components:
           items:
             type: string
             format: uuid
-        sources:
+        evidence_links:
           type: array
           items:
-            $ref: "#/components/schemas/NoteSource"
-        linked_note_ids:
+            $ref: "#/components/schemas/NoteEvidenceLink"
+        note_links:
           type: array
           items:
-            type: string
-            format: uuid
+            $ref: "#/components/schemas/NoteLink"
 
     NoteUpdateRequest:
       type: object
@@ -2797,22 +2832,21 @@ components:
 
     NoteSourcesReplaceRequest:
       type: object
-      required: [sources]
+      required: [evidence_links]
       properties:
-        sources:
+        evidence_links:
           type: array
           items:
-            $ref: "#/components/schemas/NoteSource"
+            $ref: "#/components/schemas/NoteEvidenceLink"
 
     NoteLinksReplaceRequest:
       type: object
-      required: [linked_note_ids]
+      required: [note_links]
       properties:
-        linked_note_ids:
+        note_links:
           type: array
           items:
-            type: string
-            format: uuid
+            $ref: "#/components/schemas/NoteLink"
 
     NoteResponse:
       allOf:
@@ -3394,4 +3428,3 @@ x-implementation-notes:
     - "Document hydration must stay compact and fast for first editor paint."
     - "Do not reintroduce legacy cookie-trust auth or legacy noncanonical payload fields."
 '''
-

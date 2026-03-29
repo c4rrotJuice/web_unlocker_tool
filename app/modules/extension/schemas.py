@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.modules.research.notes.schemas import NoteSourceInput
+from app.modules.research.notes.schemas import NoteEvidenceLinkInput, NoteLinkInput
 from app.services.citation_domain import ExtractionPayload, SUPPORTED_STYLES
 
 
@@ -116,8 +116,8 @@ class ExtensionNoteCaptureRequest(BaseModel):
     citation_id: str | None = None
     quote_id: str | None = None
     tag_ids: list[str] = Field(default_factory=list)
-    sources: list[NoteSourceInput] = Field(default_factory=list)
-    linked_note_ids: list[str] = Field(default_factory=list)
+    evidence_links: list[NoteEvidenceLinkInput] = Field(default_factory=list)
+    note_links: list[NoteLinkInput] = Field(default_factory=list)
 
     @field_validator("title", "note_body")
     @classmethod
@@ -133,7 +133,7 @@ class WorkInEditorNoteSeed(BaseModel):
     note_body: str
     project_id: str | None = None
     tag_ids: list[str] = Field(default_factory=list)
-    sources: list[NoteSourceInput] = Field(default_factory=list)
+    evidence_links: list[NoteEvidenceLinkInput] = Field(default_factory=list)
 
     @field_validator("note_body")
     @classmethod

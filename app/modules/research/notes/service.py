@@ -6,7 +6,7 @@ from fastapi import HTTPException
 
 from app.core.serialization import serialize_paging_meta
 from app.core.serialization import serialize_ok_envelope
-from app.core.serialization import serialize_note, serialize_note_source
+from app.core.serialization import serialize_document_reference, serialize_note, serialize_note_evidence_link, serialize_note_link, serialize_note_reference
 from app.modules.common.ownership import OwnershipValidator
 from app.modules.common.relation_validation import RelationValidator, map_relation_error
 from app.modules.research.common import normalize_uuid
@@ -21,6 +21,7 @@ class NotesService:
         sources_service,
         taxonomy_service,
         citations_service,
+        workspace_service=None,
         ownership: OwnershipValidator,
         relation_validation: RelationValidator,
     ):
@@ -28,28 +29,49 @@ class NotesService:
         self.sources_service = sources_service
         self.taxonomy_service = taxonomy_service
         self.citations_service = citations_service
+        self.workspace_service = workspace_service
         self.ownership = ownership
         self.relation_validation = relation_validation
 
-    async def _validate_note_source_references(self, *, user_id: str, access_token: str | None, sources: list[dict]) -> None:
+    @staticmethod
+    def _group_evidence_links(evidence_links: list[dict]) -> dict[str, list[dict]]:
+        grouped = {"primary": [], "supporting": [], "background": []}
+        for evidence_link in evidence_links:
+            grouped.setdefault(str(evidence_link.get("evidence_role") or "supporting"), []).append(evidence_link)
+        return grouped
+
+    @staticmethod
+    def _group_note_links(note_links: list[dict], linked_notes_by_id: dict[str, dict]) -> dict[str, list[dict]]:
+        grouped = {"supports": [], "contradicts": [], "extends": [], "related": []}
+        for note_link in note_links:
+            linked_note_id = note_link.get("linked_note_id")
+            grouped.setdefault(str(note_link.get("link_type") or "related"), []).append(
+                {
+                    "link": note_link,
+                    "note": linked_notes_by_id.get(linked_note_id),
+                }
+            )
+        return grouped
+
+    async def _validate_note_evidence_references(self, *, user_id: str, access_token: str | None, evidence_links: list[dict]) -> None:
         citation_ids: list[str] = []
         source_ids: list[str] = []
-        for source in sources:
-            relation_type = str(source.get("relation_type") or "external")
-            source_id = source.get("source_id")
-            citation_id = source.get("citation_id")
-            url = source.get("url")
-            if relation_type not in {"external", "source", "citation"}:
-                raise HTTPException(status_code=422, detail="Invalid note source relation type")
-            if relation_type == "external" and not url:
+        for evidence_link in evidence_links:
+            target_kind = str(evidence_link.get("target_kind") or "external")
+            source_id = evidence_link.get("source_id")
+            citation_id = evidence_link.get("citation_id")
+            url = evidence_link.get("url")
+            if target_kind not in {"external", "source", "citation"}:
+                raise HTTPException(status_code=422, detail="Invalid note evidence target kind")
+            if target_kind == "external" and not url:
                 raise HTTPException(status_code=422, detail="External note sources require a URL")
             if source_id:
                 source_ids.append(str(source_id))
             if citation_id:
                 citation_ids.append(str(citation_id))
-            if relation_type == "source" and not source_id:
+            if target_kind == "source" and not source_id:
                 raise HTTPException(status_code=422, detail="Source note references require source_id")
-            if relation_type == "citation" and not citation_id:
+            if target_kind == "citation" and not citation_id:
                 raise HTTPException(status_code=422, detail="Citation note references require citation_id")
         if citation_ids:
             await self.relation_validation.validate_owned_citation_ids(
@@ -94,36 +116,36 @@ class NotesService:
                 tags_by_note.setdefault(note_id, []).append(tag)
 
         source_rows = await self.repository.list_note_sources(user_id=user_id, access_token=access_token, note_ids=note_ids)
-        sources_by_note: dict[str, list[dict]] = {note_id: [] for note_id in note_ids if note_id}
+        evidence_links_by_note: dict[str, list[dict]] = {note_id: [] for note_id in note_ids if note_id}
         for source_row in source_rows:
             note_id = source_row.get("note_id")
             if not note_id:
                 continue
-            hydrated_source = serialize_note_source(
+            hydrated_source = serialize_note_evidence_link(
                 {
                     **source_row,
+                    "target_kind": source_row.get("relation_type"),
                     "display": {
                         "label": source_row.get("title") or source_row.get("url"),
                         "subtitle": source_row.get("hostname"),
                     },
                 }
             )
-            sources_by_note.setdefault(note_id, []).append(hydrated_source)
+            evidence_links_by_note.setdefault(note_id, []).append(hydrated_source)
 
         link_rows = await self.repository.list_note_links(user_id=user_id, access_token=access_token, note_ids=note_ids)
-        linked_ids_by_note: dict[str, list[str]] = {note_id: [] for note_id in note_ids if note_id}
+        note_links_by_note: dict[str, list[dict]] = {note_id: [] for note_id in note_ids if note_id}
         for row in link_rows:
             note_id = row.get("note_id")
-            linked_note_id = row.get("linked_note_id")
-            if note_id and linked_note_id:
-                linked_ids_by_note.setdefault(note_id, []).append(linked_note_id)
+            if note_id and row.get("linked_note_id"):
+                note_links_by_note.setdefault(note_id, []).append(serialize_note_link(row))
 
         return [
             serialize_note(
                 row,
                 tags=tags_by_note.get(row.get("id"), []),
-                linked_note_ids=linked_ids_by_note.get(row.get("id"), []),
-                sources=sources_by_note.get(row.get("id"), []),
+                note_links=note_links_by_note.get(row.get("id"), []),
+                evidence_links=evidence_links_by_note.get(row.get("id"), []),
             )
             for row in rows
         ]
@@ -218,7 +240,71 @@ class NotesService:
             select="id,title,note_body,highlight_text,project_id,citation_id,quote_id,status,archived_at,created_at,updated_at",
         )
         hydrated = await self._hydrate(user_id=user_id, access_token=access_token, rows=[row])
-        return hydrated[0]
+        note = hydrated[0]
+        linked_note_ids = [link.get("linked_note_id") for link in note.get("note_links") or [] if link.get("linked_note_id")]
+        linked_notes = await self.list_notes_by_ids(user_id=user_id, access_token=access_token, note_ids=linked_note_ids) if linked_note_ids else []
+        linked_notes_by_id = {item.get("id"): serialize_note_reference(item) for item in linked_notes if item.get("id")}
+        attached_documents = []
+        if self.workspace_service is not None:
+            document_links = await self.workspace_service.list_documents_for_note_ids(
+                user_id=user_id,
+                access_token=access_token,
+                note_ids=[str(note.get("id"))],
+            )
+            document_ids = []
+            seen_document_ids: set[str] = set()
+            for link in document_links:
+                document_id = link.get("document_id")
+                if document_id and document_id not in seen_document_ids:
+                    seen_document_ids.add(document_id)
+                    document_ids.append(document_id)
+            if document_ids:
+                document_rows = await self.workspace_service.repository.list_documents_by_ids(
+                    user_id=user_id,
+                    access_token=access_token,
+                    document_ids=document_ids,
+                    summary_only=True,
+                )
+                attached_documents = [serialize_document_reference(row) for row in document_rows]
+        project = await self.taxonomy_service.get_project(
+            user_id=user_id,
+            access_token=access_token,
+            project_id=str(note["project_id"]),
+        ) if note.get("project_id") else None
+        lineage_citation = await self.citations_service.get_citation(
+            user_id=user_id,
+            access_token=access_token,
+            citation_id=str(note["citation_id"]),
+        ) if note.get("citation_id") else None
+        lineage_quote = None
+        if note.get("quote_id"):
+            quote_row = await self.ownership.load_owned_quote(
+                user_id=user_id,
+                quote_id=str(note["quote_id"]),
+                access_token=access_token,
+                select="id,citation_id,excerpt,locator,annotation,created_at,updated_at",
+            )
+            lineage_quote = {
+                "id": quote_row.get("id"),
+                "citation_id": quote_row.get("citation_id"),
+                "excerpt": quote_row.get("excerpt") or "",
+                "locator": quote_row.get("locator") if isinstance(quote_row.get("locator"), dict) else {},
+                "annotation": quote_row.get("annotation"),
+                "created_at": quote_row.get("created_at"),
+                "updated_at": quote_row.get("updated_at"),
+            }
+        return serialize_note(
+            note,
+            tags=note.get("tags") or [],
+            note_links=note.get("note_links") or [],
+            evidence_links=note.get("evidence_links") or [],
+            project=project,
+            attached_documents=attached_documents,
+            lineage_citation=lineage_citation,
+            lineage_quote=lineage_quote,
+            evidence_links_by_role=self._group_evidence_links(note.get("evidence_links") or []),
+            note_links_by_type=self._group_note_links(note.get("note_links") or [], linked_notes_by_id),
+        )
 
     async def create_note(self, *, user_id: str, access_token: str | None, payload: dict) -> dict:
         project_id = await self.taxonomy_service.ensure_project_exists(
@@ -232,11 +318,16 @@ class NotesService:
             citation_id=payload.get("citation_id"),
             quote_id=payload.get("quote_id"),
         )
-        linked_note_ids = await self.relation_validation.validate_owned_note_ids(
-            user_id=user_id,
-            access_token=access_token,
-            note_ids=self.relation_validation.normalize_relation_ids(payload.get("linked_note_ids") or [], field_name="linked_note_id"),
-        ) if payload.get("linked_note_ids") else []
+        normalized_note_links = self.relation_validation.validate_note_links(
+            note_id=None,
+            note_links=payload.get("note_links") or [],
+        ) if payload.get("note_links") else []
+        if normalized_note_links:
+            await self.relation_validation.validate_owned_note_ids(
+                user_id=user_id,
+                access_token=access_token,
+                note_ids=[link["linked_note_id"] for link in normalized_note_links],
+            )
         row = await self.repository.create_note(
             user_id=user_id,
             access_token=access_token,
@@ -251,8 +342,8 @@ class NotesService:
             raise HTTPException(status_code=500, detail="Failed to create note")
         note_id = str(row["id"])
         await self.replace_note_tags(user_id=user_id, access_token=access_token, note_id=note_id, tag_ids=payload.get("tag_ids") or [])
-        await self.replace_note_sources(user_id=user_id, access_token=access_token, note_id=note_id, sources=payload.get("sources") or [])
-        await self.replace_note_links(user_id=user_id, access_token=access_token, note_id=note_id, linked_note_ids=linked_note_ids)
+        await self.replace_note_sources(user_id=user_id, access_token=access_token, note_id=note_id, evidence_links=payload.get("evidence_links") or [])
+        await self.replace_note_links(user_id=user_id, access_token=access_token, note_id=note_id, note_links=normalized_note_links)
         return await self.get_note(user_id=user_id, access_token=access_token, note_id=note_id)
 
     async def list_notes_by_ids(self, *, user_id: str, access_token: str | None, note_ids: list[str]) -> list[dict]:
@@ -347,7 +438,7 @@ class NotesService:
             raise map_relation_error(response, missing_parent_detail="Note not found", invalid_related_detail="Invalid tag references")
         return await self.get_note(user_id=user_id, access_token=access_token, note_id=normalized_note_id)
 
-    async def replace_note_sources(self, *, user_id: str, access_token: str | None, note_id: str, sources: list[dict]) -> dict:
+    async def replace_note_sources(self, *, user_id: str, access_token: str | None, note_id: str, evidence_links: list[dict]) -> dict:
         normalized_note_id = normalize_uuid(note_id, field_name="note_id")
         await self.ownership.load_owned_note(
             user_id=user_id,
@@ -355,11 +446,11 @@ class NotesService:
             access_token=access_token,
             select="id",
         )
-        normalized_sources = self.relation_validation.normalize_note_sources(sources=sources)
-        await self._validate_note_source_references(
+        normalized_sources = self.relation_validation.normalize_note_sources(sources=evidence_links)
+        await self._validate_note_evidence_references(
             user_id=user_id,
             access_token=access_token,
-            sources=normalized_sources,
+            evidence_links=normalized_sources,
         )
         response, _ = await self.repository.call_replace_rpc(
             function_name="replace_note_sources_atomic",
@@ -369,7 +460,7 @@ class NotesService:
             raise map_relation_error(response, missing_parent_detail="Note not found", invalid_related_detail="Invalid note sources")
         return await self.get_note(user_id=user_id, access_token=access_token, note_id=normalized_note_id)
 
-    async def replace_note_links(self, *, user_id: str, access_token: str | None, note_id: str, linked_note_ids: list[str]) -> dict:
+    async def replace_note_links(self, *, user_id: str, access_token: str | None, note_id: str, note_links: list[dict]) -> dict:
         normalized_note_id = normalize_uuid(note_id, field_name="note_id")
         await self.ownership.load_owned_note(
             user_id=user_id,
@@ -377,15 +468,15 @@ class NotesService:
             access_token=access_token,
             select="id",
         )
-        normalized_linked_ids = self.relation_validation.validate_linked_note_ids(note_id=normalized_note_id, linked_note_ids=linked_note_ids)
-        normalized_linked_ids = await self.relation_validation.validate_owned_note_ids(
+        normalized_note_links = self.relation_validation.validate_note_links(note_id=normalized_note_id, note_links=note_links)
+        await self.relation_validation.validate_owned_note_ids(
             user_id=user_id,
             access_token=access_token,
-            note_ids=normalized_linked_ids,
+            note_ids=[link["linked_note_id"] for link in normalized_note_links],
         )
         response, _ = await self.repository.call_replace_rpc(
             function_name="replace_note_links_atomic",
-            payload={"p_user_id": user_id, "p_note_id": normalized_note_id, "p_linked_note_ids": normalized_linked_ids},
+            payload={"p_user_id": user_id, "p_note_id": normalized_note_id, "p_note_links": normalized_note_links},
         )
         if response.status_code != 200:
             raise map_relation_error(response, missing_parent_detail="Note not found", invalid_related_detail="Invalid linked note references")

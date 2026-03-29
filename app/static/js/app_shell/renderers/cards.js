@@ -1,5 +1,6 @@
 import { escapeHtml, formatDateTime, formatRelativeTime, joinText, limitText } from "../core/format.js";
 import { citationDisplayTitle, citationPrimaryText } from "../../shared/citation_contract.js";
+import { renderMetaCount, relationshipCount } from "./relationships.js";
 
 function chipRow(tags = []) {
   if (!tags.length) return "";
@@ -21,7 +22,7 @@ export function renderSourceCard(source, options = {}) {
       <p class="research-card-body">${escapeHtml(limitText(source.container_title || source.canonical_url || "", 120))}</p>
       <div class="research-card-meta">
         <span class="meta-pill">${escapeHtml(meta || "Source")}</span>
-        <span class="meta-pill">${counts.citation_count || 0} citations</span>
+        ${renderMetaCount("citations", counts.citation_count)}
       </div>
     </article>
   `;
@@ -39,7 +40,8 @@ export function renderCitationCard(citation, options = {}) {
       <p class="research-card-body">${escapeHtml(limitText(citationPrimaryText(citation), 160))}</p>
       <div class="research-card-meta">
         <span class="meta-pill">${escapeHtml(source.hostname || source.publisher || "Source")}</span>
-        <span class="meta-pill">${counts.quote_count || 0} quotes</span>
+        ${renderMetaCount("quotes", counts.quote_count)}
+        ${relationshipCount(counts.note_count, 0) ? renderMetaCount("notes", counts.note_count) : ""}
         <span class="meta-pill">${escapeHtml(formatRelativeTime(citation.updated_at || citation.created_at))}</span>
       </div>
     </article>
@@ -57,7 +59,7 @@ export function renderQuoteCard(quote, options = {}) {
       <p class="research-card-body">${escapeHtml(limitText(quote.excerpt || "", 180))}</p>
       <div class="research-card-meta">
         <span class="meta-pill">${escapeHtml(source.hostname || source.publisher || "Citation")}</span>
-        <span class="meta-pill">${(quote.note_ids || []).length} notes</span>
+        ${renderMetaCount("notes", (quote.note_ids || []).length)}
         <span class="meta-pill">${escapeHtml(formatRelativeTime(quote.updated_at || quote.created_at))}</span>
       </div>
     </article>
@@ -66,6 +68,11 @@ export function renderQuoteCard(quote, options = {}) {
 
 export function renderNoteCard(note, options = {}) {
   const projectChip = note.project ? [{ name: note.project.name }] : [];
+  const relatedNoteCount = relationshipCount(note?.relationship_groups?.note_links_by_type?.supports?.length, 0)
+    + relationshipCount(note?.relationship_groups?.note_links_by_type?.contradicts?.length, 0)
+    + relationshipCount(note?.relationship_groups?.note_links_by_type?.extends?.length, 0)
+    + relationshipCount(note?.relationship_groups?.note_links_by_type?.related?.length, 0)
+    + (Array.isArray(note.note_links) && !note.relationship_groups?.note_links_by_type ? note.note_links.length : 0);
   return `
     <article class="research-card${options.selected ? " is-selected" : ""}" data-entity-id="${escapeHtml(note.id)}" tabindex="0" role="button" aria-pressed="${options.selected ? "true" : "false"}">
       <div class="research-card-header">
@@ -74,7 +81,8 @@ export function renderNoteCard(note, options = {}) {
       <p class="research-card-body">${escapeHtml(limitText(note.note_body || note.highlight_text || "", 180))}</p>
       <div class="research-card-meta">
         <span class="meta-pill">${escapeHtml(note.status || "active")}</span>
-        <span class="meta-pill">${(note.sources || []).length} sources</span>
+        ${renderMetaCount("evidence", (note.evidence_links || []).length)}
+        ${relatedNoteCount ? renderMetaCount("related notes", relatedNoteCount) : ""}
         <span class="meta-pill">${escapeHtml(formatRelativeTime(note.updated_at || note.created_at))}</span>
       </div>
       ${chipRow([...(note.tags || []), ...projectChip])}
@@ -83,6 +91,7 @@ export function renderNoteCard(note, options = {}) {
 }
 
 export function renderProjectCard(project, options = {}) {
+  const counts = project.relationship_counts || {};
   return `
     <article class="research-card${options.selected ? " is-selected" : ""}" data-project-id="${escapeHtml(project.id)}">
       <div class="research-card-header">
@@ -91,6 +100,8 @@ export function renderProjectCard(project, options = {}) {
       <p class="research-card-body">${escapeHtml(limitText(project.description || "A project for connected sources, notes, and documents.", 140))}</p>
       <div class="research-card-meta">
         <span class="project-chip">${escapeHtml(project.color || "No color")}</span>
+        ${relationshipCount(counts.note_count, 0) ? renderMetaCount("notes", counts.note_count) : ""}
+        ${relationshipCount(counts.document_count, 0) ? renderMetaCount("documents", counts.document_count) : ""}
         <span class="meta-pill">${escapeHtml(formatDateTime(project.updated_at || project.created_at))}</span>
       </div>
     </article>
@@ -98,6 +109,7 @@ export function renderProjectCard(project, options = {}) {
 }
 
 export function renderDocumentCard(document) {
+  const attachedNoteCount = Array.isArray(document.attached_note_ids) ? document.attached_note_ids.length : 0;
   return `
     <article class="research-card">
       <div class="research-card-header">
@@ -105,7 +117,8 @@ export function renderDocumentCard(document) {
       </div>
       <div class="research-card-meta">
         <span class="meta-pill">${escapeHtml(document.status || "active")}</span>
-        <span class="meta-pill">${(document.attached_citation_ids || []).length} citations</span>
+        ${renderMetaCount("attached citations", (document.attached_citation_ids || []).length)}
+        ${attachedNoteCount ? renderMetaCount("attached notes", attachedNoteCount) : ""}
         <span class="meta-pill">${escapeHtml(formatRelativeTime(document.updated_at || document.created_at))}</span>
       </div>
       ${chipRow(document.tags || [])}

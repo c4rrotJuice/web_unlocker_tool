@@ -146,7 +146,7 @@ class NotesRepository:
             params={
                 "user_id": f"eq.{user_id}",
                 "note_id": f"in.({','.join(note_ids)})",
-                "select": "id,note_id,source_id,citation_id,relation_type,url,hostname,title,source_author,source_published_at,attached_at,position",
+                "select": "id,note_id,source_id,citation_id,relation_type,evidence_role,url,hostname,title,source_author,source_published_at,attached_at,position",
                 "order": "position.asc,attached_at.asc,id.asc",
             },
             headers=self._headers(access_token, include_content_type=False),
@@ -162,7 +162,7 @@ class NotesRepository:
             params={
                 "user_id": f"eq.{user_id}",
                 "source_id": f"in.({','.join(source_ids)})",
-                "select": "id,note_id,source_id,citation_id,relation_type,url,hostname,title,source_author,source_published_at,attached_at,position",
+                "select": "id,note_id,source_id,citation_id,relation_type,evidence_role,url,hostname,title,source_author,source_published_at,attached_at,position",
                 "order": "position.asc,attached_at.asc,id.asc",
             },
             headers=self._headers(access_token, include_content_type=False),
@@ -178,13 +178,47 @@ class NotesRepository:
             params={
                 "user_id": f"eq.{user_id}",
                 "citation_id": f"in.({','.join(citation_ids)})",
-                "select": "id,note_id,source_id,citation_id,relation_type,url,hostname,title,source_author,source_published_at,attached_at,position",
+                "select": "id,note_id,source_id,citation_id,relation_type,evidence_role,url,hostname,title,source_author,source_published_at,attached_at,position",
                 "order": "position.asc,attached_at.asc,id.asc",
             },
             headers=self._headers(access_token, include_content_type=False),
         )
         payload = response_json(response)
         return payload if isinstance(payload, list) else []
+
+    async def list_note_summaries_by_citation_ids(self, *, user_id: str, access_token: str | None, citation_ids: list[str]) -> list[dict]:
+        if not citation_ids:
+            return []
+        response = await self.supabase_repo.get(
+            "notes",
+            params={
+                "user_id": f"eq.{user_id}",
+                "citation_id": f"in.({','.join(citation_ids)})",
+                "select": "id,title,note_body,highlight_text,project_id,citation_id,quote_id,status,archived_at,created_at,updated_at",
+                "order": "updated_at.desc,id.desc",
+                "limit": "50",
+            },
+            headers=self._headers(access_token, include_content_type=False),
+        )
+        payload = response_json(response)
+        return payload if isinstance(payload, list) else []
+
+    async def list_note_summaries_by_source_ids(self, *, user_id: str, access_token: str | None, source_ids: list[str]) -> list[dict]:
+        if not source_ids:
+            return []
+        note_source_rows = await self.list_note_sources_by_source_ids(
+            user_id=user_id,
+            access_token=access_token,
+            source_ids=source_ids,
+        )
+        note_ids: list[str] = []
+        seen_note_ids: set[str] = set()
+        for row in note_source_rows:
+            note_id = row.get("note_id")
+            if note_id and note_id not in seen_note_ids:
+                seen_note_ids.add(note_id)
+                note_ids.append(note_id)
+        return await self.list_notes_by_ids(user_id=user_id, access_token=access_token, note_ids=note_ids)
 
     async def list_note_links(self, *, user_id: str, access_token: str | None, note_ids: list[str]) -> list[dict]:
         if not note_ids:
@@ -194,8 +228,8 @@ class NotesRepository:
             params={
                 "user_id": f"eq.{user_id}",
                 "note_id": f"in.({','.join(note_ids)})",
-                "select": "note_id,linked_note_id,created_at",
-                "order": "created_at.asc,linked_note_id.asc",
+                "select": "note_id,linked_note_id,link_type,created_at",
+                "order": "created_at.asc,linked_note_id.asc,link_type.asc",
             },
             headers=self._headers(access_token, include_content_type=False),
         )

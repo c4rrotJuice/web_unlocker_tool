@@ -85,9 +85,9 @@ function buildFixture() {
     status: "active",
     citation_id: "citation-a",
     quote_id: "quote-a",
-    sources: [{ id: "note-source-a", source_id: "source-a", citation_id: "citation-a", title: "Source A" }],
+    evidence_links: [{ id: "note-source-a", source_id: "source-a", citation_id: "citation-a", target_kind: "citation", evidence_role: "primary", title: "Source A" }],
     tags: [{ id: "tag-a", name: "Evidence" }],
-    linked_note_ids: [],
+    note_links: [],
     created_at: "2026-03-20T00:00:00+00:00",
     updated_at: "2026-03-20T00:00:00+00:00",
   };
@@ -134,10 +134,10 @@ test("research page auto-activates the first asset and keeps the context panel v
   assert.equal(harness.window.location.search.includes("selected=source-a"), true);
   assert.equal(elements.frame.classList.contains("has-context"), true);
   assert.match(elements.listRegion.innerHTML, /is-selected/);
-  assert.match(elements.contextBody.innerHTML, /Linked citations/);
-  assert.match(elements.contextBody.innerHTML, /Linked quotes/);
-  assert.match(elements.contextBody.innerHTML, /Linked notes/);
-  assert.match(elements.contextBody.innerHTML, /Linked documents/);
+  assert.match(elements.contextBody.innerHTML, /Citation neighborhood/);
+  assert.match(elements.contextBody.innerHTML, /Quote neighborhood/);
+  assert.match(elements.contextBody.innerHTML, /Note neighborhood/);
+  assert.match(elements.contextBody.innerHTML, /Document attachments/);
   assert.ok(requests.includes("/api/research/source/source-a/graph"));
 });
 
@@ -174,7 +174,7 @@ test("selecting a different asset updates the context panel immediately", async 
   assert.match(elements.contextBody.innerHTML, /Loading related research neighborhood/);
 
   await flush();
-  assert.match(elements.contextBody.innerHTML, /Linked citations/);
+  assert.match(elements.contextBody.innerHTML, /Citation neighborhood/);
   assert.doesNotMatch(elements.contextBody.innerHTML, /Note A/);
 });
 
@@ -227,8 +227,8 @@ test("selection stays stable across filter refreshes and the next tab auto-selec
   await flush();
   assert.equal(harness.window.location.search.includes("tab=citations"), true);
   assert.equal(harness.window.location.search.includes("selected=citation-a"), true);
-  assert.match(elements.contextBody.innerHTML, /Linked sources/);
-  assert.match(elements.contextBody.innerHTML, /Linked documents/);
+  assert.match(elements.contextBody.innerHTML, /Source neighborhood/);
+  assert.match(elements.contextBody.innerHTML, /Document attachments/);
 });
 
 test("empty states keep the context panel open and render honest relationship-free copy", async () => {

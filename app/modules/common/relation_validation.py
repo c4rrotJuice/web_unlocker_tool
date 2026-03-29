@@ -8,13 +8,19 @@ from app.modules.research.common import normalize_uuid, normalize_uuid_list
 from app.services.supabase_rest import response_error_text, response_json
 
 
-def _dedupe_sources(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+NOTE_LINK_TYPES = frozenset({"supports", "contradicts", "extends", "related"})
+NOTE_EVIDENCE_TARGET_KINDS = frozenset({"external", "source", "citation"})
+NOTE_EVIDENCE_ROLES = frozenset({"primary", "supporting", "background"})
+
+
+def _dedupe_note_evidence_links(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str | None, str | None]] = set()
+    seen: set[tuple[str, str, str, str | None, str | None]] = set()
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             continue
-        relation_type = str(item.get("relation_type") or "external").strip().lower() or "external"
+        target_kind = str(item.get("target_kind") or "external").strip().lower() or "external"
+        evidence_role = str(item.get("evidence_role") or "supporting").strip().lower() or "supporting"
         url = str(item.get("url") or "").strip()
         source_id = str(item.get("source_id") or "").strip() or None
         citation_id = str(item.get("citation_id") or "").strip() or None
@@ -25,7 +31,7 @@ def _dedupe_sources(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             citation_id = normalize_uuid(citation_id, field_name="citation_id")
         if not url and not source_id and not citation_id:
             continue
-        key = (relation_type, url.lower(), source_id, citation_id)
+        key = (target_kind, evidence_role, url.lower(), source_id, citation_id)
         if key in seen:
             continue
         seen.add(key)
@@ -35,7 +41,8 @@ def _dedupe_sources(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "id": item.get("id"),
                 "source_id": source_id,
                 "citation_id": citation_id,
-                "relation_type": relation_type,
+                "target_kind": target_kind,
+                "evidence_role": evidence_role,
                 "url": url or None,
                 "hostname": (item.get("hostname") or "").strip() or None,
                 "title": (item.get("title") or "").strip() or None,
@@ -46,6 +53,30 @@ def _dedupe_sources(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "subtitle": (item.get("hostname") or "").strip() or None,
                 },
                 "position": position,
+            }
+        )
+    return normalized
+
+
+def _dedupe_note_links(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        linked_note_id = str(item.get("linked_note_id") or "").strip()
+        if not linked_note_id:
+            continue
+        normalized_note_id = normalize_uuid(linked_note_id, field_name="linked_note_id")
+        link_type = str(item.get("link_type") or "related").strip().lower() or "related"
+        key = (normalized_note_id, link_type)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(
+            {
+                "linked_note_id": normalized_note_id,
+                "link_type": link_type,
             }
         )
     return normalized
@@ -96,15 +127,28 @@ class RelationValidator:
             raise HTTPException(status_code=422, detail="Invalid note references")
         return normalized
 
-    def validate_linked_note_ids(self, *, note_id: str, linked_note_ids: list[str]) -> list[str]:
-        normalized_note_id = normalize_uuid(note_id, field_name="note_id")
-        normalized_linked_ids = self.normalize_relation_ids(linked_note_ids, field_name="linked_note_id")
-        if normalized_note_id in normalized_linked_ids:
+    def normalize_note_links(self, *, note_links: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return _dedupe_note_links(note_links)
+
+    def validate_note_links(self, *, note_id: str | None, note_links: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized_note_id = normalize_uuid(note_id, field_name="note_id") if note_id else None
+        normalized_note_links = self.normalize_note_links(note_links=note_links)
+        if normalized_note_id and any(link["linked_note_id"] == normalized_note_id for link in normalized_note_links):
             raise HTTPException(status_code=422, detail="A note cannot link to itself")
-        return normalized_linked_ids
+        invalid_types = sorted({link["link_type"] for link in normalized_note_links if link["link_type"] not in NOTE_LINK_TYPES})
+        if invalid_types:
+            raise HTTPException(status_code=422, detail="Invalid note link type")
+        return normalized_note_links
 
     def normalize_note_sources(self, *, sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return _dedupe_sources(sources)
+        normalized_sources = _dedupe_note_evidence_links(sources)
+        invalid_target_kinds = sorted({source["target_kind"] for source in normalized_sources if source["target_kind"] not in NOTE_EVIDENCE_TARGET_KINDS})
+        if invalid_target_kinds:
+            raise HTTPException(status_code=422, detail="Invalid note evidence target kind")
+        invalid_roles = sorted({source["evidence_role"] for source in normalized_sources if source["evidence_role"] not in NOTE_EVIDENCE_ROLES})
+        if invalid_roles:
+            raise HTTPException(status_code=422, detail="Invalid note evidence role")
+        return normalized_sources
 
 
 def map_relation_error(response, *, missing_parent_detail: str, invalid_related_detail: str) -> HTTPException:

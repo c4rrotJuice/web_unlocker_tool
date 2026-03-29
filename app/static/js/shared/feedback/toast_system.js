@@ -214,7 +214,7 @@ export function createToastStore({ bus, renderer }) {
   return { add, dismiss, clear, getVisible, getMostRecentVisibleId };
 }
 
-function createEventAdapter({ bus, statusStore }) {
+export function createEventAdapter({ bus, statusStore }) {
   function emitToast(type, title, options = {}) {
     bus.emit("feedback:toast:add", toToastPayload(type, title, options));
   }
@@ -260,16 +260,25 @@ function createEventAdapter({ bus, statusStore }) {
         emitToast(TOAST_TYPES.ERROR, "Export failed", { description: payload.message || "" });
         break;
       case FEEDBACK_EVENTS.CITATION_ATTACHED:
-        emitToast(TOAST_TYPES.SUCCESS, "Citation attached");
+        emitToast(TOAST_TYPES.SUCCESS, payload?.source === "insert" ? "Inserted into document and attached" : "Attached to document");
         break;
       case FEEDBACK_EVENTS.CITATION_ATTACH_SKIPPED:
         emitToast(TOAST_TYPES.INFO, "Citation already attached", { dedupeKey: "citation-already-attached" });
         break;
+      case FEEDBACK_EVENTS.CITATION_DETACHED:
+        emitToast(TOAST_TYPES.INFO, "Removed from document");
+        break;
       case FEEDBACK_EVENTS.NOTE_ATTACHED:
-        emitToast(TOAST_TYPES.SUCCESS, "Note attached");
+        emitToast(TOAST_TYPES.SUCCESS, payload?.source === "insert" ? "Inserted into document and attached" : "Attached to document");
+        break;
+      case FEEDBACK_EVENTS.NOTE_ATTACH_SKIPPED:
+        emitToast(TOAST_TYPES.INFO, "Note already attached", { dedupeKey: "note-already-attached" });
+        break;
+      case FEEDBACK_EVENTS.NOTE_DETACHED:
+        emitToast(TOAST_TYPES.INFO, "Removed from document");
         break;
       case FEEDBACK_EVENTS.QUOTE_INSERTED:
-        emitToast(TOAST_TYPES.SUCCESS, "Quote inserted");
+        emitToast(TOAST_TYPES.SUCCESS, payload?.citationId ? "Inserted into document and attached" : "Quote inserted");
         break;
       case FEEDBACK_EVENTS.BIBLIOGRAPHY_INSERTED:
         emitToast(TOAST_TYPES.INFO, "Bibliography inserted");

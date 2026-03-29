@@ -67,17 +67,27 @@ identity_service = IdentityService(
         anon_key=settings.supabase_anon_key,
     )
 )
-taxonomy_service = TaxonomyService(
-    repository=TaxonomyRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
-)
+taxonomy_repository = TaxonomyRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
+sources_repository = SourcesRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
+citations_repository = CitationsRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
+notes_repository = NotesRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
+quotes_repository = QuotesRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
+workspace_repository = WorkspaceRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
+taxonomy_service = TaxonomyService(repository=taxonomy_repository)
 sources_service = SourcesService(
-    repository=SourcesRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
+    repository=sources_repository,
+    citations_repository=citations_repository,
+    quotes_repository=quotes_repository,
+    notes_repository=notes_repository,
+    workspace_repository=workspace_repository,
 )
 citations_service = CitationsService(
-    repository=CitationsRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key),
+    repository=citations_repository,
     sources_service=sources_service,
+    quotes_repository=quotes_repository,
+    notes_repository=notes_repository,
+    workspace_repository=workspace_repository,
 )
-notes_repository = NotesRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
 ownership = OwnershipValidator(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
 relation_validation = RelationValidator(
     taxonomy_service=taxonomy_service,
@@ -89,25 +99,29 @@ notes_service = NotesService(
     sources_service=sources_service,
     taxonomy_service=taxonomy_service,
     citations_service=citations_service,
+    workspace_service=None,
     ownership=ownership,
     relation_validation=relation_validation,
 )
 quotes_service = QuotesService(
-    repository=QuotesRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key),
+    repository=quotes_repository,
     citations_service=citations_service,
     notes_service=notes_service,
+    workspace_repository=workspace_repository,
     ownership=ownership,
     relation_validation=relation_validation,
 )
 workspace_service = WorkspaceService(
-    repository=WorkspaceRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key),
+    repository=workspace_repository,
     taxonomy_service=taxonomy_service,
+    sources_service=sources_service,
     citations_service=citations_service,
     quotes_service=quotes_service,
     notes_service=notes_service,
     ownership=ownership,
     relation_validation=relation_validation,
 )
+notes_service.workspace_service = workspace_service
 graph_service = ResearchGraphService(
     sources_service=sources_service,
     citations_service=citations_service,
@@ -532,7 +546,7 @@ async def replace_note_sources(note_id: str, payload: NoteSourcesReplaceRequest,
         user_id=access.user_id,
         access_token=access.access_token,
         note_id=note_id,
-        sources=[item.model_dump(exclude_none=True) for item in payload.sources],
+        evidence_links=[item.model_dump(exclude_none=True) for item in payload.evidence_links],
     )
 
 
@@ -542,7 +556,7 @@ async def replace_note_links(note_id: str, payload: NoteLinksReplaceRequest, acc
         user_id=access.user_id,
         access_token=access.access_token,
         note_id=note_id,
-        linked_note_ids=payload.linked_note_ids,
+        note_links=[item.model_dump(exclude_none=True) for item in payload.note_links],
     )
 
 

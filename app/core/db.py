@@ -55,6 +55,7 @@ EXPECTED_RPCS = (
     "replace_note_tag_links_atomic",
     "replace_note_sources_atomic",
     "replace_note_links_atomic",
+    "get_project_relationship_summaries",
 )
 
 

@@ -43,6 +43,18 @@ export function createResearchApi() {
     getNote(noteId) {
       return window.webUnlockerAuth.authJson(`/api/notes/${encodeURIComponent(noteId)}`, { method: "GET" });
     },
+    replaceNoteLinks(noteId, noteLinks) {
+      return window.webUnlockerAuth.authJson(`/api/notes/${encodeURIComponent(noteId)}/links`, {
+        method: "PUT",
+        body: { note_links: noteLinks },
+      });
+    },
+    replaceNoteSources(noteId, evidenceLinks) {
+      return window.webUnlockerAuth.authJson(`/api/notes/${encodeURIComponent(noteId)}/sources`, {
+        method: "PUT",
+        body: { evidence_links: evidenceLinks },
+      });
+    },
     createNote(payload) {
       return window.webUnlockerAuth.authJson("/api/notes", {
         method: "POST",

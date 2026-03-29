@@ -1,5 +1,6 @@
 import {
   renderCitationDetail,
+  renderDocumentRelationshipDetail,
   renderNoteDetail,
   renderQuoteDetail,
   renderSourceDetail,
@@ -109,6 +110,7 @@ export function renderContextRail(target, context, state, detail, handlers = {})
   if (context.mode === "citation_focus" && detail) {
     target.innerHTML = renderCitationDetail(detail, {
       citationView: handlers.citationViewState?.get?.(detail.id) || {},
+      ...(handlers.linkActions?.getCitationDetailOptions?.(detail) || {}),
     });
     return;
   }
@@ -121,16 +123,12 @@ export function renderContextRail(target, context, state, detail, handlers = {})
     return;
   }
   if (context.mode === "source_focus" && detail) {
-    target.innerHTML = renderSourceDetail(detail);
+    target.innerHTML = renderSourceDetail(detail, handlers.linkActions?.getSourceDetailOptions?.(detail) || {});
     return;
   }
-  target.innerHTML = `
-    <div class="editor-v2-card">
-      <h3>Attached research</h3>
-      <p>Select text or focus a research item to keep writing with context close by.</p>
-      <p class="editor-v2-meta">
-        Attached: ${(attached.citations || []).length} citations, ${(attached.notes || []).length} notes, ${(attached.quotes || []).length} quotes, ${(attached.sources || []).length} sources
-      </p>
-    </div>
-  `;
+  if (state.active_document) {
+    target.innerHTML = renderDocumentRelationshipDetail(state.active_document, attached);
+    return;
+  }
+  target.innerHTML = `<div class="editor-v2-card"><h3>Attached research</h3><p>Select text or focus a research item to keep writing with context close by.</p></div>`;
 }

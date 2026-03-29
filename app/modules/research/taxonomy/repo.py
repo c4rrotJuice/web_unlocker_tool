@@ -47,6 +47,94 @@ class TaxonomyRepository:
         )
         return first_row(response_json(response))
 
+    async def list_project_relationship_summaries(
+        self,
+        *,
+        user_id: str,
+        access_token: str | None,
+        project_ids: list[str] | None = None,
+        include_archived: bool = True,
+        limit: int = 24,
+    ) -> list[dict]:
+        response = await self.supabase_repo.rpc(
+            "get_project_relationship_summaries",
+            json={
+                "p_user_id": user_id,
+                "p_project_ids": project_ids or None,
+                "p_include_archived": include_archived,
+                "p_limit": limit,
+            },
+            headers=self._headers(access_token),
+        )
+        payload = response_json(response)
+        return payload if isinstance(payload, list) else []
+
+    async def list_note_rows_for_projects(self, *, user_id: str, access_token: str | None, project_ids: list[str]) -> list[dict]:
+        if not project_ids:
+            return []
+        response = await self.supabase_repo.get(
+            "notes",
+            params={
+                "user_id": f"eq.{user_id}",
+                "project_id": f"in.({','.join(project_ids)})",
+                "select": "id,project_id,citation_id,updated_at,title,status",
+                "order": "updated_at.desc,id.desc",
+                "limit": "500",
+            },
+            headers=self._headers(access_token, include_content_type=False),
+        )
+        payload = response_json(response)
+        return payload if isinstance(payload, list) else []
+
+    async def list_document_rows_for_projects(self, *, user_id: str, access_token: str | None, project_ids: list[str]) -> list[dict]:
+        if not project_ids:
+            return []
+        response = await self.supabase_repo.get(
+            "documents",
+            params={
+                "user_id": f"eq.{user_id}",
+                "project_id": f"in.({','.join(project_ids)})",
+                "select": "id,project_id,title,status,updated_at,created_at",
+                "order": "updated_at.desc,id.desc",
+                "limit": "500",
+            },
+            headers=self._headers(access_token, include_content_type=False),
+        )
+        payload = response_json(response)
+        return payload if isinstance(payload, list) else []
+
+    async def list_document_citation_rows(self, *, user_id: str, access_token: str | None, document_ids: list[str]) -> list[dict]:
+        if not document_ids:
+            return []
+        response = await self.supabase_repo.get(
+            "document_citations",
+            params={
+                "user_id": f"eq.{user_id}",
+                "document_id": f"in.({','.join(document_ids)})",
+                "select": "document_id,citation_id",
+                "limit": "500",
+            },
+            headers=self._headers(access_token, include_content_type=False),
+        )
+        payload = response_json(response)
+        return payload if isinstance(payload, list) else []
+
+    async def list_note_source_rows(self, *, user_id: str, access_token: str | None, note_ids: list[str]) -> list[dict]:
+        if not note_ids:
+            return []
+        response = await self.supabase_repo.get(
+            "note_sources",
+            params={
+                "user_id": f"eq.{user_id}",
+                "note_id": f"in.({','.join(note_ids)})",
+                "select": "note_id,source_id",
+                "limit": "500",
+            },
+            headers=self._headers(access_token, include_content_type=False),
+        )
+        payload = response_json(response)
+        return payload if isinstance(payload, list) else []
+
     async def create_project(self, *, user_id: str, access_token: str | None, payload: dict) -> dict | None:
         now_iso = datetime.now(timezone.utc).isoformat()
         response = await self.supabase_repo.post(

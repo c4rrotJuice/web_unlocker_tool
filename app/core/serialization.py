@@ -168,9 +168,14 @@ def serialize_request_auth_context(context: RequestAuthContext) -> dict[str, obj
     }
 
 
-def serialize_project(row: dict[str, object]) -> dict[str, object]:
+def serialize_project(
+    row: dict[str, object],
+    *,
+    relationship_counts: dict[str, int] | None = None,
+    recent_activity: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
     status = str(row.get("status") or "active")
-    return {
+    payload = {
         "id": row.get("id"),
         "name": row.get("name"),
         "color": row.get("color"),
@@ -180,6 +185,11 @@ def serialize_project(row: dict[str, object]) -> dict[str, object]:
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
+    if relationship_counts is not None:
+        payload["relationship_counts"] = relationship_counts
+    if recent_activity is not None:
+        payload["recent_activity"] = recent_activity
+    return payload
 
 
 def serialize_tag(row: dict[str, object]) -> dict[str, object]:
@@ -327,12 +337,69 @@ def serialize_quote(row: dict[str, object], *, citation: dict[str, object] | Non
     }
 
 
-def serialize_note_source(row: dict[str, object]) -> dict[str, object]:
+def serialize_citation_reference(row: dict[str, object]) -> dict[str, object]:
     return {
         "id": row.get("id"),
         "source_id": row.get("source_id"),
+        "locator": row.get("locator") if isinstance(row.get("locator"), dict) else {},
+        "annotation": row.get("annotation"),
+        "excerpt": row.get("excerpt"),
+        "quote_text": row.get("quote_text"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def serialize_quote_reference(row: dict[str, object]) -> dict[str, object]:
+    return {
+        "id": row.get("id"),
         "citation_id": row.get("citation_id"),
-        "relation_type": row.get("relation_type") or "external",
+        "excerpt": row.get("excerpt") or "",
+        "locator": row.get("locator") if isinstance(row.get("locator"), dict) else {},
+        "annotation": row.get("annotation"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def serialize_note_reference(row: dict[str, object]) -> dict[str, object]:
+    title = row.get("title")
+    return {
+        "id": row.get("id"),
+        "title": "" if title is None else str(title),
+        "note_body": row.get("note_body") or "",
+        "highlight_text": row.get("highlight_text"),
+        "project_id": row.get("project_id"),
+        "citation_id": row.get("citation_id"),
+        "quote_id": row.get("quote_id"),
+        "status": row.get("status") or "active",
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def serialize_document_reference(row: dict[str, object], *, project: dict[str, object] | None = None) -> dict[str, object]:
+    status = str(row.get("status") or "active")
+    return {
+        "id": row.get("id"),
+        "title": row.get("title") or "Untitled",
+        "project_id": row.get("project_id"),
+        "project": project,
+        "status": status,
+        "archived": status == "archived",
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "revision": row.get("updated_at"),
+    }
+
+
+def serialize_note_evidence_link(row: dict[str, object]) -> dict[str, object]:
+    return {
+        "id": row.get("id"),
+        "target_kind": row.get("target_kind") or row.get("relation_type") or "external",
+        "evidence_role": row.get("evidence_role") or "supporting",
+        "source_id": row.get("source_id"),
+        "citation_id": row.get("citation_id"),
         "url": row.get("url"),
         "hostname": row.get("hostname"),
         "title": row.get("title"),
@@ -344,37 +411,60 @@ def serialize_note_source(row: dict[str, object]) -> dict[str, object]:
     }
 
 
+def serialize_note_link(row: dict[str, object]) -> dict[str, object]:
+    return {
+        "linked_note_id": row.get("linked_note_id"),
+        "link_type": row.get("link_type") or "related",
+        "created_at": row.get("created_at"),
+    }
+
+
 def serialize_note(
     row: dict[str, object],
     *,
     tags: list[dict[str, object]],
-    linked_note_ids: list[str],
-    sources: list[dict[str, object]],
+    note_links: list[dict[str, object]],
+    evidence_links: list[dict[str, object]],
+    project: dict[str, object] | None = None,
+    attached_documents: list[dict[str, object]] | None = None,
+    lineage_citation: dict[str, object] | None = None,
+    lineage_quote: dict[str, object] | None = None,
+    evidence_links_by_role: dict[str, list[dict[str, object]]] | None = None,
+    note_links_by_type: dict[str, list[dict[str, object]]] | None = None,
 ) -> dict[str, object]:
     title = row.get("title")
-    supporting_source_ids = [source.get("source_id") for source in sources if source.get("source_id")]
-    supporting_citation_ids = [source.get("citation_id") for source in sources if source.get("citation_id")]
-    return {
+    evidence_source_ids = [source.get("source_id") for source in evidence_links if source.get("source_id")]
+    evidence_citation_ids = [source.get("citation_id") for source in evidence_links if source.get("citation_id")]
+    payload = {
         "id": row.get("id"),
         "title": "" if title is None else str(title),
         "note_body": row.get("note_body") or "",
         "highlight_text": row.get("highlight_text"),
         "project_id": row.get("project_id"),
+        "project": project,
         "citation_id": row.get("citation_id"),
         "quote_id": row.get("quote_id"),
         "tags": tags,
-        "linked_note_ids": linked_note_ids,
-        "sources": sources,
+        "note_links": note_links,
+        "evidence_links": evidence_links,
         "lineage": {
             "citation_id": row.get("citation_id"),
             "quote_id": row.get("quote_id"),
-            "supporting_source_ids": supporting_source_ids,
-            "supporting_citation_ids": supporting_citation_ids,
+            "citation": lineage_citation,
+            "quote": lineage_quote,
+            "evidence_source_ids": evidence_source_ids,
+            "evidence_citation_ids": evidence_citation_ids,
+        },
+        "attached_documents": attached_documents or [],
+        "relationship_groups": {
+            "evidence_links_by_role": evidence_links_by_role or {},
+            "note_links_by_type": note_links_by_type or {},
         },
         "status": row.get("status") or "active",
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
+    return payload
 
 
 def serialize_activity_event(row: dict[str, object]) -> dict[str, object]:
@@ -471,6 +561,7 @@ def serialize_document(
     attached_note_ids: list[str],
     tag_ids: list[str],
     tags: list[dict[str, object]],
+    project: dict[str, object] | None = None,
     can_edit: bool,
     allowed_export_formats: list[str],
     edit_lock_reason: str | None = None,
@@ -483,6 +574,7 @@ def serialize_document(
         "content_delta": row.get("content_delta"),
         "content_html": row.get("content_html"),
         "project_id": row.get("project_id"),
+        "project": project,
         "status": status,
         "archived": status == "archived",
         "attached_citation_ids": attached_citation_ids,
@@ -513,7 +605,7 @@ def serialize_document_hydration(
     attached_citations: list[dict[str, object]],
     attached_notes: list[dict[str, object]],
     attached_quotes: list[dict[str, object]] | None = None,
-    attached_sources: list[dict[str, object]] | None = None,
+    derived_sources: list[dict[str, object]] | None = None,
     seed: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
@@ -521,7 +613,7 @@ def serialize_document_hydration(
         "attached_citations": attached_citations,
         "attached_notes": attached_notes,
         "attached_quotes": attached_quotes or [],
-        "attached_sources": attached_sources or [],
+        "derived_sources": derived_sources or [],
         "seed": seed,
     }
 

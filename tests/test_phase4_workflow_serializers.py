@@ -1,20 +1,22 @@
 from app.core.serialization import (
     serialize_document,
     serialize_document_hydration,
+    serialize_note_evidence_link,
+    serialize_note_link,
     serialize_note,
-    serialize_note_source,
     serialize_outline,
     serialize_quote,
 )
 
 
-def test_note_source_serializer_shape_is_explicit_and_stable():
-    payload = serialize_note_source(
+def test_note_evidence_and_link_serializer_shapes_are_explicit_and_stable():
+    payload = serialize_note_evidence_link(
         {
             "id": "rel-1",
+            "target_kind": "citation",
+            "evidence_role": "primary",
             "source_id": "source-1",
             "citation_id": "citation-1",
-            "relation_type": "citation",
             "url": "https://example.com",
             "hostname": "example.com",
             "title": "Example",
@@ -27,9 +29,10 @@ def test_note_source_serializer_shape_is_explicit_and_stable():
     )
     assert set(payload.keys()) == {
         "id",
+        "target_kind",
+        "evidence_role",
         "source_id",
         "citation_id",
-        "relation_type",
         "url",
         "hostname",
         "title",
@@ -39,6 +42,8 @@ def test_note_source_serializer_shape_is_explicit_and_stable():
         "attached_at",
         "position",
     }
+    note_link = serialize_note_link({"linked_note_id": "note-2", "link_type": "supports", "created_at": "2026-01-02T00:00:00+00:00"})
+    assert note_link == {"linked_note_id": "note-2", "link_type": "supports", "created_at": "2026-01-02T00:00:00+00:00"}
 
 
 def test_quote_note_document_serializers_exclude_legacy_fields():
@@ -68,8 +73,8 @@ def test_quote_note_document_serializers_exclude_legacy_fields():
             "updated_at": "2026-01-02T00:00:00+00:00",
         },
         tags=[{"id": "tag-1", "name": "evidence", "normalized_name": "evidence"}],
-        linked_note_ids=["note-2"],
-        sources=[serialize_note_source({"id": "rel-1", "relation_type": "external", "display": {}, "position": 0})],
+        note_links=[serialize_note_link({"linked_note_id": "note-2", "link_type": "related", "created_at": "2026-01-02T00:00:00+00:00"})],
+        evidence_links=[serialize_note_evidence_link({"id": "rel-1", "target_kind": "external", "evidence_role": "background", "display": {}, "position": 0})],
     )
     document = serialize_document(
         {
@@ -93,12 +98,14 @@ def test_quote_note_document_serializers_exclude_legacy_fields():
     assert "citation" in quote
     assert "citation_ids" not in document
     assert note["tags"][0]["id"] == "tag-1"
-    assert note["lineage"] == {
-        "citation_id": "citation-1",
-        "quote_id": "quote-1",
-        "supporting_source_ids": [],
-        "supporting_citation_ids": [],
-    }
+    assert note["note_links"][0]["link_type"] == "related"
+    assert note["evidence_links"][0]["evidence_role"] == "background"
+    assert note["lineage"]["citation_id"] == "citation-1"
+    assert note["lineage"]["quote_id"] == "quote-1"
+    assert note["lineage"]["citation"] is None
+    assert note["lineage"]["quote"] is None
+    assert note["lineage"]["evidence_source_ids"] == []
+    assert note["lineage"]["evidence_citation_ids"] == []
     assert document["attached_citation_ids"] == ["citation-1"]
     assert document["attached_note_ids"] == ["note-1"]
     assert document["tag_ids"] == ["tag-1"]
@@ -112,10 +119,10 @@ def test_hydration_and_outline_payload_shapes_are_stable():
         attached_citations=[{"id": "citation-1", "primary_render": {"style": "mla", "kind": "bibliography", "text": "Source"}}],
         attached_notes=[{"id": "note-1"}],
         attached_quotes=[],
-        attached_sources=[],
+        derived_sources=[],
         seed=None,
     )
     outline = serialize_outline([{"level": 1, "text": "Heading", "anchor": "heading"}])
-    assert set(hydration.keys()) == {"document", "attached_citations", "attached_notes", "attached_quotes", "attached_sources", "seed"}
+    assert set(hydration.keys()) == {"document", "attached_citations", "attached_notes", "attached_quotes", "derived_sources", "seed"}
     assert hydration["attached_citations"][0]["primary_render"]["kind"] == "bibliography"
     assert outline == {"items": [{"level": 1, "text": "Heading", "anchor": "heading"}]}

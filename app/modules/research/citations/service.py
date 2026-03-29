@@ -7,7 +7,15 @@ from fastapi import HTTPException
 
 from app.core.serialization import serialize_ok_envelope
 from app.core.serialization import serialize_paging_meta
-from app.core.serialization import serialize_citation, serialize_citation_template, serialize_source_summary
+from app.core.serialization import (
+    serialize_citation,
+    serialize_citation_reference,
+    serialize_citation_template,
+    serialize_document_reference,
+    serialize_note_reference,
+    serialize_quote_reference,
+    serialize_source_summary,
+)
 from app.modules.research.citations.repo import CitationsRepository
 from app.modules.research.sources.service import SourcesService
 from app.services.citation_domain import (
@@ -26,9 +34,50 @@ logger = logging.getLogger(__name__)
 
 
 class CitationsService:
-    def __init__(self, *, repository: CitationsRepository, sources_service: SourcesService):
+    def __init__(self, *, repository: CitationsRepository, sources_service: SourcesService, quotes_repository=None, notes_repository=None, workspace_repository=None):
         self.repository = repository
         self.sources_service = sources_service
+        self.quotes_repository = quotes_repository
+        self.notes_repository = notes_repository
+        self.workspace_repository = workspace_repository
+
+    async def _list_note_summaries_for_citation(self, *, user_id: str, access_token: str | None, citation_id: str) -> list[dict]:
+        if self.notes_repository is None:
+            return []
+        if hasattr(self.notes_repository, "list_note_summaries_by_citation_ids"):
+            note_rows = await self.notes_repository.list_note_summaries_by_citation_ids(
+                user_id=user_id,
+                access_token=access_token,
+                citation_ids=[citation_id],
+            )
+        else:
+            note_rows = await self.notes_repository.list_notes(
+                user_id=user_id,
+                access_token=access_token,
+                citation_id=citation_id,
+                limit=20,
+                offset=0,
+            )
+        supporting_note_ids: list[str] = []
+        existing_note_ids = {row.get("id") for row in note_rows if row.get("id")}
+        for note_source in await self.notes_repository.list_note_sources_by_citation_ids(
+            user_id=user_id,
+            access_token=access_token,
+            citation_ids=[citation_id],
+        ):
+            note_id = note_source.get("note_id")
+            if note_id and note_id not in existing_note_ids:
+                supporting_note_ids.append(note_id)
+                existing_note_ids.add(note_id)
+        if supporting_note_ids:
+            note_rows.extend(
+                await self.notes_repository.list_notes_by_ids(
+                    user_id=user_id,
+                    access_token=access_token,
+                    note_ids=supporting_note_ids,
+                )
+            )
+        return note_rows
 
     def _require_extraction_payload(self, extraction_payload: ExtractionPayload) -> ExtractionPayload:
         if isinstance(extraction_payload, ExtractionPayload):
@@ -505,7 +554,47 @@ class CitationsService:
         )
         if not rows:
             raise HTTPException(status_code=404, detail="Citation not found")
-        return rows[0]
+        payload = rows[0]
+        if not all([self.quotes_repository, self.notes_repository, self.workspace_repository]):
+            return payload
+        quote_rows = await self.quotes_repository.list_quotes(
+            user_id=user_id,
+            access_token=access_token,
+            citation_id=citation_id,
+            limit=20,
+            offset=0,
+            order="created_at.desc,id.desc",
+        )
+        note_rows = await self._list_note_summaries_for_citation(
+            user_id=user_id,
+            access_token=access_token,
+            citation_id=citation_id,
+        )
+        document_link_rows = await self.workspace_repository.list_documents_for_citation_ids(
+            user_id=user_id,
+            access_token=access_token,
+            citation_ids=[citation_id],
+        )
+        document_ids = []
+        seen_document_ids: set[str] = set()
+        for link in document_link_rows:
+            document_id = link.get("document_id")
+            if document_id and document_id not in seen_document_ids:
+                seen_document_ids.add(document_id)
+                document_ids.append(document_id)
+        document_rows = await self.workspace_repository.list_documents_by_ids(
+            user_id=user_id,
+            access_token=access_token,
+            document_ids=document_ids,
+            summary_only=True,
+        ) if document_ids else []
+        payload["neighborhood"] = {
+            "source": payload.get("source"),
+            "quotes": [serialize_quote_reference(item) for item in quote_rows],
+            "notes": [serialize_note_reference(item) for item in note_rows],
+            "documents": [serialize_document_reference(item) for item in document_rows],
+        }
+        return payload
 
     async def create_citation(
         self,

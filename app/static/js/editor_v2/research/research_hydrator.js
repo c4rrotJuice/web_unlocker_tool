@@ -15,7 +15,7 @@ export function createResearchHydrator({
       citations: Array.isArray(payload.attached_citations) ? payload.attached_citations : [],
       notes: Array.isArray(payload.attached_notes) ? payload.attached_notes : [],
       quotes: Array.isArray(payload.attached_quotes) ? payload.attached_quotes : [],
-      sources: Array.isArray(payload.attached_sources) ? payload.attached_sources : [],
+      sources: Array.isArray(payload.derived_sources) ? payload.derived_sources : [],
     };
     stores.citations?.prime?.(attached.citations);
     stores.notes?.prime?.(attached.notes);

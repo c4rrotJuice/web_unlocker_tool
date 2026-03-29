@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 
 import { createFeedbackBus } from "../../app/static/js/shared/feedback/feedback_bus.js";
 import { createStatusStore } from "../../app/static/js/shared/feedback/status_store.js";
-import { createToastStore } from "../../app/static/js/shared/feedback/toast_system.js";
-import { FEEDBACK_CONSTANTS, STATUS_SCOPES, STATUS_STATES, TOAST_TYPES } from "../../app/static/js/shared/feedback/feedback_tokens.js";
+import { createEventAdapter, createToastStore } from "../../app/static/js/shared/feedback/toast_system.js";
+import { FEEDBACK_CONSTANTS, FEEDBACK_EVENTS, STATUS_SCOPES, STATUS_STATES, TOAST_TYPES } from "../../app/static/js/shared/feedback/feedback_tokens.js";
 
 function createRendererHarness() {
   let visible = [];
@@ -124,4 +124,21 @@ test("editor saved state respects dwell time and does not flicker during rapid a
 
   statusStore.set(STATUS_SCOPES.EDITOR_DOCUMENT, STATUS_STATES.SAVING);
   assert.equal(statusStore.get(STATUS_SCOPES.EDITOR_DOCUMENT).state, STATUS_STATES.SAVING);
+});
+
+test("document attach feedback distinguishes direct attach from insert-and-attach flows", () => {
+  globalThis.window = { setTimeout, clearTimeout };
+  const bus = createFeedbackBus();
+  const harness = createRendererHarness();
+  const statusStore = createStatusStore({ bus });
+  createToastStore({ bus, renderer: harness.renderer });
+  const adapter = createEventAdapter({ bus, statusStore });
+
+  adapter.emitDomainEvent(FEEDBACK_EVENTS.CITATION_ATTACHED, { source: "attach" });
+  adapter.emitDomainEvent(FEEDBACK_EVENTS.NOTE_ATTACHED, { source: "insert" });
+
+  assert.deepEqual(harness.getVisible().map((toast) => toast.title), [
+    "Inserted into document and attached",
+    "Attached to document",
+  ]);
 });

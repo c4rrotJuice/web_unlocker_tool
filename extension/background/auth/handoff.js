@@ -67,8 +67,8 @@ export function createHandoffManager(options = {}) {
             url,
             focused: true,
             type: "popup",
-            width: 540,
-            height: 720,
+            width: 460,
+            height: 640,
         });
         return createOkResult({ windowId: created?.id || null, url });
     }

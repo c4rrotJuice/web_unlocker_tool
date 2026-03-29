@@ -40,6 +40,10 @@
     .status.error {
       color: #fca5a5;
     }
+
+    .status.success {
+      color: #93c5fd;
+    }
   </style>
 </head>
 <body>
@@ -72,9 +76,10 @@
     const statusEl = document.getElementById("status");
     const closeBtn = document.getElementById("close-tab");
 
-    function setStatus(text, isError = false) {
+    function setStatus(text, isError = false, isSuccess = false) {
       statusEl.textContent = text;
       statusEl.classList.toggle("error", Boolean(isError));
+      statusEl.classList.toggle("success", Boolean(isSuccess));
     }
     if (closeBtn) {
       closeBtn.addEventListener("click", function onCloseClick() {
@@ -138,7 +143,10 @@
 
     function bootstrapHandoffPage() {
       if (attemptId) {
-        setStatus("Sign-in complete. The extension will finish secure session restore automatically.");
+        setStatus("Sign-in complete. Finalizing extension access and closing this window…", false, true);
+        window.setTimeout(() => {
+          window.close();
+        }, 160);
       } else if (handoffCode) {
         void runCodeRestore();
       } else {

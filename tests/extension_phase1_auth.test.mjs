@@ -209,7 +209,14 @@ function createFetchStub({
             handoff: {
               issue_path: "/api/auth/handoff",
               exchange_path: "/api/auth/handoff/exchange",
+              landing_path: "/auth/handoff",
               preferred_destination: "/editor",
+            },
+            routes: {
+              dashboard_path: "/dashboard",
+              dashboard_url: "https://app.writior.com/dashboard",
+              editor_path: "/editor",
+              editor_url: "https://app.writior.com/editor",
             },
           },
           taxonomy: { recent_projects: [], recent_tags: [] },
@@ -445,6 +452,9 @@ test("auth start runs attempt exchange bootstrap flow and stores token only in b
   assert.equal(chromeApi.openedTabs.length, 0);
   assert.equal(chromeApi.openedWindows.length, 1);
   assert.match(chromeApi.openedWindows[0].url, /\/auth\?source=extension&attempt=attempt-1&next=%2Fdashboard/);
+  assert.equal(chromeApi.openedWindows[0].type, "popup");
+  assert.equal(chromeApi.openedWindows[0].width, 460);
+  assert.equal(chromeApi.openedWindows[0].height, 640);
   assert.equal(chromeApi.closedWindows.length, 1);
   assert.equal(requests[2].url.endsWith("/api/auth/handoff/exchange"), true);
   assert.equal(requests[3].url.endsWith("/api/extension/bootstrap"), true);
@@ -710,6 +720,7 @@ test("canonical auth exchange errors surface explicitly and leave auth state in 
 
   assert.equal(result.ok, false);
   assert.equal(result.error.code, "handoff_expired");
+  assert.equal(chromeApi.closedWindows.length, 0);
   assert.equal(stateResult.data.auth.status, "signed_out");
   assert.equal(stateResult.data.auth.reason, "missing_session");
 });

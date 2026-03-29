@@ -85,6 +85,7 @@ async def test_route_surface_keeps_expected_public_and_shell_entries(monkeypatch
     main = _load_main(monkeypatch)
     async with async_test_client(main.app) as client:
         auth = await client.get("/auth")
+        compact_auth = await client.get("/auth?source=extension&attempt=attempt-1&next=/dashboard")
         dashboard = await client.get("/dashboard")
         editor = await client.get("/editor")
         pricing = await client.get("/pricing", follow_redirects=False)
@@ -92,6 +93,7 @@ async def test_route_surface_keeps_expected_public_and_shell_entries(monkeypatch
         handoff = await client.get("/auth/handoff?code=handoff-1", follow_redirects=False)
 
     assert auth.status_code == 200
+    assert compact_auth.status_code == 200
     assert dashboard.status_code == 200
     assert editor.status_code == 200
     assert pricing.status_code == 307
@@ -101,6 +103,9 @@ async def test_route_surface_keeps_expected_public_and_shell_entries(monkeypatch
     assert handoff.status_code == 200
     assert "Sign-in complete" in handoff.text
     assert "Return to the extension" in handoff.text
+    assert "compact-auth" in compact_auth.text
+    assert "Extension Sign In" in compact_auth.text
+    assert "Open App" not in compact_auth.text
 
 
 def test_app_root_shell_does_not_reference_legacy_unlock_endpoints():
@@ -189,9 +194,13 @@ def test_research_selection_uses_canonical_graph_endpoint_for_context_neighborho
 def test_phase7_runtime_avoids_legacy_cookie_and_dashboard_fetch_paths():
     auth_source = open("app/static/js/auth.js", encoding="utf-8").read()
     dashboard_source = open("app/static/js/app_shell/pages/dashboard.js", encoding="utf-8").read()
+    auth_template = open("app/templates/auth.html", encoding="utf-8").read()
+    handoff_template = open("app/templates/auth_handoff.html", encoding="utf-8").read()
 
     assert "WRITIOR_SUPABASE_URL" in auth_source
     assert "/api/insights/monthly-summary" in dashboard_source
+    assert "compact-auth" in auth_template
+    assert "Finalizing extension access and closing this window" in handoff_template
 
 
 def test_projects_surface_requests_explicit_limited_project_list():

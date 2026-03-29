@@ -764,8 +764,9 @@ test("sidepanel surfaces launch failures when canonical dashboard truth is unava
     openDashboard.dispatchEvent(new FakeEvent("click", openDashboard));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    assert.equal(chromeApi.tabsCreateCalls.length, 0);
-    assert.equal(collectText(mountedRoot).includes("Dashboard URL is unavailable from bootstrap."), true);
+    assert.equal(chromeApi.tabsCreateCalls.length, 1);
+    assert.equal(chromeApi.tabsCreateCalls[0].url, "https://app.writior.com/dashboard");
+    assert.equal(collectText(mountedRoot).includes("Opening dashboard..."), true);
   } finally {
     shell?.destroy?.();
     globalThis.document = previousDocument;

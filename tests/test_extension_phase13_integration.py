@@ -105,6 +105,12 @@ async def test_extension_routes_expose_canonical_bootstrap_handoff_and_seeded_ed
                         "landing_path": "/auth/handoff",
                         "preferred_destination": "/editor",
                     },
+                    "routes": {
+                        "dashboard_path": "/dashboard",
+                        "dashboard_url": "https://app.writior.com/dashboard",
+                        "editor_path": "/editor",
+                        "editor_url": "https://app.writior.com/editor",
+                    },
                 },
                 "taxonomy": {"recent_projects": [], "recent_tags": []},
             },
@@ -201,6 +207,7 @@ async def test_extension_routes_expose_canonical_bootstrap_handoff_and_seeded_ed
 
     assert bootstrap.status_code == 200
     assert bootstrap.json()["data"]["app"]["handoff"]["preferred_destination"] == "/editor"
+    assert bootstrap.json()["data"]["app"]["routes"]["dashboard_path"] == "/dashboard"
     assert issued.status_code == 200
     assert issued.json()["data"]["code"] == "handoff-1"
     assert exchanged.status_code == 200

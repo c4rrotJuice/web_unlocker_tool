@@ -1,5 +1,9 @@
 // GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { API_ORIGIN } from "../../shared/constants/endpoints.js";
+const CANONICAL_APP_ROUTES = Object.freeze({
+    dashboard: "/dashboard",
+    editor: "/editor",
+});
 function readBootstrapApp(stateStore) {
     const app = stateStore?.getState?.()?.bootstrap?.app;
     return app && typeof app === "object" ? app : null;
@@ -30,9 +34,7 @@ function readCandidate(app, candidates = []) {
 }
 export function resolveCanonicalDestinationUrl(stateStore, destination) {
     const app = readBootstrapApp(stateStore);
-    if (!app) {
-        return "";
-    }
+    const fallbackRoute = CANONICAL_APP_ROUTES[destination] || "";
     if (destination === "editor") {
         return resolveCanonicalUrl(readCandidate(app, [
             "handoff.preferred_destination",
@@ -40,7 +42,7 @@ export function resolveCanonicalDestinationUrl(stateStore, destination) {
             "routes.editor_path",
             "editor_url",
             "editor_path",
-        ]), stateStore);
+        ]) || fallbackRoute, stateStore);
     }
     if (destination === "dashboard") {
         return resolveCanonicalUrl(readCandidate(app, [
@@ -48,7 +50,7 @@ export function resolveCanonicalDestinationUrl(stateStore, destination) {
             "routes.dashboard_path",
             "dashboard_url",
             "dashboard_path",
-        ]), stateStore);
+        ]) || fallbackRoute, stateStore);
     }
     return "";
 }

@@ -1,5 +1,10 @@
 import { API_ORIGIN } from "../../shared/constants/endpoints.ts";
 
+const CANONICAL_APP_ROUTES = Object.freeze({
+  dashboard: "/dashboard",
+  editor: "/editor",
+});
+
 function readBootstrapApp(stateStore) {
   const app = stateStore?.getState?.()?.bootstrap?.app;
   return app && typeof app === "object" ? app : null;
@@ -33,9 +38,7 @@ function readCandidate(app, candidates = []) {
 
 export function resolveCanonicalDestinationUrl(stateStore, destination) {
   const app = readBootstrapApp(stateStore);
-  if (!app) {
-    return "";
-  }
+  const fallbackRoute = CANONICAL_APP_ROUTES[destination] || "";
 
   if (destination === "editor") {
     return resolveCanonicalUrl(
@@ -45,7 +48,7 @@ export function resolveCanonicalDestinationUrl(stateStore, destination) {
         "routes.editor_path",
         "editor_url",
         "editor_path",
-      ]),
+      ]) || fallbackRoute,
       stateStore,
     );
   }
@@ -57,7 +60,7 @@ export function resolveCanonicalDestinationUrl(stateStore, destination) {
         "routes.dashboard_path",
         "dashboard_url",
         "dashboard_path",
-      ]),
+      ]) || fallbackRoute,
       stateStore,
     );
   }

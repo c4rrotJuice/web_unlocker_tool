@@ -7,20 +7,25 @@
   <link rel="stylesheet" href="/static/css/navStyle.css">
   <style>
     :root {
-      --bg-dark: #121212;
-      --card-bg: #1f1f1f;
-      --accent: #3b82f6;
-      --accent-hover: #2563eb;
-      --text-light: #ffffff;
+      --bg-dark: #121826;
+      --card-bg: rgba(19, 27, 44, 0.92);
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --text-light: #f8fafc;
       --success: #4ade80;
       --error: #f87171;
+      --muted: #94a3b8;
+      --border: rgba(148, 163, 184, 0.2);
     }
 
     body {
       font-family: "Segoe UI", sans-serif;
-      background-color: var(--bg-dark);
+      background:
+        radial-gradient(circle at top, rgba(37, 99, 235, 0.24), transparent 42%),
+        linear-gradient(180deg, #0b1120 0%, var(--bg-dark) 100%);
       color: var(--text-light);
       margin: 0;
+      min-height: 100vh;
     }
 
     .auth-page {
@@ -28,14 +33,15 @@
       align-items: center;
       justify-content: center;
       min-height: calc(100vh - 120px);
-      padding: 2rem 0;
+      padding: 2rem 1rem;
     }
 
     .auth-container {
       display: flex;
       background-color: var(--card-bg);
       border-radius: 16px;
-      box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
+      border: 1px solid var(--border);
+      box-shadow: 0 18px 44px rgba(2, 6, 23, 0.46);
       overflow: hidden;
       max-width: 900px;
       width: 90%;
@@ -77,10 +83,9 @@
     .form-container {
       width: 100%;
       max-width: 360px;
-      background-color: #1f1f1f;
+      background-color: transparent;
       border-radius: 12px;
-      padding: 2rem;
-      box-shadow: 0 0 15px rgba(0, 0, 0, 0.4);
+      padding: 0;
       position: absolute;
       top: 50%;
       left: 50%;
@@ -99,7 +104,15 @@
 
     .form-container h2 {
       text-align: center;
-      margin-bottom: 1rem;
+      margin: 0 0 0.35rem 0;
+      font-size: 1.65rem;
+    }
+
+    .form-lede {
+      margin: 0 0 1.2rem 0;
+      text-align: center;
+      color: var(--muted);
+      line-height: 1.45;
     }
 
     form {
@@ -110,10 +123,10 @@
     input[type="text"],
     input[type="email"],
     input[type="password"] {
-      background-color: #2c2c2c;
+      background-color: rgba(15, 23, 42, 0.92);
       color: #fff;
-      border: 1px solid #444;
-      border-radius: 6px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
       padding: 0.75rem;
       margin-bottom: 1rem;
     }
@@ -125,6 +138,8 @@
     .radio-group {
       margin-bottom: 1rem;
       font-size: 0.9rem;
+      line-height: 1.5;
+      color: #cbd5e1;
     }
 
     button {
@@ -155,6 +170,7 @@
       margin-top: 1rem;
       text-align: center;
       font-size: 0.9rem;
+      color: var(--muted);
     }
 
     .toggle-link a {
@@ -165,6 +181,59 @@
     }
 
     .toggle-link a:hover { text-decoration: underline; }
+
+    .auth-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 0.85rem;
+      padding: 0.35rem 0.65rem;
+      border-radius: 999px;
+      border: 1px solid rgba(147, 197, 253, 0.28);
+      background: rgba(30, 64, 175, 0.18);
+      color: #bfdbfe;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    body.compact-auth .auth-page {
+      min-height: 100vh;
+      padding: 1rem;
+    }
+
+    body.compact-auth .auth-container {
+      width: min(100%, 420px);
+      min-height: 0;
+      border-radius: 18px;
+    }
+
+    body.compact-auth .form-section {
+      padding: 1.4rem;
+    }
+
+    body.compact-auth .form-container {
+      max-width: 100%;
+      position: relative;
+      top: auto;
+      left: auto;
+      transform: none;
+      opacity: 0;
+    }
+
+    body.compact-auth .form-container.active {
+      transform: none;
+    }
+
+    body.compact-auth .welcome-section,
+    body.compact-auth .navbar {
+      display: none;
+    }
+
+    body.compact-auth .auth-page[data-compact-auth="true"] .form-section {
+      align-items: stretch;
+    }
 
     @keyframes fadeSlideIn {
       0% { opacity: 0; transform: translate(-50%, -45%) scale(0.98); }
@@ -198,7 +267,8 @@
     }
   </style>
 </head>
-<body class="has-navbar">
+<body class="{% if not compact_auth %}has-navbar{% endif %}{% if compact_auth %} compact-auth{% endif %}">
+  {% if not compact_auth %}
   <header class="navbar">
     <div class="navbar-container">
       <div class="logo">
@@ -222,8 +292,9 @@
       </div>
     </div>
   </header>
+  {% endif %}
 
-  <main class="auth-page">
+  <main class="auth-page" data-compact-auth="{{ 'true' if compact_auth else 'false' }}">
     <div class="auth-container">
       <div class="welcome-section">
         <h1>Welcome to Cite Unlocker</h1>
@@ -232,7 +303,17 @@
 
       <div class="form-section">
         <div class="form-container active" id="login-container">
+          {% if compact_auth %}
+          <div class="auth-badge">Extension Sign In</div>
+          {% endif %}
           <h2>Log In</h2>
+          <p class="form-lede">
+            {% if compact_auth %}
+            Sign in to finish secure extension access.
+            {% else %}
+            Continue into your Writior workspace.
+            {% endif %}
+          </p>
           <form id="login-form">
             <input type="email" id="login-email" placeholder="Email" required />
             <input type="password" id="login-password" placeholder="Password" required />
@@ -243,7 +324,17 @@
         </div>
 
         <div class="form-container" id="signup-container">
+          {% if compact_auth %}
+          <div class="auth-badge">Extension Sign Up</div>
+          {% endif %}
           <h2>Create Account</h2>
+          <p class="form-lede">
+            {% if compact_auth %}
+            Create an account, then continue back to the extension.
+            {% else %}
+            Start your Writior account with the essentials.
+            {% endif %}
+          </p>
           <form id="signup-form">
             <input type="text" id="signup-name" placeholder="Full Name" required />
             <input type="email" id="signup-email" placeholder="Email" required />
@@ -270,6 +361,7 @@
     const nextPath = {{ next_path | tojson }};
     const authSource = {{ auth_source | tojson }};
     const authAttempt = {{ auth_attempt | tojson }};
+    const compactAuth = {{ compact_auth | tojson }};
     const loginContainer = document.getElementById("login-container");
     const signupContainer = document.getElementById("signup-container");
 
@@ -322,6 +414,11 @@
       return payload?.data?.attempt_id || authAttempt;
     }
 
+    function redirectAfterExtensionSuccess(completedAttempt) {
+      const redirectPath = `/auth/handoff?attempt=${encodeURIComponent(completedAttempt)}`;
+      window.location.replace(redirectPath);
+    }
+
     document.getElementById("signup-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       signupMsg.textContent = "";
@@ -349,8 +446,11 @@
           const mapped = window.webUnlockerUI?.mapApiError?.(data) || { message: data?.detail || data?.message || "Signup failed" };
           throw new Error(mapped.message);
         }
-        showInlineMessage(signupMsg, "Signup successful. Check your email to confirm.");
-        toast?.show({ type: "success", message: "Account created. Please verify your email." });
+        const signupMessage = compactAuth
+          ? "Account created. Verify your email, then sign in to finish extension access."
+          : "Signup successful. Check your email to confirm.";
+        showInlineMessage(signupMsg, signupMessage);
+        toast?.show({ type: "success", message: signupMessage });
       } catch (err) {
         showInlineMessage(signupMsg, err.message || "Signup failed", true);
       }
@@ -383,17 +483,17 @@
         const successMessage = window.webUnlockerUI?.COPY?.success?.LOGIN_SUCCESS || "Signed in successfully.";
         showInlineMessage(loginMsg, successMessage);
         toast?.show({ type: "success", message: successMessage });
-        let redirectPath = nextPath;
         if (authSource === "extension" && authAttempt) {
           const completedAttempt = await completeExtensionAuthAttempt(data?.session || null);
           if (!completedAttempt) {
             throw new Error("Failed to complete extension sign-in attempt.");
           }
-          redirectPath = `/auth/handoff?attempt=${encodeURIComponent(completedAttempt)}`;
+          redirectAfterExtensionSuccess(completedAttempt);
+          return;
         }
 
         setTimeout(() => {
-          window.location.href = redirectPath;
+          window.location.href = nextPath || "/dashboard";
         }, 450);
       } catch (err) {
         showInlineMessage(loginMsg, err.message || "Login failed", true);
@@ -407,6 +507,8 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="/static/js/ui_feedback.js"></script>
   <script src="/static/js/auth.js"></script>
+  {% if not compact_auth %}
   <script src="/static/js/nav.js"></script>
+  {% endif %}
 </body>
 </html>

@@ -182,6 +182,12 @@ class ExtensionService:
                     "landing_path": "/auth/handoff",
                     "preferred_destination": "/editor",
                 },
+                "routes": {
+                    "dashboard_path": "/dashboard",
+                    "dashboard_url": f"{self.settings.canonical_app_origin}/dashboard",
+                    "editor_path": "/editor",
+                    "editor_url": f"{self.settings.canonical_app_origin}/editor",
+                },
             },
             "taxonomy": {
                 "recent_projects": projects[:8],

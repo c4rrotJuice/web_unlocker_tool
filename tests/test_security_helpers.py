@@ -57,7 +57,11 @@ def test_route_classifier_is_authoritative_for_mounted_v2_routes():
     classifier = get_route_classifier()
 
     assert classifier.classify("/api/public-config") == RouteAccess.PUBLIC
+    assert classifier.classify("/dashboard") == RouteAccess.AUTH_REQUIRED
+    assert classifier.classify("/projects/project-123") == RouteAccess.AUTH_REQUIRED
     assert classifier.classify("/api/me") == RouteAccess.AUTH_REQUIRED
+    assert classifier.classify("/api/projects") == RouteAccess.AUTH_REQUIRED
+    assert classifier.classify("/api/docs/doc-1") == RouteAccess.AUTH_REQUIRED
     assert classifier.classify("/api/research/status") == RouteAccess.PUBLIC
     assert classifier.classify("/api/workspace/status") == RouteAccess.PUBLIC
     assert classifier.classify("/api/unknown") == RouteAccess.PUBLIC
@@ -76,6 +80,7 @@ def test_redirect_predicates_cover_protocol_relative_full_url_backslash_and_vali
     assert is_safe_redirect("//evil.com") is False
     assert is_safe_redirect("https://evil.com") is False
     assert is_safe_redirect("\\evil.com") is False
+    assert is_safe_redirect("javascript:alert(1)") is False
     assert is_safe_redirect("/editor") is True
 
 

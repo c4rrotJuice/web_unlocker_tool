@@ -54,6 +54,18 @@ class SignupRequest(BaseModel):
         return normalized
 
 
+class AuthSessionCreateRequest(BaseModel):
+    access_token: str
+
+    @field_validator("access_token")
+    @classmethod
+    def normalize_access_token(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("access_token must not be empty.")
+        return normalized
+
+
 class ProfilePatchRequest(BaseModel):
     display_name: str | None = Field(default=None)
     use_case: str | None = Field(default=None)

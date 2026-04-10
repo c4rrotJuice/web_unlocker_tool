@@ -17,6 +17,7 @@ from app.logging_utils import clear_request_context, configure_logging, set_requ
 
 
 logger = logging.getLogger(__name__)
+SESSION_COOKIE_NAME = "writior_session"
 
 
 class RouteAccess(str, Enum):
@@ -34,11 +35,12 @@ class RateLimitPolicy:
 
 class RouteClassifier:
     def __init__(self) -> None:
-        self._rules = {
+        self._exact_rules = {
             "/healthz": RouteAccess.PUBLIC,
             "/status": RouteAccess.PUBLIC,
             "/api/public-config": RouteAccess.PUBLIC,
             "/api/auth/signup": RouteAccess.PUBLIC,
+            "/api/auth/session": RouteAccess.PUBLIC,
             "/api/identity/status": RouteAccess.PUBLIC,
             "/api/billing/status": RouteAccess.PUBLIC,
             "/api/unlock/status": RouteAccess.PUBLIC,
@@ -46,6 +48,16 @@ class RouteClassifier:
             "/api/workspace/status": RouteAccess.PUBLIC,
             "/api/extension/status": RouteAccess.PUBLIC,
             "/api/insights/status": RouteAccess.PUBLIC,
+            "/": RouteAccess.PUBLIC,
+            "/auth": RouteAccess.PUBLIC,
+            "/pricing": RouteAccess.PUBLIC,
+            "/pricing/success": RouteAccess.PUBLIC,
+            "/auth/handoff": RouteAccess.PUBLIC,
+            "/dashboard": RouteAccess.AUTH_REQUIRED,
+            "/projects": RouteAccess.AUTH_REQUIRED,
+            "/research": RouteAccess.AUTH_REQUIRED,
+            "/editor": RouteAccess.AUTH_REQUIRED,
+            "/insights": RouteAccess.AUTH_REQUIRED,
             "/api/me": RouteAccess.AUTH_REQUIRED,
             "/api/profile": RouteAccess.AUTH_REQUIRED,
             "/api/preferences": RouteAccess.AUTH_REQUIRED,
@@ -56,9 +68,29 @@ class RouteClassifier:
             "/api/identity/account": RouteAccess.AUTH_REQUIRED,
             "/api/identity/capabilities": RouteAccess.AUTH_REQUIRED,
         }
+        self._prefix_rules = (
+            ("/projects/", RouteAccess.AUTH_REQUIRED),
+            ("/api/projects", RouteAccess.AUTH_REQUIRED),
+            ("/api/tags", RouteAccess.AUTH_REQUIRED),
+            ("/api/sources", RouteAccess.AUTH_REQUIRED),
+            ("/api/citations", RouteAccess.AUTH_REQUIRED),
+            ("/api/quotes", RouteAccess.AUTH_REQUIRED),
+            ("/api/notes", RouteAccess.AUTH_REQUIRED),
+            ("/api/research/", RouteAccess.AUTH_REQUIRED),
+            ("/api/citation-templates", RouteAccess.AUTH_REQUIRED),
+            ("/api/docs", RouteAccess.AUTH_REQUIRED),
+            ("/api/editor/access", RouteAccess.AUTH_REQUIRED),
+            ("/api/activity", RouteAccess.AUTH_REQUIRED),
+            ("/api/extension/", RouteAccess.AUTH_REQUIRED),
+        )
 
     def classify(self, path: str) -> RouteAccess:
-        return self._rules.get(path, RouteAccess.PUBLIC)
+        if path in self._exact_rules:
+            return self._exact_rules[path]
+        for prefix, access in self._prefix_rules:
+            if path.startswith(prefix):
+                return access
+        return RouteAccess.PUBLIC
 
 
 def get_route_classifier() -> RouteClassifier:
@@ -92,6 +124,29 @@ def is_safe_redirect(path: str | None) -> bool:
         return True
     except UnsafeRedirectError:
         return False
+
+
+def set_session_cookie(response, token: str, settings: Settings | None = None) -> None:
+    settings = settings or get_settings()
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=settings.env not in {"dev", "test"},
+        samesite="lax",
+        path="/",
+    )
+
+
+def clear_session_cookie(response, settings: Settings | None = None) -> None:
+    settings = settings or get_settings()
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        httponly=True,
+        secure=settings.env not in {"dev", "test"},
+        samesite="lax",
+        path="/",
+    )
 
 
 def resolve_client_ip(request: Request, settings: Settings | None = None) -> str:

@@ -13,9 +13,8 @@ from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 from fastapi import Request
 from supabase import create_client
 
-from app.core.auth import RequestAuthContext
+from app.core.auth import RequestAuthContext, resolve_request_access_state
 from app.core.config import Settings, get_settings
-from app.core.entitlements import capability_state_from_account_state
 from app.core.errors import (
     AppError,
     InvalidTokenError,
@@ -150,14 +149,15 @@ class ExtensionService:
         return await self.repository.delete_expired_handoff_attempts()
 
     async def build_access_context(self, request: Request, auth_context: RequestAuthContext) -> ExtensionAccessContext:
-        account_state = await self.identity_service.ensure_account_bootstrapped(auth_context)
-        capability_state = capability_state_from_account_state(account_state)
-        request.state.auth_context = auth_context
-        request.state.capability_state = capability_state
+        enriched = await resolve_request_access_state(
+            request,
+            auth_context,
+            identity_service=self.identity_service,
+        )
         return ExtensionAccessContext(
-            auth_context=auth_context,
-            account_state=account_state,
-            capability_state=capability_state,
+            auth_context=enriched,
+            account_state=enriched.account_state,
+            capability_state=enriched.capability_state,
         )
 
     async def bootstrap(self, access: ExtensionAccessContext) -> dict[str, object]:

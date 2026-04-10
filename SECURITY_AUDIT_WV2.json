@@ -1,0 +1,248 @@
+{
+  "summary": {
+    "overall_risk_rating": "high",
+    "confirmed_vulnerabilities": 5,
+    "likely_vulnerabilities": 2,
+    "compliant_or_verified_safe_categories": 10,
+    "top_5_urgent_risks": [
+      "Authenticated shell pages are publicly renderable and rely on client-side auth redirects only.",
+      "Web auth stores Supabase session tokens in browser localStorage through default supabase-js persistence.",
+      "Extension session tokens are persisted in chrome.storage.local instead of remaining background-only.",
+      "Extension logout does not revoke the underlying Supabase session or refresh token.",
+      "Auth-adjacent signup and handoff flows lack robust shared rate limiting."
+    ]
+  },
+  "findings": [
+    {
+      "id": "SEC-001",
+      "title": "Require server-side auth on authenticated shell pages",
+      "category": "frontend-only route protection",
+      "status": "confirmed",
+      "severity": "critical",
+      "confidence": "high",
+      "files": [
+        "app/routes/shell.py",
+        "app/static/js/app_shell/boot.js",
+        "tests/test_phase7_frontend_shell.py"
+      ],
+      "routes": [
+        "/dashboard",
+        "/projects",
+        "/projects/{project_id}",
+        "/research",
+        "/editor",
+        "/insights"
+      ],
+      "evidence": [
+        "app/routes/shell.py:75-157 renders all authenticated shell pages without an auth dependency",
+        "app/static/js/app_shell/boot.js:9-38 handles signed-out state client-side after page render",
+        "tests/test_phase7_frontend_shell.py:84-97 currently asserts 200 for /dashboard and /editor"
+      ],
+      "exploit_path": "Any unauthenticated client can request the protected shell routes directly and receive rendered HTML; only the browser runtime later decides to redirect.",
+      "fix_direction": "Add server-side auth enforcement before rendering authenticated shell pages and update the shell tests to expect protected behavior.",
+      "priority": "P0"
+    },
+    {
+      "id": "SEC-002",
+      "title": "Stop persisting web auth tokens in localStorage",
+      "category": "unsafe browser token storage",
+      "status": "confirmed",
+      "severity": "high",
+      "confidence": "high",
+      "files": [
+        "app/static/js/auth.js",
+        "app/templates/auth.html"
+      ],
+      "routes": [
+        "/auth"
+      ],
+      "evidence": [
+        "app/static/js/auth.js:82-92 creates supabase-js client with default storage options",
+        "app/templates/auth.html:466-480 signs in with Supabase JS and immediately uses the returned session in the browser"
+      ],
+      "exploit_path": "A web XSS bug or malicious extension with page access can read the persisted Supabase session from localStorage and replay bearer/refresh tokens.",
+      "fix_direction": "Replace default browser persistence with a safer server-managed or non-localStorage session model.",
+      "priority": "P0"
+    },
+    {
+      "id": "SEC-003",
+      "title": "Remove extension session tokens from shared extension storage",
+      "category": "unsafe extension token storage",
+      "status": "confirmed",
+      "severity": "high",
+      "confidence": "medium",
+      "files": [
+        "extension/background/auth/session_store.ts"
+      ],
+      "routes": [],
+      "evidence": [
+        "extension/background/auth/session_store.ts:18-42 reads and writes the normalized session, including refresh token, to chrome.storage.local"
+      ],
+      "exploit_path": "Because tokens live in shared extension storage, session authority is no longer confined to the background worker and can be accessed or overwritten by other privileged extension surfaces.",
+      "fix_direction": "Keep refresh-capable credentials in a background-only custody model rather than chrome.storage.local.",
+      "priority": "P1"
+    },
+    {
+      "id": "SEC-004",
+      "title": "Revoke Supabase sessions on extension logout",
+      "category": "logout invalidation",
+      "status": "confirmed",
+      "severity": "high",
+      "confidence": "high",
+      "files": [
+        "extension/background/handlers/auth_handler.ts",
+        "extension/background/auth/session_manager.ts"
+      ],
+      "routes": [],
+      "evidence": [
+        "extension/background/handlers/auth_handler.ts:97-101 only clears local state on logout",
+        "extension/background/auth/session_manager.ts:34-38 only removes local storage/alarm state"
+      ],
+      "exploit_path": "If the refresh token was previously copied, the attacker can continue refreshing the session after the user clicks Sign Out in the extension because server-side session semantics were never invalidated.",
+      "fix_direction": "Call Supabase sign-out/revocation during extension logout and verify the old refresh token no longer works.",
+      "priority": "P1"
+    },
+    {
+      "id": "SEC-005",
+      "title": "Throttle signup and harden auth-sensitive rate limiting",
+      "category": "missing rate limiting",
+      "status": "confirmed",
+      "severity": "high",
+      "confidence": "medium",
+      "files": [
+        "app/modules/identity/routes.py",
+        "app/modules/extension/service.py",
+        "app/core/security.py"
+      ],
+      "routes": [
+        "/api/auth/signup",
+        "/api/auth/handoff/attempts",
+        "/api/auth/handoff/exchange",
+        "/api/auth/handoff/refresh"
+      ],
+      "evidence": [
+        "app/modules/identity/routes.py:37-39 exposes signup with no rate-limit dependency",
+        "app/modules/extension/service.py:245-359 and 529-546 rate-limit auth-sensitive flows only through app.state.rate_limiter",
+        "app/core/security.py:92-151 implements an in-memory limiter only"
+      ],
+      "exploit_path": "Bots can hammer signup directly, and distributed requests can bypass in-memory per-process counters on handoff/auth-sensitive flows by spreading across workers.",
+      "fix_direction": "Attach explicit auth-sensitive rate limiting to signup and move handoff throttling onto shared infrastructure.",
+      "priority": "P1"
+    },
+    {
+      "id": "SEC-006",
+      "title": "Maintain explicit-origin CORS",
+      "category": "cors",
+      "status": "compliant",
+      "severity": "none",
+      "confidence": "high",
+      "files": [
+        "app/core/config.py",
+        "app/core/security.py"
+      ],
+      "routes": [],
+      "evidence": [
+        "app/core/config.py:80-86 rejects wildcard CORS in staging/prod",
+        "app/core/security.py:153-165 installs CORSMiddleware with configured origins only"
+      ],
+      "exploit_path": "N/A",
+      "fix_direction": "Keep the current explicit-origin model.",
+      "priority": "P3"
+    },
+    {
+      "id": "SEC-007",
+      "title": "Preserve ownership-scoped entity access",
+      "category": "idor",
+      "status": "compliant",
+      "severity": "none",
+      "confidence": "medium",
+      "files": [
+        "app/modules/common/ownership.py",
+        "app/modules/common/relation_validation.py",
+        "app/modules/workspace/service.py",
+        "tests/test_phase4_workflow_services.py"
+      ],
+      "routes": [
+        "/api/notes/*",
+        "/api/quotes/*",
+        "/api/docs/*"
+      ],
+      "evidence": [
+        "app/modules/common/ownership.py:25-66 loads owned document/note/quote rows by user_id",
+        "app/modules/common/relation_validation.py:92-143 validates owned relation ids before replace-all RPCs",
+        "tests/test_phase4_workflow_services.py covers multiple foreign-reference rejection paths"
+      ],
+      "exploit_path": "N/A",
+      "fix_direction": "Keep centralized ownership validation and relation-RPC tests.",
+      "priority": "P3"
+    },
+    {
+      "id": "SEC-008",
+      "title": "Keep redirect validation strict",
+      "category": "open redirect",
+      "status": "compliant",
+      "severity": "none",
+      "confidence": "high",
+      "files": [
+        "app/core/security.py",
+        "app/routes/shell.py",
+        "app/modules/extension/service.py",
+        "tests/test_security_helpers.py"
+      ],
+      "routes": [
+        "/auth",
+        "/api/auth/handoff",
+        "/api/auth/handoff/exchange"
+      ],
+      "evidence": [
+        "app/core/security.py:57-77 rejects external and malformed redirect paths",
+        "app/modules/extension/service.py:216-240 blocks nested redirects and non-editor/dashboard targets",
+        "tests/test_security_helpers.py:67-79 covers safe/unsafe redirect cases"
+      ],
+      "exploit_path": "N/A",
+      "fix_direction": "Reuse the same validators for future callback flows.",
+      "priority": "P3"
+    },
+    {
+      "id": "SEC-009",
+      "title": "Keep webhook verification mandatory",
+      "category": "webhook integrity",
+      "status": "compliant",
+      "severity": "none",
+      "confidence": "high",
+      "files": [
+        "app/modules/billing/service.py"
+      ],
+      "routes": [
+        "/api/webhooks/paddle"
+      ],
+      "evidence": [
+        "app/modules/billing/service.py:364-385 verifies Paddle signatures before payload processing"
+      ],
+      "exploit_path": "N/A",
+      "fix_direction": "Preserve the current signature-first processing order.",
+      "priority": "P3"
+    },
+    {
+      "id": "SEC-010",
+      "title": "Dependency review found no critical/high JS advisories",
+      "category": "dependency risk",
+      "status": "compliant",
+      "severity": "none",
+      "confidence": "medium",
+      "files": [
+        "package.json",
+        "package-lock.json",
+        "app/requirements.txt"
+      ],
+      "routes": [],
+      "evidence": [
+        "npm audit --omit=dev returned zero vulnerabilities",
+        "root JS dependency set is limited to dev-only TypeScript"
+      ],
+      "exploit_path": "N/A",
+      "fix_direction": "Add Python advisory scanning in CI to strengthen this coverage.",
+      "priority": "P2"
+    }
+  ]
+}

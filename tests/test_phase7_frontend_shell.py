@@ -9,6 +9,12 @@ from tests.conftest import async_test_client
 
 class DummyAuth:
     def get_user(self, token):
+        if token == "valid-token":
+            return type(
+                "DummyResponse",
+                (),
+                {"user": type("DummyUser", (), {"id": "user-1", "email": "user@example.com", "aud": "authenticated", "role": "authenticated"})()},
+            )
         return type("DummyResponse", (), {"user": None})
 
 
@@ -58,12 +64,6 @@ async def test_public_config_exposes_canonical_boot_keys(monkeypatch):
     ("path", "title_fragment", "page_id"),
     [
         ("/", "Home", "home"),
-        ("/dashboard", "Dashboard", "dashboard"),
-        ("/projects", "Projects", "projects"),
-        ("/projects/project-123", "Project", "projects"),
-        ("/research?tab=quotes&selected=quote-1", "Research Explorer", "research"),
-        ("/editor", "Documents", "editor"),
-        ("/insights", "Insights", "insights"),
     ],
 )
 async def test_shell_routes_render_minimal_boot_metadata(monkeypatch, path, title_fragment, page_id):
@@ -86,16 +86,12 @@ async def test_route_surface_keeps_expected_public_and_shell_entries(monkeypatch
     async with async_test_client(main.app) as client:
         auth = await client.get("/auth")
         compact_auth = await client.get("/auth?source=extension&attempt=attempt-1&next=/dashboard")
-        dashboard = await client.get("/dashboard")
-        editor = await client.get("/editor")
         pricing = await client.get("/pricing", follow_redirects=False)
         pricing_success = await client.get("/pricing/success", follow_redirects=False)
         handoff = await client.get("/auth/handoff?code=handoff-1", follow_redirects=False)
 
     assert auth.status_code == 200
     assert compact_auth.status_code == 200
-    assert dashboard.status_code == 200
-    assert editor.status_code == 200
     assert pricing.status_code == 307
     assert pricing.headers["location"] == "/static/pricing.html"
     assert pricing_success.status_code == 307
@@ -130,9 +126,11 @@ def test_shell_template_exposes_sidebar_controls_for_desktop_and_mobile():
 
 
 @pytest.mark.anyio
-async def test_editor_route_uses_minimal_shell_header(monkeypatch):
+async def test_editor_route_uses_minimal_shell_header_when_authenticated(monkeypatch):
     main = _load_main(monkeypatch)
     async with async_test_client(main.app) as client:
+        session_response = await client.post("/api/auth/session", json={"access_token": "valid-token"})
+        assert session_response.status_code == 200
         response = await client.get("/editor")
 
     assert response.status_code == 200
@@ -198,9 +196,13 @@ def test_phase7_runtime_avoids_legacy_cookie_and_dashboard_fetch_paths():
     handoff_template = open("app/templates/auth_handoff.html", encoding="utf-8").read()
 
     assert "WRITIOR_SUPABASE_URL" in auth_source
+    assert "persistSession: false" in auth_source
+    assert "/api/auth/session" in auth_source
     assert "/api/insights/monthly-summary" in dashboard_source
     assert "compact-auth" in auth_template
+    assert "persistWebSession" in auth_template
     assert "Finalizing extension access and closing this window" in handoff_template
+    assert "AUTH_RESTORE" not in handoff_template
 
 
 def test_projects_surface_requests_explicit_limited_project_list():

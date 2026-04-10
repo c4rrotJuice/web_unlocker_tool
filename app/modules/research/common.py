@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, Request
 
-from app.core.auth import RequestAuthContext
+from app.core.auth import RequestAuthContext, resolve_request_access_state
 from app.core.entitlements import CapabilityState
 from app.modules.identity.service import IdentityService
 from app.services.supabase_rest import SupabaseRestRepository, response_error_code, response_error_text, response_json
@@ -106,13 +106,15 @@ async def load_capability_state_from_request(
     *,
     identity_service: IdentityService,
 ) -> ResearchAccessContext:
-    account_state, capability_state = await identity_service.resolve_access_state(auth_context)
-    request.state.auth_context = auth_context.with_account_state(account_state).with_capability_state(capability_state)
-    request.state.capability_state = capability_state
+    enriched = await resolve_request_access_state(
+        request,
+        auth_context,
+        identity_service=identity_service,
+    )
     return ResearchAccessContext(
-        user_id=auth_context.user_id,
-        access_token=auth_context.access_token,
-        capability_state=capability_state,
+        user_id=enriched.user_id,
+        access_token=enriched.access_token,
+        capability_state=enriched.capability_state,
     )
 
 

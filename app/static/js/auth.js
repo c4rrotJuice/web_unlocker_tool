@@ -6,6 +6,20 @@
   let resumeRefreshBound = false;
   let protectedRequestObserver = null;
   let cachedSession = null;
+  const inMemoryStorage = (() => {
+    const values = new Map();
+    return {
+      getItem(key) {
+        return values.has(key) ? values.get(key) : null;
+      },
+      setItem(key, value) {
+        values.set(key, String(value));
+      },
+      removeItem(key) {
+        values.delete(key);
+      },
+    };
+  })();
   const runtimeDebugEnabled = !!window.__WRITIOR_RUNTIME_DEBUG__;
   const runtimeDebugCounts = {
     clientCreated: 0,
@@ -88,7 +102,14 @@
         ) {
           window.WRITIOR_SUPABASE_URL = config.url;
           window.WRITIOR_SUPABASE_ANON_KEY = config.key;
-          supabaseClient = window.supabase.createClient(config.url, config.key);
+          supabaseClient = window.supabase.createClient(config.url, config.key, {
+            auth: {
+              persistSession: false,
+              autoRefreshToken: false,
+              detectSessionInUrl: false,
+              storage: inMemoryStorage,
+            },
+          });
           runtimeDebugCounts.clientCreated += 1;
           debugAuth("client_created", { count: runtimeDebugCounts.clientCreated });
         }
@@ -137,41 +158,16 @@
         });
         return session;
       }
-      if (!refreshInFlight) {
-        refreshInFlight = client.auth.refreshSession().finally(() => {
-          refreshInFlight = null;
-        });
-      }
-      const refreshed = await refreshInFlight.catch((error) => ({ error }));
-      const refreshedSession = refreshed?.data?.session || null;
-      if (refreshedSession?.access_token) {
-        rememberSession(refreshedSession);
-        debugAuth("get_session_exit", {
-          count: runtimeDebugCounts.getSessionCalls,
-          cached: !!cachedSession?.access_token,
-          refreshed: true,
-        });
-        return refreshed;
-      }
-      if (refreshed?.error) {
-        clearSessionCache();
-        debugAuth("get_session_exit", {
-          count: runtimeDebugCounts.getSessionCalls,
-          cached: false,
-          refreshed: false,
-          error: refreshed.error?.message || "refresh_failed",
-        });
-        return {
-          data: { session: null },
-          error: refreshed.error,
-        };
-      }
+      clearSessionCache();
       debugAuth("get_session_exit", {
         count: runtimeDebugCounts.getSessionCalls,
-        cached: !!cachedSession?.access_token,
+        cached: false,
         refreshed: false,
       });
-      return session;
+      return {
+        data: { session: null },
+        error: new Error("Missing bearer token."),
+      };
     })().finally(() => {
       sessionReadInFlight = null;
     });
@@ -186,9 +182,68 @@
         error: new Error("Supabase client unavailable"),
       };
     }
-    const result = await client.auth.setSession(tokens);
+    const result = await client.auth.setSession({
+      access_token: tokens?.access_token || "",
+      refresh_token: tokens?.refresh_token || "",
+    });
     rememberSession(result?.data?.session || null);
     return result;
+  }
+
+  async function loadSessionFromServer() {
+    try {
+      const response = await fetch("/api/auth/session", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        clearSessionCache();
+        return { data: { session: null }, error: new Error("Missing bearer token.") };
+      }
+      const payload = await response.json().catch(() => ({}));
+      const accessToken = payload?.data?.access_token || null;
+      if (!accessToken) {
+        clearSessionCache();
+        return { data: { session: null }, error: new Error("Missing bearer token.") };
+      }
+      const session = {
+        access_token: accessToken,
+        refresh_token: null,
+        token_type: "bearer",
+      };
+      rememberSession(session);
+      return { data: { session }, error: null };
+    } catch (_error) {
+      clearSessionCache();
+      return { data: { session: null }, error: new Error("Missing bearer token.") };
+    }
+  }
+
+  async function persistWebSession(accessToken) {
+    const response = await fetch("/api/auth/session", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      credentials: "same-origin",
+      body: JSON.stringify({ access_token: accessToken }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error?.message || payload?.detail || payload?.message || "Failed to persist web session.");
+    }
+    return payload;
+  }
+
+  async function clearWebSession() {
+    clearSessionCache();
+    await fetch("/api/auth/session", {
+      method: "DELETE",
+      headers: { Accept: "application/json" },
+      credentials: "same-origin",
+    }).catch(() => {});
   }
 
   async function onAuthStateChange(callback) {
@@ -252,7 +307,10 @@
       timeoutMs,
       cached: !!cachedSession?.access_token,
     });
-    return getSession();
+    if (cachedSession?.access_token) {
+      return getSession();
+    }
+    return loadSessionFromServer();
   }
 
   function createAuthSessionError(code = "missing_credentials", message = null, details = {}) {
@@ -414,6 +472,8 @@
     ready: ensureSupabaseClient,
     getSession,
     setSession,
+    persistWebSession,
+    clearWebSession,
     onAuthStateChange,
     getAccessToken,
     waitForSessionReady,

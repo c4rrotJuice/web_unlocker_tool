@@ -11,6 +11,7 @@ from app.core.account_state import AccountState
 from app.core.config import Settings, get_settings
 from app.core.entitlements import CapabilityState
 from app.core.errors import ExpiredTokenError, InvalidTokenError, MalformedCredentialsError, MissingCredentialsError
+from app.core.security import SESSION_COOKIE_NAME
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,11 @@ def _safe_claims(user: Any) -> dict[str, object]:
     }
 
 
+def store_request_auth_context(request: Request, context: RequestAuthContext) -> RequestAuthContext:
+    request.state.auth_context = context
+    return context
+
+
 class SupabaseTokenVerifier:
     def __init__(self, settings: Settings):
         if not settings.supabase_url or not settings.supabase_anon_key:
@@ -92,5 +98,28 @@ async def require_request_auth_context(
     token = extract_bearer_token(authorization)
     verifier = get_token_verifier()
     context = verifier.verify(token)
-    request.state.auth_context = context
-    return context
+    return store_request_auth_context(request, context)
+
+
+async def require_request_auth_context_from_session_cookie(
+    request: Request,
+) -> RequestAuthContext:
+    session_token = request.cookies.get(SESSION_COOKIE_NAME)
+    if session_token is None or not session_token.strip():
+        raise MissingCredentialsError()
+    verifier = get_token_verifier()
+    context = verifier.verify(session_token.strip())
+    return store_request_auth_context(request, context)
+
+
+async def resolve_request_access_state(
+    request: Request,
+    auth_context: RequestAuthContext,
+    *,
+    identity_service,
+) -> RequestAuthContext:
+    account_state, capability_state = await identity_service.resolve_access_state(auth_context)
+    enriched = auth_context.with_account_state(account_state).with_capability_state(capability_state)
+    store_request_auth_context(request, enriched)
+    request.state.capability_state = capability_state
+    return enriched

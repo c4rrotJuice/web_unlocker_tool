@@ -29,6 +29,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (window.webUnlockerAuth?.client) {
         await window.webUnlockerAuth.client.auth.signOut().catch(() => {});
       }
+      if (window.webUnlockerAuth?.clearWebSession) {
+        await window.webUnlockerAuth.clearWebSession();
+      }
       toast?.show({ type: "success", message: window.webUnlockerUI?.COPY?.success?.LOGOUT_SUCCESS || "Signed out." });
       window.location.href = "/";
     });

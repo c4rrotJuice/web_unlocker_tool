@@ -106,9 +106,12 @@ async def test_protected_route_rejects_missing_bearer(monkeypatch):
     main = _load_main(monkeypatch, auth_impl=ValidAuth())
     async with async_test_client(main.app) as client:
         response = await client.get("/api/me")
+        projects_response = await client.get("/api/projects")
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "missing_credentials"
+    assert projects_response.status_code == 401
+    assert projects_response.json()["error"]["code"] == "missing_credentials"
 
 
 @pytest.mark.anyio
@@ -141,6 +144,8 @@ async def test_me_and_entitlements_return_canonical_envelopes(monkeypatch):
     async with async_test_client(main.app) as client:
         me_response = await client.get("/api/me", headers=headers)
         entitlement_response = await client.get("/api/entitlements/current", headers=headers)
+        session_response = await client.post("/api/auth/session", json={"access_token": "valid-token"})
+        current_session = await client.get("/api/auth/session")
 
     me_payload = me_response.json()
     entitlement_payload = entitlement_response.json()
@@ -153,6 +158,10 @@ async def test_me_and_entitlements_return_canonical_envelopes(monkeypatch):
     assert entitlement_response.status_code == 200
     assert entitlement_payload["data"]["entitlement"]["status"] == "grace_period"
     assert entitlement_payload["data"]["capabilities"]["tier"] == "standard"
+    assert session_response.status_code == 200
+    assert current_session.status_code == 200
+    assert current_session.json()["data"]["authenticated"] is True
+    assert current_session.json()["data"]["access_token"] == "valid-token"
 
 
 def test_request_auth_context_contract():

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
+from app.core.auth import require_request_auth_context_from_session_cookie
 from app.core.config import get_settings
-from app.core.security import validate_internal_redirect_path
+from app.core.errors import AppError
+from app.core.security import clear_session_cookie, validate_internal_redirect_path
 
 router = APIRouter(tags=["shell"])
 templates = Jinja2Templates(directory="app/templates")
@@ -30,6 +33,28 @@ def _shell_context(*, request: Request, page: str, title: str, nav_key: str, pag
             }
         ),
     }
+
+
+def _requested_next_path(request: Request) -> str:
+    raw_path = request.url.path
+    if request.url.query:
+        raw_path = f"{raw_path}?{request.url.query}"
+    return validate_internal_redirect_path(raw_path)
+
+
+def _auth_redirect(request: Request, *, clear_session: bool = False) -> RedirectResponse:
+    next_path = _requested_next_path(request)
+    response = RedirectResponse(url=f"/auth?{urlencode({'next': next_path})}", status_code=307)
+    if clear_session:
+        clear_session_cookie(response, settings)
+    return response
+
+
+async def _guard_shell_request(request: Request):
+    try:
+        return await require_request_auth_context_from_session_cookie(request)
+    except AppError:
+        return None
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -74,6 +99,8 @@ async def pricing_success():
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
+    if await _guard_shell_request(request) is None:
+        return _auth_redirect(request, clear_session=True)
     return templates.TemplateResponse(
         request,
         "app_dashboard.html",
@@ -83,6 +110,8 @@ async def dashboard(request: Request):
 
 @router.get("/projects", response_class=HTMLResponse)
 async def projects(request: Request):
+    if await _guard_shell_request(request) is None:
+        return _auth_redirect(request, clear_session=True)
     return templates.TemplateResponse(
         request,
         "app_projects.html",
@@ -92,6 +121,8 @@ async def projects(request: Request):
 
 @router.get("/projects/{project_id}", response_class=HTMLResponse)
 async def project_detail(request: Request, project_id: str):
+    if await _guard_shell_request(request) is None:
+        return _auth_redirect(request, clear_session=True)
     return templates.TemplateResponse(
         request,
         "app_projects.html",
@@ -107,6 +138,8 @@ async def project_detail(request: Request, project_id: str):
 
 @router.get("/research", response_class=HTMLResponse)
 async def research(request: Request):
+    if await _guard_shell_request(request) is None:
+        return _auth_redirect(request, clear_session=True)
     return templates.TemplateResponse(
         request,
         "app_research.html",
@@ -128,6 +161,8 @@ async def research(request: Request):
 
 @router.get("/editor", response_class=HTMLResponse)
 async def editor(request: Request):
+    if await _guard_shell_request(request) is None:
+        return _auth_redirect(request, clear_session=True)
     page_state = {
         "document_id": request.query_params.get("document_id") or "",
         "new_document": request.query_params.get("new") in {"1", "true", "yes"},
@@ -150,6 +185,8 @@ async def editor(request: Request):
 
 @router.get("/insights", response_class=HTMLResponse)
 async def insights(request: Request):
+    if await _guard_shell_request(request) is None:
+        return _auth_redirect(request, clear_session=True)
     return templates.TemplateResponse(
         request,
         "app_insights.html",

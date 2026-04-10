@@ -473,6 +473,10 @@
           throw new Error(error.message || "Login failed");
         }
 
+        if (data?.session?.access_token && window.webUnlockerAuth?.persistWebSession) {
+          await window.webUnlockerAuth.persistWebSession(data.session.access_token);
+        }
+
         if (data?.session?.access_token && window.webUnlockerAuth?.setSession) {
           await window.webUnlockerAuth.setSession({
             access_token: data.session.access_token,

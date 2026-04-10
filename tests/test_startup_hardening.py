@@ -89,6 +89,12 @@ class FakeExtensionRepository:
     async def delete_expired_handoff_attempts(self, *, cleanup_grace_window_minutes: int = 10):
         return 0
 
+    async def hit_auth_rate_limit(self, *, scope, identity, limit, window_seconds):
+        return True, max(limit - 1, 0)
+
+    async def record_revoked_access_token(self, *, access_token, user_id, expires_at):
+        return None
+
 
 class FakeRateLimiter:
     async def hit(self, _key, *, limit, window_seconds):

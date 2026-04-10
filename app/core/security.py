@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import Settings, get_settings
 from app.core.errors import RateLimitExceededError, UnsafeRedirectError
 from app.logging_utils import clear_request_context, configure_logging, set_request_context
+from app.services.supabase_rest import SupabaseRestRepository, response_json
 
 
 logger = logging.getLogger(__name__)
@@ -186,6 +187,66 @@ class InMemoryRateLimiter:
             remaining = max(limit - count, 0)
             retry_after = max(int(reset_at - now), 0)
             return count <= limit, retry_after if count > limit else remaining
+
+
+async def hit_shared_auth_rate_limit(
+    *,
+    scope: str,
+    identity: str,
+    limit: int,
+    window_seconds: int,
+    settings: Settings | None = None,
+) -> tuple[bool, int]:
+    settings = settings or get_settings()
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        if settings.env in {"prod", "staging"}:
+            return False, max(window_seconds, 1)
+        return True, max(limit - 1, 0)
+    repository = SupabaseRestRepository(
+        base_url=settings.supabase_url,
+        service_role_key=settings.supabase_service_role_key,
+    )
+    response = await repository.rpc(
+        "hit_auth_rate_limit",
+        json={
+            "p_scope": scope,
+            "p_identity": identity,
+            "p_limit": limit,
+            "p_window_seconds": window_seconds,
+        },
+        headers=repository.headers(),
+    )
+    payload = response_json(response)
+    row = payload[0] if isinstance(payload, list) and payload else payload
+    if not isinstance(row, dict):
+        return False, max(window_seconds, 1)
+    allowed = bool(row.get("allowed"))
+    retry_after = int(row.get("retry_after") or 0)
+    remaining = int(row.get("remaining") or 0)
+    return allowed, retry_after if not allowed else remaining
+
+
+async def enforce_shared_auth_sensitive_rate_limit(
+    request: Request,
+    *,
+    scope: str,
+    identity: str | None = None,
+    limit: int | None = None,
+    window_seconds: int | None = None,
+    settings: Settings | None = None,
+) -> None:
+    settings = settings or get_settings()
+    rate_limits = settings.rate_limits
+    identity_key = identity or f"ip:{resolve_client_ip(request, settings)}"
+    allowed, aux = await hit_shared_auth_rate_limit(
+        scope=f"auth_sensitive:{scope}",
+        identity=identity_key,
+        limit=limit or rate_limits.auth_sensitive_limit,
+        window_seconds=window_seconds or rate_limits.auth_sensitive_window_seconds,
+        settings=settings,
+    )
+    if not allowed:
+        raise RateLimitExceededError(retry_after_seconds=aux)
 
 
 def get_rate_limit_policies(settings: Settings | None = None) -> dict[str, RateLimitPolicy]:

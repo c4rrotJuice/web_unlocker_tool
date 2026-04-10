@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.core.security import hit_shared_auth_rate_limit
 from app.modules.research.common import first_row
 from app.services.supabase_rest import SupabaseRestRepository, response_error_code, response_json
 
@@ -32,6 +34,33 @@ class ExtensionRepository:
             headers=self.supabase_repo.headers(prefer="return=representation"),
         )
         return first_row(response_json(response))
+
+    async def hit_auth_rate_limit(
+        self,
+        *,
+        scope: str,
+        identity: str,
+        limit: int,
+        window_seconds: int,
+    ) -> tuple[bool, int]:
+        return await hit_shared_auth_rate_limit(
+            scope=scope,
+            identity=identity,
+            limit=limit,
+            window_seconds=window_seconds,
+        )
+
+    async def record_revoked_access_token(self, *, access_token: str, user_id: str, expires_at: str | None) -> None:
+        token_hash = hashlib.sha256(access_token.encode("utf-8")).hexdigest()
+        await self.supabase_repo.post(
+            "revoked_auth_tokens",
+            json={
+                "token_hash": token_hash,
+                "user_id": user_id,
+                "expires_at": expires_at,
+            },
+            headers=self.supabase_repo.headers(prefer="resolution=merge-duplicates,return=minimal"),
+        )
 
     async def create_handoff_attempt(
         self,

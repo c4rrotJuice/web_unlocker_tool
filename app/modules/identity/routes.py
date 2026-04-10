@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from app.core.auth import RequestAuthContext, get_token_verifier, require_request_auth_context, require_request_auth_context_from_session_cookie
 from app.core.config import get_settings
 from app.core.serialization import serialize_ok_envelope
-from app.core.security import clear_session_cookie, set_session_cookie
+from app.core.security import clear_session_cookie, enforce_shared_auth_sensitive_rate_limit, set_session_cookie
 from app.modules.identity.repo import IdentityRepository
 from app.modules.identity.schemas import AuthSessionCreateRequest, PreferencesPatchRequest, ProfilePatchRequest, SignupRequest
 from app.modules.identity.service import IdentityService
@@ -37,7 +37,10 @@ async def identity_status() -> dict[str, object]:
 
 
 @router.post("/api/auth/signup")
-async def signup(payload: SignupRequest) -> dict[str, object]:
+async def signup(request: Request, payload: SignupRequest) -> dict[str, object]:
+    await enforce_shared_auth_sensitive_rate_limit(request, scope="signup")
+    if payload.email:
+        await enforce_shared_auth_sensitive_rate_limit(request, scope="signup_email", identity=f"email:{payload.email.lower()}")
     return await service.signup(payload)
 
 

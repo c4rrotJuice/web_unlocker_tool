@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import base64
 import hmac
 import hashlib
 import json
@@ -246,9 +247,9 @@ class ExtensionService:
         return f"{normalized_path}{suffix}"
 
     async def _enforce_rate_limit(self, request: Request, *, scope: str, identity: str, limit: int, window_seconds: int) -> None:
-        limiter = request.app.state.rate_limiter
-        allowed, aux = await limiter.hit(
-            f"extension:{scope}:{identity}",
+        allowed, aux = await self.repository.hit_auth_rate_limit(
+            scope=f"extension:{scope}",
+            identity=identity,
             limit=limit,
             window_seconds=window_seconds,
         )
@@ -332,6 +333,20 @@ class ExtensionService:
         if created is None:
             raise ExtensionPersistenceError("Failed to issue handoff code.")
         return code, expires_at
+
+    def _access_token_expires_at(self, access_token: str) -> str | None:
+        try:
+            parts = access_token.split(".")
+            if len(parts) < 2:
+                return None
+            payload = parts[1] + "=" * (-len(parts[1]) % 4)
+            claims = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")).decode("utf-8"))
+            exp = claims.get("exp")
+            if not isinstance(exp, (int, float)):
+                return None
+            return datetime.fromtimestamp(exp, timezone.utc).isoformat()
+        except Exception:
+            return None
 
     async def issue_handoff(self, request: Request, access: ExtensionAccessContext, payload) -> dict[str, object]:
         await self._enforce_rate_limit(
@@ -587,6 +602,11 @@ class ExtensionService:
             sign_out(access_token, "global")
         except Exception as exc:
             raise HandoffLogoutFailedError() from exc
+        await self.repository.record_revoked_access_token(
+            access_token=access_token,
+            user_id=access.user_id,
+            expires_at=self._access_token_expires_at(access_token),
+        )
         return serialize_ok_envelope(
             {
                 "revoked": True,

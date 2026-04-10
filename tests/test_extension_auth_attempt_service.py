@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -20,6 +21,9 @@ class InMemoryExtensionRepository:
     def __init__(self):
         self.handoff_attempts: dict[str, dict[str, object]] = {}
         self.handoff_codes: dict[str, dict[str, object]] = {}
+        self.rate_limits: dict[tuple[str, str], int] = {}
+        self.rate_limit_decisions: list[tuple[bool, int]] = []
+        self.revoked_tokens: dict[str, dict[str, object]] = {}
         self._next_id = 0
 
     def _id(self) -> str:
@@ -113,6 +117,22 @@ class InMemoryExtensionRepository:
 
     async def delete_expired_handoff_attempts(self):
         return 0
+
+    async def hit_auth_rate_limit(self, *, scope, identity, limit, window_seconds):
+        if self.rate_limit_decisions:
+            return self.rate_limit_decisions.pop(0)
+        key = (scope, identity)
+        count = self.rate_limits.get(key, 0) + 1
+        self.rate_limits[key] = count
+        return count <= limit, max(limit - count, 0) if count <= limit else window_seconds
+
+    async def record_revoked_access_token(self, *, access_token, user_id, expires_at):
+        token_hash = hashlib.sha256(access_token.encode("utf-8")).hexdigest()
+        self.revoked_tokens[token_hash] = {
+            "token_hash": token_hash,
+            "user_id": user_id,
+            "expires_at": expires_at,
+        }
 
 
 class CleanupFailingExtensionRepository(InMemoryExtensionRepository):

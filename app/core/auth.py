@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Any
@@ -12,6 +13,7 @@ from app.core.config import Settings, get_settings
 from app.core.entitlements import CapabilityState
 from app.core.errors import ExpiredTokenError, InvalidTokenError, MalformedCredentialsError, MissingCredentialsError
 from app.core.security import SESSION_COOKIE_NAME
+from app.services.supabase_rest import SupabaseRestRepository, response_json
 
 
 @dataclass(frozen=True)
@@ -91,6 +93,32 @@ def get_token_verifier() -> SupabaseTokenVerifier:
     return SupabaseTokenVerifier(get_settings())
 
 
+async def is_access_token_revoked(token: str, settings: Settings | None = None) -> bool:
+    settings = settings or get_settings()
+    if settings.env in {"test", "dev"}:
+        return False
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        return False
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    repository = SupabaseRestRepository(
+        base_url=settings.supabase_url,
+        service_role_key=settings.supabase_service_role_key,
+    )
+    response = await repository.get(
+        "revoked_auth_tokens",
+        params={
+            "token_hash": f"eq.{token_hash}",
+            "select": "token_hash",
+            "limit": "1",
+        },
+        headers=repository.headers(include_content_type=False),
+    )
+    payload = response_json(response)
+    if isinstance(payload, list):
+        return bool(payload)
+    return isinstance(payload, dict) and bool(payload)
+
+
 async def require_request_auth_context(
     request: Request,
     authorization: str | None = Header(default=None),
@@ -98,6 +126,14 @@ async def require_request_auth_context(
     token = extract_bearer_token(authorization)
     verifier = get_token_verifier()
     context = verifier.verify(token)
+    try:
+        revoked = await is_access_token_revoked(token)
+    except Exception as exc:
+        if get_settings().env in {"prod", "staging"}:
+            raise InvalidTokenError("Token revocation status could not be verified.") from exc
+        revoked = False
+    if revoked:
+        raise InvalidTokenError("Token has been revoked.")
     return store_request_auth_context(request, context)
 
 
@@ -108,7 +144,16 @@ async def require_request_auth_context_from_session_cookie(
     if session_token is None or not session_token.strip():
         raise MissingCredentialsError()
     verifier = get_token_verifier()
-    context = verifier.verify(session_token.strip())
+    token = session_token.strip()
+    context = verifier.verify(token)
+    try:
+        revoked = await is_access_token_revoked(token)
+    except Exception as exc:
+        if get_settings().env in {"prod", "staging"}:
+            raise InvalidTokenError("Token revocation status could not be verified.") from exc
+        revoked = False
+    if revoked:
+        raise InvalidTokenError("Token has been revoked.")
     return store_request_auth_context(request, context)
 
 

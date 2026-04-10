@@ -109,7 +109,7 @@ def _load_identity(monkeypatch, repository):
     importlib.reload(core_config)
     core_config.get_settings.cache_clear()
     identity_routes.service.repository = repository
-    identity_routes.service.supabase_admin = DummySupabaseClient()
+    identity_routes.service._supabase_admin = DummySupabaseClient()
     return identity_routes, SignupRequest
 
 
@@ -124,7 +124,7 @@ async def test_signup_bootstraps_all_canonical_account_rows(monkeypatch):
         use_case="research",
     )
 
-    response = await identity_routes.signup(payload)
+    response = await identity_routes.service.signup(payload)
 
     assert response["ok"] is True
     assert response["data"]["user_id"] == "signup-user"

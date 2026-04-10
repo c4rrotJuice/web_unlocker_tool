@@ -1,6 +1,7 @@
 // GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { API_ORIGIN } from "../../shared/constants/endpoints.js";
 import { MESSAGE_NAMES } from "../../shared/constants/message_names.js";
+import { toPublicAuthState } from "../../shared/types/auth.js";
 import { createErrorResult, createOkResult, ERROR_CODES } from "../../shared/types/messages.js";
 import { createLogger } from "../../shared/utils/logger.js";
 import { createApiClient } from "../api/client.js";
@@ -94,7 +95,7 @@ export function createBackgroundRuntime(deps = {}) {
         return createOkResult({
             alive: true,
             messageTypes: Object.values(MESSAGE_NAMES),
-            auth: stateStore.getState(),
+            auth: toPublicAuthState(stateStore.getState()),
             citation: citationStateStore.getState(),
         }, reason);
     }

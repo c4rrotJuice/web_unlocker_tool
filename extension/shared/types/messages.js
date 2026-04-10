@@ -18,6 +18,7 @@ export const ERROR_CODES = Object.freeze({
     HANDOFF_ALREADY_USED: "handoff_already_used",
     HANDOFF_PAYLOAD_INVALID: "handoff_payload_invalid",
     HANDOFF_REFRESH_FAILED: "handoff_refresh_failed",
+    HANDOFF_LOGOUT_FAILED: "handoff_logout_failed",
     AUTH_ATTEMPT_INVALID: "auth_attempt_invalid",
     AUTH_ATTEMPT_EXPIRED: "auth_attempt_expired",
 });

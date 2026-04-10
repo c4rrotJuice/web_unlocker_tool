@@ -1,5 +1,6 @@
 import { API_ORIGIN } from "../../shared/constants/endpoints.ts";
 import { MESSAGE_NAMES } from "../../shared/constants/message_names.ts";
+import { toPublicAuthState } from "../../shared/types/auth.ts";
 import { createErrorResult, createOkResult, ERROR_CODES } from "../../shared/types/messages.ts";
 import { createLogger } from "../../shared/utils/logger.ts";
 import { createApiClient } from "../api/client.ts";
@@ -103,7 +104,7 @@ export function createBackgroundRuntime(deps = {}) {
     return createOkResult({
       alive: true,
       messageTypes: Object.values(MESSAGE_NAMES),
-      auth: stateStore.getState(),
+      auth: toPublicAuthState(stateStore.getState()),
       citation: citationStateStore.getState(),
     }, reason);
   }

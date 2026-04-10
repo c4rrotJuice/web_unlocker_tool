@@ -196,6 +196,14 @@ export function createApiClient({
         label: "Handoff refresh response",
       });
     },
+    logoutSession() {
+      return request(ENDPOINTS.AUTH_HANDOFF_LOGOUT, {
+        method: "POST",
+        auth: true,
+        fallbackCode: ERROR_CODES.HANDOFF_LOGOUT_FAILED,
+        label: "Handoff logout response",
+      });
+    },
     loadBootstrap() {
       return request(ENDPOINTS.BOOTSTRAP, {
         auth: true,

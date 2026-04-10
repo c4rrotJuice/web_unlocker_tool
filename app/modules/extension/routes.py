@@ -201,6 +201,11 @@ async def refresh_handoff_session(request: Request, payload: HandoffRefreshReque
     return await service.refresh_session(request, payload)
 
 
+@router.post("/api/auth/handoff/logout")
+async def logout_handoff_session(request: Request, access=Depends(_extension_access)):
+    return await service.revoke_session(request, access)
+
+
 @router.get("/auth/handoff", response_class=HTMLResponse)
 async def handoff_landing(
     request: Request,

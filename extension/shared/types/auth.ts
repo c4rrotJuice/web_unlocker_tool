@@ -60,6 +60,29 @@ export function createAuthErrorState(error, reason = "auth_error", baseline: any
   };
 }
 
+const SENSITIVE_AUTH_FIELDS = new Set([
+  "access_token",
+  "refresh_token",
+  "token_type",
+]);
+
+function clonePublicValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => clonePublicValue(entry));
+  }
+  if (value && typeof value === "object") {
+    const output = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (SENSITIVE_AUTH_FIELDS.has(key)) {
+        continue;
+      }
+      output[key] = clonePublicValue(entry);
+    }
+    return output;
+  }
+  return value ?? null;
+}
+
 export function normalizeAuthError(error, fallbackCode = "auth_invalid") {
   if (!error || typeof error !== "object") {
     return {
@@ -71,7 +94,7 @@ export function normalizeAuthError(error, fallbackCode = "auth_invalid") {
   return {
     code: typeof error.code === "string" ? error.code : fallbackCode,
     message: typeof error.message === "string" && error.message.trim() ? error.message : "Authentication failed.",
-    details: error.details ?? null,
+    details: clonePublicValue(error.details ?? null),
   };
 }
 
@@ -97,6 +120,40 @@ export function normalizeSession(session) {
   };
 }
 
+export function normalizeSessionSnapshot(session) {
+  if (!session || typeof session !== "object") {
+    return null;
+  }
+  return {
+    authenticated: true,
+    user_id: typeof session.user_id === "string" && session.user_id.trim() ? session.user_id : null,
+    email: typeof session.email === "string" && session.email.trim() ? session.email : null,
+    issued_at: typeof session.issued_at === "string" && session.issued_at.trim() ? session.issued_at : null,
+    expires_at: typeof session.expires_at === "string" && session.expires_at.trim() ? session.expires_at : null,
+    expires_in: Number.isFinite(session.expires_in) ? session.expires_in : null,
+    source: typeof session.source === "string" && session.source.trim() ? session.source : "background",
+  };
+}
+
+export function toPublicAuthState(authState) {
+  if (!authState || typeof authState !== "object") {
+    return createSignedOutAuthState("missing_auth_state");
+  }
+  const status = Object.values(AUTH_STATUS).includes(authState.status)
+    ? authState.status
+    : AUTH_STATUS.ERROR;
+  const reason = typeof authState.reason === "string" && authState.reason.trim()
+    ? authState.reason
+    : null;
+  return clonePublicValue({
+    status,
+    reason,
+    session: normalizeSessionSnapshot(authState.session),
+    bootstrap: authState.bootstrap ?? null,
+    error: authState.error ? normalizeAuthError(authState.error) : null,
+  });
+}
+
 export function getSessionExpiryTime(session) {
   const normalized = normalizeSession(session);
   if (!normalized?.expires_at) {
@@ -112,7 +169,7 @@ export function isSessionExpired(session, now = Date.now()) {
 }
 
 export function hasAuthSession(authState) {
-  return Boolean(normalizeSession(authState?.session));
+  return Boolean(normalizeSession(authState?.session) || normalizeSessionSnapshot(authState?.session));
 }
 
 export function shouldPresentSignedInUi(authState) {

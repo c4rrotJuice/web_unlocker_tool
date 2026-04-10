@@ -1,5 +1,5 @@
 import { ERROR_CODES } from "../../shared/types/messages.ts";
-import { isSessionExpired, normalizeSession } from "../../shared/types/auth.ts";
+import { isSessionExpired, normalizeSession, toPublicAuthState } from "../../shared/types/auth.ts";
 
 const AUTH_REFRESH_ALARM = "writior.auth.refresh";
 
@@ -26,9 +26,10 @@ export function createSessionManager(options: any = {}) {
   let refreshInFlight: Promise<any> | null = null;
 
   async function persistAuthState(authState = stateStore.getState()) {
-    await authStateStorage.write(authState);
-    await scheduleRefreshForSession(authState?.session || null);
-    return authState;
+    const publicAuthState = await authStateStorage.write(authState);
+    const sessionForRefresh = normalizeSession(authState?.session) || await sessionStore.read();
+    await scheduleRefreshForSession(sessionForRefresh);
+    return publicAuthState;
   }
 
   async function clearSession(reason = "signed_out") {
@@ -147,6 +148,7 @@ export function createSessionManager(options: any = {}) {
   return {
     alarmName: AUTH_REFRESH_ALARM,
     persistAuthState,
+    toPublicAuthState,
     clearSession,
     ensureSession,
     refreshSession,

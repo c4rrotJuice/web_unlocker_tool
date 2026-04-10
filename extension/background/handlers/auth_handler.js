@@ -1,5 +1,6 @@
 // GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { createErrorResult, createOkResult, ERROR_CODES } from "../../shared/types/messages.js";
+import { toPublicAuthState } from "../../shared/types/auth.js";
 import { createHandoffManager } from "../auth/handoff.js";
 export function createAuthHandler(options = {}) {
     const typedOptions = options;
@@ -34,8 +35,7 @@ export function createAuthHandler(options = {}) {
             forceRefresh: options.forceRefresh === true,
         });
         if (!session?.access_token) {
-            const auth = stateStore.setSignedOut("missing_session");
-            await sessionManager.persistAuthState(auth);
+            const auth = await sessionManager.persistAuthState(stateStore.setSignedOut("missing_session"));
             return { auth, bootstrapResult: null };
         }
         const currentState = stateStore.getState();
@@ -46,7 +46,7 @@ export function createAuthHandler(options = {}) {
             || !currentState.bootstrap
             || currentState.session?.access_token !== session.access_token;
         if (!needsBootstrap) {
-            return { auth: currentState, bootstrapResult: null };
+            return { auth: toPublicAuthState(currentState), bootstrapResult: null };
         }
         const bootstrapResult = await bootstrapHandler.fetch({
             type: "bootstrap.fetch",
@@ -54,7 +54,7 @@ export function createAuthHandler(options = {}) {
             payload: { surface: "background" },
         });
         return {
-            auth: stateStore.getState(),
+            auth: toPublicAuthState(stateStore.getState()),
             bootstrapResult,
         };
     }
@@ -82,10 +82,21 @@ export function createAuthHandler(options = {}) {
             return createOkResult({ auth }, request.requestId);
         },
         async logout(request) {
-            await sessionManager.clearSession("signed_out");
+            let revokeResult = null;
+            const session = await sessionStore.read();
+            if (session?.access_token) {
+                revokeResult = await apiClient.logoutSession();
+            }
+            const revokeFailed = revokeResult?.ok === false;
+            const auth = await sessionManager.clearSession(revokeFailed ? "signed_out_revoke_failed" : "signed_out");
             await citationStateStore?.clear?.();
-            const auth = stateStore.getState();
-            return createOkResult({ auth }, request.requestId);
+            return createOkResult({ auth }, request.requestId, {
+                upstream_logout: !session?.access_token
+                    ? { attempted: false, status: "no_session" }
+                    : revokeFailed
+                        ? { attempted: true, status: "failed", error: revokeResult.error }
+                        : { attempted: true, status: "revoked" },
+            });
         },
         restoreSession,
     };

@@ -16,8 +16,7 @@ export function createBootstrapHandler(options = {}) {
         stateStore.setLoading("bootstrap_fetch", previousState);
         const session = await sessionManager.ensureSession({ reason: "bootstrap_fetch" });
         if (!session?.access_token) {
-            const auth = stateStore.setSignedOut("missing_session");
-            await sessionManager.persistAuthState(auth);
+            const auth = await sessionManager.persistAuthState(stateStore.setSignedOut("missing_session"));
             return createOkResult({ auth }, request.requestId);
         }
         const result = await apiClient.loadBootstrap();
@@ -25,33 +24,28 @@ export function createBootstrapHandler(options = {}) {
             const code = result.error?.code || ERROR_CODES.BOOTSTRAP_FAILED;
             if (code === ERROR_CODES.UNAUTHORIZED || code === ERROR_CODES.AUTH_INVALID) {
                 if (didRetry) {
-                    const auth = stateStore.setSignedOut("invalid_session");
-                    await sessionManager.persistAuthState(auth);
+                    const auth = await sessionManager.persistAuthState(stateStore.setSignedOut("invalid_session"));
                     return createOkResult({ auth }, request.requestId);
                 }
                 const refreshed = await sessionManager.refreshSession({ reason: "bootstrap_retry", force: true });
                 if (refreshed?.access_token) {
                     return fetch(request, { didRetry: true });
                 }
-                const auth = stateStore.setSignedOut("invalid_session");
-                await sessionManager.persistAuthState(auth);
+                const auth = await sessionManager.persistAuthState(stateStore.setSignedOut("invalid_session"));
                 return createOkResult({ auth }, request.requestId);
             }
-            const auth = stateStore.setError(result.error, "bootstrap_failed", previousState);
-            await sessionManager.persistAuthState(auth);
+            const auth = await sessionManager.persistAuthState(stateStore.setError(result.error, "bootstrap_failed", previousState));
             return createErrorResult(code, result.error.message || "Bootstrap failed.", request.requestId, result.error.details ?? null, { auth });
         }
         const validated = validateBootstrapSnapshot(result.data);
         if (validated.ok === false) {
-            const auth = stateStore.setError(validated.error, "bootstrap_invalid", previousState);
-            await sessionManager.persistAuthState(auth);
+            const auth = await sessionManager.persistAuthState(stateStore.setError(validated.error, "bootstrap_invalid", previousState));
             return createErrorResult(validated.error.code, validated.error.message, request.requestId, validated.error.details ?? null, { auth });
         }
-        const auth = stateStore.setSignedIn({
+        const auth = await sessionManager.persistAuthState(stateStore.setSignedIn({
             session,
             bootstrap: validated.data,
-        });
-        await sessionManager.persistAuthState(auth);
+        }));
         return createOkResult({ auth }, request.requestId);
     }
     return {

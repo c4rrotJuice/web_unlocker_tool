@@ -61,6 +61,11 @@ class HandoffRefreshFailedError(AppError):
         super().__init__("handoff_refresh_failed", message, 401)
 
 
+class HandoffLogoutFailedError(AppError):
+    def __init__(self, message: str = "Handoff session logout failed.") -> None:
+        super().__init__("handoff_logout_failed", message, 503)
+
+
 class HandoffAttemptInvalidError(AppError):
     def __init__(self, message: str = "Auth attempt is invalid.") -> None:
         super().__init__("auth_attempt_invalid", message, 400)
@@ -561,6 +566,33 @@ class ExtensionService:
             expected_user_id="",
         )
         return serialize_ok_envelope({ "session": session_payload })
+
+    async def revoke_session(self, request: Request, access: ExtensionAccessContext) -> dict[str, object]:
+        await self._enforce_rate_limit(
+            request,
+            scope="handoff_logout",
+            identity=self._rate_limit_identity(request, access.user_id),
+            limit=self.settings.rate_limits.auth_sensitive_limit,
+            window_seconds=self.settings.rate_limits.auth_sensitive_window_seconds,
+        )
+        access_token = (access.access_token or "").strip()
+        if not access_token:
+            raise HandoffLogoutFailedError("Authenticated access token is required for session logout.")
+        auth = getattr(self.auth_client, "auth", None)
+        admin = getattr(auth, "admin", None)
+        sign_out = getattr(admin, "sign_out", None)
+        if not callable(sign_out):
+            raise HandoffLogoutFailedError("Supabase session revocation is unavailable.")
+        try:
+            sign_out(access_token, "global")
+        except Exception as exc:
+            raise HandoffLogoutFailedError() from exc
+        return serialize_ok_envelope(
+            {
+                "revoked": True,
+                "scope": "global",
+            }
+        )
 
     async def exchange_handoff(self, request: Request, payload) -> dict[str, object]:
         phase = "rate_limit"

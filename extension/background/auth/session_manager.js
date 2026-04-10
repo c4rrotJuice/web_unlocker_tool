@@ -1,6 +1,6 @@
 // GENERATED FILE. DO NOT EDIT. Source of truth: adjacent .ts module.
 import { ERROR_CODES } from "../../shared/types/messages.js";
-import { isSessionExpired, normalizeSession } from "../../shared/types/auth.js";
+import { isSessionExpired, normalizeSession, toPublicAuthState } from "../../shared/types/auth.js";
 const AUTH_REFRESH_ALARM = "writior.auth.refresh";
 function isAuthFailure(code = "") {
     return code === ERROR_CODES.UNAUTHORIZED
@@ -14,9 +14,10 @@ export function createSessionManager(options = {}) {
     }
     let refreshInFlight = null;
     async function persistAuthState(authState = stateStore.getState()) {
-        await authStateStorage.write(authState);
-        await scheduleRefreshForSession(authState?.session || null);
-        return authState;
+        const publicAuthState = await authStateStorage.write(authState);
+        const sessionForRefresh = normalizeSession(authState?.session) || await sessionStore.read();
+        await scheduleRefreshForSession(sessionForRefresh);
+        return publicAuthState;
     }
     async function clearSession(reason = "signed_out") {
         await sessionStore.clear();
@@ -125,6 +126,7 @@ export function createSessionManager(options = {}) {
     return {
         alarmName: AUTH_REFRESH_ALARM,
         persistAuthState,
+        toPublicAuthState,
         clearSession,
         ensureSession,
         refreshSession,

@@ -197,6 +197,15 @@ function createFetchStub({
         },
       });
     }
+    if (normalizedUrl.endsWith("/api/auth/handoff/logout")) {
+      return createResponse({
+        ok: true,
+        data: {
+          revoked: true,
+          scope: "global",
+        },
+      });
+    }
     if (normalizedUrl.endsWith("/api/extension/bootstrap")) {
       return createResponse(bootstrapBody || {
         ok: true,
@@ -230,6 +239,12 @@ function createFetchStub({
 
 function read(file) {
   return fs.readFileSync(path.join("extension", file), "utf8");
+}
+
+function assertTokenFreeAuthSnapshot(auth) {
+  const serialized = JSON.stringify(auth);
+  assert.equal(serialized.includes("access_token"), false, "auth snapshot must not expose access_token");
+  assert.equal(serialized.includes("refresh_token"), false, "auth snapshot must not expose refresh_token");
 }
 
 test("session store writes reads and clears token state in background only", async () => {
@@ -452,6 +467,8 @@ test("worker restore uses stored token to fetch bootstrap and expose signed-in a
   assert.equal(bootstrapResult.ok, true);
   assert.equal(stateResult.data.auth.status, "signed_in");
   assert.equal(stateResult.data.auth.bootstrap.profile.display_name, "User One");
+  assertTokenFreeAuthSnapshot(bootstrapResult.data.auth);
+  assertTokenFreeAuthSnapshot(stateResult.data.auth);
   assert.equal(requests[0].headers.authorization, "Bearer token-123");
 });
 
@@ -514,6 +531,8 @@ test("auth start runs attempt exchange bootstrap flow and stores token only in b
 
   assert.equal(result.ok, true);
   assert.equal(stateResult.data.auth.status, "signed_in");
+  assertTokenFreeAuthSnapshot(result.data.auth);
+  assertTokenFreeAuthSnapshot(stateResult.data.auth);
   assert.equal(chromeApi.openedTabs.length, 0);
   assert.equal(chromeApi.openedWindows.length, 1);
   assert.match(chromeApi.openedWindows[0].url, /\/auth\?source=extension&attempt=attempt-1&next=%2Fdashboard/);
@@ -588,8 +607,52 @@ test("auth status get self-heals stale signed-out cache when a valid session sti
 
   assert.equal(result.ok, true);
   assert.equal(result.data.auth.status, "signed_in");
-  assert.equal(result.data.auth.session.access_token, "token-123");
+  assert.equal(result.data.auth.session.access_token, undefined);
+  assert.equal(result.data.auth.session.refresh_token, undefined);
+  assert.equal(result.data.auth.session.email, "user@example.com");
   assert.equal(requests.some((entry) => entry.url.endsWith("/api/extension/bootstrap")), true);
+});
+
+test("auth state storage exposes only token-free normalized UI snapshots", async () => {
+  const chromeApi = createChromeStub({
+    [STORAGE_KEYS.AUTH_SESSION]: {
+      access_token: "token-123",
+      refresh_token: "refresh-123",
+      token_type: "bearer",
+      user_id: "user-1",
+      email: "user@example.com",
+      source: "background",
+    },
+  });
+  const storageEvents = [];
+  chromeApi.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === "local" && changes?.[STORAGE_KEYS.AUTH_STATE]) {
+      storageEvents.push(changes[STORAGE_KEYS.AUTH_STATE].newValue);
+    }
+  });
+  const { fetchImpl } = createFetchStub();
+  const runtime = createBackgroundRuntime({
+    chromeApi,
+    fetchImpl,
+    baseUrl: "https://app.writior.com",
+  });
+
+  const result = await runtime.dispatch({
+    type: MESSAGE_NAMES.AUTH_STATUS_GET,
+    requestId: "token-free-status-1",
+    payload: { surface: "popup" },
+  });
+  const stored = await chromeApi.storage.local.get({ [STORAGE_KEYS.AUTH_STATE]: null });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.data.auth.status, "signed_in");
+  assertTokenFreeAuthSnapshot(result.data.auth);
+  assertTokenFreeAuthSnapshot(stored[STORAGE_KEYS.AUTH_STATE]);
+  assert.equal(stored[STORAGE_KEYS.AUTH_STATE].session.email, "user@example.com");
+  assert.ok(storageEvents.length > 0);
+  for (const auth of storageEvents) {
+    assertTokenFreeAuthSnapshot(auth);
+  }
 });
 
 test("startup restore clears expired invalid session cleanly when refresh recovery fails", async () => {
@@ -790,15 +853,39 @@ test("canonical auth exchange errors surface explicitly and leave auth state in 
   assert.equal(stateResult.data.auth.reason, "missing_session");
 });
 
-test("auth logout clears stored session and returns signed-out state", async () => {
+test("auth logout revokes upstream session, clears stored state, and propagates signed-out UI state", async () => {
   const chromeApi = createChromeStub({
     [STORAGE_KEYS.AUTH_SESSION]: {
       access_token: "token-123",
       refresh_token: "refresh-123",
       token_type: "bearer",
+      user_id: "user-1",
+      email: "user@example.com",
+    },
+    [STORAGE_KEYS.AUTH_STATE]: {
+      status: "signed_in",
+      reason: null,
+      session: {
+        authenticated: true,
+        email: "user@example.com",
+      },
+      bootstrap: {
+        profile: { email: "user@example.com" },
+        entitlement: { tier: "standard" },
+        capabilities: { tier: "standard" },
+        app: {},
+        taxonomy: {},
+      },
+      error: null,
     },
   });
-  const { fetchImpl } = createFetchStub();
+  const changes = [];
+  chromeApi.storage.onChanged.addListener((nextChanges, areaName) => {
+    if (areaName === "local" && nextChanges?.[STORAGE_KEYS.AUTH_STATE]) {
+      changes.push(nextChanges[STORAGE_KEYS.AUTH_STATE].newValue);
+    }
+  });
+  const { fetchImpl, requests } = createFetchStub();
   const runtime = createBackgroundRuntime({
     chromeApi,
     fetchImpl,
@@ -814,7 +901,96 @@ test("auth logout clears stored session and returns signed-out state", async () 
 
   assert.equal(logoutResult.ok, true);
   assert.equal(logoutResult.data.auth.status, "signed_out");
+  assert.equal(logoutResult.meta.upstream_logout.status, "revoked");
   assert.equal((await chromeApi.storage.local.get({ [STORAGE_KEYS.AUTH_SESSION]: null }))[STORAGE_KEYS.AUTH_SESSION], null);
+  assert.equal((await chromeApi.storage.local.get({ [STORAGE_KEYS.AUTH_STATE]: null }))[STORAGE_KEYS.AUTH_STATE].status, "signed_out");
+  assert.equal(changes.some((auth) => auth?.status === "signed_out"), true);
+  const logoutRequest = requests.find((entry) => entry.url.endsWith("/api/auth/handoff/logout"));
+  assert.ok(logoutRequest);
+  assert.equal(logoutRequest.method, "POST");
+  assert.equal(logoutRequest.headers.authorization, "Bearer token-123");
+});
+
+test("auth logout clears local session and returns explicit revoke failure metadata", async () => {
+  const chromeApi = createChromeStub({
+    [STORAGE_KEYS.AUTH_SESSION]: {
+      access_token: "token-123",
+      refresh_token: "refresh-123",
+      token_type: "bearer",
+      user_id: "user-1",
+      email: "user@example.com",
+    },
+  });
+  const { fetchImpl } = createFetchStub();
+  const runtime = createBackgroundRuntime({
+    chromeApi,
+    fetchImpl: async (url, init = {}) => {
+      if (String(url).endsWith("/api/auth/handoff/logout")) {
+        return createResponse({
+          ok: false,
+          error: {
+            code: "handoff_logout_failed",
+            message: "Logout failed.",
+          },
+        }, 503);
+      }
+      return fetchImpl(url, init);
+    },
+    baseUrl: "https://app.writior.com",
+  });
+
+  await runtime.bootstrap();
+  const logoutResult = await runtime.dispatch({
+    type: MESSAGE_NAMES.AUTH_LOGOUT,
+    requestId: "logout-failure-1",
+    payload: { surface: "sidepanel" },
+  });
+
+  assert.equal(logoutResult.ok, true);
+  assert.equal(logoutResult.data.auth.status, "signed_out");
+  assert.equal(logoutResult.data.auth.reason, "signed_out_revoke_failed");
+  assert.equal(logoutResult.meta.upstream_logout.status, "failed");
+  assert.equal(logoutResult.meta.upstream_logout.error.code, "handoff_logout_failed");
+  assert.equal((await chromeApi.storage.local.get({ [STORAGE_KEYS.AUTH_SESSION]: null }))[STORAGE_KEYS.AUTH_SESSION], null);
+});
+
+test("post-logout authenticated actions fail cleanly without stale refresh reuse", async () => {
+  const chromeApi = createChromeStub({
+    [STORAGE_KEYS.AUTH_SESSION]: {
+      access_token: "token-123",
+      refresh_token: "refresh-123",
+      token_type: "bearer",
+      user_id: "user-1",
+      email: "user@example.com",
+    },
+  });
+  const { fetchImpl, requests } = createFetchStub();
+  const runtime = createBackgroundRuntime({
+    chromeApi,
+    fetchImpl,
+    baseUrl: "https://app.writior.com",
+  });
+
+  await runtime.bootstrap();
+  await runtime.dispatch({
+    type: MESSAGE_NAMES.AUTH_LOGOUT,
+    requestId: "logout-stale-1",
+    payload: { surface: "popup" },
+  });
+  const bootstrapAfterLogout = await runtime.dispatch({
+    type: MESSAGE_NAMES.BOOTSTRAP_FETCH,
+    requestId: "bootstrap-after-logout-1",
+    payload: { surface: "sidepanel" },
+  });
+
+  assert.equal(bootstrapAfterLogout.ok, true);
+  assert.equal(bootstrapAfterLogout.data.auth.status, "signed_out");
+  assert.equal(bootstrapAfterLogout.data.auth.reason, "missing_session");
+  const logoutIndex = requests.findIndex((entry) => entry.url.endsWith("/api/auth/handoff/logout"));
+  assert.notEqual(logoutIndex, -1);
+  const postLogoutRequests = requests.slice(logoutIndex + 1);
+  assert.equal(postLogoutRequests.some((entry) => entry.url.endsWith("/api/auth/handoff/refresh")), false);
+  assert.equal(postLogoutRequests.some((entry) => entry.url.endsWith("/api/extension/bootstrap")), false);
 });
 
 test("live extension auth flow does not depend on auth handoff landing page DOM", () => {

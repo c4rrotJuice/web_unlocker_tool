@@ -201,6 +201,10 @@ def test_phase7_runtime_avoids_legacy_cookie_and_dashboard_fetch_paths():
     assert "/api/insights/monthly-summary" in dashboard_source
     assert "compact-auth" in auth_template
     assert "persistWebSession" in auth_template
+    assert "await getAuthClient()" in auth_template
+    assert "await persistAndConfirmWebSession(data?.session || null)" in auth_template
+    assert 'fetch("/api/auth/session", {' in auth_template
+    assert 'autocomplete="current-password"' in auth_template
     assert "Finalizing extension access and closing this window" in handoff_template
     assert "AUTH_RESTORE" not in handoff_template
 

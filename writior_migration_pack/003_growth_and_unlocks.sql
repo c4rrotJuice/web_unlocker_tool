@@ -60,6 +60,42 @@ create table if not exists public.user_milestones (
 create index if not exists idx_user_milestones_user_awarded_at
   on public.user_milestones(user_id, awarded_at desc);
 
+create table if not exists public.activity_events (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  event_type text not null check (event_type in ('unlock', 'source_captured', 'citation_created', 'quote_saved', 'note_created', 'document_updated')),
+  entity_id uuid,
+  idempotency_key text not null,
+  created_at timestamptz not null default now(),
+  unique (user_id, idempotency_key)
+);
+
+create index if not exists idx_activity_events_user_created_at
+  on public.activity_events(user_id, created_at desc);
+
+create index if not exists idx_activity_events_user_type
+  on public.activity_events(user_id, event_type, created_at desc);
+
+create table if not exists public.user_daily_activity (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  date date not null,
+  activity_score integer not null default 0 check (activity_score >= 0),
+  actions_count integer not null default 0 check (actions_count >= 0),
+  last_event_at timestamptz not null default now(),
+  primary key (user_id, date)
+);
+
+create index if not exists idx_user_daily_activity_user_date
+  on public.user_daily_activity(user_id, date desc);
+
+create table if not exists public.user_activity_state (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  current_streak integer not null default 0 check (current_streak >= 0),
+  longest_streak integer not null default 0 check (longest_streak >= 0),
+  last_active_date date,
+  updated_at timestamptz not null default now()
+);
+
 create or replace function public.get_unlock_days(
   p_user_id uuid,
   p_start_date date,

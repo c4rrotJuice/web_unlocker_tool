@@ -23,12 +23,13 @@ logger = logging.getLogger(__name__)
 
 
 class SourcesService:
-    def __init__(self, *, repository: SourcesRepository, citations_repository=None, quotes_repository=None, notes_repository=None, workspace_repository=None):
+    def __init__(self, *, repository: SourcesRepository, citations_repository=None, quotes_repository=None, notes_repository=None, workspace_repository=None, activity_service=None):
         self.repository = repository
         self.citations_repository = citations_repository
         self.quotes_repository = quotes_repository
         self.notes_repository = notes_repository
         self.workspace_repository = workspace_repository
+        self.activity_service = activity_service
 
     async def _list_note_summaries_for_source(self, *, user_id: str, access_token: str | None, source_id: str, citation_ids: list[str]) -> list[dict]:
         if self.notes_repository is None:
@@ -92,6 +93,7 @@ class SourcesService:
     async def resolve_or_create_source(
         self,
         *,
+        user_id: str | None = None,
         access_token: str | None,
         extraction_payload: ExtractionPayload,
     ) -> dict:
@@ -155,6 +157,13 @@ class SourcesService:
                 "canonical_url": normalized_source["canonical_url"],
             },
         )
+        if resolution == "created" and self.activity_service is not None and user_id:
+            await self.activity_service.record_event(
+                user_id=user_id,
+                event_type="source_captured",
+                entity_id=str(row.get("id") or ""),
+                idempotency_key=f"source-created:{row.get('id')}",
+            )
         return serialize_source_detail(row, relationship_counts={})
 
     async def list_sources(

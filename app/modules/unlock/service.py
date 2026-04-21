@@ -22,9 +22,10 @@ from app.services.momentum import MILESTONE_CONFIG, calculate_streak, count_acti
 
 
 class UnlockService:
-    def __init__(self, *, repository: UnlockRepository, contract: str):
+    def __init__(self, *, repository: UnlockRepository, contract: str, activity_service=None):
         self.repository = repository
         self.contract = contract
+        self.activity_service = activity_service
 
     def status(self) -> dict[str, object]:
         return serialize_module_status(
@@ -126,6 +127,18 @@ class UnlockService:
         awarded: list[dict[str, object]] = []
         if reconcile_milestones and not deduped and normalized["event_type"] == "unlock":
             awarded = await self.reconcile_milestones(user_id=user_id)
+        if self.activity_service is not None and not deduped:
+            mapped_type = "unlock"
+            if normalized["event_type"] == "selection_capture":
+                mapped_type = "source_captured"
+            try:
+                await self.activity_service.record_event(
+                    user_id=user_id,
+                    event_type=mapped_type,
+                    idempotency_key=str(normalized.get("event_id") or row.get("id") or ""),
+                )
+            except HTTPException:
+                pass
         return serialize_ok_envelope(
             {
                 "deduped": deduped,

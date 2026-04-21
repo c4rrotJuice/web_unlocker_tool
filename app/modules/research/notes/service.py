@@ -22,6 +22,7 @@ class NotesService:
         taxonomy_service,
         citations_service,
         workspace_service=None,
+        activity_service=None,
         ownership: OwnershipValidator,
         relation_validation: RelationValidator,
     ):
@@ -30,6 +31,7 @@ class NotesService:
         self.taxonomy_service = taxonomy_service
         self.citations_service = citations_service
         self.workspace_service = workspace_service
+        self.activity_service = activity_service
         self.ownership = ownership
         self.relation_validation = relation_validation
 
@@ -344,6 +346,13 @@ class NotesService:
         await self.replace_note_tags(user_id=user_id, access_token=access_token, note_id=note_id, tag_ids=payload.get("tag_ids") or [])
         await self.replace_note_sources(user_id=user_id, access_token=access_token, note_id=note_id, evidence_links=payload.get("evidence_links") or [])
         await self.replace_note_links(user_id=user_id, access_token=access_token, note_id=note_id, note_links=normalized_note_links)
+        if self.activity_service is not None:
+            await self.activity_service.record_event(
+                user_id=user_id,
+                event_type="note_created",
+                entity_id=note_id,
+                idempotency_key=f"note-created:{note_id}",
+            )
         return await self.get_note(user_id=user_id, access_token=access_token, note_id=note_id)
 
     async def list_notes_by_ids(self, *, user_id: str, access_token: str | None, note_ids: list[str]) -> list[dict]:

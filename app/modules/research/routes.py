@@ -19,6 +19,8 @@ from app.modules.common.ownership import OwnershipValidator
 from app.modules.common.relation_validation import RelationValidator
 from app.modules.identity.repo import IdentityRepository
 from app.modules.identity.service import IdentityService
+from app.modules.insights.activity_service import ActivityService
+from app.modules.insights.repo import InsightsRepository
 from app.modules.research.common import load_capability_state_from_request, normalize_uuid
 from app.modules.research.graph_service import ResearchGraphService
 from app.modules.research.notes.repo import NotesRepository
@@ -68,6 +70,7 @@ identity_service = IdentityService(
     )
 )
 taxonomy_repository = TaxonomyRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
+activity_service = ActivityService(repository=InsightsRepository(supabase_repo=supabase_repo))
 sources_repository = SourcesRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
 citations_repository = CitationsRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
 notes_repository = NotesRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
@@ -80,6 +83,7 @@ sources_service = SourcesService(
     quotes_repository=quotes_repository,
     notes_repository=notes_repository,
     workspace_repository=workspace_repository,
+    activity_service=activity_service,
 )
 citations_service = CitationsService(
     repository=citations_repository,
@@ -87,6 +91,7 @@ citations_service = CitationsService(
     quotes_repository=quotes_repository,
     notes_repository=notes_repository,
     workspace_repository=workspace_repository,
+    activity_service=activity_service,
 )
 ownership = OwnershipValidator(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
 relation_validation = RelationValidator(
@@ -100,6 +105,7 @@ notes_service = NotesService(
     taxonomy_service=taxonomy_service,
     citations_service=citations_service,
     workspace_service=None,
+    activity_service=activity_service,
     ownership=ownership,
     relation_validation=relation_validation,
 )
@@ -108,6 +114,7 @@ quotes_service = QuotesService(
     citations_service=citations_service,
     notes_service=notes_service,
     workspace_repository=workspace_repository,
+    activity_service=activity_service,
     ownership=ownership,
     relation_validation=relation_validation,
 )
@@ -118,6 +125,7 @@ workspace_service = WorkspaceService(
     citations_service=citations_service,
     quotes_service=quotes_service,
     notes_service=notes_service,
+    activity_service=activity_service,
     ownership=ownership,
     relation_validation=relation_validation,
 )
@@ -276,6 +284,7 @@ async def list_sources(
 @router.post("/api/sources/resolve")
 async def resolve_source(payload: SourceResolveRequest, access=Depends(_access)):
     return await sources_service.resolve_or_create_source(
+        user_id=access.user_id,
         access_token=access.access_token,
         extraction_payload=payload.extraction_payload,
     )

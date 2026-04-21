@@ -7,6 +7,8 @@ from app.core.config import get_settings
 from app.core.entitlements import capability_state_from_account_state
 from app.modules.identity.repo import IdentityRepository
 from app.modules.identity.service import IdentityService
+from app.modules.insights.activity_service import ActivityService
+from app.modules.insights.repo import InsightsRepository
 from app.modules.unlock.repo import UnlockRepository
 from app.modules.unlock.schemas import ActivityEventCreateRequest, ActivityHistoryQuery, BookmarkCreateRequest, BookmarkListQuery
 from app.modules.unlock.service import UnlockService
@@ -26,7 +28,12 @@ identity_service = IdentityService(
         anon_key=settings.supabase_anon_key,
     )
 )
-service = UnlockService(repository=UnlockRepository(supabase_repo=supabase_repo), contract=str(settings.migration_pack_dir))
+activity_service = ActivityService(repository=InsightsRepository(supabase_repo=supabase_repo))
+service = UnlockService(
+    repository=UnlockRepository(supabase_repo=supabase_repo),
+    contract=str(settings.migration_pack_dir),
+    activity_service=activity_service,
+)
 
 
 async def _activity_access(auth_context: RequestAuthContext = Depends(require_request_auth_context)):

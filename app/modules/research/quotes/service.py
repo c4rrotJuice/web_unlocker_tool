@@ -21,6 +21,7 @@ class QuotesService:
         workspace_repository=None,
         ownership: OwnershipValidator,
         relation_validation: RelationValidator,
+        activity_service=None,
     ):
         self.repository = repository
         self.citations_service = citations_service
@@ -28,6 +29,7 @@ class QuotesService:
         self.workspace_repository = workspace_repository
         self.ownership = ownership
         self.relation_validation = relation_validation
+        self.activity_service = activity_service
 
     async def _serialize_rows(self, *, user_id: str, access_token: str | None, rows: list[dict]) -> list[dict]:
         if not rows:
@@ -237,6 +239,13 @@ class QuotesService:
         )
         if row is None:
             raise HTTPException(status_code=500, detail="Failed to create quote")
+        if self.activity_service is not None:
+            await self.activity_service.record_event(
+                user_id=user_id,
+                event_type="quote_saved",
+                entity_id=str(row.get("id") or ""),
+                idempotency_key=f"quote-created:{row.get('id')}",
+            )
         return await self.get_quote(user_id=user_id, access_token=access_token, quote_id=str(row["id"]))
 
     async def update_quote(self, *, user_id: str, access_token: str | None, quote_id: str, payload: dict) -> dict:

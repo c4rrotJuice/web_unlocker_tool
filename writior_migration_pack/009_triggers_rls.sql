@@ -73,6 +73,9 @@ alter table public.unlock_events enable row level security;
 alter table public.guest_unlock_usage enable row level security;
 alter table public.bookmarks enable row level security;
 alter table public.user_milestones enable row level security;
+alter table public.activity_events enable row level security;
+alter table public.user_daily_activity enable row level security;
+alter table public.user_activity_state enable row level security;
 alter table public.projects enable row level security;
 alter table public.tags enable row level security;
 alter table public.sources enable row level security;
@@ -123,6 +126,24 @@ create policy "bookmarks_update_own" on public.bookmarks for update using (auth.
 create policy "bookmarks_delete_own" on public.bookmarks for delete using (auth.uid() = user_id);
 
 create policy "user_milestones_select_own" on public.user_milestones for select using (auth.uid() = user_id);
+create policy "user_milestones_insert_service_role_only" on public.user_milestones
+for insert with check (auth.role() = 'service_role');
+
+create policy "activity_events_select_own" on public.activity_events for select using (auth.uid() = user_id);
+create policy "activity_events_insert_service_role_only" on public.activity_events
+for insert with check (auth.role() = 'service_role');
+
+create policy "user_daily_activity_select_own" on public.user_daily_activity for select using (auth.uid() = user_id);
+create policy "user_daily_activity_insert_service_role_only" on public.user_daily_activity
+for insert with check (auth.role() = 'service_role');
+create policy "user_daily_activity_update_service_role_only" on public.user_daily_activity
+for update using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+
+create policy "user_activity_state_select_own" on public.user_activity_state for select using (auth.uid() = user_id);
+create policy "user_activity_state_insert_service_role_only" on public.user_activity_state
+for insert with check (auth.role() = 'service_role');
+create policy "user_activity_state_update_service_role_only" on public.user_activity_state
+for update using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
 
 create policy "projects_select_own" on public.projects for select using (auth.uid() = user_id);
 create policy "projects_insert_own" on public.projects for insert with check (auth.uid() = user_id);

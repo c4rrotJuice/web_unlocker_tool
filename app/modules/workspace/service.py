@@ -31,6 +31,7 @@ class WorkspaceService:
         citations_service,
         quotes_service,
         notes_service,
+        activity_service=None,
         ownership: OwnershipValidator,
         relation_validation: RelationValidator,
     ):
@@ -40,6 +41,7 @@ class WorkspaceService:
         self.citations_service = citations_service
         self.quotes_service = quotes_service
         self.notes_service = notes_service
+        self.activity_service = activity_service
         self.ownership = ownership
         self.relation_validation = relation_validation
 
@@ -270,6 +272,13 @@ class WorkspaceService:
         )
         if row is None:
             raise HTTPException(status_code=500, detail="Failed to create document")
+        if self.activity_service is not None:
+            await self.activity_service.record_event(
+                user_id=user_id,
+                event_type="document_updated",
+                entity_id=str(row.get("id") or ""),
+                idempotency_key=f"document-created:{row.get('id')}",
+            )
         return await self.get_document(user_id=user_id, access_token=access_token, capability_state=capability_state, document_id=str(row["id"]))
 
     async def update_document(self, *, user_id: str, access_token: str | None, capability_state, document_id: str, payload: dict) -> dict:
@@ -326,6 +335,13 @@ class WorkspaceService:
                     capability_state=capability_state,
                     document_id=normalized_document_id,
                 ))["data"],
+            )
+        if self.activity_service is not None:
+            await self.activity_service.record_event(
+                user_id=user_id,
+                event_type="document_updated",
+                entity_id=str(row.get("id") or ""),
+                idempotency_key=f"document-updated:{row.get('id')}:{expected_revision}",
             )
         return await self.get_document(user_id=user_id, access_token=access_token, capability_state=capability_state, document_id=str(row["id"]))
 

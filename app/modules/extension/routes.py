@@ -24,6 +24,8 @@ from app.modules.extension.schemas import (
 from app.modules.extension.service import build_extension_service
 from app.modules.identity.repo import IdentityRepository
 from app.modules.identity.service import IdentityService
+from app.modules.insights.activity_service import ActivityService
+from app.modules.insights.repo import InsightsRepository
 from app.modules.unlock.repo import UnlockRepository
 from app.modules.unlock.service import UnlockService
 from app.modules.research.citations.repo import CitationsRepository
@@ -59,12 +61,15 @@ identity_service = IdentityService(
 taxonomy_service = TaxonomyService(
     repository=TaxonomyRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
 )
+activity_service = ActivityService(repository=InsightsRepository(supabase_repo=supabase_repo))
 sources_service = SourcesService(
-    repository=SourcesRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
+    repository=SourcesRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key),
+    activity_service=activity_service,
 )
 citations_service = CitationsService(
     repository=CitationsRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key),
     sources_service=sources_service,
+    activity_service=activity_service,
 )
 notes_repository = NotesRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
 ownership = OwnershipValidator(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key)
@@ -78,6 +83,7 @@ notes_service = NotesService(
     sources_service=sources_service,
     taxonomy_service=taxonomy_service,
     citations_service=citations_service,
+    activity_service=activity_service,
     ownership=ownership,
     relation_validation=relation_validation,
 )
@@ -85,6 +91,7 @@ quotes_service = QuotesService(
     repository=QuotesRepository(supabase_repo=supabase_repo, anon_key=settings.supabase_anon_key),
     citations_service=citations_service,
     notes_service=notes_service,
+    activity_service=activity_service,
     ownership=ownership,
     relation_validation=relation_validation,
 )
@@ -95,6 +102,7 @@ workspace_service = WorkspaceService(
     citations_service=citations_service,
     quotes_service=quotes_service,
     notes_service=notes_service,
+    activity_service=activity_service,
     ownership=ownership,
     relation_validation=relation_validation,
 )
@@ -109,6 +117,7 @@ graph_service = ResearchGraphService(
 unlock_service = UnlockService(
     repository=UnlockRepository(supabase_repo=supabase_repo),
     contract=str(settings.migration_pack_dir),
+    activity_service=activity_service,
 )
 service = build_extension_service(
     repository=ExtensionRepository(supabase_repo=supabase_repo),

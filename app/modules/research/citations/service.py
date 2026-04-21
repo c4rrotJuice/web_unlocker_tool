@@ -34,12 +34,13 @@ logger = logging.getLogger(__name__)
 
 
 class CitationsService:
-    def __init__(self, *, repository: CitationsRepository, sources_service: SourcesService, quotes_repository=None, notes_repository=None, workspace_repository=None):
+    def __init__(self, *, repository: CitationsRepository, sources_service: SourcesService, quotes_repository=None, notes_repository=None, workspace_repository=None, activity_service=None):
         self.repository = repository
         self.sources_service = sources_service
         self.quotes_repository = quotes_repository
         self.notes_repository = notes_repository
         self.workspace_repository = workspace_repository
+        self.activity_service = activity_service
 
     async def _list_note_summaries_for_citation(self, *, user_id: str, access_token: str | None, citation_id: str) -> list[dict]:
         if self.notes_repository is None:
@@ -624,10 +625,17 @@ class CitationsService:
                 "identifier_keys": sorted(str(key) for key in (extraction_payload.identifiers or {}).keys()),
             },
         )
-        source = await self.sources_service.resolve_or_create_source(
-            access_token=access_token,
-            extraction_payload=extraction_payload,
-        )
+        try:
+            source = await self.sources_service.resolve_or_create_source(
+                user_id=user_id,
+                access_token=access_token,
+                extraction_payload=extraction_payload,
+            )
+        except TypeError:
+            source = await self.sources_service.resolve_or_create_source(
+                access_token=access_token,
+                extraction_payload=extraction_payload,
+            )
         citation_context = self._citation_context(
             excerpt=excerpt,
             locator=locator,
@@ -641,6 +649,13 @@ class CitationsService:
         )
         if row is None:
             raise HTTPException(status_code=500, detail="Failed to create citation instance")
+        if self.activity_service is not None:
+            await self.activity_service.record_event(
+                user_id=user_id,
+                event_type="citation_created",
+                entity_id=str(row.get("id") or ""),
+                idempotency_key=f"citation-created:{row.get('id')}",
+            )
         logger.info(
             "citations.create.instance_persisted",
             extra={

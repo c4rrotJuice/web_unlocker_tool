@@ -106,31 +106,7 @@ class InsightsRepository:
         if response.status_code in {200, 201}:
             rows = response_json(response)
             return False, rows[0] if isinstance(rows, list) and rows else None
-        if response.status_code == 409:
-            existing = await self.get_activity_event_by_idempotency_key(
-                user_id=str(payload.get("user_id")),
-                idempotency_key=str(payload.get("idempotency_key") or ""),
-            )
-            return True, existing
         return False, None
-
-    async def get_activity_event_by_idempotency_key(self, *, user_id: str, idempotency_key: str) -> dict[str, Any] | None:
-        if not idempotency_key:
-            return None
-        response = await self.supabase_repo.get(
-            "activity_events",
-            params={
-                "user_id": f"eq.{user_id}",
-                "idempotency_key": f"eq.{idempotency_key}",
-                "select": "id,user_id,event_type,entity_id,created_at",
-                "limit": "1",
-            },
-            headers=self.supabase_repo.headers(include_content_type=False),
-        )
-        rows = response_json(response)
-        if isinstance(rows, list) and rows:
-            return rows[0]
-        return None
 
     async def get_daily_activity(self, *, user_id: str, activity_date: str) -> dict[str, Any] | None:
         response = await self.supabase_repo.get(
@@ -236,7 +212,7 @@ class InsightsRepository:
             "activity_events",
             params={
                 "user_id": f"eq.{user_id}",
-                "event_type": f"eq.{event_type}",
+                "type": f"eq.{event_type}",
                 "select": "id",
             },
             headers=self.supabase_repo.headers(prefer="count=exact", include_content_type=False),

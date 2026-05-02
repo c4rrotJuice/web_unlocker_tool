@@ -63,18 +63,13 @@ create index if not exists idx_user_milestones_user_awarded_at
 create table if not exists public.activity_events (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  event_type text not null check (event_type in ('unlock', 'source_captured', 'citation_created', 'quote_saved', 'note_created', 'document_updated')),
+  type text not null check (type in ('unlock', 'source_captured', 'citation_created', 'quote_saved', 'note_created', 'document_updated')),
   entity_id uuid,
-  idempotency_key text not null,
-  created_at timestamptz not null default now(),
-  unique (user_id, idempotency_key)
+  created_at timestamptz not null default now()
 );
 
 create index if not exists idx_activity_events_user_created_at
   on public.activity_events(user_id, created_at desc);
-
-create index if not exists idx_activity_events_user_type
-  on public.activity_events(user_id, event_type, created_at desc);
 
 create table if not exists public.user_daily_activity (
   user_id uuid not null references auth.users(id) on delete cascade,

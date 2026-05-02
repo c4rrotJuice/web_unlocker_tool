@@ -32,25 +32,34 @@ class MilestoneService:
     def __init__(self, *, repository: InsightsRepository):
         self.repository = repository
 
-    async def _metrics(self, *, user_id: str, streak: dict[str, Any] | None = None) -> dict[str, int]:
-        return {
-            "current_streak": int((streak or {}).get("current_streak") or 0),
-            "source_captured": await self.repository.count_activity_events(user_id=user_id, event_type="source_captured"),
-            "note_created": await self.repository.count_activity_events(user_id=user_id, event_type="note_created"),
-            "citation_created": await self.repository.count_activity_events(user_id=user_id, event_type="citation_created"),
-            "documents_total": await self.repository.count_documents_for_user(user_id=user_id),
-            "document_citations_total": await self.repository.count_document_citations_for_user(user_id=user_id),
-        }
+    async def _metric(self, *, user_id: str, metric: str) -> int:
+        if metric == "current_streak":
+            state = await self.repository.get_activity_state(user_id=user_id) or {}
+            return int(state.get("current_streak") or 0)
+        if metric in {"source_captured", "note_created", "citation_created"}:
+            return await self.repository.count_activity_events(user_id=user_id, event_type=metric)
+        if metric == "documents_total":
+            return await self.repository.count_documents_for_user(user_id=user_id)
+        if metric == "document_citations_total":
+            return await self.repository.count_document_citations_for_user(user_id=user_id)
+        return 0
 
-    async def evaluate(self, *, user_id: str, streak: dict[str, Any] | None = None) -> list[dict[str, object]]:
+    async def _metrics(self, *, user_id: str, rules: tuple[MilestoneRule, ...]) -> dict[str, int]:
+        metrics: dict[str, int] = {}
+        for metric in {rule.metric for rule in rules}:
+            metrics[metric] = await self._metric(user_id=user_id, metric=metric)
+        return metrics
+
+    async def evaluate_milestones(self, user_id: str) -> list[dict[str, object]]:
         existing = await self.repository.list_milestones(user_id=user_id)
         existing_keys = {str(row.get("milestone_key")) for row in existing if row.get("milestone_key")}
-        metrics = await self._metrics(user_id=user_id, streak=streak)
+        pending_rules = tuple(rule for rule in RULES if rule.id not in existing_keys)
+        if not pending_rules:
+            return []
+        metrics = await self._metrics(user_id=user_id, rules=pending_rules)
 
         awarded: list[dict[str, object]] = []
-        for rule in RULES:
-            if rule.id in existing_keys:
-                continue
+        for rule in pending_rules:
             if metrics.get(rule.metric, 0) < rule.threshold:
                 continue
             inserted, row = await self.repository.insert_milestone(
@@ -67,10 +76,13 @@ class MilestoneService:
                 awarded.append(row)
         return awarded
 
+    async def evaluate(self, *, user_id: str, streak: dict[str, Any] | None = None) -> list[dict[str, object]]:
+        return await self.evaluate_milestones(user_id)
+
     async def progress(self, *, user_id: str) -> list[dict[str, object]]:
         existing = await self.repository.list_milestones(user_id=user_id)
         earned_keys = {str(row.get("milestone_key")) for row in existing if row.get("milestone_key")}
-        metrics = await self._metrics(user_id=user_id)
+        metrics = await self._metrics(user_id=user_id, rules=RULES)
         return [
             {
                 "id": rule.id,

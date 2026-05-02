@@ -127,16 +127,9 @@ class UnlockService:
         awarded: list[dict[str, object]] = []
         if reconcile_milestones and not deduped and normalized["event_type"] == "unlock":
             awarded = await self.reconcile_milestones(user_id=user_id)
-        if self.activity_service is not None and not deduped:
-            mapped_type = "unlock"
-            if normalized["event_type"] == "selection_capture":
-                mapped_type = "source_captured"
+        if self.activity_service is not None and not deduped and normalized["event_type"] == "unlock":
             try:
-                await self.activity_service.record_event(
-                    user_id=user_id,
-                    event_type=mapped_type,
-                    idempotency_key=str(normalized.get("event_id") or row.get("id") or ""),
-                )
+                await self.activity_service.log_event(user_id, "unlock", entity_id=str(row["id"]) if row.get("id") else None)
             except HTTPException:
                 pass
         return serialize_ok_envelope(

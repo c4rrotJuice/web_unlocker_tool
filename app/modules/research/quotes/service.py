@@ -240,11 +240,10 @@ class QuotesService:
         if row is None:
             raise HTTPException(status_code=500, detail="Failed to create quote")
         if self.activity_service is not None:
-            await self.activity_service.record_event(
-                user_id=user_id,
-                event_type="quote_saved",
-                entity_id=str(row.get("id") or ""),
-                idempotency_key=f"quote-created:{row.get('id')}",
+            await self.activity_service.log_event(
+                user_id,
+                "quote_saved",
+                entity_id=str(row["id"]) if row.get("id") else None,
             )
         return await self.get_quote(user_id=user_id, access_token=access_token, quote_id=str(row["id"]))
 

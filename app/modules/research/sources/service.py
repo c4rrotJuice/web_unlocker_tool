@@ -158,11 +158,10 @@ class SourcesService:
             },
         )
         if resolution == "created" and self.activity_service is not None and user_id:
-            await self.activity_service.record_event(
-                user_id=user_id,
-                event_type="source_captured",
-                entity_id=str(row.get("id") or ""),
-                idempotency_key=f"source-created:{row.get('id')}",
+            await self.activity_service.log_event(
+                user_id,
+                "source_captured",
+                entity_id=str(row["id"]) if row.get("id") else None,
             )
         return serialize_source_detail(row, relationship_counts={})
 

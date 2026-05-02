@@ -273,11 +273,10 @@ class WorkspaceService:
         if row is None:
             raise HTTPException(status_code=500, detail="Failed to create document")
         if self.activity_service is not None:
-            await self.activity_service.record_event(
-                user_id=user_id,
-                event_type="document_updated",
-                entity_id=str(row.get("id") or ""),
-                idempotency_key=f"document-created:{row.get('id')}",
+            await self.activity_service.log_event(
+                user_id,
+                "document_updated",
+                entity_id=str(row["id"]) if row.get("id") else None,
             )
         return await self.get_document(user_id=user_id, access_token=access_token, capability_state=capability_state, document_id=str(row["id"]))
 
@@ -337,11 +336,10 @@ class WorkspaceService:
                 ))["data"],
             )
         if self.activity_service is not None:
-            await self.activity_service.record_event(
-                user_id=user_id,
-                event_type="document_updated",
-                entity_id=str(row.get("id") or ""),
-                idempotency_key=f"document-updated:{row.get('id')}:{expected_revision}",
+            await self.activity_service.log_event(
+                user_id,
+                "document_updated",
+                entity_id=str(row["id"]) if row.get("id") else None,
             )
         return await self.get_document(user_id=user_id, access_token=access_token, capability_state=capability_state, document_id=str(row["id"]))
 

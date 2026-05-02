@@ -73,7 +73,7 @@ async def get_monthly_report(month: str | None = None, x_user_timezone: str | No
 
 
 @router.get("/api/insights/activity")
-async def get_activity(days: int = 30, access=Depends(_insight_access)):
+async def get_activity(days: int = 7, access=Depends(_insight_access)):
     return await activity_service.activity_summary(user_id=access["user_id"], days=days)
 
 

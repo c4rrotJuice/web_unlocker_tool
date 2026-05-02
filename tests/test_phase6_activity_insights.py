@@ -160,6 +160,31 @@ class FakeUnlockRepository:
 
 
 class FakeInsightsRepository:
+    def __init__(self):
+        self.daily_rows = [
+            {
+                "user_id": "user-1",
+                "date": "2026-03-02",
+                "activity_score": 4,
+                "actions_count": 2,
+                "last_event_at": "2026-03-02T10:00:00+00:00",
+            },
+            {
+                "user_id": "user-1",
+                "date": "2026-03-01",
+                "activity_score": 1,
+                "actions_count": 1,
+                "last_event_at": "2026-03-01T10:00:00+00:00",
+            },
+        ]
+        self.activity_state = {
+            "user_id": "user-1",
+            "current_streak": 3,
+            "longest_streak": 5,
+            "last_active_date": "2026-03-02",
+            "updated_at": "2026-03-02T10:00:00+00:00",
+        }
+
     async def count_unlock_events(self, *, user_id: str, start_at: str, end_at: str, event_type: str | None = None):
         counts = {
             None: 6,
@@ -186,11 +211,31 @@ class FakeInsightsRepository:
         return [
             {
                 "id": "milestone-1",
-                "milestone_key": "first_7_day_streak",
+                "milestone_key": "streak_3",
                 "awarded_at": "2026-03-10T10:00:00+00:00",
-                "metadata": {"threshold": 7},
+                "metadata": {"threshold": 3, "label": "3-day streak"},
             }
         ]
+
+    async def list_daily_activity(self, *, user_id: str, start_date: str, end_date: str, limit: int = 90):
+        return self.daily_rows[:limit]
+
+    async def get_activity_state(self, *, user_id: str):
+        return self.activity_state
+
+    async def count_activity_events(self, *, user_id: str, event_type: str):
+        counts = {
+            "source_captured": 4,
+            "note_created": 1,
+            "citation_created": 2,
+        }
+        return counts.get(event_type, 0)
+
+    async def count_documents_for_user(self, *, user_id: str):
+        return 1
+
+    async def count_document_citations_for_user(self, *, user_id: str):
+        return 1
 
 
 def _load_app(monkeypatch, *, tier: str = "standard"):
@@ -310,7 +355,10 @@ async def test_bookmark_create_requires_capability_but_list_remains_available(mo
 @pytest.mark.anyio
 async def test_insights_and_report_metadata_use_canonical_sources(monkeypatch):
     app, _unlock_routes, insights_routes, _extension_routes = _load_app(monkeypatch, tier="pro")
-    insights_routes.service.repository = FakeInsightsRepository()
+    fake_repo = FakeInsightsRepository()
+    insights_routes.service.repository = fake_repo
+    insights_routes.activity_service.repository = fake_repo
+    insights_routes.activity_service.milestone_service.repository = fake_repo
 
     async with async_test_client(app) as client:
         momentum = await client.get("/api/insights/momentum?month=2026-03", headers={"Authorization": "Bearer valid", "X-User-Timezone": "UTC"})
@@ -329,6 +377,36 @@ async def test_insights_and_report_metadata_use_canonical_sources(monkeypatch):
     assert report.headers["content-type"].startswith("application/json")
     assert report.json()["data"]["download_url"] is None
     assert report.json()["data"]["sections"]["domains"][0]["domain"] == "example.com"
+
+
+@pytest.mark.anyio
+async def test_insights_activity_streak_and_milestone_endpoints_are_fast_precomputed_reads(monkeypatch):
+    app, _unlock_routes, insights_routes, _extension_routes = _load_app(monkeypatch, tier="pro")
+    fake_repo = FakeInsightsRepository()
+    insights_routes.service.repository = fake_repo
+    insights_routes.activity_service.repository = fake_repo
+    insights_routes.activity_service.milestone_service.repository = fake_repo
+
+    async with async_test_client(app) as client:
+        activity = await client.get("/api/insights/activity?days=60", headers={"Authorization": "Bearer valid"})
+        streak = await client.get("/api/insights/streak", headers={"Authorization": "Bearer valid"})
+        milestones = await client.get("/api/insights/milestones", headers={"Authorization": "Bearer valid"})
+
+    assert activity.status_code == 200
+    assert activity.json()["meta"]["days"] == 30
+    assert activity.json()["data"][0] == {
+        "date": "2026-03-02",
+        "activity_score": 4,
+        "actions_count": 2,
+        "active_day": True,
+        "last_event_at": "2026-03-02T10:00:00+00:00",
+    }
+    assert streak.status_code == 200
+    assert streak.json()["data"]["current_streak"] == 3
+    assert streak.json()["data"]["longest_streak"] == 5
+    assert milestones.status_code == 200
+    assert milestones.json()["data"]["earned"][0]["key"] == "streak_3"
+    assert milestones.json()["data"]["progress"][0].keys() >= {"id", "type", "metric", "threshold", "value", "earned"}
 
 
 def test_phase6_runtime_paths_do_not_reference_legacy_reporting_identifiers():

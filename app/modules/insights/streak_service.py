@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date as date_cls, datetime, timedelta, timezone
 
 from app.modules.insights.repo import InsightsRepository
 
@@ -9,12 +9,16 @@ class StreakService:
     def __init__(self, *, repository: InsightsRepository):
         self.repository = repository
 
-    async def update_for_active_day(self, *, user_id: str, active_date: date) -> dict[str, object]:
+    def _date(self, value: date_cls | str) -> date_cls:
+        return date_cls.fromisoformat(value) if isinstance(value, str) else value
+
+    async def update_streak(self, user_id: str, date: date_cls | str) -> dict[str, object]:
+        active_date = self._date(date)
         state = await self.repository.get_activity_state(user_id=user_id)
         current_streak = int((state or {}).get("current_streak") or 0)
         longest_streak = int((state or {}).get("longest_streak") or 0)
         last_active_raw = (state or {}).get("last_active_date")
-        last_active_date = date.fromisoformat(last_active_raw) if isinstance(last_active_raw, str) and last_active_raw else None
+        last_active_date = date_cls.fromisoformat(last_active_raw) if isinstance(last_active_raw, str) and last_active_raw else None
 
         if last_active_date == active_date:
             return {

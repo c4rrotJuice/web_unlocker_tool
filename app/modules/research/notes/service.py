@@ -347,11 +347,10 @@ class NotesService:
         await self.replace_note_sources(user_id=user_id, access_token=access_token, note_id=note_id, evidence_links=payload.get("evidence_links") or [])
         await self.replace_note_links(user_id=user_id, access_token=access_token, note_id=note_id, note_links=normalized_note_links)
         if self.activity_service is not None:
-            await self.activity_service.record_event(
-                user_id=user_id,
-                event_type="note_created",
+            await self.activity_service.log_event(
+                user_id,
+                "note_created",
                 entity_id=note_id,
-                idempotency_key=f"note-created:{note_id}",
             )
         return await self.get_note(user_id=user_id, access_token=access_token, note_id=note_id)
 

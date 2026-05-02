@@ -38,6 +38,17 @@ export function createUiHandler(options = {}) {
         }
         return null;
     }
+    function getKnownPanelOpen(context) {
+        const key = getTargetKey(context);
+        return key ? panelStateByTarget.get(key) === true : false;
+    }
+    function trackTargetRun(context, run) {
+        const key = getTargetKey(context) || "__global__";
+        toggleInFlightByTarget.set(key, run.finally(() => {
+            toggleInFlightByTarget.delete(key);
+        }));
+        return toggleInFlightByTarget.get(key);
+    }
     async function persistPanelState() {
         const storage = chromeApi?.storage?.local;
         if (typeof storage?.set !== "function") {
@@ -82,7 +93,7 @@ export function createUiHandler(options = {}) {
         toggleInFlightByTarget.set(key, nextRun);
         return nextRun;
     }
-    async function resolveContext(sender = {}) {
+    function resolveContextFromSender(sender = {}) {
         const typedSender = sender;
         const senderWindowId = typedSender?.tab?.windowId;
         const senderTabId = typedSender?.tab?.id;
@@ -91,6 +102,13 @@ export function createUiHandler(options = {}) {
                 windowId: senderWindowId,
                 tabId: Number.isInteger(senderTabId) ? senderTabId : null,
             };
+        }
+        return null;
+    }
+    async function resolveContext(sender = {}) {
+        const senderContext = resolveContextFromSender(sender);
+        if (senderContext) {
+            return senderContext;
         }
         if (typeof chromeApi?.tabs?.query !== "function") {
             return null;
@@ -104,15 +122,17 @@ export function createUiHandler(options = {}) {
     }
     async function openSidepanelForContext(context) {
         const tabId = context?.tabId;
+        let setOptionsResult = null;
         if (Number.isInteger(tabId) && typeof chromeApi?.sidePanel?.setOptions === "function") {
-            await chromeApi.sidePanel.setOptions({ tabId, enabled: true, path: "sidepanel/index.html" });
+            setOptionsResult = Promise.resolve(chromeApi.sidePanel.setOptions({ tabId, enabled: true, path: "sidepanel/index.html" }));
         }
-        if (Number.isInteger(tabId)) {
-            await chromeApi.sidePanel.open({ tabId });
+        const openResult = Number.isInteger(tabId)
+            ? Promise.resolve(chromeApi.sidePanel.open({ tabId }))
+            : Promise.resolve(chromeApi.sidePanel.open({ windowId: context.windowId }));
+        if (setOptionsResult) {
+            await setOptionsResult;
         }
-        else {
-            await chromeApi.sidePanel.open({ windowId: context.windowId });
-        }
+        await openResult;
         await updatePanelState(context, true);
         return createOkResult({
             opened: true,
@@ -138,7 +158,18 @@ export function createUiHandler(options = {}) {
         }
         return createErrorResult(ERROR_CODES.NOT_IMPLEMENTED, "ui.open_sidepanel toggle-close is not implemented in this browser.");
     }
-    async function toggleSidepanelForContext(context, requestId) {
+    async function toggleSidepanelForContext(context, requestId, options = {}) {
+        if (options?.preserveUserGesture === true && !getKnownPanelOpen(context)) {
+            const existingRun = toggleInFlightByTarget.get(getTargetKey(context) || "__global__");
+            if (existingRun) {
+                return existingRun;
+            }
+            const run = openSidepanelForContext(context).then((result) => ({
+                ...result,
+                requestId,
+            }));
+            return trackTargetRun(context, run);
+        }
         return runWithTargetLock(context, async () => {
             const result = await (await isPanelOpen(context)
                 ? closeSidepanelForContext(context)
@@ -150,6 +181,7 @@ export function createUiHandler(options = {}) {
         });
     }
     function registerPanelStateListeners() {
+        void hydratePersistedPanelState().catch(() => { });
         const onOpened = chromeApi?.sidePanel?.onOpened;
         if (typeof onOpened?.addListener === "function") {
             onOpened.addListener((event = {}) => {
@@ -177,7 +209,7 @@ export function createUiHandler(options = {}) {
             void toggleSidepanelForContext({
                 tabId: Number.isInteger(tab?.id) ? tab.id : null,
                 windowId: Number.isInteger(tab?.windowId) ? tab.windowId : null,
-            }, "action-click").catch(() => { });
+            }, "action-click", { preserveUserGesture: true }).catch(() => { });
         });
         return true;
     }
@@ -195,12 +227,14 @@ export function createUiHandler(options = {}) {
             if (!chromeApi?.sidePanel?.open) {
                 return createErrorResult(ERROR_CODES.NOT_IMPLEMENTED, "ui.open_sidepanel is not implemented in this phase.", request.requestId, { reason: "sidePanel API unavailable" });
             }
-            const context = await resolveContext(sender);
+            const context = resolveContextFromSender(sender) || await resolveContext(sender);
             if (!Number.isInteger(context?.windowId)) {
                 return createErrorResult(ERROR_CODES.INVALID_CONTEXT, "Unable to resolve an active browser window for the side panel.", request.requestId);
             }
             if (request?.payload?.mode === "toggle") {
-                return toggleSidepanelForContext(context, request.requestId);
+                return toggleSidepanelForContext(context, request.requestId, {
+                    preserveUserGesture: request?.payload?.userGesture === true,
+                });
             }
             return runWithTargetLock(context, async () => {
                 const result = await openSidepanelForContext(context);

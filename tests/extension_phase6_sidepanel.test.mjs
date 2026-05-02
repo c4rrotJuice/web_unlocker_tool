@@ -841,6 +841,25 @@ test("sidepanel toggle restores persisted open state after worker restart instea
   assert.equal(chromeApi.sidePanelCloseCalls.length, 1);
 });
 
+test("user-gesture sidepanel toggles call open before async state hydration", async () => {
+  const { chromeApi, runtime } = createRuntime({ signedIn: true });
+  chromeApi.sidePanel.setOptions = async (args) => {
+    chromeApi.sidePanelSetOptionsCalls.push(args);
+    return new Promise(() => {});
+  };
+
+  const dispatchResult = runtime.dispatch({
+    type: MESSAGE_NAMES.OPEN_SIDEPANEL,
+    requestId: "gesture-toggle",
+    payload: { surface: "content", mode: "toggle", userGesture: true },
+  }, { tab: { id: 11, windowId: 1 } });
+  void dispatchResult.catch(() => {});
+
+  assert.equal(chromeApi.sidePanelOpenCalls.length, 1);
+  assert.deepEqual(chromeApi.sidePanelOpenCalls[0], { tabId: 11 });
+  assert.equal(chromeApi.sidePanelSetOptionsCalls.length, 1);
+});
+
 test("popup launcher button sends the canonical sidepanel toggle request and stays lightweight", async () => {
   const previousDocument = globalThis.document;
   const previousWindow = globalThis.window;
@@ -907,6 +926,7 @@ test("popup launcher button sends the canonical sidepanel toggle request and sta
     assert.ok(toggleMessage);
     assert.equal(toggleMessage.payload.surface, "popup");
     assert.equal(toggleMessage.payload.mode, "toggle");
+    assert.equal(toggleMessage.payload.userGesture, true);
     assert.equal(collectText(root).includes("Writior"), true);
     assert.equal(closeCount, 1);
   } finally {
@@ -958,6 +978,9 @@ test("page icon surfaces sidepanel toggle failures instead of failing silently",
     launcher.mount();
     const button = findByAttr(documentRef.body, "aria-label", "Toggle Writior sidepanel");
     assert.ok(button);
+    const icon = findByAttr(documentRef.body, "data-writior-launcher-icon", "true");
+    assert.ok(icon);
+    assert.equal(icon.src, "assets/icons/writior_logo_32.jpg");
 
     button.dispatchEvent(new FakeEvent("click", button));
     await new Promise((resolve) => setTimeout(resolve, 0));

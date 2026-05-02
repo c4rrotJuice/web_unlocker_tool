@@ -41,6 +41,19 @@ export function createUiHandler(options = {}) {
     return null;
   }
 
+  function getKnownPanelOpen(context: any) {
+    const key = getTargetKey(context);
+    return key ? panelStateByTarget.get(key) === true : false;
+  }
+
+  function trackTargetRun(context: any, run: Promise<any>) {
+    const key = getTargetKey(context) || "__global__";
+    toggleInFlightByTarget.set(key, run.finally(() => {
+      toggleInFlightByTarget.delete(key);
+    }));
+    return toggleInFlightByTarget.get(key);
+  }
+
   async function persistPanelState() {
     const storage = chromeApi?.storage?.local;
     if (typeof storage?.set !== "function") {
@@ -88,7 +101,7 @@ export function createUiHandler(options = {}) {
     return nextRun;
   }
 
-  async function resolveContext(sender = {}) {
+  function resolveContextFromSender(sender = {}) {
     const typedSender: any = sender;
     const senderWindowId = typedSender?.tab?.windowId;
     const senderTabId = typedSender?.tab?.id;
@@ -97,6 +110,14 @@ export function createUiHandler(options = {}) {
         windowId: senderWindowId,
         tabId: Number.isInteger(senderTabId) ? senderTabId : null,
       };
+    }
+    return null;
+  }
+
+  async function resolveContext(sender = {}) {
+    const senderContext = resolveContextFromSender(sender);
+    if (senderContext) {
+      return senderContext;
     }
     if (typeof chromeApi?.tabs?.query !== "function") {
       return null;
@@ -111,14 +132,17 @@ export function createUiHandler(options = {}) {
 
   async function openSidepanelForContext(context: any) {
     const tabId = context?.tabId;
+    let setOptionsResult: Promise<any> | null = null;
     if (Number.isInteger(tabId) && typeof chromeApi?.sidePanel?.setOptions === "function") {
-      await chromeApi.sidePanel.setOptions({ tabId, enabled: true, path: "sidepanel/index.html" });
+      setOptionsResult = Promise.resolve(chromeApi.sidePanel.setOptions({ tabId, enabled: true, path: "sidepanel/index.html" }));
     }
-    if (Number.isInteger(tabId)) {
-      await chromeApi.sidePanel.open({ tabId });
-    } else {
-      await chromeApi.sidePanel.open({ windowId: context.windowId });
+    const openResult = Number.isInteger(tabId)
+      ? Promise.resolve(chromeApi.sidePanel.open({ tabId }))
+      : Promise.resolve(chromeApi.sidePanel.open({ windowId: context.windowId }));
+    if (setOptionsResult) {
+      await setOptionsResult;
     }
+    await openResult;
     await updatePanelState(context, true);
     return createOkResult({
       opened: true,
@@ -149,7 +173,18 @@ export function createUiHandler(options = {}) {
     );
   }
 
-  async function toggleSidepanelForContext(context: any, requestId: string | undefined) {
+  async function toggleSidepanelForContext(context: any, requestId: string | undefined, options: any = {}) {
+    if (options?.preserveUserGesture === true && !getKnownPanelOpen(context)) {
+      const existingRun = toggleInFlightByTarget.get(getTargetKey(context) || "__global__");
+      if (existingRun) {
+        return existingRun;
+      }
+      const run = openSidepanelForContext(context).then((result) => ({
+        ...result,
+        requestId,
+      }));
+      return trackTargetRun(context, run);
+    }
     return runWithTargetLock(context, async () => {
       const result = await (await isPanelOpen(context)
         ? closeSidepanelForContext(context)
@@ -162,6 +197,7 @@ export function createUiHandler(options = {}) {
   }
 
   function registerPanelStateListeners() {
+    void hydratePersistedPanelState().catch(() => {});
     const onOpened = chromeApi?.sidePanel?.onOpened;
     if (typeof onOpened?.addListener === "function") {
       onOpened.addListener((event: any = {}) => {
@@ -190,7 +226,7 @@ export function createUiHandler(options = {}) {
       void toggleSidepanelForContext({
         tabId: Number.isInteger(tab?.id) ? tab.id : null,
         windowId: Number.isInteger(tab?.windowId) ? tab.windowId : null,
-      }, "action-click").catch(() => {});
+      }, "action-click", { preserveUserGesture: true }).catch(() => {});
     });
     return true;
   }
@@ -215,7 +251,7 @@ export function createUiHandler(options = {}) {
         );
       }
 
-      const context = await resolveContext(sender);
+      const context = resolveContextFromSender(sender) || await resolveContext(sender);
       if (!Number.isInteger(context?.windowId)) {
         return createErrorResult(
           ERROR_CODES.INVALID_CONTEXT,
@@ -224,7 +260,9 @@ export function createUiHandler(options = {}) {
         );
       }
       if (request?.payload?.mode === "toggle") {
-        return toggleSidepanelForContext(context, request.requestId);
+        return toggleSidepanelForContext(context, request.requestId, {
+          preserveUserGesture: request?.payload?.userGesture === true,
+        });
       }
       return runWithTargetLock(context, async () => {
         const result = await openSidepanelForContext(context);

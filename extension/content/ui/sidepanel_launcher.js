@@ -63,7 +63,7 @@ export function createSidepanelLauncher({ windowRef = globalThis.window, documen
             return toggleInFlight;
         }
         toggleInFlight = (async () => {
-            const result = await runtimeClient.openSidepanel({ mode: "toggle" });
+            const result = await runtimeClient.openSidepanel({ mode: "toggle", userGesture: true });
             if (!result?.ok) {
                 toast.show(result?.error?.message || "Workspace toggle failed.", { duration: 2200 });
                 return;

@@ -22,9 +22,9 @@ export function createRuntimeClient(chromeApi, surface) {
                 ...payload,
             }));
         },
-        openSidepanel({ mode = undefined } = {}) {
+        openSidepanel({ mode = undefined, userGesture = false } = {}) {
             const requestId = createRequestId(`${surface}-open-sidepanel`);
-            return sendRuntimeMessage(chromeApi, createOpenSidepanelRequest(requestId, surface, mode));
+            return sendRuntimeMessage(chromeApi, createOpenSidepanelRequest(requestId, surface, mode, userGesture));
         },
         authStart({ trigger = "manual", redirectPath = undefined } = {}) {
             const requestId = createRequestId(`${surface}-auth-start`);

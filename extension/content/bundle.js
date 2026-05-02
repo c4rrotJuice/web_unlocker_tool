@@ -172,10 +172,11 @@ function createRequest(type, requestId, payload) {
 function createPingRequest(requestId, payload) {
     return createRequest(message_names_ts_1.MESSAGE_NAMES.PING, requestId, payload);
 }
-function createOpenSidepanelRequest(requestId, surface, mode = undefined) {
+function createOpenSidepanelRequest(requestId, surface, mode = undefined, userGesture = false) {
     return createRequest(message_names_ts_1.MESSAGE_NAMES.OPEN_SIDEPANEL, requestId, {
         surface,
         ...(mode ? { mode } : {}),
+        ...(userGesture ? { userGesture: true } : {}),
     });
 }
 function createAuthStartRequest(requestId, surface, trigger, redirectPath = undefined) {
@@ -1195,9 +1196,9 @@ function createRuntimeClient(chromeApi, surface) {
                 ...payload,
             }));
         },
-        openSidepanel({ mode = undefined } = {}) {
+        openSidepanel({ mode = undefined, userGesture = false } = {}) {
             const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-open-sidepanel`);
-            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createOpenSidepanelRequest)(requestId, surface, mode));
+            return (0, runtime_message_ts_1.sendRuntimeMessage)(chromeApi, (0, messages_ts_1.createOpenSidepanelRequest)(requestId, surface, mode, userGesture));
         },
         authStart({ trigger = "manual", redirectPath = undefined } = {}) {
             const requestId = (0, request_id_ts_1.createRequestId)(`${surface}-auth-start`);
@@ -5794,7 +5795,7 @@ function createSidepanelLauncher({ windowRef = globalThis.window, documentRef = 
             return toggleInFlight;
         }
         toggleInFlight = (async () => {
-            const result = await runtimeClient.openSidepanel({ mode: "toggle" });
+            const result = await runtimeClient.openSidepanel({ mode: "toggle", userGesture: true });
             if (!result?.ok) {
                 toast.show(result?.error?.message || "Workspace toggle failed.", { duration: 2200 });
                 return;

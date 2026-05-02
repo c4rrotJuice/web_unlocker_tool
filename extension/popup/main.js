@@ -58,7 +58,7 @@ function renderPopup(root) {
         renderPopupAuthSnapshot(snapshotRoot, getAuthStatusText(result));
     });
     const openSidepanelButton = createButton("Toggle Workspace", async () => {
-        const result = await runtimeClient.openSidepanel({ mode: "toggle" });
+        const result = await runtimeClient.openSidepanel({ mode: "toggle", userGesture: true });
         if (!result?.ok) {
             renderPopupAuthSnapshot(snapshotRoot, {
                 status: "error",

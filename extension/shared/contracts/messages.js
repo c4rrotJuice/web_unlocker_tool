@@ -7,10 +7,11 @@ function createRequest(type, requestId, payload) {
 export function createPingRequest(requestId, payload) {
     return createRequest(MESSAGE_NAMES.PING, requestId, payload);
 }
-export function createOpenSidepanelRequest(requestId, surface, mode = undefined) {
+export function createOpenSidepanelRequest(requestId, surface, mode = undefined, userGesture = false) {
     return createRequest(MESSAGE_NAMES.OPEN_SIDEPANEL, requestId, {
         surface,
         ...(mode ? { mode } : {}),
+        ...(userGesture ? { userGesture: true } : {}),
     });
 }
 export function createAuthStartRequest(requestId, surface, trigger, redirectPath = undefined) {
